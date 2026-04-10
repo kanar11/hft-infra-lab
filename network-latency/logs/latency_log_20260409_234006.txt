@@ -1,0 +1,13 @@
+=== Network Latency Monitor ===
+Target: 8.8.8.8
+Packets: 100
+[1/3] Measuring ICMP latency...
+rtt min/avg/max/mdev = 12.420/15.032/20.509/1.521 ms
+
+[2/3] Measuring TCP latency...
+hping3 not installed. Install: sudo apt install hping3
+
+[3/3] Calculating jitter...
+Min: rtt minms | Avg: avgms | Max: maxms | Jitter: mdev = 12.475ms
+
+=== Done ===
