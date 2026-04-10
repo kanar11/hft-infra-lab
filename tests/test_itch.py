@@ -1,6 +1,7 @@
+import os
 import sys
 import struct
-sys.path.insert(0, '/home/kanar11/hft-infra-lab')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from itch_parser.itch_parser import ITCHMessage
 
 def test_parse_add_order():

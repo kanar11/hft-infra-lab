@@ -1,5 +1,6 @@
+import os
 import sys
-sys.path.insert(0, '/home/kanar11/hft-infra-lab')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from oms.oms import OMS, Side, OrderStatus
 
 def test_submit_order():
