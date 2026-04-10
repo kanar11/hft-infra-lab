@@ -1,0 +1,26 @@
+import socket
+import struct
+import time
+
+MCAST_GROUP = '239.1.1.1'
+MCAST_PORT = 5001
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(('', MCAST_PORT))
+
+mreq = struct.pack('4sL', socket.inet_aton(MCAST_GROUP), socket.INADDR_ANY)
+sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+print("Measuring multicast latency...")
+print(f"{'SEQ':<8} {'Latency (us)':<15}")
+print("-" * 25)
+
+while True:
+    data, addr = sock.recvfrom(1024)
+    recv_time = time.time_ns()
+    msg = data.decode()
+    parts = dict(p.split('=') for p in msg.split())
+    send_time = int(parts['TS'])
+    latency_us = (recv_time - send_time) / 1000
+    print(f"{parts['SEQ']:<8} {latency_us:<15.2f}")
