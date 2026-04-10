@@ -1,0 +1,128 @@
+[
+  {
+    "timestamp": "2026-04-10T19:39:15.057012",
+    "memory": {
+      "total_mb": 3915,
+      "used_percent": 37.1,
+      "hugepages_total": 512,
+      "hugepages_used": 0
+    },
+    "context_switches": 437950,
+    "interrupts": {
+      "CPU0": 610877,
+      "CPU1": 17539
+    },
+    "network": {
+      "rx_bytes": 73702698,
+      "rx_packets": 77801,
+      "tx_bytes": 2044350,
+      "tx_packets": 20469
+    },
+    "isolated_cpus": "1"
+  },
+  {
+    "timestamp": "2026-04-10T19:39:20.136849",
+    "memory": {
+      "total_mb": 3915,
+      "used_percent": 37.1,
+      "hugepages_total": 512,
+      "hugepages_used": 0
+    },
+    "context_switches": 438335,
+    "interrupts": {
+      "CPU0": 611380,
+      "CPU1": 17543
+    },
+    "network": {
+      "rx_bytes": 73714758,
+      "rx_packets": 77964,
+      "tx_bytes": 2052466,
+      "tx_packets": 20557
+    },
+    "isolated_cpus": "1"
+  },
+  {
+    "timestamp": "2026-04-10T19:39:25.147223",
+    "memory": {
+      "total_mb": 3915,
+      "used_percent": 37.1,
+      "hugepages_total": 512,
+      "hugepages_used": 0
+    },
+    "context_switches": 438512,
+    "interrupts": {
+      "CPU0": 611787,
+      "CPU1": 17546
+    },
+    "network": {
+      "rx_bytes": 73714818,
+      "rx_packets": 77965,
+      "tx_bytes": 2052732,
+      "tx_packets": 20558
+    },
+    "isolated_cpus": "1"
+  },
+  {
+    "timestamp": "2026-04-10T19:39:30.251283",
+    "memory": {
+      "total_mb": 3915,
+      "used_percent": 37.1,
+      "hugepages_total": 512,
+      "hugepages_used": 0
+    },
+    "context_switches": 438724,
+    "interrupts": {
+      "CPU0": 612088,
+      "CPU1": 17552
+    },
+    "network": {
+      "rx_bytes": 73714938,
+      "rx_packets": 77967,
+      "tx_bytes": 2053088,
+      "tx_packets": 20560
+    },
+    "isolated_cpus": "1"
+  },
+  {
+    "timestamp": "2026-04-10T19:39:35.253617",
+    "memory": {
+      "total_mb": 3915,
+      "used_percent": 37.1,
+      "hugepages_total": 512,
+      "hugepages_used": 0
+    },
+    "context_switches": 438941,
+    "interrupts": {
+      "CPU0": 612425,
+      "CPU1": 17555
+    },
+    "network": {
+      "rx_bytes": 73715058,
+      "rx_packets": 77969,
+      "tx_bytes": 2053444,
+      "tx_packets": 20562
+    },
+    "isolated_cpus": "1"
+  },
+  {
+    "timestamp": "2026-04-10T19:39:40.278481",
+    "memory": {
+      "total_mb": 3915,
+      "used_percent": 37.1,
+      "hugepages_total": 512,
+      "hugepages_used": 0
+    },
+    "context_switches": 439128,
+    "interrupts": {
+      "CPU0": 612849,
+      "CPU1": 17559
+    },
+    "network": {
+      "rx_bytes": 73715118,
+      "rx_packets": 77970,
+      "tx_bytes": 2053710,
+      "tx_packets": 20563
+    },
+    "isolated_cpus": "1"
+  }
+]
