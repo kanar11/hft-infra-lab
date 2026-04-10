@@ -1,0 +1,27 @@
+name: HFT Infra Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run OMS tests
+        run: python tests/test_oms.py
+
+      - name: Run ITCH tests
+        run: python tests/test_itch.py
+
+      - name: Run benchmarks
+        run: python tests/benchmark.py
