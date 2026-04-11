@@ -2,34 +2,38 @@
 
 Complete low-latency infrastructure lab for HFT systems — kernel tuning, networking, order management, and monitoring.
 
+## Performance Highlights
+- Order book matching: **23M orders/sec** (C++, 2-core VM)
+- ITCH parser: **258K msg/sec** (Python)
+- OUCH encoding: **1.7M msg/sec** (Python)
+- Lock-free queue: **10M messages** benchmarked
+- DPDK poll mode: **5.6x latency reduction** vs interrupts
+
 ## Modules
 
-### kernel-config/
-Server hardening: hugepages (512x2MB), CPU isolation (isolcpus, nohz_full, rcu_nocbs), sysctl tuning, IRQ affinity.
+| Module | Description | Language |
+|--------|------------|----------|
+| kernel-config/ | Hugepages, CPU isolation, sysctl, IRQ affinity | Bash |
+| linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
+| network-latency/ | Network latency and jitter measurement | Bash |
+| multicast/ | Market data feed sender/receiver with latency | Python |
+| orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
+| fix-protocol/ | FIX 4.2 message parser | Python |
+| itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser | Python |
+| ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol | Python |
+| dpdk-bypass/ | Kernel bypass simulator with poll mode driver | Python |
+| lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
+| oms/ | Order Management System with risk checks, P&L | Python |
+| monitoring/ | Real-time infra monitor with alerts | Python |
+| tests/ | Unit tests (12) and benchmarks | Python |
+| docs/ | Technical write-up on Linux tuning | Markdown |
 
-### linux-tuning/
-Benchmarking scripts: baseline vs tuned kernel performance comparison.
-
-### network-latency/
-Real-time network latency measurement and jitter analysis.
-
-### multicast/
-Market data feed simulation — multicast sender/receiver with latency measurement in microseconds.
-
-### orderbook/
-C++ matching engine with price-time priority, bid/ask management, and nanosecond latency tracking.
-
-### fix-protocol/
-FIX 4.2 protocol parser — parses NewOrder, Cancel, Execution messages with per-message latency.
-
-### dpdk-bypass/
-DPDK kernel bypass simulator — poll mode driver vs interrupt-driven I/O, CPU pinning, busy-wait packet processing.
-
-### oms/
-Order Management System — order lifecycle, position tracking, realized P&L, pre-trade risk checks (position limits, order value caps).
-
-### monitoring/
-Real-time infrastructure monitor — memory, context switches, network throughput, hugepages usage, IRQ alerts on isolated CPUs.
+## Quick Start
+```bash
+make build      # compile C++ modules
+make test       # run all unit tests (12/12)
+make benchmark  # run performance benchmarks
+```
 
 ## Environment
 - OS: Ubuntu 24.04 LTS Server
