@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+"""Unit tests for ITCH 5.0 protocol parser."""
 import os
 import sys
 import struct

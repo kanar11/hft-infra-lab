@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+"""Unit tests for FIX 4.2 protocol parser."""
 import os
 import sys
 import importlib.util

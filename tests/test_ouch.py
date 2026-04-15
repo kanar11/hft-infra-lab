@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+"""Unit tests for OUCH 4.2 protocol."""
 import os
 import sys
 import struct

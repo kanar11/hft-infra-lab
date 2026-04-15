@@ -34,11 +34,11 @@ class KernelBypassSimulator:
         """
         print(f"[DPDK-SIM] Starting Poll Mode Driver for {duration_sec}s...")
         print(f"[DPDK-SIM] Mode: POLLING (no interrupts)")
-        
+
         sock.setblocking(False)
         start = time.time()
         polls = 0
-        
+
         while time.time() - start < duration_sec:
             polls += 1
             try:
@@ -52,19 +52,19 @@ class KernelBypassSimulator:
                     send_time = int(parts.get('TS', recv_time))
                 except (ValueError, UnicodeDecodeError):
                     continue
-                
+
                 latency = (recv_time - send_time) / 1000  # microseconds
                 self.packets_processed += 1
                 self.total_latency_ns += (recv_time - send_time)
-                
+
                 if self.packets_processed % 10 == 0:
                     print(f"  PKT #{self.packets_processed} latency={latency:.1f}us")
-                    
+
             except BlockingIOError:
                 continue  # No packet, keep polling (busy-wait)
-        
+
         return polls
-    
+
     def print_stats(self, polls: int, duration: int) -> None:
         """Print poll mode driver performance summary."""
         print(f"\n[DPDK-SIM] === Statistics ===")
@@ -80,24 +80,24 @@ class KernelBypassSimulator:
 def main() -> None:
     """Run poll mode driver on multicast feed."""
     import struct
-    
+
     MCAST_GROUP = '239.1.1.1'
     MCAST_PORT = 5001
-    
+
     sim = KernelBypassSimulator(cpu_core=1)
     sim.pin_to_core()
-    
+
     # Setup multicast socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('', MCAST_PORT))
-    
+
     mreq = struct.pack('4sL', socket.inet_aton(MCAST_GROUP), socket.INADDR_ANY)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    
+
     print(f"[DPDK-SIM] Listening on {MCAST_GROUP}:{MCAST_PORT}")
     print("[DPDK-SIM] Start mc_sender.py in another terminal\n")
-    
+
     duration = 10
     try:
         polls = sim.poll_mode_driver(sock, duration)

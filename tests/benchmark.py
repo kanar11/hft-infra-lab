@@ -18,12 +18,12 @@ def benchmark_itch(iterations: int = 100000) -> None:
     parser = ITCHMessage()
     msg = struct.pack('!c q q c I 8s I',
         b'A', 1000000, 1001, b'B', 100, b'AAPL    ', 1502500)
-    
+
     start = time.time_ns()
     for _ in range(iterations):
         parser.parse(msg)
     elapsed = time.time_ns() - start
-    
+
     per_msg = elapsed / iterations
     throughput = 1_000_000_000 / per_msg
     print(f"ITCH Parser:")
@@ -44,7 +44,7 @@ def benchmark_oms(iterations: int = 50000) -> None:
             if order:
                 oms.fill_order(order.order_id, 1, 150.00)
     elapsed = time.time_ns() - start
-    
+
     per_order = elapsed / iterations
     throughput = 1_000_000_000 / per_order
     print(f"OMS (submit + fill):")
