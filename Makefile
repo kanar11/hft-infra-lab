@@ -10,6 +10,7 @@ build:
 	$(CXX) $(CXXFLAGS) -o orderbook/latency_histogram orderbook/latency_histogram.cpp
 	$(CXX) $(CXXFLAGS) -o lockfree/spsc_queue lockfree/spsc_queue.cpp
 	$(CXX) $(CXXFLAGS) -o memory-latency/cache_latency memory-latency/cache_latency.cpp
+	$(CXX) $(CXXFLAGS) -o itch_parser/benchmark_itch itch_parser/benchmark_itch.cpp
 
 test: build
 	python3 tests/test_oms.py
@@ -25,6 +26,7 @@ benchmark:
 	cd orderbook && ./latency_histogram
 	cd lockfree && ./spsc_queue
 	cd memory-latency && ./cache_latency
+	cd itch_parser && ./benchmark_itch
 
 simulate:
 	python3 simulator/market_sim.py 10000
@@ -52,3 +54,4 @@ lint:
 clean:
 	rm -f orderbook/orderbook orderbook/orderbook_v2 orderbook/benchmark_orderbook
 	rm -f orderbook/latency_histogram lockfree/spsc_queue memory-latency/cache_latency
+	rm -f itch_parser/benchmark_itch
