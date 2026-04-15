@@ -10,13 +10,27 @@ z poprawną średnią ceną kosztów i konfigurowalnymi limitami ryzyka.
 import os
 import time
 import logging
+# from enum import Enum: imports Enum - lets us create a fixed set of constant values (like exit codes 0/1/2 in bash)
+# from enum import Enum: importuje Enum - pozwala nam stworzyć ustalony zbiór stałych wartości (jak kody wyjścia 0/1/2 w bashu)
 from enum import Enum
+# from dataclasses import dataclass: imports dataclass decorator - auto-generates __init__ and other methods for us
+# from dataclasses import dataclass: importuje dekorator dataclass - auto-generuje __init__ i inne metody dla nas
 from dataclasses import dataclass, field
+# from typing import Dict, Optional: type hints that help document what types variables should hold
+# Dict[int, Order] means "a dictionary with int keys and Order values"
+# Optional[Order] means "either an Order object or None" (like a value that might not exist)
+# from typing import Dict, Optional: podpowiedzi typu które pomagają udokumentować, jakie typy powinny przechowywać zmienne
+# Dict[int, Order] oznacza "słownik z kluczami int i wartościami Order"
+# Optional[Order] oznacza "albo obiekt Order, albo None" (jak wartość, która może nie istnieć)
 from typing import Dict, Optional
 
 logger = logging.getLogger('oms')
 
 
+# Enum: defines a fixed set of allowed values (like exit codes in bash: 0=success, 1=error, 2=failure)
+# You can only use these specific values; prevents typos and invalid states
+# Enum: definiuje ustalony zbiór dozwolonych wartości (jak kody wyjścia w bashu: 0=sukces, 1=błąd, 2=porażka)
+# Możesz używać tylko tych konkretnych wartości; zapobiega literówkom i nieprawidłowym stanom
 class OrderStatus(Enum):
     NEW = "NEW"
     SENT = "SENT"
@@ -31,6 +45,10 @@ class Side(Enum):
     SELL = "SELL"
 
 
+# @dataclass: this decorator auto-generates the __init__ method that creates Order objects
+# Without @dataclass, we'd have to write __init__ ourselves - it's like a template for creating new instances
+# @dataclass: ten dekorator auto-generuje metodę __init__, która tworzy obiekty Order
+# Bez @dataclass, musielibyśmy sami napisać __init__ - to jak szablon do tworzenia nowych instancji
 @dataclass
 class Order:
     order_id: int
@@ -58,13 +76,29 @@ class OMS:
     """Order Management System with pre-trade risk checks and P&L tracking.
     System zarządzania zamówieniami z kontrolami ryzyka przed transakcją i śledzeniem P&L."""
 
+    # __init__ is the constructor - a special method that runs automatically when you create a new OMS object
+    # It initializes (sets up) all the data that OMS needs to function, like when a bash script initializes variables at startup
+    # __init__ jest konstruktorem - specjalną metodą, która uruchamia się automatycznie, gdy tworzysz nowy obiekt OMS
+    # Inicjalizuje (konfiguruje) wszystkie dane, których OMS potrzebuje do funkcjonowania, jak inicjalizacja zmiennych w skrypcie bash
     def __init__(self, max_position: int = 1000, max_order_value: float = 100000) -> None:
+        # self = "this object" - refers to the specific OMS instance we're creating (like $0 in bash refers to the script itself)
+        # self.orders = attribute (variable) stored inside this OMS object
+        # Dict[int, Order] = dictionary that maps order IDs (ints) to Order objects (like associative arrays in bash)
+        # self = "ten obiekt" - odwołuje się do konkretnej instancji OMS, którą tworzymy (jak $0 w bashu odwołuje się do samego skryptu)
+        # self.orders = atrybut (zmienna) przechowywany wewnątrz tego obiektu OMS
+        # Dict[int, Order] = słownik, który mapuje ID zamówień (inty) do obiektów Order (jak tablice asocjacyjne w bashu)
         self.orders: Dict[int, Order] = {}
         self.positions: Dict[str, Position] = {}
         self.next_id: int = 1
         self.max_position: int = max_position
         self.max_order_value: float = max_order_value
 
+    # -> Optional[Order] is the return type hint - tells you what this function returns
+    # -> Optional[Order] means it returns either an Order object OR None (nothing/null)
+    # The arrow -> shows what comes OUT of the function (the output)
+    # -> Optional[Order] jest podpowiedzią typu zwracanego - mówi ci, co ta funkcja zwraca
+    # -> Optional[Order] oznacza, że zwraca albo obiekt Order ALBO None (nic/null)
+    # Strzałka -> pokazuje, co wychodzi z funkcji (dane wyjściowe)
     def submit_order(self, symbol: str, side: Side, price: float,
                      quantity: int) -> Optional[Order]:
         """Submit new order with pre-trade risk checks.
@@ -81,6 +115,10 @@ class OMS:
 
         # Input validation
         # Walidacja danych wejściowych
+        # price != price checks for NaN (Not a Number) - a special float value that's not equal to itself
+        # This is a trick: only NaN != NaN, so if a value isn't equal to itself, it must be NaN
+        # price != price sprawdza NaN (Not a Number) - specjalną wartość float, która nie jest równa sobie
+        # To jest sztuczka: tylko NaN != NaN, więc jeśli wartość nie jest równa sobie, musi być NaN
         if not isinstance(price, (int, float)) or price != price:  # NaN check
             logger.warning(f"REJECTED: invalid price {price}")
             return None
@@ -230,5 +268,13 @@ def main() -> None:
     oms.print_positions()
 
 
+# if __name__ == '__main__' is a Python idiom that checks "is this file being run directly, or imported?"
+# __name__ is a special variable: '__main__' when you run the script directly, but the module name if it's imported
+# Think of it like checking if bash script is being sourced or executed directly
+# This pattern lets the same file be both a runnable script AND a reusable library
+# if __name__ == '__main__' jest idiomem Pythona, który sprawdza "czy ten plik jest uruchamiany bezpośrednio, czy importowany?"
+# __name__ jest specjalną zmienną: '__main__' gdy bezpośrednio uruchamiasz skrypt, ale nazwa modułu jeśli jest importowany
+# Myśl o tym jak sprawdzanie czy skrypt bash jest sourcowany czy wykonywany bezpośrednio
+# Ten wzorzec pozwala temu samemu plikowi być zarówno skryptem wykonywalnym JAK I wielokrotnie używalną biblioteką
 if __name__ == '__main__':
     main()

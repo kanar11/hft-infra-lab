@@ -79,14 +79,20 @@ class RiskLimits:
 class RiskState:
     """Live risk state tracking.
     Śledzenie stanu ryzyka na żywo."""
+    # default_factory=dict creates a new empty dict {} for EACH instance
+    # Nie współdzielimy słownika między instancjami — każda dostaje własny
     positions: Dict[str, int] = field(default_factory=dict)
     daily_pnl: float = 0.0
     peak_pnl: float = 0.0
+    # default_factory=list creates a new empty list [] for EACH instance
+    # Każda instancja RiskState ma swój własny timestamp — nie współdzielą listę
     order_timestamps: list = field(default_factory=list)
     kill_switch_active: bool = False
     total_checks: int = 0
     total_rejects: int = 0
     total_latency_ns: int = 0
+    # default_factory=dict creates a new empty dict {} for EACH instance
+    # Każda instancja RiskState ma swoje powody odrzuceń — nie współdzielą słownik
     reject_reasons: Dict[str, int] = field(default_factory=dict)
 
 
@@ -99,6 +105,8 @@ class RiskManager:
     """
 
     def __init__(self, limits: Optional[RiskLimits] = None) -> None:
+        # 'limits or RiskLimits()' means: if limits is None, use default RiskLimits()
+        # Jak ${VAR:-default} w Bashu — jeśli zmienna pusta, użyj wartości domyślnej
         self.limits = limits or RiskLimits()
         self.state = RiskState()
 
@@ -127,6 +135,9 @@ class RiskManager:
         # Sprawdzenie wartości zlecenia
         order_value = price * quantity
         if order_value > self.limits.max_order_value:
+            # f'...' strings (f-strings) embed variables like ${var} in Bash
+            # {order_value:,.0f} formats number with commas and 0 decimals (e.g., 1,234,567)
+            # f'...' to f-stringi — wstawiają zmienne jak ${var} w Bashu
             return self._reject('ORDER_VALUE',
                                 f'Order value ${order_value:,.0f} > limit ${self.limits.max_order_value:,.0f}',
                                 start)
@@ -144,6 +155,10 @@ class RiskManager:
         # Sprawdzenie ekspozycji portfela
         test_positions = dict(self.state.positions)
         test_positions[symbol] = projected
+        # 'sum(abs(v) for v in ...)' is a generator expression (compact loop)
+        # abs(v) takes absolute value (ignores +/-), for loops through each value
+        # sum() adds them all: |100| + |-50| + |200| = 350
+        # sum(abs(v) ...) to generator — kompaktna pętla zamiast tradycyjnego for
         total_exposure = sum(abs(v) for v in test_positions.values())
         if total_exposure > self.limits.max_portfolio_exposure:
             return self._reject('PORTFOLIO_EXPOSURE',
@@ -154,6 +169,8 @@ class RiskManager:
         # Dzienny limit straty (przełącznik obwodu)
         if self.state.daily_pnl < -self.limits.max_daily_loss:
             self.state.kill_switch_active = True
+            # f-string embeds daily_pnl value directly into message text (like ${var} in Bash)
+            # f-string wstawia wartość daily_pnl w tekst (jak ${var} w Bashu)
             return self._reject('CIRCUIT_BREAKER',
                                 f'Daily loss ${-self.state.daily_pnl:,.0f} > limit ${self.limits.max_daily_loss:,.0f} — KILL SWITCH ACTIVATED',
                                 start)
@@ -164,6 +181,8 @@ class RiskManager:
             drawdown_pct = (self.state.peak_pnl - self.state.daily_pnl) / self.state.peak_pnl * 100
             if drawdown_pct > self.limits.max_drawdown_pct:
                 self.state.kill_switch_active = True
+                # f'...' embeds variables: {drawdown_pct:.1f} formats to 1 decimal place (5.2%)
+                # f'...' wstawia zmienne — {value:.1f} to format z 1 miejscem dziesiętnym
                 return self._reject('DRAWDOWN',
                                     f'Drawdown {drawdown_pct:.1f}% > limit {self.limits.max_drawdown_pct}% — KILL SWITCH ACTIVATED',
                                     start)
@@ -172,6 +191,9 @@ class RiskManager:
         # Ograniczanie szybkości
         now = time.time_ns()
         one_sec_ago = now - 1_000_000_000
+        # [t for t in ... if ...] is a list comprehension — filters like grep
+        # Keeps only timestamps NEWER than 1 second ago (like grep 'recent')
+        # Zachowuje tylko znaczniki czasu nowsze niż 1 sekundę (jak grep na liniach)
         self.state.order_timestamps = [t for t in self.state.order_timestamps if t > one_sec_ago]
         if len(self.state.order_timestamps) >= self.limits.max_orders_per_second:
             return self._reject('RATE_LIMIT',
@@ -233,6 +255,10 @@ class RiskManager:
         elapsed = time.time_ns() - start
         self.state.total_rejects += 1
         self.state.total_latency_ns += elapsed
+        # dict.get(key, default) returns value if key exists, else returns default
+        # Like ${VAR:-0} in Bash — if VAR not set, use 0 instead
+        # .get(..., 0) + 1 increments the counter for this reject reason
+        # dict.get(..., 0) — jeśli klucz nie istnieje, użyj 0 zamiast błędu
         self.state.reject_reasons[reason_code] = self.state.reject_reasons.get(reason_code, 0) + 1
         return RiskCheckResult(action=RiskAction.REJECT, reason=reason, latency_ns=elapsed)
 
@@ -247,6 +273,9 @@ class RiskManager:
             logger.info(f"  Reject breakdown:")
             for reason, count in sorted(self.state.reject_reasons.items()):
                 logger.info(f"    {reason}: {count}")
+        # 'value if condition else default' is called a ternary operator
+        # If total_checks > 0, calculate average; otherwise use 0 (prevents division by zero)
+        # Operator trójargumentowy: jeśli warunek, to wartość_a, inaczej wartość_b
         avg = self.state.total_latency_ns / self.state.total_checks if self.state.total_checks > 0 else 0
         logger.info(f"  Avg check latency: {avg:.0f} ns")
         logger.info(f"  Kill switch: {'ACTIVE' if self.state.kill_switch_active else 'inactive'}")

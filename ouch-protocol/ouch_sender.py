@@ -9,7 +9,12 @@ i odpowiedzi serwera (Accepted, Replaced, Cancelled, Executed).
 """
 import struct
 import time
+import logging
+import sys
+import os
 from typing import Dict, Any, Tuple
+
+logger = logging.getLogger('ouch')
 
 
 class OUCHMessage:
@@ -149,35 +154,39 @@ def benchmark_encoding(iterations: int = 100000) -> Tuple[float, float]:
 
 
 def main() -> None:
-    print("=== NASDAQ OUCH 4.2 Protocol ===\n")
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import setup_logging
+    setup_logging()
+
+    logger.info("=== NASDAQ OUCH 4.2 Protocol ===")
     ouch = OUCHMessage()
 
     # Demo messages
-    print("--- Building Orders ---")
+    logger.info("--- Building Orders ---")
 
     msg1 = ouch.enter_order("ORD001", "B", 100, "AAPL", 150.25)
-    print(f"  ENTER BUY  100 AAPL @ 150.25 ({len(msg1)} bytes): {msg1.hex()}")
+    logger.info(f"  ENTER BUY  100 AAPL @ 150.25 ({len(msg1)} bytes): {msg1.hex()}")
 
     msg2 = ouch.enter_order("ORD002", "S", 50, "MSFT", 380.50, "I")
-    print(f"  ENTER SELL  50 MSFT @ 380.50 IOC ({len(msg2)} bytes): {msg2.hex()}")
+    logger.info(f"  ENTER SELL  50 MSFT @ 380.50 IOC ({len(msg2)} bytes): {msg2.hex()}")
 
     msg3 = ouch.cancel_order("ORD001")
-    print(f"  CANCEL ORD001 ({len(msg3)} bytes): {msg3.hex()}")
+    logger.info(f"  CANCEL ORD001 ({len(msg3)} bytes): {msg3.hex()}")
 
     msg4 = ouch.replace_order("ORD002", "ORD003", 75, 381.00)
-    print(f"  REPLACE ORD002->ORD003 75@381.00 ({len(msg4)} bytes): {msg4.hex()}")
+    logger.info(f"  REPLACE ORD002->ORD003 75@381.00 ({len(msg4)} bytes): {msg4.hex()}")
 
     # Benchmark
-    print("\n--- Benchmark ---")
+    logger.info("--- Benchmark ---")
     per_msg, throughput = benchmark_encoding()
-    print(f"  Encoding: {per_msg:.0f} ns/msg")
-    print(f"  Throughput: {throughput:,.0f} msg/sec")
+    logger.info(f"  Encoding: {per_msg:.0f} ns/msg")
+    logger.info(f"  Throughput: {throughput:,.0f} msg/sec")
 
     # ITCH vs OUCH comparison (porównanie ITCH vs OUCH)
-    print("\n--- ITCH vs OUCH ---")
-    print("  ITCH: binary market data FROM exchange (read-only)")
-    print("  OUCH: binary order entry TO exchange (write)")
-    print("  FIX:  text-based, both directions (slower)")
+    logger.info("--- ITCH vs OUCH ---")
+    logger.info("  ITCH: binary market data FROM exchange (read-only)")
+    logger.info("  OUCH: binary order entry TO exchange (write)")
+    logger.info("  FIX:  text-based, both directions (slower)")
 
 
 if __name__ == '__main__':

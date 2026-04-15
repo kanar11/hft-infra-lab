@@ -9,6 +9,11 @@ symulując rzeczywisty kanał danych rynkowych giełdy.
 """
 import socket
 import time
+import logging
+import sys
+import os
+
+logger = logging.getLogger('multicast.sender')
 
 MCAST_GROUP = '239.1.1.1'
 MCAST_PORT = 5001
@@ -18,6 +23,10 @@ def main() -> None:
     """Send multicast market data in a loop until interrupted.
     Wysyła dane rynkowe multicast w pętli do przerwania.
     """
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import setup_logging
+    setup_logging()
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 
@@ -26,11 +35,11 @@ def main() -> None:
         while True:
             msg = f"SEQ={seq} TS={time.time_ns()}"
             sock.sendto(msg.encode(), (MCAST_GROUP, MCAST_PORT))
-            print(f"Sent: {msg}")
+            logger.info(f"Sent: {msg}")
             seq += 1
             time.sleep(0.1)
     except KeyboardInterrupt:
-        print(f"\nStopped after {seq} messages.")
+        logger.info(f"Stopped after {seq} messages.")
     finally:
         sock.close()
 

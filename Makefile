@@ -1,4 +1,4 @@
-.PHONY: build test benchmark simulate clean
+.PHONY: build test benchmark simulate lint clean
 
 CXX      = g++
 CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -pthread
@@ -28,6 +28,26 @@ benchmark:
 
 simulate:
 	python3 simulator/market_sim.py 10000
+
+lint:
+	@echo "=== Syntax check: all Python files ==="
+	@python3 -m py_compile config_loader.py
+	@python3 -m py_compile oms/oms.py
+	@python3 -m py_compile itch_parser/itch_parser.py
+	@python3 -m py_compile strategy/mean_reversion.py
+	@python3 -m py_compile router/smart_router.py
+	@python3 -m py_compile risk/risk_manager.py
+	@python3 -m py_compile simulator/market_sim.py
+	@python3 -m py_compile monitoring/infra_monitor.py
+	@python3 -m py_compile dpdk-bypass/kernel_bypass_sim.py
+	@python3 -m py_compile ouch-protocol/ouch_sender.py
+	@python3 -m py_compile fix-protocol/fix_parser.py
+	@python3 -m py_compile multicast/mc_sender.py
+	@python3 -m py_compile multicast/mc_receiver.py
+	@python3 -m py_compile multicast/mc_receiver_latency.py
+	@python3 -m py_compile tests/benchmark.py
+	@python3 -m py_compile tests/benchmark_chart.py
+	@echo "All Python files OK"
 
 clean:
 	rm -f orderbook/orderbook orderbook/orderbook_v2 orderbook/benchmark_orderbook

@@ -10,15 +10,25 @@ Parsuje wszystkie 8 typów wiadomości ITCH: ADD_ORDER, ADD_ORDER_MPID, DELETE_O
 REPLACE_ORDER, ORDER_EXECUTED, ORDER_CANCELLED, TRADE, SYSTEM_EVENT
 i STOCK_DIRECTORY. Używane do przetwarzania bezpośrednich kanałów danych rynkowych.
 """
+# The 'struct' module reads raw binary data and converts it to Python values
+# Like Linux tools 'xxd' or 'od' that show hex/binary data - struct unpacks it into numbers
 import struct
 import time
+import os
+import logging
 from typing import Dict, List, Any, Optional
 
+logger = logging.getLogger('itch')
 
+
+# A class is like a folder of related commands and data that work together
+# Think of it like a system tool that has multiple functions (parse_add_order, parse_delete_order, etc.)
 class ITCHMessage:
     """NASDAQ ITCH 5.0 protocol parser (simplified).
     Parser protokołu NASDAQ ITCH 5.0 (uproszczony)."""
 
+    # Class variable: shared by ALL instances of ITCHMessage (like a global variable)
+    # All copies of ITCHMessage use this same dictionary - not individual copies
     MSG_TYPES = {
         b'A': 'ADD_ORDER',
         b'D': 'DELETE_ORDER',
@@ -30,6 +40,8 @@ class ITCHMessage:
         b'R': 'STOCK_DIRECTORY',
     }
 
+    # @staticmethod: this function doesn't need 'self' (the object reference)
+    # Like a standalone script that doesn't depend on the class - it's self-contained
     @staticmethod
     def parse_add_order(data: bytes) -> Dict[str, Any]:
         """Parse Add Order (A) message.
@@ -38,18 +50,32 @@ class ITCHMessage:
         """
         if len(data) < 34:
             return {'type': 'ERROR', 'reason': f'ADD_ORDER too short ({len(data)} < 34)'}
+        # Format string: '!c q q c I 8s I'
+        # ! = network byte order (big-endian: most significant byte first, like reading left-to-right)
+        # c = char (1 byte, single character)
+        # q = 8-byte integer (64-bit number, like 'long' in C)
+        # I = 4-byte unsigned integer (32-bit unsigned number)
+        # 8s = 8-byte string (fixed-length text, 8 characters)
+        # So: 1 char + 8-byte int + 8-byte int + 1 char + 4-byte int + 8-byte string + 4-byte int = 34 bytes total
         fmt = '!c q q c I 8s I'
         fields = struct.unpack(fmt, data[:34])
         return {
             'type': 'ADD_ORDER',
             'timestamp_ns': fields[1],
             'order_ref': fields[2],
+            # b'B' is a bytes literal: the 'b' prefix means raw binary data, not text
+            # It represents the actual byte value of the ASCII character 'B' (0x42)
             'side': 'BUY' if fields[3] == b'B' else 'SELL',
             'shares': fields[4],
+            # .decode('ascii', errors='replace'): convert bytes to text string
+            # 'ascii' means use ASCII character mapping (standard 7-bit text)
+            # errors='replace': if there's a bad byte, replace it with '?' instead of crashing
+            # .strip(): remove whitespace from both ends (like 'AAPL    ' becomes 'AAPL')
             'stock': fields[5].decode('ascii', errors='replace').strip(),
             'price': fields[6] / 10000.0
         }
 
+    # @staticmethod: standalone function, doesn't need 'self'
     @staticmethod
     def parse_delete_order(data: bytes) -> Dict[str, Any]:
         """Parse Delete Order (D) message.
@@ -66,6 +92,7 @@ class ITCHMessage:
             'order_ref': fields[2]
         }
 
+    # @staticmethod: standalone function, doesn't need 'self'
     @staticmethod
     def parse_replace_order(data: bytes) -> Dict[str, Any]:
         """Parse Replace Order (U) message.
@@ -85,6 +112,7 @@ class ITCHMessage:
             'price': fields[5] / 10000.0
         }
 
+    # @staticmethod: standalone function, doesn't need 'self'
     @staticmethod
     def parse_order_executed(data: bytes) -> Dict[str, Any]:
         """Parse Order Executed (E) message.
@@ -103,6 +131,7 @@ class ITCHMessage:
             'match_number': fields[4]
         }
 
+    # @staticmethod: standalone function, doesn't need 'self'
     @staticmethod
     def parse_order_cancelled(data: bytes) -> Dict[str, Any]:
         """Parse Order Cancelled (C) message.
@@ -120,6 +149,7 @@ class ITCHMessage:
             'cancelled_shares': fields[3]
         }
 
+    # @staticmethod: standalone function, doesn't need 'self'
     @staticmethod
     def parse_trade(data: bytes) -> Dict[str, Any]:
         """Parse Trade (P) message.
@@ -136,11 +166,14 @@ class ITCHMessage:
             'order_ref': fields[2],
             'side': 'BUY' if fields[3] == b'B' else 'SELL',
             'shares': fields[4],
+            # .decode('ascii', errors='replace'): convert bytes to text string
+            # .strip(): remove whitespace from both ends
             'stock': fields[5].decode('ascii', errors='replace').strip(),
             'price': fields[6] / 10000.0,
             'match_number': fields[7]
         }
 
+    # @staticmethod: standalone function, doesn't need 'self'
     @staticmethod
     def parse_system_event(data: bytes) -> Dict[str, Any]:
         """Parse System Event (S) message.
@@ -149,6 +182,8 @@ class ITCHMessage:
         """
         if len(data) < 10:
             return {'type': 'ERROR', 'reason': f'SYSTEM_EVENT too short ({len(data)} < 10)'}
+        # This is a dictionary: maps bytes keys (b'O', b'S', etc.) to string values
+        # Like creating a lookup table or translation table in shell using associative arrays
         EVENTS = {b'O': 'START_OF_MESSAGES', b'S': 'START_OF_SYSTEM_HOURS',
                   b'Q': 'START_OF_MARKET_HOURS', b'M': 'END_OF_MARKET_HOURS',
                   b'E': 'END_OF_SYSTEM_HOURS', b'C': 'END_OF_MESSAGES'}
@@ -160,6 +195,7 @@ class ITCHMessage:
             'event_code': EVENTS.get(fields[2], f'UNKNOWN({fields[2]})')
         }
 
+    # @staticmethod: standalone function, doesn't need 'self'
     @staticmethod
     def parse_stock_directory(data: bytes) -> Dict[str, Any]:
         """Parse Stock Directory (R) message.
@@ -173,7 +209,10 @@ class ITCHMessage:
         return {
             'type': 'STOCK_DIRECTORY',
             'timestamp_ns': fields[1],
+            # .decode('ascii', errors='replace'): convert bytes to text string
+            # .strip(): remove whitespace from both ends
             'stock': fields[2].decode('ascii', errors='replace').strip(),
+            # .decode without .strip() - keep whitespace as-is
             'market_category': fields[3].decode('ascii', errors='replace')
         }
 
@@ -183,6 +222,8 @@ class ITCHMessage:
         start = time.time_ns()
         msg_type = data[0:1]
 
+        # This is a dictionary mapping byte keys to function objects (methods)
+        # Used to dispatch (route) to the correct parsing function based on message type
         parsers = {
             b'A': self.parse_add_order,
             b'D': self.parse_delete_order,
@@ -211,9 +252,11 @@ class ITCHMessage:
 def create_test_messages() -> List[bytes]:
     """Generate sample ITCH binary messages for all implemented types.
     Generuje przykładowe wiadomości binarne ITCH dla wszystkich zaimplementowanych typów."""
+    # List: ordered collection of items (like an array in shell)
     messages = []
 
     # Add Order: BUY 100 AAPL @ 150.2500
+    # .append(): add an item to the end of the list (like pushing to shell array)
     messages.append(struct.pack('!c q q c I 8s I',
         b'A', 1000000000, 1001, b'B', 100, b'AAPL    ', 1502500))
 
@@ -253,25 +296,34 @@ def create_test_messages() -> List[bytes]:
 
 
 def main() -> None:
-    print("=== NASDAQ ITCH 5.0 Parser ===\n")
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import setup_logging
+    setup_logging()
+
+    logger.info("=== NASDAQ ITCH 5.0 Parser ===")
 
     parser = ITCHMessage()
     messages = create_test_messages()
 
     total_ns = 0
+    # for loop: iterate over each item in messages list
+    # enumerate(): provides both index (i) and value (raw) - like 'for i in "${!array[@]}"' in bash
     for i, raw in enumerate(messages):
         result = parser.parse(raw)
         parse_ns = result.pop('parse_time_ns')
         total_ns += parse_ns
 
-        print(f"Message {i+1} ({len(raw)} bytes):")
+        logger.info(f"Message {i+1} ({len(raw)} bytes):")
+        # for loop: iterate over dictionary items
+        # .items(): returns pairs of (key, value) - like iterating over associative array in bash
         for k, v in result.items():
-            print(f"  {k}: {v}")
-        print(f"  parse_time: {parse_ns} ns\n")
+            logger.info(f"  {k}: {v}")
+        logger.info(f"  parse_time: {parse_ns} ns")
 
     avg = total_ns // len(messages)
-    print(f"Average parse time: {avg} ns")
-    print(f"Throughput: ~{1_000_000_000 // avg:,} messages/sec (theoretical)")
+    logger.info(f"Average parse time: {avg} ns")
+    logger.info(f"Throughput: ~{1_000_000_000 // avg:,} messages/sec (theoretical)")
 
 
 if __name__ == '__main__':

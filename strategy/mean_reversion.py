@@ -22,6 +22,9 @@ import logging
 import time
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
+# deque (double-ended queue) is a list that automatically removes old items when full.
+# Like using `tail -n 20` to keep only the last 20 lines, deque keeps a fixed-size rolling window.
+# Użyteczne dla przechowywania ostatnich N cen bez ręcznego usuwania starych wartości.
 from collections import deque
 
 logger = logging.getLogger('strategy')
@@ -76,15 +79,24 @@ class MeanReversionStrategy:
         self.order_size = order_size
 
         # Per-stock price history
+        # Dict[str, deque] means: a dictionary where keys are stock symbols (strings)
+        # and values are deques (rolling price windows).
+        # Słownik przechowujący dla każdej akcji (np. 'AAPL') listę ostatnich cen.
         self.prices: Dict[str, deque] = {}
         self.stats = StrategyStats()
 
     def _get_sma(self, stock: str) -> Optional[float]:
         """Calculate Simple Moving Average for a stock.
         Oblicz prostą średnią ruchomą dla akcji.
+
+        Optional[float] means the function returns either a float number OR None.
+        Like a Linux command that may return a value or be empty.
+        Funkcja może zwrócić liczbę lub None (nic), jeśli nie mamy wystarczających danych.
         """
         history = self.prices.get(stock)
         if not history or len(history) < self.window:
+            # Return None if we don't have enough price data yet.
+            # Zwróć None jeśli brakuje nam wystarczająco danych do obliczenia średniej.
             return None
         return sum(history) / len(history)
 
@@ -92,6 +104,10 @@ class MeanReversionStrategy:
                        timestamp_ns: int = 0) -> Optional[Signal]:
         """Process a price update and optionally generate a signal.
         Przetwórz aktualizację ceny i opcjonalnie wygeneruj sygnał.
+
+        Optional[Signal] means this function returns either a Signal object OR None.
+        Like a grep search that might find matches or return empty results.
+        Funkcja zwraca sygnał do handlu LUB None (brak działania).
 
         Args:
             stock: Stock symbol
@@ -105,6 +121,9 @@ class MeanReversionStrategy:
         # Per-stock price history
         # Historia cen dla każdej akcji
         if stock not in self.prices:
+            # deque(maxlen=20) automatically removes the oldest price when a 21st is added.
+            # Like logrotate that deletes old log files when reaching size limit.
+            # Po dodaniu 21-szej ceny, najstarsza automatycznie znika (FIFO - first in, first out).
             self.prices[stock] = deque(maxlen=self.window)
         self.prices[stock].append(price)
 
@@ -115,6 +134,10 @@ class MeanReversionStrategy:
             self.stats.holds += 1
             return None
 
+        # deviation = (price - sma) / sma
+        # This calculates percentage difference: how far from average as a percentage.
+        # Like comparing file size change: if file grew from 100 bytes to 150 bytes, deviation = 50%.
+        # Jeśli cena jest 150, a średnia 100, odchylenie = 0.50 (50% powyżej średniej).
         deviation = (price - sma) / sma
         signal = None
 
@@ -199,6 +222,10 @@ def demo() -> None:
     for i in range(200):
         # Random walk with mean reversion tendency
         # Spacer losowy z tendencją powrotu do średniej
+        # rng.gauss(0, 0.15) generates a random number from a normal distribution.
+        # Center at 0 (mean), spread of ~0.15 (standard deviation).
+        # Like bell curve: most values near 0, few far away. Opposite of uniform random.
+        # Generuje losowe liczby skupione wokół zera (0), większość między -0.45 a +0.45.
         price += rng.gauss(0, 0.15)
         ts = 34200_000_000_000 + i * 1_000_000_000  # 1 tick per second
 
@@ -232,5 +259,9 @@ def demo() -> None:
     logger.info(f"  Final position: {position} shares")
 
 
+# if __name__ == '__main__': is a Python pattern that checks if this file is being run directly.
+# Like a shell script with: if [ "$0" = "./script.sh" ]; then ...
+# If another file imports this module, demo() won't run. Only when you execute this file directly.
+# Umożliwia użycie pliku jako modułu (import) LUB jako samodzielnego programu do testowania.
 if __name__ == '__main__':
     demo()

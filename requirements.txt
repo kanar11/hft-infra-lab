@@ -1,0 +1,12 @@
+# HFT Infrastructure Lab — Python dependencies
+# Zależności Pythona dla laboratorium infrastruktury HFT
+#
+# Install: pip install -r requirements.txt
+
+# YAML config file support (optional — defaults used if missing)
+# Obsługa pliku konfiguracji YAML (opcjonalna — domyślne wartości gdy brak)
+pyyaml>=6.0
+
+# All other dependencies are Python stdlib:
+# Wszystkie pozostałe zależności to biblioteka standardowa Pythona:
+#   struct, socket, time, logging, collections, dataclasses, enum, typing, json, os, sys

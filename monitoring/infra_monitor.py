@@ -10,8 +10,11 @@ i zdrowotność systemu z konfigurowalnymi progami alertów.
 import time
 import os
 import json
+import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+
+logger = logging.getLogger('monitor')
 
 
 class InfraMonitor:
@@ -164,8 +167,8 @@ class InfraMonitor:
             duration: Total monitoring time in seconds
             interval: Sampling interval in seconds
         """
-        print("=== HFT Infrastructure Monitor ===")
-        print(f"Monitoring for {duration}s, interval {interval}s\n")
+        logger.info("=== HFT Infrastructure Monitor ===")
+        logger.info(f"Monitoring for {duration}s, interval {interval}s")
 
         start = time.time()
         prev_ctx = self.get_context_switches()
@@ -189,16 +192,15 @@ class InfraMonitor:
             prev_time = now
 
             mem = metrics['memory']
-            print(f"[{metrics['timestamp'][11:19]}]")
-            print(f"  MEM: {mem['used_percent']}% | HugePages: {mem['hugepages_used']}/{mem['hugepages_total']}")
-            print(f"  CTX switches/s: {ctx_per_sec:,}")
-            print(f"  NET rx: {rx_bps:,} B/s | pkts: {net['rx_packets']:,}")
-            print(f"  Isolated CPUs: {metrics['isolated_cpus']}")
+            logger.info(f"[{metrics['timestamp'][11:19]}]")
+            logger.info(f"  MEM: {mem['used_percent']}% | HugePages: {mem['hugepages_used']}/{mem['hugepages_total']}")
+            logger.info(f"  CTX switches/s: {ctx_per_sec:,}")
+            logger.info(f"  NET rx: {rx_bps:,} B/s | pkts: {net['rx_packets']:,}")
+            logger.info(f"  Isolated CPUs: {metrics['isolated_cpus']}")
 
             alerts = self.check_alerts(metrics)
             for a in alerts:
-                print(f"  *** {a} ***")
-            print()
+                logger.warning(f"  *** {a} ***")
 
             self.metrics_log.append(metrics)
             time.sleep(interval)
@@ -207,9 +209,13 @@ class InfraMonitor:
         logfile = f"monitor_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(logfile, 'w') as f:
             json.dump(self.metrics_log, f, indent=2)
-        print(f"Log saved to {logfile}")
+        logger.info(f"Log saved to {logfile}")
 
 
 if __name__ == '__main__':
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import setup_logging
+    setup_logging()
     monitor = InfraMonitor()
     monitor.run(duration=30, interval=5)

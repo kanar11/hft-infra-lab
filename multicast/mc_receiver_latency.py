@@ -10,6 +10,11 @@ porównując znaczniki czasowe wysyłania i odboru dla każdej wiadomości.
 import socket
 import struct
 import time
+import logging
+import sys
+import os
+
+logger = logging.getLogger('multicast.latency')
 
 MCAST_GROUP = '239.1.1.1'
 MCAST_PORT = 5001
@@ -19,6 +24,10 @@ def main() -> None:
     """Join multicast group and measure per-message latency.
     Dołącza do grupy multicast i mierzy opóźnienie na wiadomość.
     """
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import setup_logging
+    setup_logging()
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('', MCAST_PORT))
@@ -26,9 +35,9 @@ def main() -> None:
     mreq = struct.pack('4sL', socket.inet_aton(MCAST_GROUP), socket.INADDR_ANY)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
-    print("Measuring multicast latency...")
-    print(f"{'SEQ':<8} {'Latency (us)':<15}")
-    print("-" * 25)
+    logger.info("Measuring multicast latency...")
+    logger.info(f"{'SEQ':<8} {'Latency (us)':<15}")
+    logger.info("-" * 25)
 
     errors = 0
     while True:
@@ -41,18 +50,18 @@ def main() -> None:
             if 'TS' not in parts or 'SEQ' not in parts:
                 errors += 1
                 if errors <= 10:
-                    print(f"  WARN: malformed message (missing TS/SEQ): {msg[:60]}")
+                    logger.warning(f"  malformed message (missing TS/SEQ): {msg[:60]}")
                 continue
 
             send_time = int(parts['TS'])
             latency_us = (recv_time - send_time) / 1000
-            print(f"{parts['SEQ']:<8} {latency_us:<15.2f}")
+            logger.info(f"{parts['SEQ']:<8} {latency_us:<15.2f}")
         except (ValueError, UnicodeDecodeError) as e:
             errors += 1
             if errors <= 10:
-                print(f"  WARN: parse error: {e}")
+                logger.warning(f"  parse error: {e}")
         except KeyboardInterrupt:
-            print(f"\nStopped. Total parse errors: {errors}")
+            logger.info(f"Stopped. Total parse errors: {errors}")
             break
     sock.close()
 

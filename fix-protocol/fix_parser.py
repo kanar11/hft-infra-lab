@@ -8,7 +8,11 @@ Analizuje wiadomości Financial Information eXchange (FIX) 4.2 używane do
 elektronicznej komunikacji handlowej pomiędzy brokerami i giełdami.
 """
 import time
+import os
+import logging
 from typing import Dict, Optional
+
+logger = logging.getLogger('fix')
 
 
 class FIXMessage:
@@ -99,15 +103,20 @@ sample_messages = [
 
 
 def main() -> None:
-    print("=== FIX Protocol Parser ===\n")
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import setup_logging
+    setup_logging()
+
+    logger.info("=== FIX Protocol Parser ===")
     total_ns = 0
     for raw in sample_messages:
         msg = FIXMessage()
         ns = msg.parse(raw)
         total_ns += ns
-        print(f"  {msg}")
-        print(f"  Parse time: {ns} ns\n")
-    print(f"Average parse time: {total_ns // len(sample_messages)} ns")
+        logger.info(f"{msg}")
+        logger.info(f"Parse time: {ns} ns")
+    logger.info(f"Average parse time: {total_ns // len(sample_messages)} ns")
 
 
 if __name__ == '__main__':

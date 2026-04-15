@@ -10,9 +10,14 @@ import os
 import logging
 from typing import Any, Dict, Optional
 
+# Try to import the yaml library (for reading YAML config files)
+# If it fails (library not installed), set yaml to None as a fallback
+# This is like 'command || echo failed' in bash - try something, handle the error gracefully
 try:
     import yaml
 except ImportError:
+    # ImportError means the yaml module is not installed/available
+    # Instead of crashing, we set it to None and handle it later
     yaml = None  # type: ignore
 
 
@@ -81,6 +86,9 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
     """Load configuration from YAML file with fallback to defaults.
     Ładuje konfigurację z pliku YAML z domyślnymi wartościami.
     """
+    # 'global' keyword declares that we're modifying the _config variable defined outside this function
+    # Without 'global', assigning to _config would create a new local variable instead
+    # Like declaring 'export' in bash to make a variable available to child shells/functions
     global _config
     if _config is not None and path is None:
         return _config
@@ -91,6 +99,9 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
     if config_path and yaml is not None:
         try:
             with open(config_path, 'r') as f:
+                # yaml.safe_load() reads the YAML text file and converts it into a Python dictionary
+                # YAML is a human-readable config format; safe_load parses it safely
+                # Similar to 'cat config.yaml | parse' - we read text and convert it to structured data
                 file_config = yaml.safe_load(f) or {}
             # Deep merge file config into defaults
             # Głębokie scalanie konfiguracji z pliku z domyślnymi
@@ -112,6 +123,8 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
                 if isinstance(config[section], dict) and param in config[section]:
                     original = config[section][param]
                     try:
+                        # isinstance() checks the type of a value (like 'test -f' checks if something is a file in bash)
+                        # This checks if the original config value is a float type before converting
                         if isinstance(original, float):
                             config[section][param] = float(value)
                         elif isinstance(original, int):
@@ -138,6 +151,9 @@ def setup_logging(config: Optional[Dict[str, Any]] = None) -> None:
     Konfiguruj logowanie Pythona z pliku konfiguracyjnego.
     """
     cfg = config or get_section('logging')
+    # getattr(object, 'attribute_name', default) dynamically accesses an attribute by name
+    # Like variable variable names in bash: eval "var_$name" - we build the attribute name at runtime
+    # Here it looks up the logging level (e.g., 'INFO' → logging.INFO) using the string from config
     level = getattr(logging, cfg.get('level', 'INFO').upper(), logging.INFO)
     fmt = cfg.get('format', '%(asctime)s [%(levelname)s] %(name)s: %(message)s')
     datefmt = cfg.get('date_format', '%H:%M:%S')

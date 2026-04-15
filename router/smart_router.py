@@ -214,16 +214,24 @@ class SmartOrderRouter:
         Remisy rozsądzane przez: niższą opłatę → niższą opóźnienie → pierwszy na liście.
         """
         if side == 'BUY':
+            # Sort venues using custom key function (like 'sort -k2' in bash sorts by column 2)
+            # This key is a tuple that defines sort order: price first, then fee, then latency
+            # Lambda is an anonymous one-line function, like a quick inline command instead of a named function
             candidates.sort(key=lambda v: (v.best_ask, v.fee_per_share, v.latency_ns))
         else:
+            # Same sorting logic, but negative bid price (-v.best_bid) reverses order (highest bid first)
+            # Lambda here is an inline function that extracts and transforms venue attributes for comparison
             candidates.sort(key=lambda v: (-v.best_bid, v.fee_per_share, v.latency_ns))
+        # Return first element after sorting (like 'head -1' returns first line)
         return candidates[0]
 
     def _lowest_latency(self, candidates: List[Venue]) -> Venue:
         """Select venue with lowest round-trip latency.
         Wybierz platformę z najniższym opóźnieniem w obie strony.
         """
+        # Lambda extracts the latency_ns value from each venue for sorting (anonymous inline function)
         candidates.sort(key=lambda v: v.latency_ns)
+        # Return first element after sorting by latency (like 'head -1')
         return candidates[0]
 
     def _split_order(self, candidates: List[Venue], side: str,
@@ -237,9 +245,13 @@ class SmartOrderRouter:
         # Sort by price (best first)
         # Sortuj po cenie (najlepsze pierwsze)
         if side == 'BUY':
+            # Sort with custom key function (like 'sort -k2 -k3' sorts by column 2, then 3)
+            # Lambda sorts by ask price first, then fee (each tuple element is a sort tier)
             candidates.sort(key=lambda v: (v.best_ask, v.fee_per_share))
+            # Create list of tuples: (venue_object, available_shares, price)
             sizes = [(v, v.ask_size, v.best_ask) for v in candidates]
         else:
+            # Sort by bid price (descending) then fee
             candidates.sort(key=lambda v: (-v.best_bid, v.fee_per_share))
             sizes = [(v, v.bid_size, v.best_bid) for v in candidates]
 
@@ -250,6 +262,8 @@ class SmartOrderRouter:
         for venue, available, price in sizes:
             if remaining <= 0:
                 break
+            # min() with two values finds the minimum (like comparing with 'test' in bash)
+            # Here we allocate the smaller of: what's left to fill OR what the venue can provide
             alloc = min(remaining, available)
             if alloc > 0:
                 splits.append(SplitOrder(venue=venue.name, quantity=alloc, price=price))
