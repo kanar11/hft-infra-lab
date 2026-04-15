@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HFT Infra Lab — Architecture</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee; margin: 0; padding: 20px; }
+  h1 { text-align: center; color: #4ecdc4; }
+  h2 { color: #f9ca24; margin-top: 30px; }
+  .diagram { max-width: 1100px; margin: 0 auto; }
+  .legend { display: flex; gap: 20px; justify-content: center; margin: 20px 0; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+  .legend-box { width: 18px; height: 18px; border-radius: 3px; }
+  .flow-section { max-width: 900px; margin: 30px auto; line-height: 1.8; }
+  .flow-section ol { padding-left: 20px; }
+  .flow-section li { margin-bottom: 8px; }
+  code { background: #16213e; padding: 2px 6px; border-radius: 3px; color: #4ecdc4; }
+  .module { background: #16213e; border-left: 4px solid #45b7d1; padding: 10px 15px; margin: 10px 0; border-radius: 0 6px 6px 0; }
+  .module b { color: #45b7d1; }
+  .perf { color: #f9ca24; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>HFT Infrastructure Lab — Architecture Map</h1>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-box" style="background:#ff6b6b"></div> Exchange</div>
+  <div class="legend-item"><div class="legend-box" style="background:#4ecdc4"></div> Network</div>
+  <div class="legend-item"><div class="legend-box" style="background:#45b7d1"></div> Trading Core</div>
+  <div class="legend-item"><div class="legend-box" style="background:#f9ca24"></div> Kernel Tuning</div>
+  <div class="legend-item"><div class="legend-box" style="background:#a29bfe"></div> Monitoring</div>
+</div>
+
+<div class="diagram">
+  <pre id="mermaid-pre"></pre>
+</div>
+
+<div class="flow-section">
+<h2>How Data Flows (jak leci informacja)</h2>
+
+<ol>
+<li><b>Giełda wysyła dane</b> — ITCH feed nadaje strumień binarnych wiadomości o zamówieniach (kto kupuje, kto sprzedaje, za ile). To leci przez multicast UDP (<code>mc_sender.py</code>).</li>
+
+<li><b>Nasz system odbiera</b> — <code>mc_receiver_latency.py</code> łapie pakiety z sieci. Może też użyć poll mode (<code>kernel_bypass_sim.py</code>) zamiast czekać na przerwania — to jest 5.6x szybsze.</li>
+
+<li><b>Parser rozkodowuje</b> — <code>itch_parser.py</code> zamienia surowe bajty na czytelne dane: "ktoś chce kupić 100 AAPL po 150.25". Robi to w ~1000 ns na wiadomość.</li>
+
+<li><b>Kolejka przekazuje</b> — <code>spsc_queue.cpp</code> to lock-free rura między wątkami. Wątek market data wrzuca dane, wątek tradingowy wyciąga. 17.6M msg/sec, zero locków.</li>
+
+<li><b>Order book matchuje</b> — <code>orderbook.cpp</code> to serce systemu. Trzyma wszystkie BID (kupno) i ASK (sprzedaż), posortowane po cenie. Jak najwyższy BID >= najniższy ASK, robi TRADE. 17.8M orders/sec.</li>
+
+<li><b>OMS sprawdza ryzyko</b> — <code>oms.py</code> przed wysłaniem zlecenia sprawdza: czy wartość nie za duża? czy pozycja nie za duża? Liczy P&L (zysk/strata).</li>
+
+<li><b>Wysyłamy zlecenie</b> — <code>ouch_sender.py</code> pakuje zlecenie w binarny format OUCH i wysyła na giełdę. <code>fix_parser.py</code> obsługuje wersję tekstową (FIX 4.2).</li>
+</ol>
+
+<h2>Kernel Tuning (jak przyspieszyliśmy komputer)</h2>
+
+<div class="module"><b>Hugepages</b> — zamiast małych stron pamięci (4KB), używamy dużych (2MB). CPU mniej szuka w pamięci = mniej opóźnień.</div>
+
+<div class="module"><b>CPU Isolation (isolcpus=1)</b> — CPU 1 jest zarezerwowany TYLKO dla naszego programu tradingowego. Żaden inny program tam nie wejdzie.</div>
+
+<div class="module"><b>IRQ Affinity</b> — wszystkie przerwania sprzętowe (karta sieciowa, dysk) idą na CPU 0. CPU 1 ma święty spokój.</div>
+
+<div class="module"><b>FIFO Scheduler</b> — nasz program ma najwyższy priorytet. Kernel nigdy go nie odsunie na bok żeby dać czas innym.</div>
+
+<div class="module"><b>Network Tuning</b> — 16MB bufory sieciowe, wyłączone TCP timestamps, swappiness=0 (nic nie idzie na dysk).</div>
+
+<h2>Performance Numbers</h2>
+
+<div class="module"><b>Order Book</b> — <span class="perf">17.8M orders/sec</span> | p50=50ns p99=130ns</div>
+<div class="module"><b>Lock-Free Queue</b> — <span class="perf">17.6M msg/sec</span> | 10M messages benchmarked</div>
+<div class="module"><b>ITCH Parser</b> — <span class="perf">~1M msg/sec</span> | ~1000 ns/msg</div>
+<div class="module"><b>OUCH Encoding</b> — <span class="perf">1.7M msg/sec</span></div>
+<div class="module"><b>Cache Latency</b> — L1: 0.97ns | L2: 3.38ns | L3: 38ns | RAM: 108ns</div>
+<div class="module"><b>Cyclictest</b> — Min: 21µs (VirtualBox VM, not bare metal)</div>
+
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ theme: 'dark', startOnLoad: false });
+
+  const diagram = `graph TB
+    subgraph Exchange["EXCHANGE"]
+        ITCH_FEED["ITCH 5.0 Feed"]
+        OUCH_GW["OUCH 4.2 Gateway"]
+        FIX_GW["FIX 4.2 Gateway"]
+    end
+
+    subgraph Network["NETWORK"]
+        MC_SEND["mc_sender.py"]
+        MC_RECV["mc_receiver_latency.py"]
+        DPDK["kernel_bypass_sim.py"]
+    end
+
+    subgraph Core["TRADING CORE - CPU 1"]
+        ITCH_PARSE["itch_parser.py"]
+        SPSC["spsc_queue.cpp"]
+        ORDERBOOK["orderbook.cpp"]
+        OMS_SYS["oms.py"]
+        OUCH_SEND["ouch_sender.py"]
+        FIX_PARSE["fix_parser.py"]
+    end
+
+    subgraph Tuning["KERNEL TUNING"]
+        HUGE["Hugepages 1GB"]
+        ISOL["isolcpus=1"]
+        IRQ["IRQ → CPU 0"]
+    end
+
+    ITCH_FEED -->|binary stream| MC_SEND
+    MC_SEND -->|UDP multicast| MC_RECV
+    MC_RECV --> DPDK
+    MC_RECV --> ITCH_PARSE
+    ITCH_PARSE --> SPSC
+    SPSC --> ORDERBOOK
+    ORDERBOOK --> OMS_SYS
+    OMS_SYS --> OUCH_SEND
+    OMS_SYS --> FIX_PARSE
+    OUCH_SEND --> OUCH_GW
+    FIX_PARSE --> FIX_GW
+
+    ISOL -.-> Core
+    HUGE -.-> Core
+    IRQ -.-> Core`;
+
+  const { svg } = await mermaid.render('arch', diagram);
+  document.getElementById('mermaid-pre').innerHTML = svg;
+</script>
+
+</body>
+</html>

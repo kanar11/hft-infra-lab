@@ -1,0 +1,76 @@
+graph TB
+    subgraph Exchange["EXCHANGE (Giełda)"]
+        ITCH_FEED["ITCH 5.0 Feed<br/>Market data stream"]
+        OUCH_GW["OUCH 4.2 Gateway<br/>Order entry"]
+        FIX_GW["FIX 4.2 Gateway<br/>Order/execution msgs"]
+    end
+
+    subgraph Network["NETWORK LAYER"]
+        MC_SEND["Multicast Sender<br/>mc_sender.py"]
+        MC_RECV["Multicast Receiver<br/>mc_receiver_latency.py"]
+        DPDK["DPDK Poll Mode<br/>kernel_bypass_sim.py"]
+        NET_LAT["Network Latency<br/>net_latency.sh"]
+    end
+
+    subgraph TradingCore["TRADING CORE (CPU 1 - Isolated)"]
+        ITCH_PARSE["ITCH Parser<br/>itch_parser.py<br/>~1M msg/sec"]
+        OUCH_SEND["OUCH Sender<br/>ouch_sender.py<br/>1.7M msg/sec"]
+        FIX_PARSE["FIX Parser<br/>fix_parser.py<br/>~2000 ns/msg"]
+        ORDERBOOK["Order Book<br/>orderbook.cpp<br/>17.8M orders/sec"]
+        SPSC["Lock-Free Queue<br/>spsc_queue.cpp<br/>17.6M msg/sec"]
+        OMS_SYS["OMS<br/>oms.py<br/>Risk checks + P&L"]
+    end
+
+    subgraph KernelTuning["KERNEL TUNING"]
+        HUGE["Hugepages 512x2MB<br/>Fewer TLB misses"]
+        ISOL["CPU Isolation<br/>isolcpus=1"]
+        IRQ["IRQ Affinity<br/>All IRQs → CPU 0"]
+        SYSCTL["Sysctl Tuning<br/>swappiness=0, 16MB buffers"]
+        CPUPIN["CPU Pinning<br/>cpu_pin.sh"]
+    end
+
+    subgraph Monitoring["MONITORING"]
+        MONITOR["Infra Monitor<br/>infra_monitor.py"]
+        MON_SH["System Monitor<br/>monitor.sh"]
+        CACHE_LAT["Cache Latency<br/>cache_latency.cpp"]
+        BENCH["Benchmarks<br/>benchmark.py"]
+    end
+
+    %% Data flow
+    ITCH_FEED -->|"binary market data"| MC_SEND
+    MC_SEND -->|"UDP multicast"| MC_RECV
+    MC_RECV --> ITCH_PARSE
+    MC_RECV --> DPDK
+
+    ITCH_PARSE -->|"parsed orders"| SPSC
+    SPSC -->|"lock-free transfer"| ORDERBOOK
+    ORDERBOOK -->|"matched trades"| OMS_SYS
+    OMS_SYS -->|"risk-checked order"| OUCH_SEND
+    OMS_SYS -->|"FIX execution reports"| FIX_PARSE
+    OUCH_SEND -->|"binary order"| OUCH_GW
+    FIX_PARSE --> FIX_GW
+
+    %% Kernel tuning affects trading core
+    ISOL -.->|"dedicates CPU 1"| TradingCore
+    HUGE -.->|"faster memory"| TradingCore
+    IRQ -.->|"no interrupts on CPU 1"| TradingCore
+    CPUPIN -.->|"pins process"| TradingCore
+
+    %% Monitoring
+    MONITOR -.->|"watches"| TradingCore
+    MON_SH -.->|"watches"| KernelTuning
+    CACHE_LAT -.->|"measures"| KernelTuning
+    BENCH -.->|"benchmarks"| TradingCore
+
+    %% Styling
+    classDef exchange fill:#ff6b6b,stroke:#333,color:#fff
+    classDef network fill:#4ecdc4,stroke:#333,color:#fff
+    classDef core fill:#45b7d1,stroke:#333,color:#fff
+    classDef kernel fill:#f9ca24,stroke:#333,color:#000
+    classDef monitor fill:#a29bfe,stroke:#333,color:#fff
+
+    class ITCH_FEED,OUCH_GW,FIX_GW exchange
+    class MC_SEND,MC_RECV,DPDK,NET_LAT network
+    class ITCH_PARSE,OUCH_SEND,FIX_PARSE,ORDERBOOK,SPSC,OMS_SYS core
+    class HUGE,ISOL,IRQ,SYSCTL,CPUPIN kernel
+    class MONITOR,MON_SH,CACHE_LAT,BENCH monitor
