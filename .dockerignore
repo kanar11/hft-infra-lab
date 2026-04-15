@@ -1,0 +1,28 @@
+# Compiled binaries (rebuilt inside container)
+orderbook/orderbook
+orderbook/orderbook_v2
+orderbook/benchmark_orderbook
+orderbook/latency_histogram
+lockfree/spsc_queue
+memory-latency/cache_latency
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs and results
+*.log
+*.json
+monitor_log_*
+benchmark_results/
+
+# Git
+.git/
+.gitignore
+
+# Charts (generated inside container if needed)
+docs/*.png
+
+# OS files
+.DS_Store
+Thumbs.db

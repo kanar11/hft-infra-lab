@@ -38,10 +38,21 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | docs/ | Technical write-up on Linux tuning, benchmark charts | Markdown |
 
 ## Quick Start
+
+### Docker (recommended)
+```bash
+docker build -t hft-lab .
+docker run hft-lab              # runs tests + benchmarks + simulator
+docker run hft-lab make test    # tests only
+docker run hft-lab make simulate  # simulator only
+```
+
+### Manual
 ```bash
 make build      # compile all C++ modules (orderbook, lockfree, cache_latency)
 make test       # run all unit tests (31/31: OMS, ITCH, OUCH, FIX)
 make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency histogram)
+make simulate   # run end-to-end market data simulator (10K messages)
 ```
 
 ## Environment
