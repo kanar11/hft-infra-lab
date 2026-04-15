@@ -22,9 +22,13 @@ Pipeline integration:
   Integracja potoku: Strategia → Router → **Menedżer Ryzyka** → OMS → Silnik Realizacji → P&L
 """
 import time
+import logging
+import os
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, Optional
+
+logger = logging.getLogger('risk')
 
 
 class RiskAction(Enum):
@@ -235,38 +239,45 @@ class RiskManager:
     def print_stats(self) -> None:
         """Print risk manager statistics.
         Wydrukuj statystyki menedżera ryzyka."""
-        print(f"\n=== Risk Manager Statistics ===")
-        print(f"  Total checks: {self.state.total_checks}")
-        print(f"  Allowed: {self.state.total_checks - self.state.total_rejects}")
-        print(f"  Rejected: {self.state.total_rejects}")
+        logger.info(f"\n=== Risk Manager Statistics ===")
+        logger.info(f"  Total checks: {self.state.total_checks}")
+        logger.info(f"  Allowed: {self.state.total_checks - self.state.total_rejects}")
+        logger.info(f"  Rejected: {self.state.total_rejects}")
         if self.state.reject_reasons:
-            print(f"  Reject breakdown:")
+            logger.info(f"  Reject breakdown:")
             for reason, count in sorted(self.state.reject_reasons.items()):
-                print(f"    {reason}: {count}")
+                logger.info(f"    {reason}: {count}")
         avg = self.state.total_latency_ns / self.state.total_checks if self.state.total_checks > 0 else 0
-        print(f"  Avg check latency: {avg:.0f} ns")
-        print(f"  Kill switch: {'ACTIVE' if self.state.kill_switch_active else 'inactive'}")
-        print(f"  Daily P&L: ${self.state.daily_pnl:,.2f}")
+        logger.info(f"  Avg check latency: {avg:.0f} ns")
+        logger.info(f"  Kill switch: {'ACTIVE' if self.state.kill_switch_active else 'inactive'}")
+        logger.info(f"  Daily P&L: ${self.state.daily_pnl:,.2f}")
         if self.state.positions:
-            print(f"  Positions:")
+            logger.info(f"  Positions:")
             for sym, qty in sorted(self.state.positions.items()):
-                print(f"    {sym}: {qty:+d}")
+                logger.info(f"    {sym}: {qty:+d}")
 
 
 def demo() -> None:
     """Run standalone demo showing risk checks, circuit breaker, and kill switch.
     Uruchom samodzielną demonstrację pokazującą kontrole ryzyka, przełącznik obwodu i przełącznik awaryjny."""
     import random
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import load_config, setup_logging
+    cfg = load_config()
+    setup_logging()
+    risk_cfg = cfg['risk']
 
-    print("=== Risk Manager Demo ===\n")
-    print("Limits: position=5000/sym, portfolio=50000, daily_loss=$100K, rate=1000/sec\n")
+    logger.info("=== Risk Manager Demo ===\n")
+    logger.info("Limits: position=5000/sym, portfolio=50000, daily_loss=$100K, rate=1000/sec\n")
 
     limits = RiskLimits(
-        max_position_per_symbol=5000,
-        max_portfolio_exposure=50000,
-        max_daily_loss=100000,
-        max_orders_per_second=1000,
-        max_order_value=500000,
+        max_position_per_symbol=risk_cfg.get('max_position_per_symbol', 5000),
+        max_portfolio_exposure=risk_cfg.get('max_portfolio_exposure', 50000),
+        max_daily_loss=risk_cfg.get('max_daily_loss', 100000),
+        max_orders_per_second=risk_cfg.get('max_orders_per_second', 1000),
+        max_order_value=risk_cfg.get('max_order_value', 500000),
+        max_drawdown_pct=risk_cfg.get('max_drawdown_pct', 5.0),
     )
     rm = RiskManager(limits=limits)
     rng = random.Random(42)
@@ -290,18 +301,18 @@ def demo() -> None:
             pnl = rng.uniform(-500, 500)
             rm.update_pnl(pnl)
             if i < 10:
-                print(f"  [{i:3d}] ALLOW {side:4s} {qty:4d} {stock} @ ${price:.2f}")
+                logger.info(f"  [{i:3d}] ALLOW {side:4s} {qty:4d} {stock} @ ${price:.2f}")
         else:
             rejected += 1
             if rejected <= 10:
-                print(f"  [{i:3d}] REJECT {side:4s} {qty:4d} {stock} — {result.reason}")
+                logger.info(f"  [{i:3d}] REJECT {side:4s} {qty:4d} {stock} — {result.reason}")
 
         if rm.state.kill_switch_active:
-            print(f"\n  !!! KILL SWITCH ACTIVATED at order {i} !!!")
+            logger.info(f"\n  !!! KILL SWITCH ACTIVATED at order {i} !!!")
             break
 
     if allowed + rejected > 20:
-        print(f"  ... ({allowed + rejected - 20} more orders)")
+        logger.info(f"  ... ({allowed + rejected - 20} more orders)")
 
     rm.print_stats()
 

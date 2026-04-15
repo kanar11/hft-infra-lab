@@ -18,10 +18,13 @@ próg, zakładamy powrót do średniej.
 Demonstruje pełny pipeline:
   ITCH Feed → Parser → Strategy (sygnały) → OMS (kontrola ryzyka) → P&L
 """
+import logging
 import time
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from collections import deque
+
+logger = logging.getLogger('strategy')
 
 
 @dataclass
@@ -154,27 +157,38 @@ class MeanReversionStrategy:
         """Print strategy performance summary.
         Drukuj podsumowanie wydajności strategii.
         """
-        print(f"\n=== Strategy Statistics ===")
-        print(f"  Signals: {self.stats.signals_generated} "
+        logger.info(f"\n=== Strategy Statistics ===")
+        logger.info(f"  Signals: {self.stats.signals_generated} "
               f"({self.stats.buys} buys, {self.stats.sells} sells)")
-        print(f"  Holds: {self.stats.holds}")
+        logger.info(f"  Holds: {self.stats.holds}")
         total = self.stats.signals_generated + self.stats.holds
         if total > 0:
             signal_rate = self.stats.signals_generated / total * 100
-            print(f"  Signal rate: {signal_rate:.1f}%")
-        print(f"  Avg decision latency: {self.stats.avg_latency_ns:.0f} ns")
+            logger.info(f"  Signal rate: {signal_rate:.1f}%")
+        logger.info(f"  Avg decision latency: {self.stats.avg_latency_ns:.0f} ns")
 
 
 def demo() -> None:
     """Run standalone demo with synthetic price data.
     Uruchom demo autonomiczne z syntetycznymi danymi cenowymi.
     """
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import load_config, setup_logging
+    cfg = load_config()
+    setup_logging()
+    strat_cfg = cfg['strategy']
+
     import random
 
-    print("=== Mean Reversion Strategy Demo ===\n")
-    print("Window=20, Threshold=0.1%, Order size=100\n")
+    logger.info("=== Mean Reversion Strategy Demo ===\n")
+    logger.info(f"Window={strat_cfg.get('window', 20)}, Threshold={strat_cfg.get('threshold_pct', 0.1)}%, Order size={strat_cfg.get('order_size', 100)}\n")
 
-    strategy = MeanReversionStrategy(window=20, threshold_pct=0.1)
+    strategy = MeanReversionStrategy(
+        window=strat_cfg.get('window', 20),
+        threshold_pct=strat_cfg.get('threshold_pct', 0.1),
+        order_size=strat_cfg.get('order_size', 100)
+    )
     rng = random.Random(42)
 
     # Simulate 200 price ticks for AAPL
@@ -192,10 +206,10 @@ def demo() -> None:
         if signal:
             signals.append(signal)
             if len(signals) <= 10:
-                print(f"  [{i:3d}] {signal.side:4s} AAPL @ ${signal.price:.2f} — {signal.reason}")
+                logger.info(f"  [{i:3d}] {signal.side:4s} AAPL @ ${signal.price:.2f} — {signal.reason}")
 
     if len(signals) > 10:
-        print(f"  ... ({len(signals) - 10} more signals)")
+        logger.info(f"  ... ({len(signals) - 10} more signals)")
 
     strategy.print_stats()
 
@@ -214,8 +228,8 @@ def demo() -> None:
                 pnl += sell_qty * (sig.price - avg_entry)
                 position -= sell_qty
 
-    print(f"\n  Simulated P&L: ${pnl:,.2f}")
-    print(f"  Final position: {position} shares")
+    logger.info(f"\n  Simulated P&L: ${pnl:,.2f}")
+    logger.info(f"  Final position: {position} shares")
 
 
 if __name__ == '__main__':

@@ -20,8 +20,13 @@ chmod +x net_latency.sh
 ./net_latency.sh 8.8.8.8
 ```
 
-## Why This Matters
+## Why This Matters / Dlaczego to ma znaczenie
 In HFT, network latency directly impacts order execution speed.
 - **ICMP latency** — baseline round-trip time
 - **TCP latency** — real trading protocol latency
 - **Jitter** — latency variance, critical for predictable execution
+
+*W HFT opóźnienie sieci bezpośrednio wpływa na szybkość wykonania zlecenia.*
+*- **Opóźnienie ICMP** — bazowy czas podróży w obie strony*
+*- **Opóźnienie TCP** — opóźnienie rzeczywistego protokołu handlowego*
+*- **Jitter** — wariancja opóźnienia, krytyczna dla przewidywalnego wykonania*

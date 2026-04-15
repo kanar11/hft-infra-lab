@@ -36,9 +36,15 @@ sudo ./hft_tuning.sh
 sudo cyclictest -l 10000 -t 1 -p 80 -i 200
 ```
 
-## Why This Matters
+## Why This Matters / Dlaczego to ma znaczenie
 In HFT, microseconds determine whether an order is filled before competitors.
 - **Hugepages** eliminate TLB misses on critical memory paths
 - **IRQ affinity** prevents network interrupts from disturbing the trading thread
 - **FIFO scheduler** gives the trading process guaranteed CPU time
 - **TCP tuning** reduces kernel network stack latency
+
+*W HFT mikrosekundy decydują, czy zlecenie zostanie zrealizowane przed konkurentami.*
+*- **Hugepages** eliminują brakujące wpisy TLB na krytycznych ścieżkach pamięci*
+*- **IRQ affinity** uniemożliwia przerwaniom sieciowym zakłócanie wątku handlowego*
+*- **Scheduler FIFO** daje procesowi handlowemu gwarantowany czas CPU*
+*- **Konfiguracja TCP** zmniejsza opóźnienie stosu sieciowego jądra*

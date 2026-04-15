@@ -1,0 +1,51 @@
+# HFT Infrastructure Lab — Configuration
+# Konfiguracja laboratorium infrastruktury HFT
+#
+# All parameters can be overridden via environment variables prefixed with HFT_
+# Wszystkie parametry można nadpisać zmiennymi środowiskowymi z prefiksem HFT_
+
+# Risk Manager limits / Limity Menedżera Ryzyka
+risk:
+  max_position_per_symbol: 5000    # Max shares per symbol / Maks. akcji na symbol
+  max_portfolio_exposure: 50000    # Max total absolute exposure / Maks. łączna ekspozycja
+  max_daily_loss: 100000.0         # Daily P&L loss limit ($) / Dzienny limit strat ($)
+  max_orders_per_second: 1000      # Rate limit / Limit częstotliwości
+  max_order_value: 500000.0        # Max single order notional ($) / Maks. wartość zlecenia ($)
+  max_drawdown_pct: 5.0            # Max drawdown from peak (%) / Maks. drawdown od szczytu (%)
+
+# OMS parameters / Parametry OMS
+oms:
+  max_position: 10000              # Max position per symbol / Maks. pozycja na symbol
+  max_order_value: 1000000.0       # Max single order value ($) / Maks. wartość zlecenia ($)
+
+# Strategy parameters / Parametry strategii
+strategy:
+  window: 20                       # SMA lookback period (ticks) / Okres SMA (ticków)
+  threshold_pct: 0.1               # Deviation threshold (%) / Próg odchylenia (%)
+  order_size: 100                  # Default order quantity / Domyślna wielkość zlecenia
+
+# Smart Order Router / Inteligentny router zleceń
+router:
+  default_strategy: BEST_PRICE     # BEST_PRICE | LOWEST_LATENCY | SPLIT
+  split_threshold: 500             # Min order size for SPLIT / Min. wielkość do podziału
+  venues:
+    - name: NYSE
+      latency_ns: 500
+      fee_per_share: 0.003
+    - name: NASDAQ
+      latency_ns: 200
+      fee_per_share: -0.002        # Negative = maker rebate / Ujemna = rabat dla makera
+    - name: BATS
+      latency_ns: 150
+      fee_per_share: -0.001
+
+# Simulator settings / Ustawienia symulatora
+simulator:
+  num_messages: 10000              # Default message count / Domyślna liczba wiadomości
+  seed: 42                         # Random seed for reproducibility / Ziarno losowości
+
+# Logging configuration / Konfiguracja logowania
+logging:
+  level: INFO                      # DEBUG | INFO | WARNING | ERROR
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  date_format: "%H:%M:%S"

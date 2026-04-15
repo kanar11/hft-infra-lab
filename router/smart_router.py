@@ -15,10 +15,13 @@ Pipeline integration:
 Integracja pipeline:
   Strategy (sygnały) → Smart Router (wybór venue'u) → OMS (kontrola ryzyka) → Wypełnienie
 """
+import logging
 import time
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+logger = logging.getLogger('router')
 
 
 class RoutingStrategy(Enum):
@@ -284,38 +287,45 @@ class SmartOrderRouter:
         """Print routing performance summary.
         Drukuj podsumowanie wydajności routingu.
         """
-        print(f"\n=== Router Statistics ===")
-        print(f"  Total routes: {self.stats.total_routes}")
-        print(f"  Rejected: {self.stats.rejected}")
+        logger.info(f"\n=== Router Statistics ===")
+        logger.info(f"  Total routes: {self.stats.total_routes}")
+        logger.info(f"  Rejected: {self.stats.rejected}")
         if self.stats.routes_by_venue:
-            print(f"  By venue:")
+            logger.info(f"  By venue:")
             for venue, count in sorted(self.stats.routes_by_venue.items()):
                 pct = count / self.stats.total_routes * 100 if self.stats.total_routes > 0 else 0
-                print(f"    {venue}: {count} ({pct:.1f}%)")
+                logger.info(f"    {venue}: {count} ({pct:.1f}%)")
         if self.stats.routes_by_strategy:
-            print(f"  By strategy:")
+            logger.info(f"  By strategy:")
             for strat, count in sorted(self.stats.routes_by_strategy.items()):
-                print(f"    {strat}: {count}")
-        print(f"  Avg routing latency: {self.stats.avg_latency_ns:.0f} ns")
+                logger.info(f"    {strat}: {count}")
+        logger.info(f"  Avg routing latency: {self.stats.avg_latency_ns:.0f} ns")
 
 
 def demo() -> None:
     """Run standalone demo with 3 venues and mixed order flow."""
     import random
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config_loader import load_config, setup_logging
+    cfg = load_config()
+    setup_logging()
+    router_cfg = cfg['router']
 
-    print("=== Smart Order Router Demo ===\n")
+    logger.info("=== Smart Order Router Demo ===\n")
 
-    # Set up venues
-    router = SmartOrderRouter(strategy=RoutingStrategy.BEST_PRICE, split_threshold=500)
-    router.add_venue(Venue(name='NYSE', latency_ns=500, fee_per_share=0.003))
-    router.add_venue(Venue(name='NASDAQ', latency_ns=200, fee_per_share=-0.002))  # rebate
-    router.add_venue(Venue(name='BATS', latency_ns=150, fee_per_share=-0.001))
+    # Set up venues from config
+    strategy_map = {'BEST_PRICE': RoutingStrategy.BEST_PRICE, 'LOWEST_LATENCY': RoutingStrategy.LOWEST_LATENCY, 'SPLIT': RoutingStrategy.SPLIT}
+    default_strat = strategy_map.get(router_cfg.get('default_strategy', 'BEST_PRICE'), RoutingStrategy.BEST_PRICE)
+    router = SmartOrderRouter(strategy=default_strat, split_threshold=router_cfg.get('split_threshold', 500))
+    for v in router_cfg.get('venues', []):
+        router.add_venue(Venue(name=v['name'], latency_ns=v['latency_ns'], fee_per_share=v['fee_per_share']))
 
     rng = random.Random(42)
     base_price = 150.00
 
-    print(f"Venues: NYSE (500ns, $0.003/sh), NASDAQ (200ns, -$0.002/sh rebate), BATS (150ns, -$0.001/sh)")
-    print(f"Strategies: BEST_PRICE, LOWEST_LATENCY, SPLIT (threshold=500)\n")
+    logger.info(f"Venues: NYSE (500ns, $0.003/sh), NASDAQ (200ns, -$0.002/sh rebate), BATS (150ns, -$0.001/sh)")
+    logger.info(f"Strategies: BEST_PRICE, LOWEST_LATENCY, SPLIT (threshold=500)\n")
 
     strategies = [RoutingStrategy.BEST_PRICE, RoutingStrategy.LOWEST_LATENCY, RoutingStrategy.SPLIT]
     decisions: List[RouteDecision] = []
@@ -346,10 +356,10 @@ def demo() -> None:
         if decision:
             decisions.append(decision)
             if len(decisions) <= 10:
-                print(f"  [{i:3d}] {side:4s} {qty:4d} → {decision.reason}")
+                logger.info(f"  [{i:3d}] {side:4s} {qty:4d} → {decision.reason}")
 
     if len(decisions) > 10:
-        print(f"  ... ({len(decisions) - 10} more routes)")
+        logger.info(f"  ... ({len(decisions) - 10} more routes)")
 
     router.print_stats()
 

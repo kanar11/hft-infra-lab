@@ -2,22 +2,26 @@
 
 Parses Financial Information eXchange messages for order routing.
 
-## Supported Message Types
+*Analizuje komunikaty Financial Information eXchange do routingu zamówień.*
+
+## Supported Message Types / Obsługiwane typy wiadomości
 - D = New Order
 - G = Modify
 - F = Cancel
 - 8 = Execution Report
 - 0 = Heartbeat
 
-## Key Tags
+## Key Tags / Kluczowe znaczniki
 - 35 = MsgType
 - 55 = Symbol
 - 54 = Side (1=Buy, 2=Sell)
 - 44 = Price
 - 38 = OrderQty
 
-## Performance
+## Performance / Wydajność
 - ~4-7μs parse time per message (Python)
 
-## Run
+*~4-7μs czas parsowania na wiadomość (Python)*
+
+## Run / Uruchomienie
 ```bash

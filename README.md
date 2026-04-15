@@ -4,7 +4,9 @@
 
 Complete low-latency infrastructure lab for HFT systems — kernel tuning, networking, order management, and monitoring.
 
-## Performance Highlights (Red Hat EL10, VirtualBox 2-core VM)
+*Kompletne laboratorium infrastruktury niskooponenciacyjnej dla systemów HFT — dostrajanie jądra, sieci, zarządzanie zamówieniami i monitorowanie.*
+
+## Performance Highlights / Wyniki wydajności (Red Hat EL10, VirtualBox 2-core VM)
 - Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
 - ITCH parser: **~1M msg/sec** (Python, ~1000ns/msg)
 - OUCH encoding: **1.7M msg/sec** (Python)
@@ -17,9 +19,9 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 ![Throughput](docs/throughput.png)
 ![Latency](docs/latency.png)
 
-## Modules
+## Modules / Moduły
 
-| Module | Description | Language |
+| Module | Description / Opis | Language |
 |--------|------------|----------|
 | kernel-config/ | Hugepages, CPU isolation, sysctl, IRQ affinity | Bash |
 | linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
@@ -40,7 +42,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | tests/ | Unit tests (54) and benchmarks | Python |
 | docs/ | Technical write-up on Linux tuning, benchmark charts | Markdown |
 
-## Quick Start
+## Quick Start / Szybki start
 
 ### Docker (recommended)
 ```bash
@@ -58,7 +60,7 @@ make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency hist
 make simulate   # run end-to-end market data simulator (10K messages)
 ```
 
-## Environment
+## Environment / Środowisko
 - OS: Red Hat Enterprise Linux 10.1 (Coughlan)
 - VM: VirtualBox (2 CPU, 4GB RAM, 40GB disk)
 - Kernel: 6.12.0-124.8.1.el10_1.x86_64

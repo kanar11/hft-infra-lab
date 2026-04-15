@@ -1,6 +1,7 @@
-# Tests & Benchmarks
+# Tests & Benchmarks / Testy i Wzorce Wydajności
 
 Unit tests and performance benchmarks for all HFT modules.
+*Testy jednostkowe i wzorce wydajności dla wszystkich modułów HFT.*
 
 ## Test Suite (54 tests)
 

@@ -17,6 +17,7 @@ import sys
 import time
 import struct
 import random
+import logging
 from typing import List, Dict, Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -24,6 +25,9 @@ from itch_parser.itch_parser import ITCHMessage
 from oms.oms import OMS, Side
 from strategy.mean_reversion import MeanReversionStrategy
 from router.smart_router import SmartOrderRouter, RoutingStrategy, Venue
+
+logger = logging.getLogger('simulator')
+cfg = None  # Will be initialized in main()
 
 
 # --- Market Data Generator ---
@@ -39,7 +43,9 @@ class MarketDataGenerator:
         'TSLA': 245.00, 'META': 500.00, 'NVDA': 880.00, 'JPM': 195.00,
     }
 
-    def __init__(self, seed: int = 42) -> None:
+    def __init__(self, seed: int = None) -> None:
+        if seed is None:
+            seed = 42
         self.rng = random.Random(seed)
         self.seq = 0
         self.order_ref = 1000
@@ -176,36 +182,35 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
         'Router' if use_router else None,
         'OMS', 'P&L'
     ]))
-    print(f"=== HFT Market Data Simulator ===")
-    print(f"Pipeline: {pipeline_str}")
-    print(f"Mode: {mode}")
-    print(f"Messages: {num_messages:,}\n")
+    logger.info(f"=== HFT Market Data Simulator ===")
+    logger.info(f"Pipeline: {pipeline_str}")
+    logger.info(f"Mode: {mode}")
+    logger.info(f"Messages: {num_messages:,}\n")
 
     # Initialize components
     # Zainicjalizuj komponenty
-    generator = MarketDataGenerator()
+    generator = MarketDataGenerator(seed=cfg.get('simulator', {}).get('seed', 42))
     parser = ITCHMessage()
-    oms = OMS(max_position=10000, max_order_value=1_000_000)
-    strategy = MeanReversionStrategy(window=20, threshold_pct=0.1) if use_strategy else None
+    oms = OMS(max_position=cfg['oms']['max_position'], max_order_value=cfg['oms']['max_order_value'])
+    strategy = MeanReversionStrategy(window=cfg['strategy']['window'], threshold_pct=cfg['strategy']['threshold_pct']) if use_strategy else None
     router = None
     if use_router:
         router = SmartOrderRouter(strategy=RoutingStrategy.BEST_PRICE, split_threshold=500)
-        router.add_venue(Venue(name='NYSE', latency_ns=500, fee_per_share=0.003))
-        router.add_venue(Venue(name='NASDAQ', latency_ns=200, fee_per_share=-0.002))
-        router.add_venue(Venue(name='BATS', latency_ns=150, fee_per_share=-0.001))
+        for venue_cfg in cfg['router']['venues']:
+            router.add_venue(Venue(name=venue_cfg['name'], latency_ns=venue_cfg['latency_ns'], fee_per_share=venue_cfg['fee_per_share']))
 
     # Generate market data
     # Generuj dane rynkowe
-    print("[1/4] Generating ITCH market data stream...")
+    logger.info("[1/4] Generating ITCH market data stream...")
     gen_start = time.time_ns()
     messages = generator.generate_stream(num_messages)
     gen_elapsed = (time.time_ns() - gen_start) / 1_000_000
-    print(f"  Generated {len(messages)} messages in {gen_elapsed:.1f}ms")
-    print(f"  Active orders at close: {len(generator.active_orders)}")
+    logger.info(f"  Generated {len(messages)} messages in {gen_elapsed:.1f}ms")
+    logger.info(f"  Active orders at close: {len(generator.active_orders)}")
 
     # Parse all messages
     # Przeanalizuj wszystkie wiadomości
-    print("\n[2/4] Parsing ITCH messages...")
+    logger.info("\n[2/4] Parsing ITCH messages...")
     parse_start = time.time_ns()
     parsed = []
     msg_counts: Dict[str, int] = {}
@@ -216,11 +221,11 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
         msg_counts[msg_type] = msg_counts.get(msg_type, 0) + 1
     parse_elapsed = (time.time_ns() - parse_start) / 1_000_000
 
-    print(f"  Parsed {len(parsed)} messages in {parse_elapsed:.1f}ms")
-    print(f"  Throughput: {len(parsed) / (parse_elapsed / 1000):,.0f} msg/sec")
-    print(f"  Message breakdown:")
+    logger.info(f"  Parsed {len(parsed)} messages in {parse_elapsed:.1f}ms")
+    logger.info(f"  Throughput: {len(parsed) / (parse_elapsed / 1000):,.0f} msg/sec")
+    logger.info(f"  Message breakdown:")
     for mtype, count in sorted(msg_counts.items()):
-        print(f"    {mtype}: {count}")
+        logger.info(f"    {mtype}: {count}")
 
     # Route through OMS (with optional strategy and router)
     # Trasuj przez OMS (z opcjonalną strategią i routerem)
@@ -229,7 +234,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
         'Router' if router else None,
         'OMS'
     ]))
-    print(f"\n[3/4] Routing through {steps} (risk checks + P&L)...")
+    logger.info(f"\n[3/4] Routing through {steps} (risk checks + P&L)...")
     import io, contextlib
     oms_start = time.time_ns()
     orders_submitted = 0
@@ -290,11 +295,11 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
                         orders_rejected += 1
 
     oms_elapsed = (time.time_ns() - oms_start) / 1_000_000
-    print(f"  Submitted: {orders_submitted:,}")
-    print(f"  Filled: {orders_filled:,}")
-    print(f"  Rejected (risk): {orders_rejected:,}")
+    logger.info(f"  Submitted: {orders_submitted:,}")
+    logger.info(f"  Filled: {orders_filled:,}")
+    logger.info(f"  Rejected (risk): {orders_rejected:,}")
     if oms_elapsed > 0:
-        print(f"  OMS throughput: {orders_submitted / (oms_elapsed / 1000):,.0f} orders/sec")
+        logger.info(f"  OMS throughput: {orders_submitted / (oms_elapsed / 1000):,.0f} orders/sec")
 
     if strategy:
         strategy.print_stats()
@@ -304,16 +309,16 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
     # Final stats
     # Statystyki końcowe
     total_elapsed = gen_elapsed + parse_elapsed + oms_elapsed
-    print(f"\n[4/4] Pipeline Summary")
-    print(f"  Total time: {total_elapsed:.1f}ms")
-    print(f"  End-to-end throughput: {len(messages) / (total_elapsed / 1000):,.0f} msg/sec")
+    logger.info(f"\n[4/4] Pipeline Summary")
+    logger.info(f"  Total time: {total_elapsed:.1f}ms")
+    logger.info(f"  End-to-end throughput: {len(messages) / (total_elapsed / 1000):,.0f} msg/sec")
 
-    print(f"\n  === Positions ===")
+    logger.info(f"\n  === Positions ===")
     for sym, pos in sorted(oms.positions.items()):
-        print(f"    {sym}: qty={pos.net_qty:+d}  avg=${pos.avg_price:.2f}  pnl=${pos.realized_pnl:.2f}")
+        logger.info(f"    {sym}: qty={pos.net_qty:+d}  avg=${pos.avg_price:.2f}  pnl=${pos.realized_pnl:.2f}")
 
     total_pnl = sum(p.realized_pnl for p in oms.positions.values())
-    print(f"\n  Total Realized P&L: ${total_pnl:,.2f}")
+    logger.info(f"\n  Total Realized P&L: ${total_pnl:,.2f}")
 
     return {
         'messages': len(messages),
@@ -328,7 +333,12 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
 
 
 def main() -> None:
-    num = 10000
+    global cfg
+    from config_loader import load_config, setup_logging
+    cfg = load_config()
+    setup_logging()
+
+    num = cfg['simulator'].get('num_messages', 10000)
     use_strategy = False
     use_router = False
     for arg in sys.argv[1:]:
