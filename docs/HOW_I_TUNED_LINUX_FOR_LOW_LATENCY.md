@@ -6,9 +6,12 @@ In high-frequency trading, microseconds decide who profits and who loses. The di
 
 ## The Environment
 
-- Ubuntu 24.04 LTS Server on VirtualBox
-- 2 vCPUs, 4GB RAM, 25GB disk
-- Kernel: 6.8.0-107-generic
+Initially built on Ubuntu 24.04 LTS, later migrated to Red Hat Enterprise Linux 10.1 to work with an enterprise distro used in production trading environments.
+
+- OS: Red Hat Enterprise Linux 10.1 (Coughlan)
+- VM: VirtualBox (2 vCPUs, 4GB RAM, 40GB disk)
+- Kernel: 6.12.0-124.8.1.el10_1.x86_64
+- Compiler: g++ 14.3.1, -O2 -std=c++17
 
 ## Step 1: Hugepages
 
