@@ -1,0 +1,6 @@
+Post-tuning cyclictest (isolcpus=1, hugepages=512, FIFO p80):
+Min: 21 us
+Avg: 3878 us  
+Max: 2464055 us
+Note: High max caused by VirtualBox hypervisor scheduling delays.
+Production HFT uses bare metal with PREEMPT_RT kernel for sub-10us p99.
