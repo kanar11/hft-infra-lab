@@ -18,6 +18,9 @@ python3 router/smart_router.py
 
 # Unit tests (10)
 python3 tests/test_router.py
+
+# Integrated with full pipeline
+python3 simulator/market_sim.py 10000 --strategy --router
 ```
 
 ## Performance
