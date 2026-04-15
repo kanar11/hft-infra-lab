@@ -1,4 +1,4 @@
-.PHONY: build test benchmark clean
+.PHONY: build test benchmark simulate clean
 
 CXX      = g++
 CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -pthread
@@ -23,6 +23,9 @@ benchmark:
 	cd orderbook && ./latency_histogram
 	cd lockfree && ./spsc_queue
 	cd memory-latency && ./cache_latency
+
+simulate:
+	python3 simulator/market_sim.py 10000
 
 clean:
 	rm -f orderbook/orderbook orderbook/orderbook_v2 orderbook/benchmark_orderbook

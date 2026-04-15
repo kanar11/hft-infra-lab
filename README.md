@@ -28,8 +28,9 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
 | oms/ | Order Management System with risk checks, P&L | Python |
 | monitoring/ | Real-time infra monitor with alerts | Python |
+| simulator/ | End-to-end market data pipeline (ITCH→Parser→OMS→P&L) | Python |
 | tests/ | Unit tests (31) and benchmarks | Python |
-| docs/ | Technical write-up on Linux tuning | Markdown |
+| docs/ | Technical write-up on Linux tuning, benchmark charts | Markdown |
 
 ## Quick Start
 ```bash
