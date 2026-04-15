@@ -10,9 +10,28 @@ memory-latency/cache_latency
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Logs
-*.json
-*.txt
+# Logs and results
+*.log
 benchmark_results/
 monitor_log_*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

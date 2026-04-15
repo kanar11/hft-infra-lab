@@ -9,31 +9,28 @@ import socket
 import time
 import os
 
+
 class KernelBypassSimulator:
+    """Simulates DPDK-style kernel bypass concepts:
+    polling vs interrupt-driven I/O, zero-copy buffers, and CPU pinning.
     """
-    Simulates DPDK-style kernel bypass concepts:
-    - Polling vs interrupt-driven I/O
-    - Zero-copy buffer management
-    - CPU pinning for packet processing
-    """
-    
-    def __init__(self, cpu_core=1):
+
+    def __init__(self, cpu_core: int = 1) -> None:
         self.cpu_core = cpu_core
-        self.packets_processed = 0
-        self.total_latency_ns = 0
-    
-    def pin_to_core(self):
-        """Pin process to isolated CPU core (like DPDK EAL)"""
+        self.packets_processed: int = 0
+        self.total_latency_ns: int = 0
+
+    def pin_to_core(self) -> None:
+        """Pin process to isolated CPU core (like DPDK EAL)."""
         try:
             os.sched_setaffinity(0, {self.cpu_core})
             print(f"[DPDK-SIM] Pinned to CPU {self.cpu_core}")
         except Exception as e:
             print(f"[DPDK-SIM] CPU pin failed: {e}")
-    
-    def poll_mode_driver(self, sock, duration_sec=5):
-        """
-        Simulate DPDK Poll Mode Driver (PMD)
-        Instead of waiting for interrupts, continuously poll for packets
+
+    def poll_mode_driver(self, sock: socket.socket, duration_sec: int = 5) -> int:
+        """Simulate DPDK Poll Mode Driver (PMD).
+        Continuously polls for packets instead of waiting for interrupts.
         """
         print(f"[DPDK-SIM] Starting Poll Mode Driver for {duration_sec}s...")
         print(f"[DPDK-SIM] Mode: POLLING (no interrupts)")
@@ -68,7 +65,8 @@ class KernelBypassSimulator:
         
         return polls
     
-    def print_stats(self, polls, duration):
+    def print_stats(self, polls: int, duration: int) -> None:
+        """Print poll mode driver performance summary."""
         print(f"\n[DPDK-SIM] === Statistics ===")
         print(f"  Packets processed: {self.packets_processed}")
         print(f"  Total polls: {polls:,}")
@@ -79,7 +77,8 @@ class KernelBypassSimulator:
         print(f"  CPU utilization: ~100% (busy polling)")
 
 
-def main():
+def main() -> None:
+    """Run poll mode driver on multicast feed."""
     import struct
     
     MCAST_GROUP = '239.1.1.1'

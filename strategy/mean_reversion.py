@@ -13,7 +13,7 @@ This is a simplified strategy to demonstrate the full pipeline:
   ITCH Feed → Parser → Strategy (signals) → OMS (risk checks) → P&L
 """
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from collections import deque
 

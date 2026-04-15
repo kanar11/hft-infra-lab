@@ -111,8 +111,8 @@ def test_routing_speed():
     start = time.time_ns()
     for _ in range(1000):
         router.route_order('BUY', 100)
-    elapsed = (time.time_ns() - start) / 1000  # total in microseconds
-    avg_ns = elapsed * 1000 / 1000  # per-route in nanoseconds
+    total_ns = time.time_ns() - start
+    avg_ns = total_ns / 1000  # per-route in nanoseconds
     assert avg_ns < 50000, f"Too slow: {avg_ns:.0f} ns/route"
     print(f"  PASS: test_routing_speed ({avg_ns:.0f} ns)")
 

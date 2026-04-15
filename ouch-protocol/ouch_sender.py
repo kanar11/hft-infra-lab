@@ -7,7 +7,6 @@ and server responses (Accepted, Replaced, Cancelled, Executed).
 """
 import struct
 import time
-import socket
 from typing import Dict, Any, Tuple
 
 
