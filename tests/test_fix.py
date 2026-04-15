@@ -46,7 +46,7 @@ def test_parse_execution():
 
 
 def test_malformed_tags():
-    """Ensure malformed tags don't crash the parser"""
+    """Ensure malformed tags don't crash the parser."""
     msg = FIXMessage()
     msg.parse("abc=xyz|35=D|=empty|55=AAPL|bad|44=100.0")
     assert msg.get_msg_type() == 'D'

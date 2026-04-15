@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from itch_parser.itch_parser import ITCHMessage
 from oms.oms import OMS, Side
 
-def benchmark_itch(iterations=100000):
+def benchmark_itch(iterations: int = 100000) -> None:
+    """Benchmark ITCH parser throughput and per-message latency."""
     parser = ITCHMessage()
     msg = struct.pack('!c q q c I 8s I',
         b'A', 1000000, 1001, b'B', 100, b'AAPL    ', 1502500)
@@ -30,7 +31,8 @@ def benchmark_itch(iterations=100000):
     print(f"  {per_msg:.0f} ns/msg")
     print(f"  {throughput:,.0f} msg/sec\n")
 
-def benchmark_oms(iterations=50000):
+def benchmark_oms(iterations: int = 50000) -> None:
+    """Benchmark OMS submit+fill throughput and per-order latency."""
     import io, contextlib
     oms = OMS(max_position=10_000_000, max_order_value=10_000_000)
 

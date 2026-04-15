@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Optional
 
 
 class ITCHMessage:
-    """NASDAQ ITCH 5.0 protocol parser (simplified)"""
+    """NASDAQ ITCH 5.0 protocol parser (simplified)."""
 
     MSG_TYPES = {
         b'A': 'ADD_ORDER',
@@ -30,6 +30,8 @@ class ITCHMessage:
         """Parse Add Order (A) message.
         Fields: msg_type(1) + timestamp(8) + order_ref(8) + side(1) + shares(4) + stock(8) + price(4) = 34 bytes
         """
+        if len(data) < 34:
+            return {'type': 'ERROR', 'reason': f'ADD_ORDER too short ({len(data)} < 34)'}
         fmt = '!c q q c I 8s I'
         fields = struct.unpack(fmt, data[:34])
         return {
@@ -47,6 +49,8 @@ class ITCHMessage:
         """Parse Delete Order (D) message.
         Fields: msg_type(1) + timestamp(8) + order_ref(8) = 17 bytes
         """
+        if len(data) < 17:
+            return {'type': 'ERROR', 'reason': f'DELETE_ORDER too short ({len(data)} < 17)'}
         fmt = '!c q q'
         fields = struct.unpack(fmt, data[:17])
         return {
@@ -60,6 +64,8 @@ class ITCHMessage:
         """Parse Replace Order (U) message.
         Fields: msg_type(1) + timestamp(8) + orig_ref(8) + new_ref(8) + shares(4) + price(4) = 33 bytes
         """
+        if len(data) < 33:
+            return {'type': 'ERROR', 'reason': f'REPLACE_ORDER too short ({len(data)} < 33)'}
         fmt = '!c q q q I I'
         fields = struct.unpack(fmt, data[:33])
         return {
@@ -76,6 +82,8 @@ class ITCHMessage:
         """Parse Order Executed (E) message.
         Fields: msg_type(1) + timestamp(8) + order_ref(8) + shares(4) + match_number(8) = 29 bytes
         """
+        if len(data) < 29:
+            return {'type': 'ERROR', 'reason': f'ORDER_EXECUTED too short ({len(data)} < 29)'}
         fmt = '!c q q I q'
         fields = struct.unpack(fmt, data[:29])
         return {
@@ -91,6 +99,8 @@ class ITCHMessage:
         """Parse Order Cancelled (C) message.
         Fields: msg_type(1) + timestamp(8) + order_ref(8) + cancelled_shares(4) = 21 bytes
         """
+        if len(data) < 21:
+            return {'type': 'ERROR', 'reason': f'ORDER_CANCELLED too short ({len(data)} < 21)'}
         fmt = '!c q q I'
         fields = struct.unpack(fmt, data[:21])
         return {
@@ -105,6 +115,8 @@ class ITCHMessage:
         """Parse Trade (P) message.
         Fields: msg_type(1) + timestamp(8) + order_ref(8) + side(1) + shares(4) + stock(8) + price(4) + match(8) = 42 bytes
         """
+        if len(data) < 42:
+            return {'type': 'ERROR', 'reason': f'TRADE too short ({len(data)} < 42)'}
         fmt = '!c q q c I 8s I q'
         fields = struct.unpack(fmt, data[:42])
         return {
@@ -123,6 +135,8 @@ class ITCHMessage:
         """Parse System Event (S) message.
         Fields: msg_type(1) + timestamp(8) + event_code(1) = 10 bytes
         """
+        if len(data) < 10:
+            return {'type': 'ERROR', 'reason': f'SYSTEM_EVENT too short ({len(data)} < 10)'}
         EVENTS = {b'O': 'START_OF_MESSAGES', b'S': 'START_OF_SYSTEM_HOURS',
                   b'Q': 'START_OF_MARKET_HOURS', b'M': 'END_OF_MARKET_HOURS',
                   b'E': 'END_OF_SYSTEM_HOURS', b'C': 'END_OF_MESSAGES'}
@@ -139,6 +153,8 @@ class ITCHMessage:
         """Parse Stock Directory (R) message.
         Fields: msg_type(1) + timestamp(8) + stock(8) + market_category(1) = 18 bytes
         """
+        if len(data) < 18:
+            return {'type': 'ERROR', 'reason': f'STOCK_DIRECTORY too short ({len(data)} < 18)'}
         fmt = '!c q 8s c'
         fields = struct.unpack(fmt, data[:18])
         return {

@@ -5,22 +5,24 @@ HFT Market Data Simulator — End-to-End Pipeline Demo
 Generates synthetic ITCH market data, parses it through the ITCH parser,
 routes orders through the OMS with risk checks, and tracks P&L.
 
-Pipeline: ITCH Generator → ITCH Parser → Strategy (optional) → OMS (risk checks) → Fill Engine → P&L
+Pipeline: ITCH Generator → ITCH Parser → Strategy (optional) → Router (optional) → OMS (risk checks) → Fill Engine → P&L
 
 This proves all modules work together as a complete trading system.
 Use --strategy flag to enable mean reversion strategy.
+Use --router flag to enable smart order routing across venues.
 """
 import os
 import sys
 import time
 import struct
 import random
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from itch_parser.itch_parser import ITCHMessage
 from oms.oms import OMS, Side
 from strategy.mean_reversion import MeanReversionStrategy
+from router.smart_router import SmartOrderRouter, RoutingStrategy, Venue
 
 
 # --- Market Data Generator ---
@@ -137,18 +139,31 @@ class MarketDataGenerator:
 
 # --- Pipeline Runner ---
 
-def run_pipeline(num_messages: int = 1000, use_strategy: bool = False) -> Dict[str, Any]:
-    """Run full pipeline: generate → parse → (strategy) → OMS → stats.
+def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
+                  use_router: bool = False) -> Dict[str, Any]:
+    """Run full pipeline: generate → parse → (strategy) → (router) → OMS → stats.
 
     Args:
         num_messages: Number of market data messages to simulate
         use_strategy: Enable mean reversion strategy for signal generation
+        use_router: Enable smart order routing across multiple venues
     Returns:
         Dict with pipeline statistics
     """
-    mode = "Strategy Mode (Mean Reversion)" if use_strategy else "Direct Mode (all orders)"
+    parts = []
+    if use_strategy:
+        parts.append('Strategy')
+    if use_router:
+        parts.append('Router')
+    mode = ' + '.join(parts) if parts else 'Direct Mode (all orders)'
+    pipeline_str = ' → '.join(filter(None, [
+        'ITCH Generator', 'Parser',
+        'Strategy' if use_strategy else None,
+        'Router' if use_router else None,
+        'OMS', 'P&L'
+    ]))
     print(f"=== HFT Market Data Simulator ===")
-    print(f"Pipeline: ITCH Generator → Parser → {'Strategy → ' if use_strategy else ''}OMS → P&L")
+    print(f"Pipeline: {pipeline_str}")
     print(f"Mode: {mode}")
     print(f"Messages: {num_messages:,}\n")
 
@@ -157,6 +172,12 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False) -> Dict[s
     parser = ITCHMessage()
     oms = OMS(max_position=10000, max_order_value=1_000_000)
     strategy = MeanReversionStrategy(window=20, threshold_pct=0.1) if use_strategy else None
+    router = None
+    if use_router:
+        router = SmartOrderRouter(strategy=RoutingStrategy.BEST_PRICE, split_threshold=500)
+        router.add_venue(Venue(name='NYSE', latency_ns=500, fee_per_share=0.003))
+        router.add_venue(Venue(name='NASDAQ', latency_ns=200, fee_per_share=-0.002))
+        router.add_venue(Venue(name='BATS', latency_ns=150, fee_per_share=-0.001))
 
     # Generate market data
     print("[1/4] Generating ITCH market data stream...")
@@ -184,9 +205,13 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False) -> Dict[s
     for mtype, count in sorted(msg_counts.items()):
         print(f"    {mtype}: {count}")
 
-    # Route through OMS (with optional strategy)
-    step = "Strategy → OMS" if strategy else "OMS"
-    print(f"\n[3/4] Routing through {step} (risk checks + P&L)...")
+    # Route through OMS (with optional strategy and router)
+    steps = ' → '.join(filter(None, [
+        'Strategy' if strategy else None,
+        'Router' if router else None,
+        'OMS'
+    ]))
+    print(f"\n[3/4] Routing through {steps} (risk checks + P&L)...")
     import io, contextlib
     oms_start = time.time_ns()
     orders_submitted = 0
@@ -198,26 +223,47 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False) -> Dict[s
             price = msg.get('price')
             stock = msg.get('stock')
 
+            # Update router quotes from market data
+            if router and stock and price:
+                spread = price * 0.0002  # 0.02% spread
+                for venue_name in ['NYSE', 'NASDAQ', 'BATS']:
+                    router.update_quote(venue_name,
+                                        round(price - spread, 2), round(price + spread, 2),
+                                        random.randint(100, 500), random.randint(100, 500))
+
             if strategy and stock and price:
                 # Strategy mode: feed price to strategy, only trade on signals
                 signal = strategy.on_market_data(stock, price, msg.get('timestamp_ns', 0))
                 if signal:
-                    side = Side.BUY if signal.side == 'BUY' else Side.SELL
-                    order = oms.submit_order(signal.stock, side, signal.price, signal.quantity)
+                    side_str = signal.side
+                    fill_price = signal.price
+                    # Route through SOR if enabled
+                    if router:
+                        route = router.route_order(side_str, signal.quantity)
+                        if route:
+                            fill_price = route.price
+                    side = Side.BUY if side_str == 'BUY' else Side.SELL
+                    order = oms.submit_order(signal.stock, side, fill_price, signal.quantity)
                     if order:
                         orders_submitted += 1
-                        oms.fill_order(order.order_id, signal.quantity, signal.price)
+                        oms.fill_order(order.order_id, signal.quantity, fill_price)
                         orders_filled += 1
                     else:
                         orders_rejected += 1
             elif not strategy:
                 # Direct mode: route all ADD_ORDER and TRADE through OMS
                 if msg['type'] in ('ADD_ORDER', 'TRADE'):
-                    side = Side.BUY if msg['side'] == 'BUY' else Side.SELL
-                    order = oms.submit_order(stock, side, price, msg['shares'])
+                    side_str = msg['side']
+                    fill_price = price
+                    if router:
+                        route = router.route_order(side_str, msg['shares'])
+                        if route:
+                            fill_price = route.price
+                    side = Side.BUY if side_str == 'BUY' else Side.SELL
+                    order = oms.submit_order(stock, side, fill_price, msg['shares'])
                     if order:
                         orders_submitted += 1
-                        oms.fill_order(order.order_id, msg['shares'], price)
+                        oms.fill_order(order.order_id, msg['shares'], fill_price)
                         orders_filled += 1
                     else:
                         orders_rejected += 1
@@ -231,6 +277,8 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False) -> Dict[s
 
     if strategy:
         strategy.print_stats()
+    if router:
+        router.print_stats()
 
     # Final stats
     total_elapsed = gen_elapsed + parse_elapsed + oms_elapsed
@@ -260,12 +308,15 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False) -> Dict[s
 def main() -> None:
     num = 10000
     use_strategy = False
+    use_router = False
     for arg in sys.argv[1:]:
         if arg == '--strategy':
             use_strategy = True
+        elif arg == '--router':
+            use_router = True
         elif arg.isdigit():
             num = int(arg)
-    run_pipeline(num_messages=num, use_strategy=use_strategy)
+    run_pipeline(num_messages=num, use_strategy=use_strategy, use_router=use_router)
 
 
 if __name__ == '__main__':

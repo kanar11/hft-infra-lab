@@ -11,7 +11,7 @@ from typing import Dict, Any, Tuple
 
 
 class OUCHMessage:
-    """NASDAQ OUCH 4.2 protocol message builder (simplified)"""
+    """NASDAQ OUCH 4.2 protocol message builder (simplified)."""
 
     MSG_TYPES = {
         'ENTER_ORDER': b'O',
