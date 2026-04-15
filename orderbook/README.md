@@ -2,11 +2,11 @@
 
 C++ order book with price-time priority matching.
 
-## Performance
-- 23M orders/sec on 2-core VM (throughput benchmark)
-- 1M orders processed in 43ms
-- Per-order latency: p50 ~50ns, p99 ~130ns (see `latency_histogram.cpp`)
-- Compiled with -O2 optimisation
+## Performance (Red Hat EL10, VirtualBox 2-core VM)
+- 17.8M orders/sec (throughput benchmark, 1M orders)
+- 1M orders processed in 56ms
+- Per-order latency: p50=50ns, p95=100ns, p99=130ns, p99.9=170ns
+- Compiled with g++ 14.3.1, -O2 -std=c++17
 
 ## How it works
 - Bids sorted highest-first (std::map with std::greater)

@@ -12,9 +12,10 @@ Single Producer Single Consumer lock-free queue for inter-thread communication i
 - alignas(64) prevents false sharing between cache lines
 - memory_order_acquire/release for correct ordering
 
-## Performance
+## Performance (Red Hat EL10, VirtualBox 2-core VM)
 - 10M messages processed
-- ~1.5M msg/sec on 2-core VM
+- 17.6M msg/sec throughput
+- 762ns avg inter-thread latency
 - Production target: 50-100M msg/sec on dedicated hardware
 
 ## Build & Run

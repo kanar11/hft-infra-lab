@@ -1,5 +1,7 @@
 # HFT Infrastructure Lab
 
+![Tests](https://github.com/kanar11/hft-infra-lab/actions/workflows/tests.yml/badge.svg)
+
 Complete low-latency infrastructure lab for HFT systems — kernel tuning, networking, order management, and monitoring.
 
 ## Performance Highlights (Red Hat EL10, VirtualBox 2-core VM)

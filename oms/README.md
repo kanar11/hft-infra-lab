@@ -12,8 +12,9 @@ Full order lifecycle management with pre-trade risk checks.
 - Max order value (rejects if exceeded)
 - Max position size (rejects if exceeded)
 
-## Performance
-- ~30K orders/sec with logging (Python)
+## Performance (Red Hat EL10, VirtualBox 2-core VM)
+- 35K orders/sec (submit + fill cycle, Python 3.12)
+- 28µs per order with risk checks and P&L tracking
 
 ## Run
 ```bash
