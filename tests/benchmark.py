@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
 Performance Benchmarks for ITCH Parser and OMS
+Benchmarki wydajności dla parsera ITCH i systemu OMS
 
 Measures throughput (messages/sec) and per-message latency (nanoseconds)
 for the core Python components of the HFT pipeline.
+Mierzy przepustowość (wiadomości/s) i opóźnienie na wiadomość (nanosekundy)
+dla głównych komponentów Pythonowych w pipeline HFT.
 """
 import os
 import sys
@@ -14,7 +17,9 @@ from itch_parser.itch_parser import ITCHMessage
 from oms.oms import OMS, Side
 
 def benchmark_itch(iterations: int = 100000) -> None:
-    """Benchmark ITCH parser throughput and per-message latency."""
+    """Benchmark ITCH parser throughput and per-message latency.
+    Benchmark przepustowości parsera ITCH i opóźnienia na wiadomość.
+    """
     parser = ITCHMessage()
     msg = struct.pack('!c q q c I 8s I',
         b'A', 1000000, 1001, b'B', 100, b'AAPL    ', 1502500)
@@ -32,7 +37,9 @@ def benchmark_itch(iterations: int = 100000) -> None:
     print(f"  {throughput:,.0f} msg/sec\n")
 
 def benchmark_oms(iterations: int = 50000) -> None:
-    """Benchmark OMS submit+fill throughput and per-order latency."""
+    """Benchmark OMS submit+fill throughput and per-order latency.
+    Benchmark przepustowości OMS (submit+fill) i opóźnienia na zlecenie.
+    """
     import io, contextlib
     oms = OMS(max_position=10_000_000, max_order_value=10_000_000)
 

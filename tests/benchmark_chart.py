@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 HFT Benchmark Chart Generator
+Generator wykresów benchmarków HFT
+
 Generates PNG charts from benchmark results for README display.
+Generuje wykresy PNG z wyników benchmarków do wyświetlania w README.
 Requires: matplotlib (pip install matplotlib)
 """
 import subprocess
@@ -10,7 +13,9 @@ import sys
 import os
 
 def run_orderbook_benchmark() -> dict:
-    """Run C++ orderbook benchmark and parse results."""
+    """Run C++ orderbook benchmark and parse results.
+    Uruchom benchmark C++ orderbooka i sparsuj wyniki.
+    """
     binary = os.path.join(os.path.dirname(__file__), '..', 'orderbook', 'benchmark_orderbook')
     if not os.path.exists(binary):
         print("ERROR: benchmark_orderbook not found. Run 'make build' first.")
@@ -29,7 +34,9 @@ def run_orderbook_benchmark() -> dict:
 
 
 def run_latency_histogram() -> dict:
-    """Run C++ latency histogram and parse percentiles."""
+    """Run C++ latency histogram and parse percentiles.
+    Uruchom histogram opóźnień C++ i sparsuj percentyle.
+    """
     binary = os.path.join(os.path.dirname(__file__), '..', 'orderbook', 'latency_histogram')
     if not os.path.exists(binary):
         print("ERROR: latency_histogram not found. Run 'make build' first.")
@@ -56,7 +63,9 @@ def run_latency_histogram() -> dict:
 
 
 def generate_charts(ob_results: dict, lat_results: dict, output_dir: str) -> None:
-    """Generate benchmark PNG charts."""
+    """Generate benchmark PNG charts.
+    Generuj wykresy PNG z benchmarków.
+    """
     try:
         import matplotlib
         matplotlib.use('Agg')  # headless backend

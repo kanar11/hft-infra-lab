@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Unit tests for Risk Manager."""
+"""Unit tests for Risk Manager.
+Testy jednostkowe dla Menedżera Ryzyka.
+"""
 import os
 import sys
 import time
@@ -8,7 +10,9 @@ from risk.risk_manager import RiskManager, RiskLimits, RiskAction
 
 
 def _make_rm() -> RiskManager:
-    """Helper: create risk manager with tight limits for testing."""
+    """Helper: create risk manager with tight limits for testing.
+    Pomocnik: tworzy menedżera ryzyka z ciasnym limitami do testów.
+    """
     limits = RiskLimits(
         max_position_per_symbol=500,
         max_portfolio_exposure=2000,
@@ -21,7 +25,9 @@ def _make_rm() -> RiskManager:
 
 
 def test_allow_normal_order():
-    """Normal order within all limits should be allowed."""
+    """Normal order within all limits should be allowed.
+    Normalne zlecenie w ramach limitów powinno być dopuszczone.
+    """
     rm = _make_rm()
     result = rm.check_order('AAPL', 'BUY', 150.00, 100)
     assert result.action == RiskAction.ALLOW
@@ -29,7 +35,9 @@ def test_allow_normal_order():
 
 
 def test_reject_order_value():
-    """Order exceeding max_order_value should be rejected."""
+    """Order exceeding max_order_value should be rejected.
+    Zlecenie przekraczające max_order_value powinno być odrzucone.
+    """
     rm = _make_rm()
     result = rm.check_order('AAPL', 'BUY', 200.00, 300)  # 60000 > 50000
     assert result.action == RiskAction.REJECT
@@ -38,7 +46,9 @@ def test_reject_order_value():
 
 
 def test_reject_position_limit():
-    """Order exceeding per-symbol position limit should be rejected."""
+    """Order exceeding per-symbol position limit should be rejected.
+    Zlecenie przekraczające limit pozycji na symbol powinno być odrzucone.
+    """
     rm = _make_rm()
     rm.state.positions['AAPL'] = 400
     result = rm.check_order('AAPL', 'BUY', 150.00, 200)  # 400+200=600 > 500
@@ -48,7 +58,9 @@ def test_reject_position_limit():
 
 
 def test_reject_portfolio_exposure():
-    """Order exceeding total portfolio exposure should be rejected."""
+    """Order exceeding total portfolio exposure should be rejected.
+    Zlecenie przekraczające łączną ekspozycję portfela powinno być odrzucone.
+    """
     rm = _make_rm()
     rm.state.positions['AAPL'] = 400
     rm.state.positions['MSFT'] = 400
@@ -63,7 +75,9 @@ def test_reject_portfolio_exposure():
 
 
 def test_circuit_breaker():
-    """Exceeding daily loss limit should activate kill switch."""
+    """Exceeding daily loss limit should activate kill switch.
+    Przekroczenie dziennego limitu strat powinno aktywować kill switch.
+    """
     rm = _make_rm()
     rm.update_pnl(-1500.0)  # loss exceeds $1000 limit
     result = rm.check_order('AAPL', 'BUY', 150.00, 100)
@@ -74,7 +88,9 @@ def test_circuit_breaker():
 
 
 def test_kill_switch_manual():
-    """Manual kill switch should reject all orders."""
+    """Manual kill switch should reject all orders.
+    Ręczny kill switch powinien odrzucić wszystkie zlecenia.
+    """
     rm = _make_rm()
     rm.activate_kill_switch()
     result = rm.check_order('AAPL', 'BUY', 150.00, 100)
@@ -84,7 +100,9 @@ def test_kill_switch_manual():
 
 
 def test_kill_switch_deactivate():
-    """Deactivating kill switch should allow orders again."""
+    """Deactivating kill switch should allow orders again.
+    Dezaktywacja kill switcha powinna ponownie dopuścić zlecenia.
+    """
     rm = _make_rm()
     rm.activate_kill_switch()
     rm.deactivate_kill_switch()
@@ -94,7 +112,9 @@ def test_kill_switch_deactivate():
 
 
 def test_drawdown_limit():
-    """Exceeding drawdown from peak should activate kill switch."""
+    """Exceeding drawdown from peak should activate kill switch.
+    Przekroczenie drawdownu od szczytu powinno aktywować kill switch.
+    """
     rm = _make_rm()
     rm.update_pnl(10000.0)   # peak = 10000
     rm.update_pnl(-5000.0)   # pnl = 5000, drawdown = 50% > 10%
@@ -106,7 +126,9 @@ def test_drawdown_limit():
 
 
 def test_reset_daily():
-    """reset_daily should clear PnL, kill switch, and rate limiter."""
+    """reset_daily should clear PnL, kill switch, and rate limiter.
+    reset_daily powinno wyzerować PnL, kill switch i limiter częstotliwości.
+    """
     rm = _make_rm()
     rm.update_pnl(-2000.0)
     rm.activate_kill_switch()
@@ -119,7 +141,9 @@ def test_reset_daily():
 
 
 def test_check_speed():
-    """Risk check should be fast (<50 microseconds)."""
+    """Risk check should be fast (<50 microseconds).
+    Kontrola ryzyka powinna być szybka (<50 mikrosekund).
+    """
     rm = _make_rm()
     start = time.time_ns()
     for _ in range(1000):

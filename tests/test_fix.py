@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Unit tests for FIX 4.2 protocol parser."""
+"""Unit tests for FIX 4.2 protocol parser.
+Testy jednostkowe dla parsera protokołu FIX 4.2.
+"""
 import os
 import sys
 import importlib.util
@@ -48,7 +50,9 @@ def test_parse_execution():
 
 
 def test_malformed_tags():
-    """Ensure malformed tags don't crash the parser."""
+    """Ensure malformed tags don't crash the parser.
+    Upewnij się że nieprawidłowe tagi nie crashują parsera.
+    """
     msg = FIXMessage()
     msg.parse("abc=xyz|35=D|=empty|55=AAPL|bad|44=100.0")
     assert msg.get_msg_type() == 'D'

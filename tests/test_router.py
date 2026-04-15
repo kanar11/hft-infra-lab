@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Unit tests for Smart Order Router."""
+"""Unit tests for Smart Order Router.
+Testy jednostkowe dla Smart Order Routera.
+"""
 import os
 import sys
 import time
@@ -8,7 +10,9 @@ from router.smart_router import SmartOrderRouter, RoutingStrategy, Venue
 
 
 def _make_router() -> SmartOrderRouter:
-    """Helper: create router with 3 venues and live quotes."""
+    """Helper: create router with 3 venues and live quotes.
+    Pomocnik: tworzy router z 3 giełdami i aktualnymi kwotowaniami.
+    """
     router = SmartOrderRouter(strategy=RoutingStrategy.BEST_PRICE, split_threshold=500)
     router.add_venue(Venue(name='NYSE', latency_ns=500, fee_per_share=0.003))
     router.add_venue(Venue(name='NASDAQ', latency_ns=200, fee_per_share=-0.002))
@@ -21,7 +25,9 @@ def _make_router() -> SmartOrderRouter:
 
 
 def test_best_price_buy():
-    """BUY should route to venue with lowest ask (NASDAQ @ 150.01)."""
+    """BUY should route to venue with lowest ask (NASDAQ @ 150.01).
+    BUY powinno trafić na giełdę z najniższym askiem (NASDAQ @ 150.01).
+    """
     router = _make_router()
     decision = router.route_order('BUY', 100)
     assert decision is not None
@@ -31,7 +37,9 @@ def test_best_price_buy():
 
 
 def test_best_price_sell():
-    """SELL should route to venue with highest bid (NASDAQ @ 149.99)."""
+    """SELL should route to venue with highest bid (NASDAQ @ 149.99).
+    SELL powinno trafić na giełdę z najwyższym bidem (NASDAQ @ 149.99).
+    """
     router = _make_router()
     decision = router.route_order('SELL', 100)
     assert decision is not None
@@ -41,7 +49,9 @@ def test_best_price_sell():
 
 
 def test_lowest_latency():
-    """LOWEST_LATENCY should route to BATS (150ns)."""
+    """LOWEST_LATENCY should route to BATS (150ns).
+    LOWEST_LATENCY powinno trafić na BATS (150ns).
+    """
     router = _make_router()
     decision = router.route_order('BUY', 100, strategy=RoutingStrategy.LOWEST_LATENCY)
     assert decision is not None
@@ -50,7 +60,9 @@ def test_lowest_latency():
 
 
 def test_split_order():
-    """Large order (1000 shares) should split across venues."""
+    """Large order (1000 shares) should split across venues.
+    Duże zlecenie (1000 akcji) powinno się podzielić między giełdy.
+    """
     router = _make_router()
     decision = router.route_order('BUY', 1000, strategy=RoutingStrategy.SPLIT)
     assert decision is not None
@@ -61,7 +73,9 @@ def test_split_order():
 
 
 def test_split_partial_fill():
-    """Split with insufficient total liquidity fills what's available."""
+    """Split with insufficient total liquidity fills what's available.
+    Podział z niewystarczającą płynnością wypełnia tyle ile dostępne.
+    """
     router = _make_router()
     # Request 2000 but only 1000 available across all venues
     decision = router.route_order('BUY', 2000, strategy=RoutingStrategy.SPLIT)
@@ -72,7 +86,9 @@ def test_split_partial_fill():
 
 
 def test_no_venues():
-    """No active venues → returns None."""
+    """No active venues → returns None.
+    Brak aktywnych giełd → zwraca None.
+    """
     router = SmartOrderRouter()
     decision = router.route_order('BUY', 100)
     assert decision is None
@@ -81,7 +97,9 @@ def test_no_venues():
 
 
 def test_inactive_venue_skipped():
-    """Inactive venue should be skipped."""
+    """Inactive venue should be skipped.
+    Nieaktywna giełda powinna być pominięta.
+    """
     router = _make_router()
     router.venues['NASDAQ'].is_active = False
     decision = router.route_order('BUY', 100)
@@ -93,7 +111,9 @@ def test_inactive_venue_skipped():
 
 
 def test_fee_tiebreaker():
-    """Equal prices → venue with lower fee wins."""
+    """Equal prices → venue with lower fee wins.
+    Równe ceny → wygrywa giełda z niższą opłatą.
+    """
     router = SmartOrderRouter()
     router.add_venue(Venue(name='A', latency_ns=200, fee_per_share=0.003))
     router.add_venue(Venue(name='B', latency_ns=200, fee_per_share=-0.002))
@@ -106,7 +126,9 @@ def test_fee_tiebreaker():
 
 
 def test_routing_speed():
-    """Routing decision should be fast (<50 microseconds)."""
+    """Routing decision should be fast (<50 microseconds).
+    Decyzja routingu powinna być szybka (<50 mikrosekund).
+    """
     router = _make_router()
     start = time.time_ns()
     for _ in range(1000):
@@ -118,7 +140,9 @@ def test_routing_speed():
 
 
 def test_stats_tracking():
-    """Stats should accurately track routes."""
+    """Stats should accurately track routes.
+    Statystyki powinny dokładnie śledzić trasy.
+    """
     router = _make_router()
     for _ in range(10):
         router.route_order('BUY', 100)
