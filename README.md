@@ -36,9 +36,9 @@ make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency hist
 ```
 
 ## Environment
-- OS: Ubuntu 24.04 LTS Server
-- VM: VirtualBox (2 CPU, 4GB RAM, 25GB disk)
-- Kernel: 6.8.0-107-generic
+- OS: Red Hat Enterprise Linux 10.1 (Coughlan) 
+- VM: VirtualBox (2 CPU, 4GB RAM, 40GB disk)
+- Kernel: 6.12.0-124.8.1.el10_1.x86_64
 - Boot params: isolcpus=1 nohz_full=1 rcu_nocbs=1
 - Hugepages: 512 x 2MB (1GB reserved)
 - Swappiness: 0
