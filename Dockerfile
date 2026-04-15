@@ -4,8 +4,13 @@ LABEL maintainer="Kasper Kanarek"
 LABEL description="HFT Infrastructure Lab — low-latency trading systems"
 
 # Install build tools and Python
+# Zainstaluj narzędzia do kompilacji i Pythona
 RUN microdnf install -y gcc-c++ make python3 python3-pip && \
     microdnf clean all
+
+# Install Python dependencies
+# Zainstaluj zależności Pythona
+RUN pip3 install --no-cache-dir pyyaml
 
 # Set working directory
 WORKDIR /hft-infra-lab
