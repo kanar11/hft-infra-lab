@@ -35,7 +35,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | monitoring/ | Real-time infra monitor with alerts | Python |
 | strategy/ | Mean reversion trading strategy (SMA signals, ~2300ns latency) | Python |
 | simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→OMS→P&L) | Python |
-| tests/ | Unit tests (31) and benchmarks | Python |
+| tests/ | Unit tests (34) and benchmarks | Python |
 | docs/ | Technical write-up on Linux tuning, benchmark charts | Markdown |
 
 ## Quick Start

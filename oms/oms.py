@@ -136,11 +136,16 @@ class OMS:
             pos.total_cost += fill_qty * fill_price
             pos.net_qty += fill_qty
         else:
-            pos.realized_pnl += fill_qty * (fill_price - pos.avg_price) if pos.net_qty > 0 else 0
+            if pos.net_qty > 0:
+                pos.realized_pnl += fill_qty * (fill_price - pos.avg_price)
+                pos.total_cost -= fill_qty * pos.avg_price
             pos.net_qty -= fill_qty
 
-        if pos.net_qty != 0:
-            pos.avg_price = pos.total_cost / abs(pos.net_qty) if pos.net_qty > 0 else pos.avg_price
+        if pos.net_qty > 0:
+            pos.avg_price = pos.total_cost / pos.net_qty
+        elif pos.net_qty == 0:
+            pos.avg_price = 0.0
+            pos.total_cost = 0.0
 
         print(f"  FILL: #{order_id} {fill_qty}@{fill_price} status={order.status.value}")
 

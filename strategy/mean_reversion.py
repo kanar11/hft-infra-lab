@@ -185,8 +185,9 @@ def demo() -> None:
             position += sig.quantity
         else:
             if position > 0:
-                pnl += sig.quantity * (sig.price - avg_entry)
-                position -= sig.quantity
+                sell_qty = min(sig.quantity, position)
+                pnl += sell_qty * (sig.price - avg_entry)
+                position -= sell_qty
 
     print(f"\n  Simulated P&L: ${pnl:,.2f}")
     print(f"  Final position: {position} shares")
