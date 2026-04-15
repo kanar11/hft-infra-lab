@@ -5,9 +5,10 @@ HFT Market Data Simulator — End-to-End Pipeline Demo
 Generates synthetic ITCH market data, parses it through the ITCH parser,
 routes orders through the OMS with risk checks, and tracks P&L.
 
-Pipeline: ITCH Generator → ITCH Parser → OMS (risk checks) → Fill Engine → P&L
+Pipeline: ITCH Generator → ITCH Parser → Strategy (optional) → OMS (risk checks) → Fill Engine → P&L
 
 This proves all modules work together as a complete trading system.
+Use --strategy flag to enable mean reversion strategy.
 """
 import os
 import sys
@@ -19,6 +20,7 @@ from typing import List, Dict, Any, Tuple
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from itch_parser.itch_parser import ITCHMessage
 from oms.oms import OMS, Side
+from strategy.mean_reversion import MeanReversionStrategy
 
 
 # --- Market Data Generator ---
@@ -135,23 +137,26 @@ class MarketDataGenerator:
 
 # --- Pipeline Runner ---
 
-def run_pipeline(num_messages: int = 1000, verbose: bool = False) -> Dict[str, Any]:
-    """Run full pipeline: generate → parse → OMS → stats.
+def run_pipeline(num_messages: int = 1000, use_strategy: bool = False) -> Dict[str, Any]:
+    """Run full pipeline: generate → parse → (strategy) → OMS → stats.
 
     Args:
         num_messages: Number of market data messages to simulate
-        verbose: Print individual message details
+        use_strategy: Enable mean reversion strategy for signal generation
     Returns:
         Dict with pipeline statistics
     """
+    mode = "Strategy Mode (Mean Reversion)" if use_strategy else "Direct Mode (all orders)"
     print(f"=== HFT Market Data Simulator ===")
-    print(f"Pipeline: ITCH Generator → Parser → OMS → P&L")
+    print(f"Pipeline: ITCH Generator → Parser → {'Strategy → ' if use_strategy else ''}OMS → P&L")
+    print(f"Mode: {mode}")
     print(f"Messages: {num_messages:,}\n")
 
     # Initialize components
     generator = MarketDataGenerator()
     parser = ITCHMessage()
     oms = OMS(max_position=10000, max_order_value=1_000_000)
+    strategy = MeanReversionStrategy(window=20, threshold_pct=0.1) if use_strategy else None
 
     # Generate market data
     print("[1/4] Generating ITCH market data stream...")
@@ -179,8 +184,9 @@ def run_pipeline(num_messages: int = 1000, verbose: bool = False) -> Dict[str, A
     for mtype, count in sorted(msg_counts.items()):
         print(f"    {mtype}: {count}")
 
-    # Route through OMS
-    print("\n[3/4] Routing through OMS (risk checks + P&L)...")
+    # Route through OMS (with optional strategy)
+    step = "Strategy → OMS" if strategy else "OMS"
+    print(f"\n[3/4] Routing through {step} (risk checks + P&L)...")
     import io, contextlib
     oms_start = time.time_ns()
     orders_submitted = 0
@@ -189,31 +195,42 @@ def run_pipeline(num_messages: int = 1000, verbose: bool = False) -> Dict[str, A
 
     with contextlib.redirect_stdout(io.StringIO()):
         for msg in parsed:
-            if msg['type'] == 'ADD_ORDER':
-                side = Side.BUY if msg['side'] == 'BUY' else Side.SELL
-                order = oms.submit_order(msg['stock'], side, msg['price'], msg['shares'])
-                if order:
-                    orders_submitted += 1
-                    # Auto-fill for simulation
-                    oms.fill_order(order.order_id, msg['shares'], msg['price'])
-                    orders_filled += 1
-                else:
-                    orders_rejected += 1
-            elif msg['type'] == 'TRADE':
-                side = Side.BUY if msg['side'] == 'BUY' else Side.SELL
-                order = oms.submit_order(msg['stock'], side, msg['price'], msg['shares'])
-                if order:
-                    orders_submitted += 1
-                    oms.fill_order(order.order_id, msg['shares'], msg['price'])
-                    orders_filled += 1
-                else:
-                    orders_rejected += 1
+            price = msg.get('price')
+            stock = msg.get('stock')
+
+            if strategy and stock and price:
+                # Strategy mode: feed price to strategy, only trade on signals
+                signal = strategy.on_market_data(stock, price, msg.get('timestamp_ns', 0))
+                if signal:
+                    side = Side.BUY if signal.side == 'BUY' else Side.SELL
+                    order = oms.submit_order(signal.stock, side, signal.price, signal.quantity)
+                    if order:
+                        orders_submitted += 1
+                        oms.fill_order(order.order_id, signal.quantity, signal.price)
+                        orders_filled += 1
+                    else:
+                        orders_rejected += 1
+            elif not strategy:
+                # Direct mode: route all ADD_ORDER and TRADE through OMS
+                if msg['type'] in ('ADD_ORDER', 'TRADE'):
+                    side = Side.BUY if msg['side'] == 'BUY' else Side.SELL
+                    order = oms.submit_order(stock, side, price, msg['shares'])
+                    if order:
+                        orders_submitted += 1
+                        oms.fill_order(order.order_id, msg['shares'], price)
+                        orders_filled += 1
+                    else:
+                        orders_rejected += 1
 
     oms_elapsed = (time.time_ns() - oms_start) / 1_000_000
     print(f"  Submitted: {orders_submitted:,}")
     print(f"  Filled: {orders_filled:,}")
     print(f"  Rejected (risk): {orders_rejected:,}")
-    print(f"  OMS throughput: {orders_submitted / (oms_elapsed / 1000):,.0f} orders/sec")
+    if oms_elapsed > 0:
+        print(f"  OMS throughput: {orders_submitted / (oms_elapsed / 1000):,.0f} orders/sec")
+
+    if strategy:
+        strategy.print_stats()
 
     # Final stats
     total_elapsed = gen_elapsed + parse_elapsed + oms_elapsed
@@ -241,8 +258,14 @@ def run_pipeline(num_messages: int = 1000, verbose: bool = False) -> Dict[str, A
 
 
 def main() -> None:
-    num = int(sys.argv[1]) if len(sys.argv) > 1 else 10000
-    run_pipeline(num_messages=num)
+    num = 10000
+    use_strategy = False
+    for arg in sys.argv[1:]:
+        if arg == '--strategy':
+            use_strategy = True
+        elif arg.isdigit():
+            num = int(arg)
+    run_pipeline(num_messages=num, use_strategy=use_strategy)
 
 
 if __name__ == '__main__':
