@@ -12,6 +12,11 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
 - DPDK poll mode: **5.6x latency reduction** vs interrupts
 
+## Benchmarks
+
+![Throughput](docs/throughput.png)
+![Latency](docs/latency.png)
+
 ## Modules
 
 | Module | Description | Language |
