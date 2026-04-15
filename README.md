@@ -5,7 +5,7 @@
 Complete low-latency infrastructure lab for HFT systems — kernel tuning, networking, order management, and monitoring.
 
 ## Performance Highlights (Red Hat EL10, VirtualBox 2-core VM)
-- Order book matching: **17.8M orders/sec** (C++, p50=50ns, p99=130ns)
+- Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
 - ITCH parser: **~1M msg/sec** (Python, ~1000ns/msg)
 - OUCH encoding: **1.7M msg/sec** (Python)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
@@ -22,19 +22,19 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | multicast/ | Market data feed sender/receiver with latency | Python |
 | orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
 | fix-protocol/ | FIX 4.2 message parser | Python |
-| itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser | Python |
+| itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser (8 message types) | Python |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol | Python |
 | dpdk-bypass/ | Kernel bypass simulator with poll mode driver | Python |
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
 | oms/ | Order Management System with risk checks, P&L | Python |
 | monitoring/ | Real-time infra monitor with alerts | Python |
-| tests/ | Unit tests (26) and benchmarks | Python |
+| tests/ | Unit tests (31) and benchmarks | Python |
 | docs/ | Technical write-up on Linux tuning | Markdown |
 
 ## Quick Start
 ```bash
 make build      # compile all C++ modules (orderbook, lockfree, cache_latency)
-make test       # run all unit tests (26/26: OMS, ITCH, OUCH, FIX)
+make test       # run all unit tests (31/31: OMS, ITCH, OUCH, FIX)
 make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency histogram)
 ```
 

@@ -2,18 +2,23 @@ import time
 import os
 import json
 from datetime import datetime
+from typing import Dict, List, Any, Optional
+
 
 class InfraMonitor:
-    def __init__(self, alert_thresholds=None):
+    """Real-time HFT infrastructure monitor reading directly from /proc."""
+
+    def __init__(self, alert_thresholds: Optional[Dict[str, float]] = None) -> None:
         self.thresholds = alert_thresholds or {
             'cpu_percent': 90.0,
             'mem_percent': 85.0,
             'context_switches_per_sec': 50000,
             'interrupts_on_isolated_cpu': 100
         }
-        self.metrics_log = []
+        self.metrics_log: List[Dict[str, Any]] = []
 
-    def get_cpu_stats(self):
+    def get_cpu_stats(self) -> Dict[str, int]:
+        """Read CPU idle/total jiffies from /proc/stat."""
         with open('/proc/stat') as f:
             line = f.readline()
             parts = line.split()
@@ -21,8 +26,9 @@ class InfraMonitor:
             total = sum(int(p) for p in parts[1:])
             return {'idle': idle, 'total': total}
 
-    def get_memory(self):
-        info = {}
+    def get_memory(self) -> Dict[str, Any]:
+        """Read memory usage and hugepages from /proc/meminfo."""
+        info: Dict[str, int] = {}
         with open('/proc/meminfo') as f:
             for line in f:
                 parts = line.split()
@@ -39,15 +45,17 @@ class InfraMonitor:
             'hugepages_used': hugepages_total - hugepages_free
         }
 
-    def get_context_switches(self):
+    def get_context_switches(self) -> int:
+        """Read total context switch count from /proc/stat."""
         with open('/proc/stat') as f:
             for line in f:
                 if line.startswith('ctxt'):
                     return int(line.split()[1])
         return 0
 
-    def get_interrupts_per_cpu(self):
-        counts = {}
+    def get_interrupts_per_cpu(self) -> Dict[str, int]:
+        """Read per-CPU interrupt counts from /proc/interrupts."""
+        counts: Dict[str, int] = {}
         with open('/proc/interrupts') as f:
             header = f.readline().split()
             num_cpus = len(header)
@@ -59,7 +67,8 @@ class InfraMonitor:
                         counts[cpu] = counts.get(cpu, 0) + int(parts[i + 1])
         return counts
 
-    def get_network_stats(self):
+    def get_network_stats(self) -> Dict[str, Any]:
+        """Read network counters from /proc/net/dev (auto-detects interface)."""
         with open('/proc/net/dev') as f:
             f.readline()
             f.readline()
@@ -76,7 +85,8 @@ class InfraMonitor:
                     }
         return {}
 
-    def check_isolated_cpu(self):
+    def check_isolated_cpu(self) -> str:
+        """Read isolated CPU list from sysfs. Returns empty string if not configured."""
         try:
             with open('/sys/devices/system/cpu/isolated') as f:
                 isolated = f.read().strip()
@@ -84,7 +94,8 @@ class InfraMonitor:
         except FileNotFoundError:
             return ''
 
-    def collect_metrics(self):
+    def collect_metrics(self) -> Dict[str, Any]:
+        """Collect all infrastructure metrics in a single snapshot."""
         return {
             'timestamp': datetime.now().isoformat(),
             'memory': self.get_memory(),
@@ -94,8 +105,9 @@ class InfraMonitor:
             'isolated_cpus': self.check_isolated_cpu()
         }
 
-    def check_alerts(self, metrics):
-        alerts = []
+    def check_alerts(self, metrics: Dict[str, Any]) -> List[str]:
+        """Check metrics against thresholds and return alert messages."""
+        alerts: List[str] = []
         mem = metrics['memory']['used_percent']
         if mem > self.thresholds['mem_percent']:
             alerts.append(f"ALERT: Memory {mem}% > {self.thresholds['mem_percent']}%")
@@ -103,11 +115,11 @@ class InfraMonitor:
         iso_cpu = metrics['isolated_cpus']
         if iso_cpu:
             # Parse CPU ranges like "1", "1-3", "1,3"
-            cpu_ids = []
+            cpu_ids: List[int] = []
             for part in iso_cpu.split(','):
                 if '-' in part:
-                    start, end = part.split('-', 1)
-                    cpu_ids.extend(range(int(start), int(end) + 1))
+                    start_cpu, end_cpu = part.split('-', 1)
+                    cpu_ids.extend(range(int(start_cpu), int(end_cpu) + 1))
                 else:
                     cpu_ids.append(int(part))
             for cpu_id in cpu_ids:
@@ -118,7 +130,12 @@ class InfraMonitor:
 
         return alerts
 
-    def run(self, duration=30, interval=5):
+    def run(self, duration: int = 30, interval: int = 5) -> None:
+        """Run the monitor loop for a given duration.
+        Args:
+            duration: Total monitoring time in seconds
+            interval: Sampling interval in seconds
+        """
         print("=== HFT Infrastructure Monitor ===")
         print(f"Monitoring for {duration}s, interval {interval}s\n")
 

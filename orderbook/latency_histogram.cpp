@@ -11,26 +11,31 @@
 #include <algorithm>
 #include <cstdint>
 
+// Fixed-point price: stored as integer ticks (1 tick = 0.01)
+using Price = std::int64_t;
+
 struct Order {
     int id;
-    double price;
+    Price price;
     int quantity;
     bool is_buy;
 };
 
 class OrderBook {
-    std::map<double, int, std::greater<double>> bids;
-    std::map<double, int> asks;
+    // NOTE: std::map allocates per-node on insert (not ideal for HFT).
+    // Production systems use pre-allocated flat arrays indexed by price level.
+    std::map<Price, int, std::greater<Price>> bids;
+    std::map<Price, int> asks;
     std::uint64_t trades = 0;
 
 public:
-    void add_order(const Order& o) {
+    void add_order(const Order& o) noexcept {
         if (o.is_buy) bids[o.price] += o.quantity;
         else          asks[o.price] += o.quantity;
         try_match();
     }
 
-    void try_match() {
+    void try_match() noexcept {
         while (!bids.empty() && !asks.empty()) {
             auto bb = bids.begin();
             auto ba = asks.begin();
@@ -45,8 +50,8 @@ public:
         }
     }
 
-    std::uint64_t get_trades() const { return trades; }
-    std::size_t depth() const { return bids.size() + asks.size(); }
+    std::uint64_t get_trades() const noexcept { return trades; }
+    std::size_t depth() const noexcept { return bids.size() + asks.size(); }
 };
 
 static double percentile(std::vector<std::uint64_t>& v, double p) {
@@ -60,17 +65,15 @@ int main(int argc, char** argv) {
     const int N = (argc > 1) ? std::atoi(argv[1]) : 1'000'000;
 
     std::mt19937 rng(42);
-    std::uniform_real_distribution<double> price_dist(99.0, 101.0);
-    std::uniform_int_distribution<int>     qty_dist(1, 100);
-    std::uniform_int_distribution<int>     side_dist(0, 1);
+    // Price range 99.00-101.00 in ticks (9900-10100)
+    std::uniform_int_distribution<Price> price_dist(9900, 10100);
+    std::uniform_int_distribution<int>   qty_dist(1, 100);
+    std::uniform_int_distribution<int>   side_dist(0, 1);
 
     std::vector<Order> orders;
     orders.reserve(N);
     for (int i = 0; i < N; i++) {
-        orders.push_back({i,
-            std::round(price_dist(rng) * 100) / 100,
-            qty_dist(rng),
-            side_dist(rng) == 1});
+        orders.push_back({i, price_dist(rng), qty_dist(rng), side_dist(rng) == 1});
     }
 
     OrderBook book;

@@ -43,6 +43,58 @@ def test_parse_trade():
     assert result['match_number'] == 5001
     print("  PASS: test_parse_trade")
 
+def test_parse_replace_order():
+    msg = struct.pack('!c q q q I I',
+        b'U', 5000000, 1002, 1003, 50, 3810000)
+    parser = ITCHMessage()
+    result = parser.parse(msg)
+    assert result['type'] == 'REPLACE_ORDER'
+    assert result['orig_order_ref'] == 1002
+    assert result['new_order_ref'] == 1003
+    assert result['shares'] == 50
+    assert result['price'] == 381.0
+    print("  PASS: test_parse_replace_order")
+
+def test_parse_order_executed():
+    msg = struct.pack('!c q q I q',
+        b'E', 6000000, 1001, 100, 5001)
+    parser = ITCHMessage()
+    result = parser.parse(msg)
+    assert result['type'] == 'ORDER_EXECUTED'
+    assert result['order_ref'] == 1001
+    assert result['shares'] == 100
+    assert result['match_number'] == 5001
+    print("  PASS: test_parse_order_executed")
+
+def test_parse_order_cancelled():
+    msg = struct.pack('!c q q I',
+        b'C', 7000000, 1002, 25)
+    parser = ITCHMessage()
+    result = parser.parse(msg)
+    assert result['type'] == 'ORDER_CANCELLED'
+    assert result['order_ref'] == 1002
+    assert result['cancelled_shares'] == 25
+    print("  PASS: test_parse_order_cancelled")
+
+def test_parse_system_event():
+    msg = struct.pack('!c q c',
+        b'S', 8000000, b'Q')
+    parser = ITCHMessage()
+    result = parser.parse(msg)
+    assert result['type'] == 'SYSTEM_EVENT'
+    assert result['event_code'] == 'START_OF_MARKET_HOURS'
+    print("  PASS: test_parse_system_event")
+
+def test_parse_stock_directory():
+    msg = struct.pack('!c q 8s c',
+        b'R', 9000000, b'AAPL    ', b'Q')
+    parser = ITCHMessage()
+    result = parser.parse(msg)
+    assert result['type'] == 'STOCK_DIRECTORY'
+    assert result['stock'] == 'AAPL'
+    assert result['market_category'] == 'Q'
+    print("  PASS: test_parse_stock_directory")
+
 def test_parse_speed():
     msg = struct.pack('!c q q c I 8s I',
         b'A', 1000000, 1001, b'B', 100, b'AAPL    ', 1502500)
@@ -58,6 +110,11 @@ if __name__ == '__main__':
         test_parse_sell_order,
         test_parse_delete,
         test_parse_trade,
+        test_parse_replace_order,
+        test_parse_order_executed,
+        test_parse_order_cancelled,
+        test_parse_system_event,
+        test_parse_stock_directory,
         test_parse_speed,
     ]
     passed = 0

@@ -1,6 +1,8 @@
 import time
 from enum import Enum
 from dataclasses import dataclass, field
+from typing import Dict, Optional
+
 
 class OrderStatus(Enum):
     NEW = "NEW"
@@ -10,9 +12,11 @@ class OrderStatus(Enum):
     CANCELLED = "CANCELLED"
     REJECTED = "REJECTED"
 
+
 class Side(Enum):
     BUY = "BUY"
     SELL = "SELL"
+
 
 @dataclass
 class Order:
@@ -27,6 +31,7 @@ class Order:
     sent_ns: int = 0
     filled_ns: int = 0
 
+
 @dataclass
 class Position:
     symbol: str
@@ -35,16 +40,28 @@ class Position:
     realized_pnl: float = 0.0
     total_cost: float = 0.0
 
-class OMS:
-    def __init__(self, max_position=1000, max_order_value=100000):
-        self.orders = {}
-        self.positions = {}
-        self.next_id = 1
-        self.max_position = max_position
-        self.max_order_value = max_order_value
 
-    def submit_order(self, symbol, side, price, quantity):
-        """Submit new order with pre-trade risk checks"""
+class OMS:
+    """Order Management System with pre-trade risk checks and P&L tracking."""
+
+    def __init__(self, max_position: int = 1000, max_order_value: float = 100000) -> None:
+        self.orders: Dict[int, Order] = {}
+        self.positions: Dict[str, Position] = {}
+        self.next_id: int = 1
+        self.max_position: int = max_position
+        self.max_order_value: float = max_order_value
+
+    def submit_order(self, symbol: str, side: Side, price: float,
+                     quantity: int) -> Optional[Order]:
+        """Submit new order with pre-trade risk checks.
+        Args:
+            symbol: Instrument symbol (e.g., 'AAPL')
+            side: Side.BUY or Side.SELL
+            price: Order price (must be positive, non-NaN)
+            quantity: Number of shares (must be positive int)
+        Returns:
+            Order object if accepted, None if rejected
+        """
         start = time.time_ns()
 
         # Input validation
@@ -92,8 +109,13 @@ class OMS:
         print(f"  ORDER #{order.order_id}: {side.value} {quantity} {symbol} @ {price} [{latency:.1f}us]")
         return order
 
-    def fill_order(self, order_id, fill_qty, fill_price):
-        """Process execution report"""
+    def fill_order(self, order_id: int, fill_qty: int, fill_price: float) -> None:
+        """Process execution report (fill).
+        Args:
+            order_id: ID of the order being filled
+            fill_qty: Number of shares filled
+            fill_price: Execution price
+        """
         order = self.orders.get(order_id)
         if not order:
             return
@@ -122,24 +144,27 @@ class OMS:
 
         print(f"  FILL: #{order_id} {fill_qty}@{fill_price} status={order.status.value}")
 
-    def cancel_order(self, order_id):
+    def cancel_order(self, order_id: int) -> None:
+        """Cancel an active or partially filled order."""
         order = self.orders.get(order_id)
         if order and order.status in (OrderStatus.SENT, OrderStatus.PARTIALLY_FILLED):
             order.status = OrderStatus.CANCELLED
             print(f"  CANCEL: #{order_id}")
 
-    def print_positions(self):
+    def print_positions(self) -> None:
+        """Print current positions and realized P&L."""
         print("\n=== POSITIONS ===")
         for sym, pos in self.positions.items():
             print(f"  {sym}: qty={pos.net_qty} avg={pos.avg_price:.2f} realized_pnl=${pos.realized_pnl:.2f}")
 
-    def print_orders(self):
+    def print_orders(self) -> None:
+        """Print all orders and their status."""
         print("\n=== ORDERS ===")
         for oid, order in self.orders.items():
             print(f"  #{oid}: {order.side.value} {order.quantity} {order.symbol} @ {order.price} [{order.status.value}] filled={order.filled_qty}")
 
 
-def main():
+def main() -> None:
     print("=== HFT Order Management System ===\n")
     oms = OMS(max_position=500, max_order_value=50000)
 
@@ -167,6 +192,7 @@ def main():
 
     oms.print_orders()
     oms.print_positions()
+
 
 if __name__ == '__main__':
     main()

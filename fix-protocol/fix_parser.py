@@ -1,11 +1,20 @@
 import time
+from typing import Dict, Optional
+
 
 class FIXMessage:
-    def __init__(self):
-        self.fields = {}
-    
-    def parse(self, raw_msg):
-        """Parse FIX message from raw string"""
+    """FIX 4.2 protocol message parser."""
+
+    def __init__(self) -> None:
+        self.fields: Dict[int, str] = {}
+
+    def parse(self, raw_msg: str) -> int:
+        """Parse FIX message from pipe-delimited string.
+        Args:
+            raw_msg: Raw FIX message (e.g., '8=FIX.4.2|35=D|55=AAPL|...')
+        Returns:
+            Parse time in nanoseconds
+        """
         start = time.time_ns()
         pairs = raw_msg.split('|')
         for pair in pairs:
@@ -20,24 +29,29 @@ class FIXMessage:
                 self.fields[tag_num] = value
         elapsed = time.time_ns() - start
         return elapsed
-    
-    def get_msg_type(self):
+
+    def get_msg_type(self) -> str:
+        """Return message type (tag 35): D=NewOrder, G=Modify, F=Cancel, 8=Execution."""
         return self.fields.get(35, 'UNKNOWN')
-    
-    def get_symbol(self):
+
+    def get_symbol(self) -> str:
+        """Return instrument symbol (tag 55)."""
         return self.fields.get(55, 'UNKNOWN')
-    
-    def get_side(self):
+
+    def get_side(self) -> str:
+        """Return order side (tag 54): 1=BUY, 2=SELL."""
         side = self.fields.get(54, '0')
         return 'BUY' if side == '1' else 'SELL'
-    
-    def get_price(self):
+
+    def get_price(self) -> float:
+        """Return order price (tag 44)."""
         return float(self.fields.get(44, 0))
-    
-    def get_quantity(self):
+
+    def get_quantity(self) -> int:
+        """Return order quantity (tag 38)."""
         return int(self.fields.get(38, 0))
-    
-    def __str__(self):
+
+    def __str__(self) -> str:
         msg_type = self.get_msg_type()
         types = {'D': 'NEW ORDER', 'G': 'MODIFY', 'F': 'CANCEL',
                  '8': 'EXECUTION', '0': 'HEARTBEAT'}
@@ -62,7 +76,7 @@ sample_messages = [
 ]
 
 
-def main():
+def main() -> None:
     print("=== FIX Protocol Parser ===\n")
     total_ns = 0
     for raw in sample_messages:
