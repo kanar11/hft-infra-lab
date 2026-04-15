@@ -40,11 +40,14 @@ class KernelBypassSimulator:
             try:
                 data, addr = sock.recvfrom(2048)
                 recv_time = time.time_ns()
-                
+
                 # Parse timestamp from packet
-                msg = data.decode()
-                parts = dict(p.split('=') for p in msg.split())
-                send_time = int(parts.get('TS', recv_time))
+                try:
+                    msg = data.decode('utf-8', errors='replace')
+                    parts = dict(p.split('=', 1) for p in msg.split() if '=' in p)
+                    send_time = int(parts.get('TS', recv_time))
+                except (ValueError, UnicodeDecodeError):
+                    continue
                 
                 latency = (recv_time - send_time) / 1000  # microseconds
                 self.packets_processed += 1

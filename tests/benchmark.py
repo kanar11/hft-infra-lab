@@ -24,14 +24,16 @@ def benchmark_itch(iterations=100000):
     print(f"  {throughput:,.0f} msg/sec\n")
 
 def benchmark_oms(iterations=50000):
+    import io, contextlib
     oms = OMS(max_position=10_000_000, max_order_value=10_000_000)
-    
+
     start = time.time_ns()
-    for i in range(iterations):
-        side = Side.BUY if i % 2 == 0 else Side.SELL
-        order = oms.submit_order("AAPL", side, 150.00, 1)
-        if order:
-            oms.fill_order(order.order_id, 1, 150.00)
+    with contextlib.redirect_stdout(io.StringIO()):
+        for i in range(iterations):
+            side = Side.BUY if i % 2 == 0 else Side.SELL
+            order = oms.submit_order("AAPL", side, 150.00, 1)
+            if order:
+                oms.fill_order(order.order_id, 1, 150.00)
     elapsed = time.time_ns() - start
     
     per_order = elapsed / iterations

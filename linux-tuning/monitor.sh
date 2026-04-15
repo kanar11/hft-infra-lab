@@ -43,8 +43,8 @@ while true; do
 
     MEM=$(free -m | awk 'NR==2{printf "Used: %sMB / Total: %sMB (%.0f%%)", $3,$2,$3*100/$2}')
 
-    # Network IRQs — match common interface names
-    NET_IRQ=$(awk '/eth0|ens|enp/ {sum=0; for(i=2;i<=NF-3;i++) sum+=$i; print sum}' /proc/interrupts)
+    # Network IRQs — match common interface names, sum all matching lines
+    NET_IRQ=$(awk '/eth|ens|enp/ {for(i=2;i<=NF-3;i++) sum+=$i} END{print sum+0}' /proc/interrupts)
 
     # Context switches delta
     CTX=$(awk '/^ctxt/ {print $2}' /proc/stat)
