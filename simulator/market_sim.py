@@ -6,6 +6,7 @@ Generates synthetic ITCH market data, parses it through the ITCH parser,
 routes orders through the OMS with risk checks, and tracks P&L.
 
 Pipeline: ITCH Generator → ITCH Parser → Strategy (optional) → Router (optional) → OMS (risk checks) → Fill Engine → P&L
+Potok: Generator ITCH → Parser ITCH → Strategia (opcjonalnie) → Router (opcjonalnie) → OMS (sprawdzenia ryzyka) → Silnik Realizacji → P&L
 
 This proves all modules work together as a complete trading system.
 Use --strategy flag to enable mean reversion strategy.
@@ -26,9 +27,11 @@ from router.smart_router import SmartOrderRouter, RoutingStrategy, Venue
 
 
 # --- Market Data Generator ---
+# --- Generator Danych Rynkowych ---
 
 class MarketDataGenerator:
-    """Generates realistic ITCH 5.0 binary messages for simulation."""
+    """Generates realistic ITCH 5.0 binary messages for simulation.
+    Generuje realistyczne binarne wiadomości ITCH 5.0 do symulacji."""
 
     STOCKS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'JPM']
     BASE_PRICES = {
@@ -43,12 +46,14 @@ class MarketDataGenerator:
         self.active_orders: Dict[int, Dict[str, Any]] = {}
 
     def _next_ts(self) -> int:
-        """Generate incrementing nanosecond timestamp."""
+        """Generate incrementing nanosecond timestamp.
+        Generuj inkrementacyjny znacznik czasu w nanosekundach."""
         self.seq += 1
         return 34200_000_000_000 + self.seq * 1_000_000  # 9:30 AM + seq ms
 
     def generate_add_order(self) -> bytes:
-        """Generate a random Add Order (A) message."""
+        """Generate a random Add Order (A) message.
+        Generuj losową wiadomość Dodaj Zlecenie (A)."""
         stock = self.rng.choice(self.STOCKS)
         base = self.BASE_PRICES[stock]
         price = round(base + self.rng.uniform(-2.0, 2.0), 2)
@@ -67,7 +72,8 @@ class MarketDataGenerator:
             stock.encode().ljust(8), int(price * 10000))
 
     def generate_execute(self) -> bytes:
-        """Generate Order Executed (E) message for a random active order."""
+        """Generate Order Executed (E) message for a random active order.
+        Generuj wiadomość Zlecenie Wykonane (E) dla losowego aktywnego zlecenia."""
         if not self.active_orders:
             return self.generate_add_order()
         ref = self.rng.choice(list(self.active_orders.keys()))
@@ -83,7 +89,8 @@ class MarketDataGenerator:
             b'E', self._next_ts(), ref, exec_shares, match_num)
 
     def generate_cancel(self) -> bytes:
-        """Generate Order Cancelled (C) message."""
+        """Generate Order Cancelled (C) message.
+        Generuj wiadomość Zlecenie Anulowane (C)."""
         if not self.active_orders:
             return self.generate_add_order()
         ref = self.rng.choice(list(self.active_orders.keys()))
@@ -93,7 +100,8 @@ class MarketDataGenerator:
             b'C', self._next_ts(), ref, order['shares'])
 
     def generate_trade(self) -> bytes:
-        """Generate Trade (P) message."""
+        """Generate Trade (P) message.
+        Generuj wiadomość Handel (P)."""
         stock = self.rng.choice(self.STOCKS)
         base = self.BASE_PRICES[stock]
         price = round(base + self.rng.uniform(-1.0, 1.0), 2)
@@ -106,14 +114,17 @@ class MarketDataGenerator:
             stock.encode().ljust(8), int(price * 10000), match_num)
 
     def generate_system_event(self, event: bytes = b'Q') -> bytes:
-        """Generate System Event (S) message."""
+        """Generate System Event (S) message.
+        Generuj wiadomość Zdarzenie Systemowe (S)."""
         return struct.pack('!c q c', b'S', self._next_ts(), event)
 
     def generate_stream(self, num_messages: int = 1000) -> List[bytes]:
-        """Generate a realistic stream of mixed ITCH messages."""
+        """Generate a realistic stream of mixed ITCH messages.
+        Generuj realistyczny strumień mieszanych wiadomości ITCH."""
         messages = []
 
         # Start of day
+        # Początek dnia
         messages.append(self.generate_system_event(b'O'))  # start of messages
         messages.append(self.generate_system_event(b'S'))  # start of system hours
         messages.append(self.generate_system_event(b'Q'))  # start of market hours
@@ -130,6 +141,7 @@ class MarketDataGenerator:
                 messages.append(self.generate_cancel())
 
         # End of day
+        # Koniec dnia
         messages.append(self.generate_system_event(b'M'))  # end of market hours
         messages.append(self.generate_system_event(b'E'))  # end of system hours
         messages.append(self.generate_system_event(b'C'))  # end of messages
@@ -138,10 +150,12 @@ class MarketDataGenerator:
 
 
 # --- Pipeline Runner ---
+# --- Uruchamiacz Potoku ---
 
 def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
                   use_router: bool = False) -> Dict[str, Any]:
     """Run full pipeline: generate → parse → (strategy) → (router) → OMS → stats.
+    Uruchom pełny potok: generuj → przeanalizuj → (strategia) → (router) → OMS → statystyki.
 
     Args:
         num_messages: Number of market data messages to simulate
@@ -168,6 +182,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
     print(f"Messages: {num_messages:,}\n")
 
     # Initialize components
+    # Zainicjalizuj komponenty
     generator = MarketDataGenerator()
     parser = ITCHMessage()
     oms = OMS(max_position=10000, max_order_value=1_000_000)
@@ -180,6 +195,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
         router.add_venue(Venue(name='BATS', latency_ns=150, fee_per_share=-0.001))
 
     # Generate market data
+    # Generuj dane rynkowe
     print("[1/4] Generating ITCH market data stream...")
     gen_start = time.time_ns()
     messages = generator.generate_stream(num_messages)
@@ -188,6 +204,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
     print(f"  Active orders at close: {len(generator.active_orders)}")
 
     # Parse all messages
+    # Przeanalizuj wszystkie wiadomości
     print("\n[2/4] Parsing ITCH messages...")
     parse_start = time.time_ns()
     parsed = []
@@ -206,6 +223,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
         print(f"    {mtype}: {count}")
 
     # Route through OMS (with optional strategy and router)
+    # Trasuj przez OMS (z opcjonalną strategią i routerem)
     steps = ' → '.join(filter(None, [
         'Strategy' if strategy else None,
         'Router' if router else None,
@@ -224,6 +242,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
             stock = msg.get('stock')
 
             # Update router quotes from market data
+            # Zaktualizuj notowania routera z danych rynkowych
             if router and stock and price:
                 spread = price * 0.0002  # 0.02% spread
                 for venue_name in ['NYSE', 'NASDAQ', 'BATS']:
@@ -233,6 +252,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
 
             if strategy and stock and price:
                 # Strategy mode: feed price to strategy, only trade on signals
+                # Tryb strategii: podaj cenę strategii, handluj tylko na sygnałach
                 signal = strategy.on_market_data(stock, price, msg.get('timestamp_ns', 0))
                 if signal:
                     side_str = signal.side
@@ -252,6 +272,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
                         orders_rejected += 1
             elif not strategy:
                 # Direct mode: route all ADD_ORDER and TRADE through OMS
+                # Tryb bezpośredni: trasuj wszystkie ADD_ORDER i TRADE przez OMS
                 if msg['type'] in ('ADD_ORDER', 'TRADE'):
                     side_str = msg['side']
                     fill_price = price
@@ -281,6 +302,7 @@ def run_pipeline(num_messages: int = 1000, use_strategy: bool = False,
         router.print_stats()
 
     # Final stats
+    # Statystyki końcowe
     total_elapsed = gen_elapsed + parse_elapsed + oms_elapsed
     print(f"\n[4/4] Pipeline Summary")
     print(f"  Total time: {total_elapsed:.1f}ms")

@@ -4,6 +4,8 @@ Multicast Latency Measurement Receiver
 
 Receives multicast market data and measures end-to-end latency
 by comparing send and receive timestamps for each message.
+Odbiera dane rynkowe multicast i mierzy opóźnienie end-to-end
+porównując znaczniki czasowe wysyłania i odboru dla każdej wiadomości.
 """
 import socket
 import struct
@@ -14,7 +16,9 @@ MCAST_PORT = 5001
 
 
 def main() -> None:
-    """Join multicast group and measure per-message latency."""
+    """Join multicast group and measure per-message latency.
+    Dołącza do grupy multicast i mierzy opóźnienie na wiadomość.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('', MCAST_PORT))

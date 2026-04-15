@@ -7,33 +7,45 @@
 template<typename T, size_t SIZE>
 class SPSCQueue {
     // Single Producer Single Consumer lock-free queue
+    // Bezblokująca kolejka producenta pojedynczego konsumenta
     // Used in HFT between market data thread and trading thread
+    // Używana w HFT między wątkiem danych rynkowych a wątkiem handlu
 
     static_assert((SIZE & (SIZE - 1)) == 0, "SIZE must be power of 2");
 
     T buffer[SIZE];
     alignas(64) std::atomic<size_t> head{0};  // producer writes here
+    // producent pisze tutaj
     alignas(64) std::atomic<size_t> tail{0};  // consumer reads here
+    // konsument czyta tutaj
     // alignas(64) prevents false sharing between CPU cache lines
+    // alignas(64) zapobiega fałszywemu udostępnianiu między liniami cache'u procesora
 
 public:
+    // Push item to queue
+    // Wstaw element do kolejki
     bool push(const T& item) {
         size_t h = head.load(std::memory_order_relaxed);
         size_t next = (h + 1) & (SIZE - 1);  // bitwise AND instead of modulo
+        // bitowe AND zamiast modulo
 
         if (next == tail.load(std::memory_order_acquire))
             return false;  // queue full
+        // kolejka pełna
 
         buffer[h] = item;
         head.store(next, std::memory_order_release);
         return true;
     }
 
+    // Pop item from queue
+    // Usuń element z kolejki
     bool pop(T& item) {
         size_t t = tail.load(std::memory_order_relaxed);
 
         if (t == head.load(std::memory_order_acquire))
             return false;  // queue empty
+        // kolejka pusta
 
         item = buffer[t];
         tail.store((t + 1) & (SIZE - 1), std::memory_order_release);
@@ -52,6 +64,8 @@ struct MarketData {
     long long timestamp_ns;
 };
 
+// Benchmark queue throughput with producer-consumer pattern
+// Benchmark przepustowości kolejki w schemacie producent-konsument
 void benchmark_throughput() {
     SPSCQueue<MarketData, 65536> queue;
     const int NUM_MESSAGES = 10000000;
@@ -60,6 +74,7 @@ void benchmark_throughput() {
     int received = 0;
 
     // Consumer thread (trading logic)
+    // Wątek konsumenta (logika handlu)
     auto consumer = std::thread([&]() {
         MarketData msg;
         while (!done || queue.size() > 0) {
@@ -72,6 +87,7 @@ void benchmark_throughput() {
     });
 
     // Producer thread (market data)
+    // Wątek producenta (dane rynkowe)
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < NUM_MESSAGES; i++) {
@@ -82,6 +98,7 @@ void benchmark_throughput() {
             std::chrono::high_resolution_clock::now().time_since_epoch().count()
         };
         while (!queue.push(msg)) {}  // spin until space available
+        // obracaj się aż do dostępu miejsca
     }
 
     done = true;
@@ -107,11 +124,14 @@ void benchmark_throughput() {
     std::cout << "Cache lines:  head and tail on separate 64-byte lines (no false sharing)" << std::endl;
 }
 
+// Demonstrate basic queue operations
+// Zademonstruj podstawowe operacje kolejki
 void demo() {
     std::cout << "=== SPSC Queue Demo ===" << std::endl;
     SPSCQueue<MarketData, 1024> queue;
 
     // Simulate market data producer
+    // Symuluj producenta danych rynkowych
     for (int i = 0; i < 5; i++) {
         MarketData msg{i, 150.25 + i * 0.01, 100, 0};
         queue.push(msg);
@@ -121,6 +141,7 @@ void demo() {
     std::cout << "  Queue size: " << queue.size() << std::endl;
 
     // Simulate trading logic consumer
+    // Symuluj konsumenta logiki handlu
     MarketData msg;
     while (queue.pop(msg)) {
         std::cout << "  POP:  seq=" << msg.seq << " price=" << msg.price << std::endl;

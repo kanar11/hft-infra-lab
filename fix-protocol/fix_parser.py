@@ -4,19 +4,24 @@ FIX 4.2 Protocol Parser
 
 Parses Financial Information eXchange (FIX) 4.2 messages used for
 electronic trading communication between brokers and exchanges.
+Analizuje wiadomości Financial Information eXchange (FIX) 4.2 używane do
+elektronicznej komunikacji handlowej pomiędzy brokerami i giełdami.
 """
 import time
 from typing import Dict, Optional
 
 
 class FIXMessage:
-    """FIX 4.2 protocol message parser."""
+    """FIX 4.2 protocol message parser.
+    Analizator wiadomości protokołu FIX 4.2.
+    """
 
     def __init__(self) -> None:
         self.fields: Dict[int, str] = {}
 
     def parse(self, raw_msg: str) -> int:
         """Parse FIX message from pipe-delimited string.
+        Analizuje wiadomość FIX z ciągu ograniczonego znakami potoku.
         Args:
             raw_msg: Raw FIX message (e.g., '8=FIX.4.2|35=D|55=AAPL|...')
         Returns:
@@ -30,32 +35,42 @@ class FIXMessage:
                 try:
                     tag_num = int(tag)
                 except ValueError:
-                    continue  # skip malformed tags
+                    continue  # skip malformed tags (pomiń zniekształcone znaczniki)
                 if tag_num <= 0:
-                    continue  # FIX tags are positive integers
+                    continue  # FIX tags are positive integers (znaczniki FIX to dodatnie liczby całkowite)
                 self.fields[tag_num] = value
         elapsed = time.time_ns() - start
         return elapsed
 
     def get_msg_type(self) -> str:
-        """Return message type (tag 35): D=NewOrder, G=Modify, F=Cancel, 8=Execution."""
+        """Return message type (tag 35): D=NewOrder, G=Modify, F=Cancel, 8=Execution.
+        Zwraca typ wiadomości (znacznik 35): D=NewOrder, G=Modify, F=Cancel, 8=Execution.
+        """
         return self.fields.get(35, 'UNKNOWN')
 
     def get_symbol(self) -> str:
-        """Return instrument symbol (tag 55)."""
+        """Return instrument symbol (tag 55).
+        Zwraca symbol instrumentu (znacznik 55).
+        """
         return self.fields.get(55, 'UNKNOWN')
 
     def get_side(self) -> str:
-        """Return order side (tag 54): 1=BUY, 2=SELL."""
+        """Return order side (tag 54): 1=BUY, 2=SELL.
+        Zwraca stronę zlecenia (znacznik 54): 1=BUY, 2=SELL.
+        """
         side = self.fields.get(54, '0')
         return 'BUY' if side == '1' else 'SELL'
 
     def get_price(self) -> float:
-        """Return order price (tag 44)."""
+        """Return order price (tag 44).
+        Zwraca cenę zlecenia (znacznik 44).
+        """
         return float(self.fields.get(44, 0))
 
     def get_quantity(self) -> int:
-        """Return order quantity (tag 38)."""
+        """Return order quantity (tag 38).
+        Zwraca ilość zlecenia (znacznik 38).
+        """
         return int(self.fields.get(38, 0))
 
     def __str__(self) -> str:

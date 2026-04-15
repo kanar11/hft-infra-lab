@@ -4,6 +4,8 @@ Multicast Market Data Feed Sender
 
 Sends timestamped market data messages over UDP multicast,
 simulating a real exchange market data feed.
+Wysyła oznaczone czasem wiadomości danych rynkowych przez multicast UDP,
+symulując rzeczywisty kanał danych rynkowych giełdy.
 """
 import socket
 import time
@@ -13,7 +15,9 @@ MCAST_PORT = 5001
 
 
 def main() -> None:
-    """Send multicast market data in a loop until interrupted."""
+    """Send multicast market data in a loop until interrupted.
+    Wysyła dane rynkowe multicast w pętli do przerwania.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 

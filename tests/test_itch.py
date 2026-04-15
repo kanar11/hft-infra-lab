@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Unit tests for ITCH 5.0 protocol parser."""
+"""
+Unit tests for ITCH 5.0 protocol parser.
+Testy jednostkowe dla parsera protokołu ITCH 5.0.
+"""
 import os
 import sys
 import struct
@@ -7,6 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from itch_parser.itch_parser import ITCHMessage
 
 def test_parse_add_order():
+    """Test parsing of ITCH add order messages."""
+    """Testuje analizę wiadomości ITCH dodania zlecenia."""
     msg = struct.pack('!c q q c I 8s I',
         b'A', 1000000, 1001, b'B', 100, b'AAPL    ', 1502500)
     parser = ITCHMessage()
@@ -19,6 +24,8 @@ def test_parse_add_order():
     print("  PASS: test_parse_add_order")
 
 def test_parse_sell_order():
+    """Test parsing of ITCH sell order messages."""
+    """Testuje analizę wiadomości ITCH sprzedaży."""
     msg = struct.pack('!c q q c I 8s I',
         b'A', 2000000, 1002, b'S', 50, b'MSFT    ', 3805000)
     parser = ITCHMessage()
@@ -29,6 +36,8 @@ def test_parse_sell_order():
     print("  PASS: test_parse_sell_order")
 
 def test_parse_delete():
+    """Test parsing of ITCH delete order messages."""
+    """Testuje analizę wiadomości ITCH usunięcia zlecenia."""
     msg = struct.pack('!c q q', b'D', 3000000, 1001)
     parser = ITCHMessage()
     result = parser.parse(msg)
@@ -37,6 +46,8 @@ def test_parse_delete():
     print("  PASS: test_parse_delete")
 
 def test_parse_trade():
+    """Test parsing of ITCH trade execution messages."""
+    """Testuje analizę wiadomości ITCH wykonania transakcji."""
     msg = struct.pack('!c q q c I 8s I q',
         b'P', 4000000, 1001, b'B', 100, b'AAPL    ', 1502500, 5001)
     parser = ITCHMessage()
@@ -46,6 +57,8 @@ def test_parse_trade():
     print("  PASS: test_parse_trade")
 
 def test_parse_replace_order():
+    """Test parsing of ITCH replace order messages."""
+    """Testuje analizę wiadomości ITCH zamiany zlecenia."""
     msg = struct.pack('!c q q q I I',
         b'U', 5000000, 1002, 1003, 50, 3810000)
     parser = ITCHMessage()
@@ -58,6 +71,8 @@ def test_parse_replace_order():
     print("  PASS: test_parse_replace_order")
 
 def test_parse_order_executed():
+    """Test parsing of ITCH order executed messages."""
+    """Testuje analizę wiadomości ITCH wykonania zlecenia."""
     msg = struct.pack('!c q q I q',
         b'E', 6000000, 1001, 100, 5001)
     parser = ITCHMessage()
@@ -69,6 +84,8 @@ def test_parse_order_executed():
     print("  PASS: test_parse_order_executed")
 
 def test_parse_order_cancelled():
+    """Test parsing of ITCH order cancelled messages."""
+    """Testuje analizę wiadomości ITCH anulowania zlecenia."""
     msg = struct.pack('!c q q I',
         b'C', 7000000, 1002, 25)
     parser = ITCHMessage()
@@ -79,6 +96,8 @@ def test_parse_order_cancelled():
     print("  PASS: test_parse_order_cancelled")
 
 def test_parse_system_event():
+    """Test parsing of ITCH system event messages."""
+    """Testuje analizę wiadomości ITCH zdarzeń systemowych."""
     msg = struct.pack('!c q c',
         b'S', 8000000, b'Q')
     parser = ITCHMessage()
@@ -88,6 +107,8 @@ def test_parse_system_event():
     print("  PASS: test_parse_system_event")
 
 def test_parse_stock_directory():
+    """Test parsing of ITCH stock directory messages."""
+    """Testuje analizę wiadomości ITCH katalogów giełdowych."""
     msg = struct.pack('!c q 8s c',
         b'R', 9000000, b'AAPL    ', b'Q')
     parser = ITCHMessage()
@@ -98,6 +119,8 @@ def test_parse_stock_directory():
     print("  PASS: test_parse_stock_directory")
 
 def test_parse_speed():
+    """Test that ITCH parser is fast enough (under 1 millisecond)."""
+    """Testuje czy parser ITCH jest wystarczająco szybki (poniżej 1 milisekundy)."""
     msg = struct.pack('!c q q c I 8s I',
         b'A', 1000000, 1001, b'B', 100, b'AAPL    ', 1502500)
     parser = ITCHMessage()

@@ -37,35 +37,35 @@
 </div>
 
 <div class="flow-section">
-<h2>How Data Flows</h2>
+<h2>How Data Flows / Przepływ danych</h2>
 
 <ol>
-<li><b>Exchange sends data</b> — The ITCH feed broadcasts a stream of binary messages about orders (who is buying, who is selling, at what price). This travels via UDP multicast (<code>mc_sender.py</code>).</li>
+<li><b>Exchange sends data</b> — The ITCH feed broadcasts a stream of binary messages about orders (who is buying, who is selling, at what price). This travels via UDP multicast (<code>mc_sender.py</code>). <br><small style="color:#888">Giełda wysyła dane — Kanał ITCH rozgłasza strumień wiadomości binarnych o zleceniach (kto kupuje, kto sprzedaje, w jakiej cenie). Przesyła się to poprzez multicast UDP (<code>mc_sender.py</code>).</small></li>
 
-<li><b>Our system receives</b> — <code>mc_receiver_latency.py</code> captures packets from the network. It can also use poll mode (<code>kernel_bypass_sim.py</code>) instead of waiting for interrupts — this is 5.6x faster.</li>
+<li><b>Our system receives</b> — <code>mc_receiver_latency.py</code> captures packets from the network. It can also use poll mode (<code>kernel_bypass_sim.py</code>) instead of waiting for interrupts — this is 5.6x faster. <br><small style="color:#888">Nasz system odbiera — <code>mc_receiver_latency.py</code> przechwytuje pakiety z sieci. Może również użyć trybu poll (<code>kernel_bypass_sim.py</code>) zamiast czekać na przerwania — jest to 5,6x szybsze.</small></li>
 
-<li><b>Parser decodes</b> — <code>itch_parser.py</code> converts raw bytes into readable data: "someone wants to buy 100 AAPL at 150.25". It does this in ~1000 ns per message.</li>
+<li><b>Parser decodes</b> — <code>itch_parser.py</code> converts raw bytes into readable data: "someone wants to buy 100 AAPL at 150.25". It does this in ~1000 ns per message. <br><small style="color:#888">Parser dekoduje — <code>itch_parser.py</code> konwertuje surowe bajty na czytelne dane: "ktoś chce kupić 100 AAPL po 150,25". Robi to w ~1000 ns na wiadomość.</small></li>
 
-<li><b>Queue transfers</b> — <code>spsc_queue.cpp</code> is a lock-free pipe between threads. The market data thread pushes data in, the trading thread pulls it out. 17.6M msg/sec, zero locks.</li>
+<li><b>Queue transfers</b> — <code>spsc_queue.cpp</code> is a lock-free pipe between threads. The market data thread pushes data in, the trading thread pulls it out. 17.6M msg/sec, zero locks. <br><small style="color:#888">Kolejka przesyła — <code>spsc_queue.cpp</code> to kanał bez blokad między wątkami. Wątek danych rynkowych wstawia dane, wątek handlu je wyciąga. 17,6M wiad./s, zero blokad.</small></li>
 
-<li><b>Order book matches</b> — <code>orderbook.cpp</code> is the heart of the system. It holds all BIDs (buy) and ASKs (sell), sorted by price. When the highest BID >= lowest ASK, it executes a TRADE. 17.8M orders/sec.</li>
+<li><b>Order book matches</b> — <code>orderbook.cpp</code> is the heart of the system. It holds all BIDs (buy) and ASKs (sell), sorted by price. When the highest BID >= lowest ASK, it executes a TRADE. 17.8M orders/sec. <br><small style="color:#888">Książka zleceń pasuje — <code>orderbook.cpp</code> to serce systemu. Przechowuje wszystkie BID'y (kupno) i ASK'i (sprzedaż), posortowane po cenie. Gdy najwyższy BID >= najniższy ASK, wykonuje TRANSAKCJĘ. 17,8M zleceń/s.</small></li>
 
-<li><b>OMS checks risk</b> — <code>oms.py</code> validates each order before sending: is the value too large? is the position too big? It tracks P&L (profit and loss).</li>
+<li><b>OMS checks risk</b> — <code>oms.py</code> validates each order before sending: is the value too large? is the position too big? It tracks P&L (profit and loss). <br><small style="color:#888">OMS sprawdza ryzyko — <code>oms.py</code> weryfikuje każde zlecenie przed wysłaniem: czy wartość jest zbyt duża? czy pozycja jest zbyt duża? Śledzi P&L (zysk i stratę).</small></li>
 
-<li><b>Order is sent</b> — <code>ouch_sender.py</code> packs the order into binary OUCH format and sends it to the exchange. <code>fix_parser.py</code> handles the text-based version (FIX 4.2).</li>
+<li><b>Order is sent</b> — <code>ouch_sender.py</code> packs the order into binary OUCH format and sends it to the exchange. <code>fix_parser.py</code> handles the text-based version (FIX 4.2). <br><small style="color:#888">Zlecenie jest wysyłane — <code>ouch_sender.py</code> pakuje zlecenie w binarny format OUCH i wysyła je do giełdy. <code>fix_parser.py</code> obsługuje wersję tekstową (FIX 4.2).</small></li>
 </ol>
 
-<h2>Kernel Tuning</h2>
+<h2>Kernel Tuning / Strojenie jądra</h2>
 
-<div class="module"><b>Hugepages</b> — Instead of small memory pages (4KB), we use large ones (2MB). The CPU does fewer page table lookups = less latency.</div>
+<div class="module"><b>Hugepages</b> — Instead of small memory pages (4KB), we use large ones (2MB). The CPU does fewer page table lookups = less latency. <br><small style="color:#888">Zamiast małych stron pamięci (4KB), używamy dużych (2MB). CPU wykonuje mniej wyszukań tabeli stron = mniej opóźnień.</small></div>
 
-<div class="module"><b>CPU Isolation (isolcpus=1)</b> — CPU 1 is reserved ONLY for our trading process. No other process can run there.</div>
+<div class="module"><b>CPU Isolation (isolcpus=1)</b> — CPU 1 is reserved ONLY for our trading process. No other process can run there. <br><small style="color:#888">CPU 1 jest zarezerwowany WYŁĄCZNIE dla naszego procesu handlowego. Żaden inny proces nie może tam działać.</small></div>
 
-<div class="module"><b>IRQ Affinity</b> — All hardware interrupts (NIC, disk) are routed to CPU 0. CPU 1 remains completely undisturbed.</div>
+<div class="module"><b>IRQ Affinity</b> — All hardware interrupts (NIC, disk) are routed to CPU 0. CPU 1 remains completely undisturbed. <br><small style="color:#888">Wszystkie przerwania sprzętowe (karta sieciowa, dysk) są kierowane do CPU 0. CPU 1 pozostaje całkowicie niezmądzony.</small></div>
 
-<div class="module"><b>FIFO Scheduler</b> — Our process has the highest priority. The kernel never preempts it to give time to other processes.</div>
+<div class="module"><b>FIFO Scheduler</b> — Our process has the highest priority. The kernel never preempts it to give time to other processes. <br><small style="color:#888">Nasz proces ma najwyższy priorytet. Jądro nigdy go nie przydziela, aby dać czas innym procesom.</small></div>
 
-<div class="module"><b>Network Tuning</b> — 16MB network buffers, TCP timestamps disabled, swappiness=0 (nothing goes to disk).</div>
+<div class="module"><b>Network Tuning</b> — 16MB network buffers, TCP timestamps disabled, swappiness=0 (nothing goes to disk). <br><small style="color:#888">Bufory sieciowe 16MB, znaczniki czasu TCP wyłączone, swappiness=0 (nic nie trafia na dysk).</small></div>
 
 <h2>Performance Numbers</h2>
 

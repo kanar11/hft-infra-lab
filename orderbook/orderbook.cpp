@@ -4,7 +4,9 @@
 #include <cstdint>
 
 // Fixed-point price: stored as integer ticks (1 tick = 0.01)
+// Stała cena - przechowywana jako liczba całkowita (1 tick = 0,01)
 // e.g., 100.50 is stored as 10050
+// np. 100,50 jest przechowywane jako 10050
 using Price = std::int64_t;
 
 static Price to_ticks(double p) { return static_cast<Price>(p * 100 + 0.5); }
@@ -19,7 +21,9 @@ struct Order {
 
 class OrderBook {
     std::map<Price, int, std::greater<Price>> bids;  // highest first
+    // najwyższa cena jako pierwsza
     std::map<Price, int> asks;  // lowest first
+    // najniższa cena jako pierwsza
     int trades = 0;
 
 public:
@@ -52,6 +56,8 @@ public:
         }
     }
 
+    // Print the current order book state
+    // Wydrukuj bieżący stan księgi zleceń
     void print_book() const {
         std::cout << "\n=== ORDER BOOK ===" << std::endl;
         std::cout << "--- ASKS ---" << std::endl;

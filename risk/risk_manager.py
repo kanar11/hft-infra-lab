@@ -7,13 +7,19 @@ the strategy/router and the OMS as a pre-trade risk gate.
 
 Features:
 - Per-symbol and portfolio-wide position limits
+  Limity pozycji na symbol i całego portfela
 - Daily P&L loss limit (circuit breaker)
+  Dzienny limit straty P&L (przełącznik obwodu)
 - Order rate limiting (max orders per second)
+  Ograniczanie szybkości zleceń (maksymalnie zleceń na sekundę)
 - Kill switch (halt all trading instantly)
+  Przełącznik awaryjny (natychmiast zatrzymać cały handel)
 - Drawdown tracking from peak P&L
+  Śledzenie spadku od szczytowego P&L
 
 Pipeline integration:
   Strategy → Router → **Risk Manager** → OMS → Fill Engine → P&L
+  Integracja potoku: Strategia → Router → **Menedżer Ryzyka** → OMS → Silnik Realizacji → P&L
 """
 import time
 from enum import Enum
@@ -22,7 +28,8 @@ from typing import Dict, Optional
 
 
 class RiskAction(Enum):
-    """Result of a risk check."""
+    """Result of a risk check.
+    Wynik sprawdzenia ryzyka."""
     ALLOW = "ALLOW"
     REJECT = "REJECT"
     KILL = "KILL"
@@ -31,6 +38,7 @@ class RiskAction(Enum):
 @dataclass
 class RiskCheckResult:
     """Detailed result of a risk check.
+    Szczegółowy wynik sprawdzenia ryzyka.
 
     Attributes:
         action: ALLOW, REJECT, or KILL
@@ -45,6 +53,7 @@ class RiskCheckResult:
 @dataclass
 class RiskLimits:
     """Configurable risk limits.
+    Konfigurowalne limity ryzyka.
 
     Attributes:
         max_position_per_symbol: Max shares in any single symbol
@@ -64,7 +73,8 @@ class RiskLimits:
 
 @dataclass
 class RiskState:
-    """Live risk state tracking."""
+    """Live risk state tracking.
+    Śledzenie stanu ryzyka na żywo."""
     positions: Dict[str, int] = field(default_factory=dict)
     daily_pnl: float = 0.0
     peak_pnl: float = 0.0
@@ -78,6 +88,7 @@ class RiskState:
 
 class RiskManager:
     """Standalone pre-trade risk manager with circuit breaker and kill switch.
+    Samodzielny menedżer ryzyka przedhandlowego z przełącznikiem obwodu i przełącznikiem awaryjnym.
 
     Args:
         limits: Configurable risk limits (position, loss, rate, etc.)
@@ -90,6 +101,7 @@ class RiskManager:
     def check_order(self, symbol: str, side: str, price: float,
                     quantity: int) -> RiskCheckResult:
         """Run all pre-trade risk checks on a proposed order.
+        Uruchomić wszystkie przedhandlowe kontrole ryzyka dla proponowanego zlecenia.
 
         Args:
             symbol: Instrument symbol
@@ -103,10 +115,12 @@ class RiskManager:
         self.state.total_checks += 1
 
         # Kill switch — reject everything
+        # Przełącznik awaryjny — odrzuć wszystko
         if self.state.kill_switch_active:
             return self._reject('KILL_SWITCH', 'Kill switch is active — all trading halted', start)
 
         # Order value check
+        # Sprawdzenie wartości zlecenia
         order_value = price * quantity
         if order_value > self.limits.max_order_value:
             return self._reject('ORDER_VALUE',
@@ -114,6 +128,7 @@ class RiskManager:
                                 start)
 
         # Position limit per symbol
+        # Limit pozycji na symbol
         current_pos = self.state.positions.get(symbol, 0)
         projected = current_pos + (quantity if side == 'BUY' else -quantity)
         if abs(projected) > self.limits.max_position_per_symbol:
@@ -122,6 +137,7 @@ class RiskManager:
                                 start)
 
         # Portfolio exposure check
+        # Sprawdzenie ekspozycji portfela
         test_positions = dict(self.state.positions)
         test_positions[symbol] = projected
         total_exposure = sum(abs(v) for v in test_positions.values())
@@ -131,6 +147,7 @@ class RiskManager:
                                 start)
 
         # Daily loss limit (circuit breaker)
+        # Dzienny limit straty (przełącznik obwodu)
         if self.state.daily_pnl < -self.limits.max_daily_loss:
             self.state.kill_switch_active = True
             return self._reject('CIRCUIT_BREAKER',
@@ -138,6 +155,7 @@ class RiskManager:
                                 start)
 
         # Drawdown check
+        # Sprawdzenie spadku
         if self.state.peak_pnl > 0:
             drawdown_pct = (self.state.peak_pnl - self.state.daily_pnl) / self.state.peak_pnl * 100
             if drawdown_pct > self.limits.max_drawdown_pct:
@@ -147,6 +165,7 @@ class RiskManager:
                                     start)
 
         # Rate limiting
+        # Ograniczanie szybkości
         now = time.time_ns()
         one_sec_ago = now - 1_000_000_000
         self.state.order_timestamps = [t for t in self.state.order_timestamps if t > one_sec_ago]
@@ -162,6 +181,7 @@ class RiskManager:
 
     def update_position(self, symbol: str, side: str, quantity: int) -> None:
         """Update position after a fill.
+        Zaktualizuj pozycję po realizacji.
 
         Args:
             symbol: Instrument symbol
@@ -176,6 +196,7 @@ class RiskManager:
 
     def update_pnl(self, pnl_change: float) -> None:
         """Update daily P&L (called after each fill).
+        Zaktualizuj dzienny P&L (wywoływane po każdej realizacji).
 
         Args:
             pnl_change: Realized P&L from this fill
@@ -185,22 +206,26 @@ class RiskManager:
             self.state.peak_pnl = self.state.daily_pnl
 
     def activate_kill_switch(self) -> None:
-        """Manually activate kill switch — halts all trading."""
+        """Manually activate kill switch — halts all trading.
+        Ręcznie aktywuj przełącznik awaryjny — wstrzymuje cały handel."""
         self.state.kill_switch_active = True
 
     def deactivate_kill_switch(self) -> None:
-        """Deactivate kill switch — resume trading."""
+        """Deactivate kill switch — resume trading.
+        Dezaktywuj przełącznik awaryjny — wznów handel."""
         self.state.kill_switch_active = False
 
     def reset_daily(self) -> None:
-        """Reset daily state (call at start of trading day)."""
+        """Reset daily state (call at start of trading day).
+        Resetuj stan dzienny (wywołaj na początku dnia handlowego)."""
         self.state.daily_pnl = 0.0
         self.state.peak_pnl = 0.0
         self.state.order_timestamps.clear()
         self.state.kill_switch_active = False
 
     def _reject(self, reason_code: str, reason: str, start: int) -> RiskCheckResult:
-        """Record a rejection and return result."""
+        """Record a rejection and return result.
+        Zapisz odrzucenie i zwróć wynik."""
         elapsed = time.time_ns() - start
         self.state.total_rejects += 1
         self.state.total_latency_ns += elapsed
@@ -208,7 +233,8 @@ class RiskManager:
         return RiskCheckResult(action=RiskAction.REJECT, reason=reason, latency_ns=elapsed)
 
     def print_stats(self) -> None:
-        """Print risk manager statistics."""
+        """Print risk manager statistics.
+        Wydrukuj statystyki menedżera ryzyka."""
         print(f"\n=== Risk Manager Statistics ===")
         print(f"  Total checks: {self.state.total_checks}")
         print(f"  Allowed: {self.state.total_checks - self.state.total_rejects}")
@@ -228,7 +254,8 @@ class RiskManager:
 
 
 def demo() -> None:
-    """Run standalone demo showing risk checks, circuit breaker, and kill switch."""
+    """Run standalone demo showing risk checks, circuit breaker, and kill switch.
+    Uruchom samodzielną demonstrację pokazującą kontrole ryzyka, przełącznik obwodu i przełącznik awaryjny."""
     import random
 
     print("=== Risk Manager Demo ===\n")

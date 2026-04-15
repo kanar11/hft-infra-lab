@@ -4,6 +4,8 @@ NASDAQ OUCH 4.2 Order Entry Protocol
 
 Encodes and decodes OUCH messages for order entry (Enter, Cancel, Replace)
 and server responses (Accepted, Replaced, Cancelled, Executed).
+Koduje i dekoduje wiadomości OUCH do wprowadzania zleceń (Enter, Cancel, Replace)
+i odpowiedzi serwera (Accepted, Replaced, Cancelled, Executed).
 """
 import struct
 import time
@@ -11,7 +13,9 @@ from typing import Dict, Any, Tuple
 
 
 class OUCHMessage:
-    """NASDAQ OUCH 4.2 protocol message builder (simplified)."""
+    """NASDAQ OUCH 4.2 protocol message builder (simplified).
+    Konstruktor wiadomości protokołu NASDAQ OUCH 4.2 (uproszczony).
+    """
 
     MSG_TYPES = {
         'ENTER_ORDER': b'O',
@@ -23,6 +27,7 @@ class OUCHMessage:
     def enter_order(token: str, side: str, shares: int, stock: str,
                     price: float, tif: str = 'D') -> bytes:
         """Build Enter Order message (33 bytes).
+        Buduje wiadomość Enter Order (33 bajty).
         Args:
             token: Order token (up to 14 chars)
             side: 'B' for buy, 'S' for sell
@@ -45,6 +50,7 @@ class OUCHMessage:
     @staticmethod
     def cancel_order(token: str, shares: int = 0) -> bytes:
         """Build Cancel Order message (19 bytes).
+        Buduje wiadomość Cancel Order (19 bajtów).
         Args:
             token: Order token to cancel
             shares: Shares to cancel (0 = cancel all)
@@ -60,6 +66,7 @@ class OUCHMessage:
     def replace_order(existing_token: str, new_token: str,
                       shares: int, price: float) -> bytes:
         """Build Replace Order message (37 bytes).
+        Buduje wiadomość Replace Order (37 bajtów).
         Args:
             existing_token: Token of order to replace
             new_token: New order token
@@ -78,6 +85,7 @@ class OUCHMessage:
     @staticmethod
     def parse_response(data: bytes) -> Dict[str, Any]:
         """Parse exchange response with bounds checking.
+        Analizuje odpowiedź giełdy z sprawdzaniem granic.
         Args:
             data: Raw bytes from exchange
         Returns:
@@ -125,7 +133,9 @@ class OUCHMessage:
 
 
 def benchmark_encoding(iterations: int = 100000) -> Tuple[float, float]:
-    """Benchmark OUCH message encoding speed."""
+    """Benchmark OUCH message encoding speed.
+    Mierzy szybkość kodowania wiadomości OUCH.
+    """
     ouch = OUCHMessage()
 
     start = time.time_ns()
@@ -163,7 +173,7 @@ def main() -> None:
     print(f"  Encoding: {per_msg:.0f} ns/msg")
     print(f"  Throughput: {throughput:,.0f} msg/sec")
 
-    # ITCH vs OUCH comparison
+    # ITCH vs OUCH comparison (porównanie ITCH vs OUCH)
     print("\n--- ITCH vs OUCH ---")
     print("  ITCH: binary market data FROM exchange (read-only)")
     print("  OUCH: binary order entry TO exchange (write)")

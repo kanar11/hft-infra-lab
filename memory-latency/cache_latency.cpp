@@ -1,5 +1,7 @@
 // cache_latency.cpp — Pointer-chasing memory latency benchmark
+// cache_latency.cpp - test wydajności opóźnienia pamięci z podążaniem wskaźnika
 // Measures access latency across L1, L2, L3 cache and main RAM
+// Mierzy opóźnienie dostępu w cache'u L1, L2, L3 i głównej pamięci RAM
 // Part of hft-infra-lab: github.com/kanar11/hft-infra-lab
 
 #include <iostream>
@@ -15,10 +17,14 @@ struct Node {
     char pad[56];
 };
 
+// Prevent compiler from optimizing away pointer loads
+// Zapobiegaj optymalizacji wskaźnika przez kompilator
 inline void escape(void* p) {
     asm volatile("" : : "g"(p) : "memory");
 }
 
+// Measure memory access latency using pointer chasing
+// Zmierz opóźnienie dostępu do pamięci za pomocą podążania wskaźnika
 double measure_latency(size_t array_size_bytes, int iterations) {
     size_t count = array_size_bytes / sizeof(Node);
     if (count < 2) count = 2;
@@ -26,12 +32,16 @@ double measure_latency(size_t array_size_bytes, int iterations) {
     std::vector<size_t> indices(count);
     std::iota(indices.begin(), indices.end(), 0);
     std::mt19937 rng(42);
+    // Randomize node order to prevent prefetcher from helping
+    // Randomizuj kolejność węzłów, aby zapobiec pomocy prefetchera
     std::shuffle(indices.begin(), indices.end(), rng);
     for (size_t i = 0; i < count - 1; i++) {
         nodes[indices[i]].next = &nodes[indices[i + 1]];
     }
     nodes[indices[count - 1]].next = &nodes[indices[0]];
     Node* p = &nodes[0];
+    // Warm up by chasing pointers
+    // Rozgrzej się, podążając wskaźnikami
     for (int i = 0; i < (int)count * 4; i++) {
         p = p->next;
     }
@@ -61,6 +71,8 @@ int main() {
     };
     std::cout << "Target          | Latency (ns)" << std::endl;
     std::cout << "----------------|-------------" << std::endl;
+    // Run latency tests on different cache levels and RAM
+    // Uruchom testy opóźnienia na różnych poziomach cache'u i pamięci RAM
     for (auto& t : tests) {
         double lat = measure_latency(t.size, t.iters);
         printf("%-16s| %.2f ns\n", t.label, lat);

@@ -5,6 +5,10 @@ NASDAQ ITCH 5.0 Binary Protocol Parser
 Parses all 8 ITCH message types: ADD_ORDER, ADD_ORDER_MPID, DELETE_ORDER,
 REPLACE_ORDER, ORDER_EXECUTED, ORDER_CANCELLED, TRADE, SYSTEM_EVENT,
 and STOCK_DIRECTORY. Used for processing direct market data feeds.
+
+Parsuje wszystkie 8 typów wiadomości ITCH: ADD_ORDER, ADD_ORDER_MPID, DELETE_ORDER,
+REPLACE_ORDER, ORDER_EXECUTED, ORDER_CANCELLED, TRADE, SYSTEM_EVENT
+i STOCK_DIRECTORY. Używane do przetwarzania bezpośrednich kanałów danych rynkowych.
 """
 import struct
 import time
@@ -12,7 +16,8 @@ from typing import Dict, List, Any, Optional
 
 
 class ITCHMessage:
-    """NASDAQ ITCH 5.0 protocol parser (simplified)."""
+    """NASDAQ ITCH 5.0 protocol parser (simplified).
+    Parser protokołu NASDAQ ITCH 5.0 (uproszczony)."""
 
     MSG_TYPES = {
         b'A': 'ADD_ORDER',
@@ -28,6 +33,7 @@ class ITCHMessage:
     @staticmethod
     def parse_add_order(data: bytes) -> Dict[str, Any]:
         """Parse Add Order (A) message.
+        Parsuje wiadomość Add Order (A).
         Fields: msg_type(1) + timestamp(8) + order_ref(8) + side(1) + shares(4) + stock(8) + price(4) = 34 bytes
         """
         if len(data) < 34:
@@ -47,6 +53,7 @@ class ITCHMessage:
     @staticmethod
     def parse_delete_order(data: bytes) -> Dict[str, Any]:
         """Parse Delete Order (D) message.
+        Parsuje wiadomość Delete Order (D).
         Fields: msg_type(1) + timestamp(8) + order_ref(8) = 17 bytes
         """
         if len(data) < 17:
@@ -62,6 +69,7 @@ class ITCHMessage:
     @staticmethod
     def parse_replace_order(data: bytes) -> Dict[str, Any]:
         """Parse Replace Order (U) message.
+        Parsuje wiadomość Replace Order (U).
         Fields: msg_type(1) + timestamp(8) + orig_ref(8) + new_ref(8) + shares(4) + price(4) = 33 bytes
         """
         if len(data) < 33:
@@ -80,6 +88,7 @@ class ITCHMessage:
     @staticmethod
     def parse_order_executed(data: bytes) -> Dict[str, Any]:
         """Parse Order Executed (E) message.
+        Parsuje wiadomość Order Executed (E).
         Fields: msg_type(1) + timestamp(8) + order_ref(8) + shares(4) + match_number(8) = 29 bytes
         """
         if len(data) < 29:
@@ -97,6 +106,7 @@ class ITCHMessage:
     @staticmethod
     def parse_order_cancelled(data: bytes) -> Dict[str, Any]:
         """Parse Order Cancelled (C) message.
+        Parsuje wiadomość Order Cancelled (C).
         Fields: msg_type(1) + timestamp(8) + order_ref(8) + cancelled_shares(4) = 21 bytes
         """
         if len(data) < 21:
@@ -113,6 +123,7 @@ class ITCHMessage:
     @staticmethod
     def parse_trade(data: bytes) -> Dict[str, Any]:
         """Parse Trade (P) message.
+        Parsuje wiadomość Trade (P).
         Fields: msg_type(1) + timestamp(8) + order_ref(8) + side(1) + shares(4) + stock(8) + price(4) + match(8) = 42 bytes
         """
         if len(data) < 42:
@@ -133,6 +144,7 @@ class ITCHMessage:
     @staticmethod
     def parse_system_event(data: bytes) -> Dict[str, Any]:
         """Parse System Event (S) message.
+        Parsuje wiadomość System Event (S).
         Fields: msg_type(1) + timestamp(8) + event_code(1) = 10 bytes
         """
         if len(data) < 10:
@@ -151,6 +163,7 @@ class ITCHMessage:
     @staticmethod
     def parse_stock_directory(data: bytes) -> Dict[str, Any]:
         """Parse Stock Directory (R) message.
+        Parsuje wiadomość Stock Directory (R).
         Fields: msg_type(1) + timestamp(8) + stock(8) + market_category(1) = 18 bytes
         """
         if len(data) < 18:
@@ -165,7 +178,8 @@ class ITCHMessage:
         }
 
     def parse(self, data: bytes) -> Dict[str, Any]:
-        """Parse any ITCH message by type byte."""
+        """Parse any ITCH message by type byte.
+        Parsuje dowolną wiadomość ITCH na podstawie bajtu typu."""
         start = time.time_ns()
         msg_type = data[0:1]
 
@@ -195,7 +209,8 @@ class ITCHMessage:
 
 
 def create_test_messages() -> List[bytes]:
-    """Generate sample ITCH binary messages for all implemented types."""
+    """Generate sample ITCH binary messages for all implemented types.
+    Generuje przykładowe wiadomości binarne ITCH dla wszystkich zaimplementowanych typów."""
     messages = []
 
     # Add Order: BUY 100 AAPL @ 150.2500

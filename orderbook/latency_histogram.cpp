@@ -1,5 +1,7 @@
 // Order book latency histogram benchmark
+// Test wydajności histogramu opóźnienia księgi zleceń
 // Measures per-order processing latency and reports p50/p95/p99/p99.9/max
+// Mierzy opóźnienie przetwarzania na zlecenie i raportuje p50/p95/p99/p99,9/max
 // Build: g++ -O2 -std=c++17 latency_histogram.cpp -o latency_histogram
 #include <iostream>
 #include <iomanip>
@@ -12,6 +14,7 @@
 #include <cstdint>
 
 // Fixed-point price: stored as integer ticks (1 tick = 0.01)
+// Stała cena - przechowywana jako liczba całkowita (1 tick = 0,01)
 using Price = std::int64_t;
 
 struct Order {
@@ -23,7 +26,9 @@ struct Order {
 
 class OrderBook {
     // NOTE: std::map allocates per-node on insert (not ideal for HFT).
+    // UWAGA: std::map przydziela pamięć dla każdego węzła przy wstawianiu (nieidealne dla HFT)
     // Production systems use pre-allocated flat arrays indexed by price level.
+    // Systemy produkcyjne używają wstępnie przydzielonych płaskich tablic indeksowanych poziomem ceny
     std::map<Price, int, std::greater<Price>> bids;
     std::map<Price, int> asks;
     std::uint64_t trades = 0;
@@ -66,6 +71,7 @@ int main(int argc, char** argv) {
 
     std::mt19937 rng(42);
     // Price range 99.00-101.00 in ticks (9900-10100)
+    // Zakres cen 99,00-101,00 w tickach (9900-10100)
     std::uniform_int_distribution<Price> price_dist(9900, 10100);
     std::uniform_int_distribution<int>   qty_dist(1, 100);
     std::uniform_int_distribution<int>   side_dist(0, 1);
@@ -81,6 +87,7 @@ int main(int argc, char** argv) {
     latencies.reserve(N);
 
     // Warmup (cache priming, no measurement)
+    // Rozgrzewanie (zalewanie cache'u, bez pomiarów)
     for (int i = 0; i < 1000 && i < N; i++) book.add_order(orders[i]);
 
     auto t_wall_start = std::chrono::high_resolution_clock::now();

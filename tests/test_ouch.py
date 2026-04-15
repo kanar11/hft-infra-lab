@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Unit tests for OUCH 4.2 protocol."""
+"""
+Unit tests for OUCH 4.2 protocol.
+Testy jednostkowe dla protokołu OUCH 4.2.
+"""
 import os
 import sys
 import struct
@@ -16,6 +19,8 @@ OUCHMessage = _mod.OUCHMessage
 
 
 def test_enter_order_encoding():
+    """Test encoding of OUCH enter order messages."""
+    """Testuje kodowanie wiadomości OUCH wprowadzenia zlecenia."""
     ouch = OUCHMessage()
     msg = ouch.enter_order("ORD001", "B", 100, "AAPL", 150.25)
     assert msg[0:1] == b'O'
@@ -24,6 +29,8 @@ def test_enter_order_encoding():
 
 
 def test_cancel_order_encoding():
+    """Test encoding of OUCH cancel order messages."""
+    """Testuje kodowanie wiadomości OUCH anulowania zlecenia."""
     ouch = OUCHMessage()
     msg = ouch.cancel_order("ORD001", 0)
     assert msg[0:1] == b'X'
@@ -32,6 +39,8 @@ def test_cancel_order_encoding():
 
 
 def test_replace_order_encoding():
+    """Test encoding of OUCH replace order messages."""
+    """Testuje kodowanie wiadomości OUCH zamiany zlecenia."""
     ouch = OUCHMessage()
     msg = ouch.replace_order("ORD001", "ORD002", 50, 151.00)
     assert msg[0:1] == b'U'
@@ -40,6 +49,8 @@ def test_replace_order_encoding():
 
 
 def test_parse_accepted():
+    """Test parsing of OUCH accepted order messages."""
+    """Testuje analizę wiadomości OUCH przyjęcia zlecenia."""
     ouch = OUCHMessage()
     data = struct.pack('!c 14s c I 8s I c q',
         b'A',
@@ -62,6 +73,8 @@ def test_parse_accepted():
 
 
 def test_parse_truncated():
+    """Test that truncated messages are handled gracefully."""
+    """Testuje czy obcięte wiadomości są obsługiwane poprawnie."""
     ouch = OUCHMessage()
     result = ouch.parse_response(b'A' + b'\x00' * 5)
     assert result['type'] == 'ERROR'
@@ -70,6 +83,8 @@ def test_parse_truncated():
 
 
 def test_parse_empty():
+    """Test that empty messages are handled gracefully."""
+    """Testuje czy puste wiadomości są obsługiwane poprawnie."""
     ouch = OUCHMessage()
     result = ouch.parse_response(b'')
     assert result['type'] == 'ERROR'
@@ -77,6 +92,8 @@ def test_parse_empty():
 
 
 def test_price_encoding_precision():
+    """Test that price encoding maintains proper precision."""
+    """Testuje czy kodowanie ceny utrzymuje prawidłową precyzję."""
     ouch = OUCHMessage()
     msg = ouch.enter_order("ORD001", "B", 1, "TEST", 99.9999)
     price_raw = struct.unpack('!I', msg[28:32])[0]

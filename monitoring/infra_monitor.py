@@ -4,6 +4,8 @@ Real-Time HFT Infrastructure Monitor
 
 Monitors CPU isolation, hugepages, network latency, IRQ affinity,
 and system health with configurable alerting thresholds.
+Monitoruje izolację CPU, ogromne strony, opóźnienie sieci, powinowactwo IRQ
+i zdrowotność systemu z konfigurowalnymi progami alertów.
 """
 import time
 import os
@@ -13,7 +15,9 @@ from typing import Dict, List, Any, Optional
 
 
 class InfraMonitor:
-    """Real-time HFT infrastructure monitor reading directly from /proc."""
+    """Real-time HFT infrastructure monitor reading directly from /proc.
+    Monitor infrastruktury HFT w czasie rzeczywistym odczytujący bezpośrednio z /proc.
+    """
 
     def __init__(self, alert_thresholds: Optional[Dict[str, float]] = None) -> None:
         self.thresholds = alert_thresholds or {
@@ -25,7 +29,9 @@ class InfraMonitor:
         self.metrics_log: List[Dict[str, Any]] = []
 
     def get_cpu_stats(self) -> Dict[str, int]:
-        """Read CPU idle/total jiffies from /proc/stat."""
+        """Read CPU idle/total jiffies from /proc/stat.
+        Odczytuje bezczynność CPU/całkowite dżifie z /proc/stat.
+        """
         with open('/proc/stat') as f:
             line = f.readline()
             parts = line.split()
@@ -34,7 +40,9 @@ class InfraMonitor:
             return {'idle': idle, 'total': total}
 
     def get_memory(self) -> Dict[str, Any]:
-        """Read memory usage and hugepages from /proc/meminfo."""
+        """Read memory usage and hugepages from /proc/meminfo.
+        Odczytuje użycie pamięci i ogromne strony z /proc/meminfo.
+        """
         info: Dict[str, int] = {}
         with open('/proc/meminfo') as f:
             for line in f:
@@ -53,7 +61,9 @@ class InfraMonitor:
         }
 
     def get_context_switches(self) -> int:
-        """Read total context switch count from /proc/stat."""
+        """Read total context switch count from /proc/stat.
+        Odczytuje całkowitą liczbę przełączeń kontekstu z /proc/stat.
+        """
         with open('/proc/stat') as f:
             for line in f:
                 if line.startswith('ctxt'):
@@ -61,7 +71,9 @@ class InfraMonitor:
         return 0
 
     def get_interrupts_per_cpu(self) -> Dict[str, int]:
-        """Read per-CPU interrupt counts from /proc/interrupts."""
+        """Read per-CPU interrupt counts from /proc/interrupts.
+        Odczytuje liczby przerwań na CPU z /proc/interrupts.
+        """
         counts: Dict[str, int] = {}
         with open('/proc/interrupts') as f:
             header = f.readline().split()
@@ -75,7 +87,9 @@ class InfraMonitor:
         return counts
 
     def get_network_stats(self) -> Dict[str, Any]:
-        """Read network counters from /proc/net/dev (auto-detects interface)."""
+        """Read network counters from /proc/net/dev (auto-detects interface).
+        Odczytuje liczniki sieci z /proc/net/dev (auto-wykrywanie interfejsu).
+        """
         with open('/proc/net/dev') as f:
             f.readline()
             f.readline()
@@ -93,7 +107,9 @@ class InfraMonitor:
         return {}
 
     def check_isolated_cpu(self) -> str:
-        """Read isolated CPU list from sysfs. Returns empty string if not configured."""
+        """Read isolated CPU list from sysfs. Returns empty string if not configured.
+        Odczytuje listę izolowanych CPU z sysfs. Zwraca pusty ciąg, jeśli nie skonfigurowano.
+        """
         try:
             with open('/sys/devices/system/cpu/isolated') as f:
                 isolated = f.read().strip()
@@ -102,7 +118,9 @@ class InfraMonitor:
             return ''
 
     def collect_metrics(self) -> Dict[str, Any]:
-        """Collect all infrastructure metrics in a single snapshot."""
+        """Collect all infrastructure metrics in a single snapshot.
+        Zbiera wszystkie metryki infrastruktury w jednej migawce.
+        """
         return {
             'timestamp': datetime.now().isoformat(),
             'memory': self.get_memory(),
@@ -113,7 +131,9 @@ class InfraMonitor:
         }
 
     def check_alerts(self, metrics: Dict[str, Any]) -> List[str]:
-        """Check metrics against thresholds and return alert messages."""
+        """Check metrics against thresholds and return alert messages.
+        Sprawdza metryki względem progów i zwraca komunikaty alertów.
+        """
         alerts: List[str] = []
         mem = metrics['memory']['used_percent']
         if mem > self.thresholds['mem_percent']:
@@ -121,7 +141,7 @@ class InfraMonitor:
 
         iso_cpu = metrics['isolated_cpus']
         if iso_cpu:
-            # Parse CPU ranges like "1", "1-3", "1,3"
+            # Parse CPU ranges like "1", "1-3", "1,3" (Analizuj zakresy CPU takie jak "1", "1-3", "1,3")
             cpu_ids: List[int] = []
             for part in iso_cpu.split(','):
                 if '-' in part:
@@ -139,6 +159,7 @@ class InfraMonitor:
 
     def run(self, duration: int = 30, interval: int = 5) -> None:
         """Run the monitor loop for a given duration.
+        Uruchamia pętlę monitora przez określony czas.
         Args:
             duration: Total monitoring time in seconds
             interval: Sampling interval in seconds
@@ -156,12 +177,12 @@ class InfraMonitor:
             now = time.time()
             dt = now - prev_time
 
-            # Context switches per second
+            # Context switches per second (Przełączenia kontekstu na sekundę)
             ctx = metrics['context_switches']
             ctx_per_sec = int((ctx - prev_ctx) / dt)
             prev_ctx = ctx
 
-            # Network throughput
+            # Network throughput (Przepustowość sieci)
             net = metrics['network']
             rx_bps = int((net['rx_bytes'] - prev_net.get('rx_bytes', 0)) / dt)
             prev_net = net
@@ -182,7 +203,7 @@ class InfraMonitor:
             self.metrics_log.append(metrics)
             time.sleep(interval)
 
-        # Save log
+        # Save log (Zapisz dziennik)
         logfile = f"monitor_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(logfile, 'w') as f:
             json.dump(self.metrics_log, f, indent=2)

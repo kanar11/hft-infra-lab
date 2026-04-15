@@ -2,7 +2,9 @@
 # HFT System Monitor
 # Author: Kasper Kanarek
 # Description: Real-time monitoring of latency, CPU and network interrupts
+# Monitorowanie w czasie rzeczywistym opóźnień, CPU i przerwań sieciowych
 # Uses /proc directly instead of expensive tools like top
+# Używa /proc bezpośrednio zamiast kosztownych narzędzi takich jak top
 
 INTERVAL=1
 LOG_FILE="monitor_log_$(date +%Y%m%d_%H%M%S).txt"
@@ -12,7 +14,8 @@ echo "Logging to: $LOG_FILE"
 echo "Press Ctrl+C to stop"
 echo ""
 
-# Read initial CPU stats from /proc/stat (avoids expensive top call)
+# Parse CPU usage statistics directly from /proc filesystem avoiding overhead of external tools
+# Analizować statystyki użycia CPU bezpośrednio z systemu plików /proc unikając obciążenia narzędzi zewnętrznych
 read_cpu() {
     local line=$(head -1 /proc/stat)
     local -a fields=($line)
@@ -30,7 +33,8 @@ PREV_CTX=$(awk '/^ctxt/ {print $2}' /proc/stat)
 while true; do
     TIMESTAMP=$(date +%H:%M:%S)
 
-    # CPU usage from /proc/stat (zero overhead vs top)
+    # Calculate current CPU usage percentage from idle time delta without invoking system tools
+    # Obliczyć bieżący procent użycia CPU z delty czasu bezczynności bez wywoływania narzędzi systemowych
     CURR_CPU=($(read_cpu))
     IDLE_DELTA=$((${CURR_CPU[0]} - ${PREV_CPU[0]}))
     TOTAL_DELTA=$((${CURR_CPU[1]} - ${PREV_CPU[1]}))
@@ -41,12 +45,16 @@ while true; do
     fi
     PREV_CPU=("${CURR_CPU[@]}")
 
+    # Get current memory usage statistics from free command
+    # Uzyskać bieżące statystyki użycia pamięci z polecenia free
     MEM=$(free -m | awk 'NR==2{printf "Used: %sMB / Total: %sMB (%.0f%%)", $3,$2,$3*100/$2}')
 
-    # Network IRQs — match common interface names, sum all matching lines
+    # Count total network interrupts for Ethernet, ENP, and ENS interfaces to detect traffic spikes
+    # Policzyć całkowite przerwania sieciowe dla interfejsów Ethernet, ENP i ENS aby wykryć wzrosty ruchu
     NET_IRQ=$(awk '/eth|ens|enp/ {for(i=2;i<=NF-3;i++) sum+=$i} END{print sum+0}' /proc/interrupts)
 
-    # Context switches delta
+    # Measure context switch rate per second to identify task scheduling overhead
+    # Zmierzyć szybkość przełączania kontekstu na sekundę aby zidentyfikować obciążenie planowania zadań
     CTX=$(awk '/^ctxt/ {print $2}' /proc/stat)
     CTX_DELTA=$((CTX - PREV_CTX))
     PREV_CTX=$CTX

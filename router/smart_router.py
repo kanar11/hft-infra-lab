@@ -11,6 +11,9 @@ and fill probability. Supports multiple routing strategies:
 
 Pipeline integration:
   Strategy (signals) → Smart Router (venue selection) → OMS (risk checks) → Fill
+
+Integracja pipeline:
+  Strategy (sygnały) → Smart Router (wybór venue'u) → OMS (kontrola ryzyka) → Wypełnienie
 """
 import time
 from enum import Enum
@@ -19,7 +22,9 @@ from typing import Dict, List, Optional
 
 
 class RoutingStrategy(Enum):
-    """Order routing strategy."""
+    """Order routing strategy.
+    Strategia routingu zleceń.
+    """
     BEST_PRICE = "BEST_PRICE"
     LOWEST_LATENCY = "LOWEST_LATENCY"
     SPLIT = "SPLIT"
@@ -28,6 +33,7 @@ class RoutingStrategy(Enum):
 @dataclass
 class Venue:
     """Trading venue with pricing and performance characteristics.
+    Platforma handlowa z charakterystyką cen i wydajności.
 
     Attributes:
         name: Venue identifier (e.g., 'NYSE', 'NASDAQ')
@@ -52,6 +58,7 @@ class Venue:
 @dataclass
 class RouteDecision:
     """Result of a routing decision.
+    Wynik decyzji routingu.
 
     Attributes:
         venue: Target venue name
@@ -77,7 +84,9 @@ class SplitOrder:
 
 @dataclass
 class RouterStats:
-    """Performance statistics for the router."""
+    """Performance statistics for the router.
+    Statystyki wydajności routera.
+    """
     total_routes: int = 0
     routes_by_venue: Dict[str, int] = field(default_factory=dict)
     routes_by_strategy: Dict[str, int] = field(default_factory=dict)
@@ -94,6 +103,8 @@ class RouterStats:
 class SmartOrderRouter:
     """Smart Order Router — selects optimal venue for each order.
 
+    Router inteligentny — wybiera optymalną platformę dla każdego zlecenia.
+
     Args:
         strategy: Default routing strategy (BEST_PRICE, LOWEST_LATENCY, SPLIT)
         split_threshold: Minimum order size before splitting across venues
@@ -107,12 +118,15 @@ class SmartOrderRouter:
         self.stats = RouterStats()
 
     def add_venue(self, venue: Venue) -> None:
-        """Register a trading venue."""
+        """Register a trading venue.
+        Zarejestruj platformę handlową.
+        """
         self.venues[venue.name] = venue
 
     def update_quote(self, venue_name: str, bid: float, ask: float,
                      bid_size: int, ask_size: int) -> None:
         """Update best bid/ask for a venue (called on every market data tick).
+        Aktualizuj najlepszą ofertę kupna/sprzedaży dla platformy.
 
         Args:
             venue_name: Venue identifier
@@ -131,6 +145,7 @@ class SmartOrderRouter:
     def route_order(self, side: str, quantity: int,
                     strategy: Optional[RoutingStrategy] = None) -> Optional[RouteDecision]:
         """Route an order to the best venue.
+        Направь zlecenie na najlepszą platformę.
 
         Args:
             side: 'BUY' or 'SELL'
@@ -148,6 +163,7 @@ class SmartOrderRouter:
             return None
 
         # Filter venues with sufficient liquidity
+        # Filtruj platformy z wystarczającą płynnością
         if side == 'BUY':
             candidates = [v for v in active if v.best_ask > 0 and v.ask_size > 0]
         else:
@@ -158,6 +174,7 @@ class SmartOrderRouter:
             return None
 
         # Select venue based on strategy
+        # Wybierz platformę na podstawie strategii
         if strat == RoutingStrategy.BEST_PRICE:
             best = self._best_price(candidates, side)
         elif strat == RoutingStrategy.LOWEST_LATENCY:
@@ -171,6 +188,7 @@ class SmartOrderRouter:
         elapsed = time.time_ns() - start
 
         # Update stats
+        # Aktualizuj statystyki
         self.stats.total_routes += 1
         self.stats.total_latency_ns += elapsed
         self.stats.routes_by_venue[best.name] = self.stats.routes_by_venue.get(best.name, 0) + 1
@@ -190,6 +208,7 @@ class SmartOrderRouter:
         """Select venue with best price (lowest ask for BUY, highest bid for SELL).
 
         Ties broken by: lower fee → lower latency → first in list.
+        Remisy rozsądzane przez: niższą opłatę → niższą opóźnienie → pierwszy na liście.
         """
         if side == 'BUY':
             candidates.sort(key=lambda v: (v.best_ask, v.fee_per_share, v.latency_ns))
@@ -198,7 +217,9 @@ class SmartOrderRouter:
         return candidates[0]
 
     def _lowest_latency(self, candidates: List[Venue]) -> Venue:
-        """Select venue with lowest round-trip latency."""
+        """Select venue with lowest round-trip latency.
+        Wybierz platformę z najniższym opóźnieniem w obie strony.
+        """
         candidates.sort(key=lambda v: v.latency_ns)
         return candidates[0]
 
@@ -208,8 +229,10 @@ class SmartOrderRouter:
 
         Allocates shares to each venue based on its share of total available
         liquidity, ensuring no venue receives more than its displayed size.
+        Przydziel akcje każdej platformie na podstawie jej udziału w całkowitej dostępnej płynności.
         """
         # Sort by price (best first)
+        # Sortuj po cenie (najlepsze pierwsze)
         if side == 'BUY':
             candidates.sort(key=lambda v: (v.best_ask, v.fee_per_share))
             sizes = [(v, v.ask_size, v.best_ask) for v in candidates]
@@ -218,6 +241,7 @@ class SmartOrderRouter:
             sizes = [(v, v.bid_size, v.best_bid) for v in candidates]
 
         # Allocate across venues
+        # Przydziel na platformy
         splits: List[SplitOrder] = []
         remaining = quantity
         for venue, available, price in sizes:
@@ -233,11 +257,13 @@ class SmartOrderRouter:
             return None
 
         # Use best price as representative
+        # Użyj najlepszej ceny jako reprezentanta
         avg_price = sum(s.price * s.quantity for s in splits) / sum(s.quantity for s in splits)
         filled_qty = sum(s.quantity for s in splits)
         elapsed = time.time_ns() - start
 
         # Update stats
+        # Aktualizuj statystyki
         self.stats.total_routes += 1
         self.stats.total_latency_ns += elapsed
         for s in splits:
@@ -255,7 +281,9 @@ class SmartOrderRouter:
         )
 
     def print_stats(self) -> None:
-        """Print routing performance summary."""
+        """Print routing performance summary.
+        Drukuj podsumowanie wydajności routingu.
+        """
         print(f"\n=== Router Statistics ===")
         print(f"  Total routes: {self.stats.total_routes}")
         print(f"  Rejected: {self.stats.rejected}")
@@ -294,6 +322,7 @@ def demo() -> None:
 
     for i in range(200):
         # Simulate varying quotes across venues
+        # Symuluj różne oferty na platformach
         mid = base_price + rng.gauss(0, 0.5)
         spread_nyse = rng.uniform(0.01, 0.05)
         spread_nasdaq = rng.uniform(0.01, 0.04)

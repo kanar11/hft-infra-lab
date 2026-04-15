@@ -4,6 +4,8 @@ Multicast Market Data Feed Receiver
 
 Joins a UDP multicast group and receives timestamped market data messages
 from the multicast sender, measuring basic receive throughput.
+Dołącza do grupy multicast UDP i odbiera oznaczone czasem wiadomości danych rynkowych
+od nadawcy multicast, mierząc podstawową przepustowość odboru.
 """
 import socket
 import struct
@@ -14,7 +16,9 @@ MCAST_PORT = 5001
 
 
 def main() -> None:
-    """Join multicast group and print received messages."""
+    """Join multicast group and print received messages.
+    Dołącza do grupy multicast i drukuje odebrane wiadomości.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('', MCAST_PORT))

@@ -4,6 +4,8 @@ Order Management System (OMS) with Pre-Trade Risk Checks and P&L Tracking
 
 Handles order lifecycle (submit → risk check → fill → P&L), position tracking
 with correct average cost basis, and configurable risk limits.
+Obsługuje cykl życia zamówienia (przesłanie → kontrola ryzyka → wypełnienie → P&L), śledzenie pozycji
+z poprawną średnią ceną kosztów i konfigurowalnymi limitami ryzyka.
 """
 import time
 from enum import Enum
@@ -49,7 +51,8 @@ class Position:
 
 
 class OMS:
-    """Order Management System with pre-trade risk checks and P&L tracking."""
+    """Order Management System with pre-trade risk checks and P&L tracking.
+    System zarządzania zamówieniami z kontrolami ryzyka przed transakcją i śledzeniem P&L."""
 
     def __init__(self, max_position: int = 1000, max_order_value: float = 100000) -> None:
         self.orders: Dict[int, Order] = {}
@@ -61,6 +64,7 @@ class OMS:
     def submit_order(self, symbol: str, side: Side, price: float,
                      quantity: int) -> Optional[Order]:
         """Submit new order with pre-trade risk checks.
+        Przesłanie nowego zamówienia z kontrolami ryzyka przed transakcją.
         Args:
             symbol: Instrument symbol (e.g., 'AAPL')
             side: Side.BUY or Side.SELL
@@ -72,6 +76,7 @@ class OMS:
         start = time.time_ns()
 
         # Input validation
+        # Walidacja danych wejściowych
         if not isinstance(price, (int, float)) or price != price:  # NaN check
             print(f"  REJECTED: invalid price {price}")
             return None
@@ -86,12 +91,14 @@ class OMS:
             return None
 
         # Risk check: order value
+        # Kontrola ryzyka: wartość zamówienia
         order_value = price * quantity
         if order_value > self.max_order_value:
             print(f"  REJECTED: order value ${order_value:,.0f} > limit ${self.max_order_value:,.0f}")
             return None
 
         # Risk check: position limit
+        # Kontrola ryzyka: limit pozycji
         pos = self.positions.get(symbol, Position(symbol))
         projected = pos.net_qty + (quantity if side == Side.BUY else -quantity)
         if abs(projected) > self.max_position:
@@ -118,6 +125,7 @@ class OMS:
 
     def fill_order(self, order_id: int, fill_qty: int, fill_price: float) -> None:
         """Process execution report (fill).
+        Przetwarzanie raportu wykonania (wypełnienie).
         Args:
             order_id: ID of the order being filled
             fill_qty: Number of shares filled
@@ -135,6 +143,7 @@ class OMS:
         order.filled_ns = time.time_ns()
 
         # Update position
+        # Aktualizuj pozycję
         if order.symbol not in self.positions:
             self.positions[order.symbol] = Position(order.symbol)
         pos = self.positions[order.symbol]
@@ -157,20 +166,23 @@ class OMS:
         print(f"  FILL: #{order_id} {fill_qty}@{fill_price} status={order.status.value}")
 
     def cancel_order(self, order_id: int) -> None:
-        """Cancel an active or partially filled order."""
+        """Cancel an active or partially filled order.
+        Anuluj aktywne lub częściowo wypełnione zamówienie."""
         order = self.orders.get(order_id)
         if order and order.status in (OrderStatus.SENT, OrderStatus.PARTIALLY_FILLED):
             order.status = OrderStatus.CANCELLED
             print(f"  CANCEL: #{order_id}")
 
     def print_positions(self) -> None:
-        """Print current positions and realized P&L."""
+        """Print current positions and realized P&L.
+        Wydrukuj bieżące pozycje i zrealizowany P&L."""
         print("\n=== POSITIONS ===")
         for sym, pos in self.positions.items():
             print(f"  {sym}: qty={pos.net_qty} avg={pos.avg_price:.2f} realized_pnl=${pos.realized_pnl:.2f}")
 
     def print_orders(self) -> None:
-        """Print all orders and their status."""
+        """Print all orders and their status.
+        Wydrukuj wszystkie zamówienia i ich status."""
         print("\n=== ORDERS ===")
         for oid, order in self.orders.items():
             print(f"  #{oid}: {order.side.value} {order.quantity} {order.symbol} @ {order.price} [{order.status.value}] filled={order.filled_qty}")
@@ -181,6 +193,7 @@ def main() -> None:
     oms = OMS(max_position=500, max_order_value=50000)
 
     # Simulate trading session
+    # Symuluj sesję transakcyjną
     print("--- Submitting orders ---")
     o1 = oms.submit_order("AAPL", Side.BUY, 150.00, 100)
     o2 = oms.submit_order("AAPL", Side.BUY, 150.50, 200)

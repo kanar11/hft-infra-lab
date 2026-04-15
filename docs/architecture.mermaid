@@ -1,18 +1,18 @@
 graph TB
-    subgraph Exchange["EXCHANGE"]
+    subgraph Exchange["EXCHANGE (Giełda)"]
         ITCH_FEED["ITCH 5.0 Feed<br/>Market data stream"]
         OUCH_GW["OUCH 4.2 Gateway<br/>Order entry"]
         FIX_GW["FIX 4.2 Gateway<br/>Order/execution msgs"]
     end
 
-    subgraph Network["NETWORK LAYER"]
+    subgraph Network["NETWORK LAYER (Warstwa sieciowa)"]
         MC_SEND["Multicast Sender<br/>mc_sender.py"]
         MC_RECV["Multicast Receiver<br/>mc_receiver_latency.py"]
         DPDK["DPDK Poll Mode<br/>kernel_bypass_sim.py"]
         NET_LAT["Network Latency<br/>net_latency.sh"]
     end
 
-    subgraph TradingCore["TRADING CORE (CPU 1 - Isolated)"]
+    subgraph TradingCore["TRADING CORE / RDZEŃ HANDLOWY (CPU 1 - Isolated)"]
         ITCH_PARSE["ITCH Parser<br/>itch_parser.py<br/>~1M msg/sec"]
         OUCH_SEND["OUCH Sender<br/>ouch_sender.py<br/>1.7M msg/sec"]
         FIX_PARSE["FIX Parser<br/>fix_parser.py<br/>~2000 ns/msg"]
@@ -21,7 +21,7 @@ graph TB
         OMS_SYS["OMS<br/>oms.py<br/>Risk checks + P&L"]
     end
 
-    subgraph KernelTuning["KERNEL TUNING"]
+    subgraph KernelTuning["KERNEL TUNING (Strojenie jądra)"]
         HUGE["Hugepages 512x2MB<br/>Fewer TLB misses"]
         ISOL["CPU Isolation<br/>isolcpus=1"]
         IRQ["IRQ Affinity<br/>All IRQs → CPU 0"]
@@ -29,7 +29,7 @@ graph TB
         CPUPIN["CPU Pinning<br/>cpu_pin.sh"]
     end
 
-    subgraph Monitoring["MONITORING"]
+    subgraph Monitoring["MONITORING (Monitorowanie)"]
         MONITOR["Infra Monitor<br/>infra_monitor.py"]
         MON_SH["System Monitor<br/>monitor.sh"]
         CACHE_LAT["Cache Latency<br/>cache_latency.cpp"]
@@ -37,30 +37,30 @@ graph TB
     end
 
     %% Data flow
-    ITCH_FEED -->|"binary market data"| MC_SEND
-    MC_SEND -->|"UDP multicast"| MC_RECV
+    ITCH_FEED -->|"binary market data<br/>(dane rynkowe binarne)"| MC_SEND
+    MC_SEND -->|"UDP multicast<br/>(multicast UDP)"| MC_RECV
     MC_RECV --> ITCH_PARSE
     MC_RECV --> DPDK
 
-    ITCH_PARSE -->|"parsed orders"| SPSC
-    SPSC -->|"lock-free transfer"| ORDERBOOK
-    ORDERBOOK -->|"matched trades"| OMS_SYS
-    OMS_SYS -->|"risk-checked order"| OUCH_SEND
-    OMS_SYS -->|"FIX execution reports"| FIX_PARSE
-    OUCH_SEND -->|"binary order"| OUCH_GW
+    ITCH_PARSE -->|"parsed orders<br/>(sparsowane zlecenia)"| SPSC
+    SPSC -->|"lock-free transfer<br/>(transfer bez blokad)"| ORDERBOOK
+    ORDERBOOK -->|"matched trades<br/>(dopasowane transakcje)"| OMS_SYS
+    OMS_SYS -->|"risk-checked order<br/>(zlecenie sprawdzone ryzyko)"| OUCH_SEND
+    OMS_SYS -->|"FIX execution reports<br/>(raporty wykonania FIX)"| FIX_PARSE
+    OUCH_SEND -->|"binary order<br/>(zlecenie binarne)"| OUCH_GW
     FIX_PARSE --> FIX_GW
 
     %% Kernel tuning affects trading core
-    ISOL -.->|"dedicates CPU 1"| TradingCore
-    HUGE -.->|"faster memory"| TradingCore
-    IRQ -.->|"no interrupts on CPU 1"| TradingCore
-    CPUPIN -.->|"pins process"| TradingCore
+    ISOL -.->|"dedicates CPU 1<br/>(dedykuje CPU 1)"| TradingCore
+    HUGE -.->|"faster memory<br/>(szybsza pamięć)"| TradingCore
+    IRQ -.->|"no interrupts on CPU 1<br/>(brak przerwań na CPU 1)"| TradingCore
+    CPUPIN -.->|"pins process<br/>(przypina proces)"| TradingCore
 
     %% Monitoring
-    MONITOR -.->|"watches"| TradingCore
-    MON_SH -.->|"watches"| KernelTuning
-    CACHE_LAT -.->|"measures"| KernelTuning
-    BENCH -.->|"benchmarks"| TradingCore
+    MONITOR -.->|"watches<br/>(obserwuje)"| TradingCore
+    MON_SH -.->|"watches<br/>(obserwuje)"| KernelTuning
+    CACHE_LAT -.->|"measures<br/>(mierzy)"| KernelTuning
+    BENCH -.->|"benchmarks<br/>(benchmarki)"| TradingCore
 
     %% Styling
     classDef exchange fill:#ff6b6b,stroke:#333,color:#fff
