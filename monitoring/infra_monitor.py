@@ -64,9 +64,11 @@ class InfraMonitor:
             f.readline()
             f.readline()
             for line in f:
-                if 'enp0s3' in line:
+                iface = line.split(':')[0].strip()
+                if iface != 'lo' and iface != '':
                     parts = line.split()
                     return {
+                        'interface': iface,
                         'rx_bytes': int(parts[1]),
                         'rx_packets': int(parts[2]),
                         'tx_bytes': int(parts[9]),
@@ -75,9 +77,12 @@ class InfraMonitor:
         return {}
 
     def check_isolated_cpu(self):
-        with open('/sys/devices/system/cpu/isolated') as f:
-            isolated = f.read().strip()
-        return isolated
+        try:
+            with open('/sys/devices/system/cpu/isolated') as f:
+                isolated = f.read().strip()
+            return isolated
+        except FileNotFoundError:
+            return ''
 
     def collect_metrics(self):
         return {
@@ -97,10 +102,19 @@ class InfraMonitor:
 
         iso_cpu = metrics['isolated_cpus']
         if iso_cpu:
-            cpu_key = f"CPU{iso_cpu}"
-            irqs = metrics['interrupts'].get(cpu_key, 0)
-            if irqs > self.thresholds['interrupts_on_isolated_cpu']:
-                alerts.append(f"ALERT: {irqs} interrupts on isolated {cpu_key}")
+            # Parse CPU ranges like "1", "1-3", "1,3"
+            cpu_ids = []
+            for part in iso_cpu.split(','):
+                if '-' in part:
+                    start, end = part.split('-', 1)
+                    cpu_ids.extend(range(int(start), int(end) + 1))
+                else:
+                    cpu_ids.append(int(part))
+            for cpu_id in cpu_ids:
+                cpu_key = f"CPU{cpu_id}"
+                irqs = metrics['interrupts'].get(cpu_key, 0)
+                if irqs > self.thresholds['interrupts_on_isolated_cpu']:
+                    alerts.append(f"ALERT: {irqs} interrupts on isolated {cpu_key}")
 
         return alerts
 

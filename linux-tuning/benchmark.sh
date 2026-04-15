@@ -14,7 +14,7 @@ echo "=== HFT Latency Benchmark ==="
 
 # Check cyclictest installed
 if ! command -v cyclictest &> /dev/null; then
-    echo "cyclictest not found. Install: sudo apt install rt-tests"
+    echo "cyclictest not found. Install: sudo dnf install rt-tests"
     exit 1
 fi
 

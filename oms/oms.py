@@ -131,7 +131,6 @@ class OMS:
     def print_positions(self):
         print("\n=== POSITIONS ===")
         for sym, pos in self.positions.items():
-            mark_pnl = 0
             print(f"  {sym}: qty={pos.net_qty} avg={pos.avg_price:.2f} realized_pnl=${pos.realized_pnl:.2f}")
 
     def print_orders(self):
