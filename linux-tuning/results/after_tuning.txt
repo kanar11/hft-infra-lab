@@ -1,6 +1,6 @@
-PO TUNINGU
+AFTER TUNING
 T0: Min=27 Avg=13074 Max=3760544
 T1: Min=18 Avg=16455 Max=3764899
 T2: Min=18 Avg=14537 Max=3760800
-T3: ISOLATED - brak w schedulerze
-Zmiany: hugepages=512, isolcpus=3, nohz_full=3, IRQ affinity=CPU0, swappiness=0
+T3: ISOLATED - removed from scheduler
+Changes: hugepages=512, isolcpus=3, nohz_full=3, IRQ affinity=CPU0, swappiness=0

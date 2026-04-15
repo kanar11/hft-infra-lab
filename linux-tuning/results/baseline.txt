@@ -1,4 +1,4 @@
-BASELINE - przed tuningiem
+BASELINE - before tuning
 T0: Min=18 Avg=185 Max=5293
 T1: Min=17 Avg=167 Max=5615
 T2: Min=17 Avg=127 Max=5205
