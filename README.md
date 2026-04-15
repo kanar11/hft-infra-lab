@@ -2,11 +2,12 @@
 
 Complete low-latency infrastructure lab for HFT systems — kernel tuning, networking, order management, and monitoring.
 
-## Performance Highlights
-- Order book matching: **23M orders/sec** (C++, 2-core VM)
-- ITCH parser: **258K msg/sec** (Python)
+## Performance Highlights (Red Hat EL10, VirtualBox 2-core VM)
+- Order book matching: **17.8M orders/sec** (C++, p50=50ns, p99=130ns)
+- ITCH parser: **~1M msg/sec** (Python, ~1000ns/msg)
 - OUCH encoding: **1.7M msg/sec** (Python)
-- Lock-free queue: **10M messages** benchmarked
+- Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
+- Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
 - DPDK poll mode: **5.6x latency reduction** vs interrupts
 
 ## Modules
@@ -39,6 +40,4 @@ make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency hist
 - OS: Red Hat Enterprise Linux 10.1 (Coughlan) 
 - VM: VirtualBox (2 CPU, 4GB RAM, 40GB disk)
 - Kernel: 6.12.0-124.8.1.el10_1.x86_64
-- Boot params: isolcpus=1 nohz_full=1 rcu_nocbs=1
-- Hugepages: 512 x 2MB (1GB reserved)
-- Swappiness: 0
+- Boot params: isolcpus=1 nohz_ful

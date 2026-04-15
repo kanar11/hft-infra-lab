@@ -3,10 +3,10 @@
 Baseline Linux kernel tuning for low-latency trading infrastructure.
 
 ## Environment
-- OS: Ubuntu 24.04 LTS
-- Kernel: 6.6.87.2-microsoft-standard-WSL2
-- CPU: AMD Ryzen 7 5700X (16 logical cores)
-- RAM: 16GB
+- OS: Red Hat Enterprise Linux 10.1 (Coughlan)
+- Kernel: 6.12.0-124.8.1.el10_1.x86_64
+- VM: VirtualBox (2 vCPUs, 4GB RAM)
+- Boot params: isolcpus=1 nohz_full=1 rcu_nocbs=1
 
 ## Optimizations Applied
 
@@ -14,18 +14,21 @@ Baseline Linux kernel tuning for low-latency trading infrastructure.
 |---|---|---|
 | 1 | Disable swap | vm.swappiness=0 |
 | 2 | Network buffers | net.core.rmem_max=16777216 |
-| 3 | Disable auto-upgrades | systemctl stop unattended-upgrades |
+| 3 | Disable background services | systemctl stop dnf-makecache.timer |
 | 4 | Hugepages (1GB) | vm.nr_hugepages=512 |
 | 5 | TCP low latency | tcp_nodelay=1, tcp_timestamps=0 |
-| 6 | IRQ affinity | eth0 IRQs pinned to CPU0 |
+| 6 | IRQ affinity | enp0s3 IRQs pinned to CPU0 |
 | 7 | FIFO scheduler | chrt -f -p 80 |
 
-## Benchmark Results (cyclictest)
+## Benchmark Results (cyclictest on tuned VM)
 
-| Metric | Before | After |
-|---|---|---|
-| Min latency | 4 µs | 3 µs |
-| Avg latency | 12 µs | 9 µs |
+| Metric | Result |
+|---|---|
+| Min latency | 21 µs |
+| Avg latency | 3878 µs |
+| Max latency | 2,464,055 µs |
+
+Note: High max/avg caused by VirtualBox hypervisor scheduling. Production HFT uses bare metal with PREEMPT_RT for sub-10µs p99.
 
 ## Usage
 ```bash

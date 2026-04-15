@@ -3,9 +3,8 @@
 Real-time network latency measurement tool for HFT infrastructure monitoring.
 
 ## Environment
-- OS: Ubuntu 24.04 LTS (WSL2)
-- CPU: AMD Ryzen 7 5700X
-- RAM: 16GB
+- OS: Red Hat Enterprise Linux 10.1 (Coughlan)
+- VM: VirtualBox (2 vCPUs, 4GB RAM)
 
 ## What it measures
 
