@@ -16,6 +16,7 @@ test: build
 	python3 tests/test_itch.py
 	python3 tests/test_ouch.py
 	python3 tests/test_fix.py
+	python3 tests/test_router.py
 
 benchmark:
 	python3 tests/benchmark.py

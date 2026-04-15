@@ -2,7 +2,7 @@
 
 Unit tests and performance benchmarks for all HFT modules.
 
-## Test Suite (34 tests)
+## Test Suite (44 tests)
 
 | File | Module | Tests |
 |------|--------|-------|
@@ -10,6 +10,7 @@ Unit tests and performance benchmarks for all HFT modules.
 | `test_itch.py` | ITCH 5.0 Parser | 10 (add, sell, delete, trade, replace, executed, cancelled, system event, stock directory, speed) |
 | `test_ouch.py` | OUCH 4.2 Protocol | 7 (encoding, parsing, truncation, precision) |
 | `test_fix.py` | FIX 4.2 Parser | 7 (order types, malformed tags, speed) |
+| `test_router.py` | Smart Order Router | 10 (best price, latency, split, fees, inactive venues, speed) |
 
 ## Run Tests
 ```bash

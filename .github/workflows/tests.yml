@@ -29,6 +29,9 @@ jobs:
       - name: Run FIX tests
         run: python tests/test_fix.py
 
+      - name: Run Router tests
+        run: python tests/test_router.py
+
       - name: Run benchmarks
         run: python tests/benchmark.py
 
