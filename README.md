@@ -35,8 +35,9 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | monitoring/ | Real-time infra monitor with alerts | Python |
 | strategy/ | Mean reversion trading strategy (SMA signals, ~2300ns latency) | Python |
 | router/ | Smart Order Router — venue selection by price, latency, split | Python |
+| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits | Python |
 | simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→OMS→P&L) | Python |
-| tests/ | Unit tests (44) and benchmarks | Python |
+| tests/ | Unit tests (54) and benchmarks | Python |
 | docs/ | Technical write-up on Linux tuning, benchmark charts | Markdown |
 
 ## Quick Start
@@ -52,7 +53,7 @@ docker run hft-lab make simulate  # simulator only
 ### Manual
 ```bash
 make build      # compile all C++ modules (orderbook, lockfree, cache_latency)
-make test       # run all unit tests (44/44: OMS, ITCH, OUCH, FIX, Router)
+make test       # run all unit tests (54/54: OMS, ITCH, OUCH, FIX, Router, Risk)
 make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency histogram)
 make simulate   # run end-to-end market data simulator (10K messages)
 ```

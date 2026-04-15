@@ -32,6 +32,9 @@ jobs:
       - name: Run Router tests
         run: python tests/test_router.py
 
+      - name: Run Risk tests
+        run: python tests/test_risk.py
+
       - name: Run benchmarks
         run: python tests/benchmark.py
 
