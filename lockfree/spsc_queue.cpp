@@ -90,14 +90,19 @@ void benchmark_throughput() {
     auto end = std::chrono::high_resolution_clock::now();
     auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     
-    double msgs_per_sec = (double)received / (elapsed_ms / 1000.0);
-    double avg_latency = (double)total_latency / received;
-    
     std::cout << "=== Lock-Free SPSC Queue Benchmark ===" << std::endl;
     std::cout << "Messages:     " << received << " / " << NUM_MESSAGES << std::endl;
     std::cout << "Time:         " << elapsed_ms << " ms" << std::endl;
-    std::cout << "Throughput:   " << (int)msgs_per_sec << " msg/sec" << std::endl;
-    std::cout << "Avg latency:  " << (int)avg_latency << " ns" << std::endl;
+
+    if (received > 0 && elapsed_ms > 0) {
+        double msgs_per_sec = (double)received / (elapsed_ms / 1000.0);
+        double avg_latency = (double)total_latency / received;
+        std::cout << "Throughput:   " << (int)msgs_per_sec << " msg/sec" << std::endl;
+        std::cout << "Avg latency:  " << (int)avg_latency << " ns" << std::endl;
+    } else {
+        std::cout << "Throughput:   N/A (no messages received)" << std::endl;
+        std::cout << "Avg latency:  N/A" << std::endl;
+    }
     std::cout << "Queue size:   65536 slots" << std::endl;
     std::cout << "Cache lines:  head and tail on separate 64-byte lines (no false sharing)" << std::endl;
 }

@@ -81,10 +81,10 @@ class OUCHMessage:
             fields = struct.unpack('!c 14s c I 8s I c q', data[:41])
             return {
                 'type': 'ACCEPTED',
-                'token': fields[1].decode().strip(),
+                'token': fields[1].decode('ascii', errors='replace').strip(),
                 'side': 'BUY' if fields[2] == b'B' else 'SELL',
                 'shares': fields[3],
-                'stock': fields[4].decode().strip(),
+                'stock': fields[4].decode('ascii', errors='replace').strip(),
                 'price': fields[5] / 10000.0,
                 'order_ref': fields[7]
             }
@@ -94,9 +94,9 @@ class OUCHMessage:
             fields = struct.unpack('!c 14s I c', data[:20])
             return {
                 'type': 'CANCELLED',
-                'token': fields[1].decode().strip(),
+                'token': fields[1].decode('ascii', errors='replace').strip(),
                 'shares': fields[2],
-                'reason': fields[3].decode()
+                'reason': fields[3].decode('ascii', errors='replace')
             }
         elif msg_type == b'E':  # Executed
             if len(data) < 31:
@@ -104,7 +104,7 @@ class OUCHMessage:
             fields = struct.unpack('!c 14s I I q', data[:31])
             return {
                 'type': 'EXECUTED',
-                'token': fields[1].decode().strip(),
+                'token': fields[1].decode('ascii', errors='replace').strip(),
                 'shares': fields[2],
                 'price': fields[3] / 10000.0,
                 'match_number': fields[4]

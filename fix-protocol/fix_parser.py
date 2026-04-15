@@ -48,7 +48,6 @@ class FIXMessage:
 # 8  = BeginString
 # 35 = MsgType (D=NewOrder, G=Modify, F=Cancel, 8=Execution)
 # 49 = SenderCompID
-# 56 = TargetCo
 # 56 = TargetCompID
 # 55 = Symbol
 # 54 = Side (1=Buy, 2=Sell)

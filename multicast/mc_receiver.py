@@ -14,7 +14,12 @@ sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
 print(f"Listening on {MCAST_GROUP}:{MCAST_PORT}...")
 
-while True:
-    data, addr = sock.recvfrom(1024)
-    recv_time = time.time_ns()
-    print(f"[{recv_time}] From {addr}: {data.decode()}")
+try:
+    while True:
+        data, addr = sock.recvfrom(1024)
+        recv_time = time.time_ns()
+        print(f"[{recv_time}] From {addr}: {data.decode()}")
+except KeyboardInterrupt:
+    print("\nStopped.")
+finally:
+    sock.close()

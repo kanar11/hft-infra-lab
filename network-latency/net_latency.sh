@@ -23,13 +23,13 @@ echo "[2/3] Measuring TCP latency..." | tee -a $LOG_FILE
 if command -v hping3 &> /dev/null; then
     sudo hping3 -S -p 80 -c 10 $TARGET 2>&1 | grep "rtt" | tee -a $LOG_FILE
 else
-    echo "hping3 not installed. Install: sudo apt install hping3" | tee -a $LOG_FILE
+    echo "hping3 not installed. Install: sudo dnf install hping3" | tee -a $LOG_FILE
 fi
 
-# 3. Jitter calculation
+# 3. Jitter calculation from ping statistics
 echo "" | tee -a $LOG_FILE
 echo "[3/3] Calculating jitter..." | tee -a $LOG_FILE
-ping -c $COUNT $TARGET | awk -F'/' 'END{print "Min: "$1"ms | Avg: "$2"ms | Max: "$3"ms | Jitter: "$4"ms"}' | tee -a $LOG_FILE
+ping -c $COUNT $TARGET | awk -F'/' '/min\/avg\/max/{print "Min: "$4"ms | Avg: "$5"ms | Max: "$6"ms | Jitter: "$7"ms"}' | tee -a $LOG_FILE
 
 echo "" | tee -a $LOG_FILE
 echo "=== Done ===" | tee -a $LOG_FILE

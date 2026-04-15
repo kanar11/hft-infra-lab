@@ -90,8 +90,11 @@ def main():
     print("[DPDK-SIM] Start mc_sender.py in another terminal\n")
     
     duration = 10
-    polls = sim.poll_mode_driver(sock, duration)
-    sim.print_stats(polls, duration)
+    try:
+        polls = sim.poll_mode_driver(sock, duration)
+        sim.print_stats(polls, duration)
+    finally:
+        sock.close()
 
 if __name__ == '__main__':
     main()

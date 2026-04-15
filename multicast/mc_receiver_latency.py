@@ -40,3 +40,4 @@ while True:
     except KeyboardInterrupt:
         print(f"\nStopped. Total parse errors: {errors}")
         break
+sock.close()

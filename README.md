@@ -42,4 +42,4 @@ make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency hist
 - OS: Red Hat Enterprise Linux 10.1 (Coughlan) 
 - VM: VirtualBox (2 CPU, 4GB RAM, 40GB disk)
 - Kernel: 6.12.0-124.8.1.el10_1.x86_64
-- Boot params: isolcpus=1 nohz_ful
+- Boot params: isolcpus=1 nohz_full=1 rcu_nocbs=1

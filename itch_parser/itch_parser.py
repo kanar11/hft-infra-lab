@@ -35,7 +35,7 @@ class ITCHMessage:
             'order_ref': fields[2],
             'side': 'BUY' if fields[3] == b'B' else 'SELL',
             'shares': fields[4],
-            'stock': fields[5].decode().strip(),
+            'stock': fields[5].decode('ascii', errors='replace').strip(),
             'price': fields[6] / 10000.0
         }
 
@@ -59,7 +59,7 @@ class ITCHMessage:
             'order_ref': fields[2],
             'side': 'BUY' if fields[3] == b'B' else 'SELL',
             'shares': fields[4],
-            'stock': fields[5].decode().strip(),
+            'stock': fields[5].decode('ascii', errors='replace').strip(),
             'price': fields[6] / 10000.0,
             'match_number': fields[7]
         }
