@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Multicast Market Data Feed Receiver
+
+Joins a UDP multicast group and receives timestamped market data messages
+from the multicast sender, measuring basic receive throughput.
+"""
 import socket
 import struct
 import time

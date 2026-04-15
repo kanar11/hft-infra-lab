@@ -51,7 +51,7 @@ docker run hft-lab make simulate  # simulator only
 ### Manual
 ```bash
 make build      # compile all C++ modules (orderbook, lockfree, cache_latency)
-make test       # run all unit tests (31/31: OMS, ITCH, OUCH, FIX)
+make test       # run all unit tests (34/34: OMS, ITCH, OUCH, FIX)
 make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency histogram)
 make simulate   # run end-to-end market data simulator (10K messages)
 ```

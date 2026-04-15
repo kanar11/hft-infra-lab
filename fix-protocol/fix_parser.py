@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+FIX 4.2 Protocol Parser
+
+Parses Financial Information eXchange (FIX) 4.2 messages used for
+electronic trading communication between brokers and exchanges.
+"""
 import time
 from typing import Dict, Optional
 

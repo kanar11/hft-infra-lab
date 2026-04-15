@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+NASDAQ OUCH 4.2 Order Entry Protocol
+
+Encodes and decodes OUCH messages for order entry (Enter, Cancel, Replace)
+and server responses (Accepted, Replaced, Cancelled, Executed).
+"""
 import struct
 import time
 import socket

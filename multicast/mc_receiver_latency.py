@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Multicast Latency Measurement Receiver
+
+Receives multicast market data and measures end-to-end latency
+by comparing send and receive timestamps for each message.
+"""
 import socket
 import struct
 import time

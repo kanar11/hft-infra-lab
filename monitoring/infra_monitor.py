@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Real-Time HFT Infrastructure Monitor
+
+Monitors CPU isolation, hugepages, network latency, IRQ affinity,
+and system health with configurable alerting thresholds.
+"""
 import time
 import os
 import json

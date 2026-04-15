@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Multicast Market Data Feed Sender
+
+Sends timestamped market data messages over UDP multicast,
+simulating a real exchange market data feed.
+"""
 import socket
 import time
 

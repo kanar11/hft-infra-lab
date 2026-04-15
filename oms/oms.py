@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Order Management System (OMS) with Pre-Trade Risk Checks and P&L Tracking
+
+Handles order lifecycle (submit → risk check → fill → P&L), position tracking
+with correct average cost basis, and configurable risk limits.
+"""
 import time
 from enum import Enum
 from dataclasses import dataclass, field

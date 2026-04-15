@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+"""
+NASDAQ ITCH 5.0 Binary Protocol Parser
+
+Parses all 8 ITCH message types: ADD_ORDER, ADD_ORDER_MPID, DELETE_ORDER,
+REPLACE_ORDER, ORDER_EXECUTED, ORDER_CANCELLED, TRADE, SYSTEM_EVENT,
+and STOCK_DIRECTORY. Used for processing direct market data feeds.
+"""
 import struct
 import time
 from typing import Dict, List, Any, Optional

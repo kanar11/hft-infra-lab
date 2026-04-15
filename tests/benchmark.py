@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Performance Benchmarks for ITCH Parser and OMS
+
+Measures throughput (messages/sec) and per-message latency (nanoseconds)
+for the core Python components of the HFT pipeline.
+"""
 import os
 import sys
 import time

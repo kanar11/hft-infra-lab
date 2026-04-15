@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+DPDK Kernel Bypass Simulator
+
+Simulates kernel bypass networking with poll-mode driver vs interrupt-driven I/O.
+Demonstrates the latency reduction achieved by bypassing the kernel network stack.
+"""
 import socket
 import time
 import os
