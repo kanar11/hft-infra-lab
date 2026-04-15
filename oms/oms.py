@@ -47,6 +47,20 @@ class OMS:
         """Submit new order with pre-trade risk checks"""
         start = time.time_ns()
 
+        # Input validation
+        if not isinstance(price, (int, float)) or price != price:  # NaN check
+            print(f"  REJECTED: invalid price {price}")
+            return None
+        if price <= 0:
+            print(f"  REJECTED: price must be positive, got {price}")
+            return None
+        if not isinstance(quantity, int) or quantity <= 0:
+            print(f"  REJECTED: quantity must be positive int, got {quantity}")
+            return None
+        if not isinstance(symbol, str) or len(symbol) == 0:
+            print(f"  REJECTED: invalid symbol")
+            return None
+
         # Risk check: order value
         order_value = price * quantity
         if order_value > self.max_order_value:

@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,5 +23,35 @@ jobs:
       - name: Run ITCH tests
         run: python tests/test_itch.py
 
+      - name: Run OUCH tests
+        run: python tests/test_ouch.py
+
+      - name: Run FIX tests
+        run: python tests/test_fix.py
+
       - name: Run benchmarks
         run: python tests/benchmark.py
+
+  build-cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install g++
+        run: sudo apt-get update && sudo apt-get install -y g++
+
+      - name: Build all C++ modules
+        run: make build
+
+      - name: Run orderbook demo
+        run: ./orderbook/orderbook
+
+      - name: Run orderbook_v2 demo
+        run: ./orderbook/orderbook_v2
+
+      - name: Run C++ benchmarks
+        run: |
+          ./orderbook/benchmark_orderbook
+          ./orderbook/latency_histogram 100000
+          ./lockfree/spsc_queue
+          ./memory-latency/cache_latency

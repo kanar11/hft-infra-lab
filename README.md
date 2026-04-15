@@ -25,14 +25,14 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
 | oms/ | Order Management System with risk checks, P&L | Python |
 | monitoring/ | Real-time infra monitor with alerts | Python |
-| tests/ | Unit tests (12) and benchmarks | Python |
+| tests/ | Unit tests (26) and benchmarks | Python |
 | docs/ | Technical write-up on Linux tuning | Markdown |
 
 ## Quick Start
 ```bash
-make build      # compile C++ modules
-make test       # run all unit tests (12/12)
-make benchmark  # run performance benchmarks
+make build      # compile all C++ modules (orderbook, lockfree, cache_latency)
+make test       # run all unit tests (26/26: OMS, ITCH, OUCH, FIX)
+make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency histogram)
 ```
 
 ## Environment

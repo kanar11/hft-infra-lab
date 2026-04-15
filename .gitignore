@@ -1,6 +1,18 @@
 # Compiled binaries
 *.o
 orderbook/orderbook
-__pycache__/
 orderbook/orderbook_v2
+orderbook/benchmark_orderbook
+orderbook/latency_histogram
 lockfree/spsc_queue
+memory-latency/cache_latency
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.json
+*.txt
+benchmark_results/
+monitor_log_*

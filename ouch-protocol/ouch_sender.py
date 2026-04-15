@@ -70,9 +70,14 @@ class OUCHMessage:
 
     @staticmethod
     def parse_response(data):
-        """Parse exchange response"""
+        """Parse exchange response with bounds checking"""
+        if not data or len(data) < 1:
+            return {'type': 'ERROR', 'reason': 'empty response'}
+
         msg_type = data[0:1]
         if msg_type == b'A':  # Accepted
+            if len(data) < 41:
+                return {'type': 'ERROR', 'reason': f'ACCEPTED too short: {len(data)} < 41 bytes'}
             fields = struct.unpack('!c 14s c I 8s I c q', data[:41])
             return {
                 'type': 'ACCEPTED',
@@ -84,6 +89,8 @@ class OUCHMessage:
                 'order_ref': fields[7]
             }
         elif msg_type == b'C':  # Cancelled
+            if len(data) < 20:
+                return {'type': 'ERROR', 'reason': f'CANCELLED too short: {len(data)} < 20 bytes'}
             fields = struct.unpack('!c 14s I c', data[:20])
             return {
                 'type': 'CANCELLED',
@@ -92,6 +99,8 @@ class OUCHMessage:
                 'reason': fields[3].decode()
             }
         elif msg_type == b'E':  # Executed
+            if len(data) < 31:
+                return {'type': 'ERROR', 'reason': f'EXECUTED too short: {len(data)} < 31 bytes'}
             fields = struct.unpack('!c 14s I I q', data[:31])
             return {
                 'type': 'EXECUTED',

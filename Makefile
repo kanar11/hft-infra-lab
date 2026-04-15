@@ -1,16 +1,29 @@
 .PHONY: build test benchmark clean
 
-build:
-	cd orderbook && g++ -O2 -o orderbook orderbook.cpp
-	cd orderbook && g++ -O2 -o benchmark_orderbook benchmark_orderbook.cpp
+CXX      = g++
+CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -pthread
 
-test:
+build:
+	$(CXX) $(CXXFLAGS) -o orderbook/orderbook orderbook/orderbook.cpp
+	$(CXX) $(CXXFLAGS) -o orderbook/orderbook_v2 orderbook/orderbook_v2.cpp
+	$(CXX) $(CXXFLAGS) -o orderbook/benchmark_orderbook orderbook/benchmark_orderbook.cpp
+	$(CXX) $(CXXFLAGS) -o orderbook/latency_histogram orderbook/latency_histogram.cpp
+	$(CXX) $(CXXFLAGS) -o lockfree/spsc_queue lockfree/spsc_queue.cpp
+	$(CXX) $(CXXFLAGS) -o memory-latency/cache_latency memory-latency/cache_latency.cpp
+
+test: build
 	python3 tests/test_oms.py
 	python3 tests/test_itch.py
+	python3 tests/test_ouch.py
+	python3 tests/test_fix.py
 
 benchmark:
 	python3 tests/benchmark.py
 	cd orderbook && ./benchmark_orderbook
+	cd orderbook && ./latency_histogram
+	cd lockfree && ./spsc_queue
+	cd memory-latency && ./cache_latency
 
 clean:
-	rm -f orderbook/orderbook orderbook/benchmark_orderbook
+	rm -f orderbook/orderbook orderbook/orderbook_v2 orderbook/benchmark_orderbook
+	rm -f orderbook/latency_histogram lockfree/spsc_queue memory-latency/cache_latency

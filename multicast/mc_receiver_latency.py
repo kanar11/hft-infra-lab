@@ -16,11 +16,27 @@ print("Measuring multicast latency...")
 print(f"{'SEQ':<8} {'Latency (us)':<15}")
 print("-" * 25)
 
+errors = 0
 while True:
-    data, addr = sock.recvfrom(1024)
-    recv_time = time.time_ns()
-    msg = data.decode()
-    parts = dict(p.split('=') for p in msg.split())
-    send_time = int(parts['TS'])
-    latency_us = (recv_time - send_time) / 1000
-    print(f"{parts['SEQ']:<8} {latency_us:<15.2f}")
+    try:
+        data, addr = sock.recvfrom(1024)
+        recv_time = time.time_ns()
+        msg = data.decode()
+        parts = dict(p.split('=') for p in msg.split() if '=' in p)
+
+        if 'TS' not in parts or 'SEQ' not in parts:
+            errors += 1
+            if errors <= 10:
+                print(f"  WARN: malformed message (missing TS/SEQ): {msg[:60]}")
+            continue
+
+        send_time = int(parts['TS'])
+        latency_us = (recv_time - send_time) / 1000
+        print(f"{parts['SEQ']:<8} {latency_us:<15.2f}")
+    except (ValueError, UnicodeDecodeError) as e:
+        errors += 1
+        if errors <= 10:
+            print(f"  WARN: parse error: {e}")
+    except KeyboardInterrupt:
+        print(f"\nStopped. Total parse errors: {errors}")
+        break
