@@ -8,7 +8,8 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 
 ## Performance Highlights / Wyniki wydajności (Red Hat EL10, VirtualBox 2-core VM)
 - Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
-- ITCH parser: **~1M msg/sec** (Python, ~1000ns/msg)
+- ITCH parser (C++): **60M msg/sec** (16ns/msg, p50=40ns, p99=50ns)
+- ITCH parser (Python): **~1M msg/sec** (~1000ns/msg)
 - OUCH encoding: **1.7M msg/sec** (Python)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
@@ -29,7 +30,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | multicast/ | Market data feed sender/receiver with latency | Python |
 | orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
 | fix-protocol/ | FIX 4.2 message parser | Python |
-| itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser (8 message types) | Python |
+| itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser (8 message types) | Python + C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol | Python |
 | dpdk-bypass/ | Kernel bypass simulator with poll mode driver | Python |
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
@@ -54,7 +55,7 @@ docker run hft-lab make simulate  # simulator only
 
 ### Manual
 ```bash
-make build      # compile all C++ modules (orderbook, lockfree, cache_latency)
+make build      # compile all C++ modules (orderbook, lockfree, cache_latency, itch_parser)
 make test       # run all unit tests (54/54: OMS, ITCH, OUCH, FIX, Router, Risk)
 make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency histogram)
 make simulate   # run end-to-end market data simulator (10K messages)
