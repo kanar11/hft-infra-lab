@@ -95,6 +95,19 @@ struct AddOrderMsg {
     double   price;         // price in dollars e.g. 150.25 / cena w dolarach
 };
 
+// ADD_ORDER_MPID message: like ADD_ORDER but includes Market Participant ID (who placed it)
+// Wiadomość ADD_ORDER_MPID: jak ADD_ORDER ale zawiera ID uczestnika rynku
+struct AddOrderMpidMsg {
+    int64_t  timestamp_ns;
+    int64_t  order_ref;
+    char     side;
+    uint32_t shares;
+    char     stock[9];
+    double   price;
+    char     mpid[5];       // Market Participant ID e.g. "GSCO" (Goldman Sachs) + null
+                            // Identyfikator uczestnika rynku np. "GSCO" + null
+};
+
 // DELETE_ORDER message: an order was cancelled/removed from the book
 // Wiadomość DELETE_ORDER: zlecenie zostało anulowane/usunięte z booka
 struct DeleteOrderMsg {
@@ -153,6 +166,7 @@ struct SystemEventMsg {
 struct StockDirectoryMsg {
     int64_t timestamp_ns;
     char    stock[9];
+    char    market_category; // 'Q'=NASDAQ, 'N'=NYSE, etc. / kategoria rynku
 };
 
 // ─────────────────────────────────────────────
@@ -165,6 +179,7 @@ struct StockDirectoryMsg {
 // Lepszy niż zwykłe liczby (0,1,2...) bo nazwy dokumentują się same
 enum class MsgType {
     ADD_ORDER,
+    ADD_ORDER_MPID,
     DELETE_ORDER,
     REPLACE_ORDER,
     ORDER_EXECUTED,
@@ -190,6 +205,7 @@ struct ParsedMessage {
     // union: wszystkie pola dzielą ten sam blok pamięci
     union {
         AddOrderMsg       add_order;
+        AddOrderMpidMsg   add_order_mpid;
         DeleteOrderMsg    delete_order;
         ReplaceOrderMsg   replace_order;
         OrderExecutedMsg  order_executed;
@@ -256,6 +272,7 @@ public:
         // Instrukcja switch: jak łańcuch if/elif, ale skompilowana do tablicy skoków (szybciej)
         switch (msg_type) {
             case 'A': result = parse_add_order(data, len);       stats_.add_orders++;     break;
+            case 'F': result = parse_add_order_mpid(data, len);  stats_.add_orders++;     break;
             case 'D': result = parse_delete_order(data, len);    stats_.delete_orders++;  break;
             case 'U': result = parse_replace_order(data, len);   stats_.replace_orders++; break;
             case 'E': result = parse_order_executed(data, len);  stats_.executions++;     break;
@@ -314,6 +331,26 @@ private:
         memcpy(msg.stock, d + 22, 8);              // copy 8 bytes of stock name / skopiuj 8 bajtów nazwy akcji
         msg.stock[8]     = '\0';                    // null-terminate the string / zakończ ciąg znakiem null
         msg.price        = read_be32(d + 30) / 10000.0; // convert fixed-point to float / konwertuj stałoprzecinkowy na zmiennoprzecinkowy
+        return m;
+    }
+
+    static inline ParsedMessage parse_add_order_mpid(const uint8_t* d, size_t len) noexcept {
+        // ADD_ORDER_MPID layout (38 bytes): same as ADD_ORDER + 4-byte MPID at end
+        // Układ ADD_ORDER_MPID (38 bajtów): jak ADD_ORDER + 4-bajtowy MPID na końcu
+        ParsedMessage m{};
+        if (len < 38) { m.type = MsgType::ERROR; return m; }
+
+        m.type = MsgType::ADD_ORDER_MPID;
+        auto& msg = m.data.add_order_mpid;
+        msg.timestamp_ns = read_be64(d + 1);
+        msg.order_ref    = read_be64(d + 9);
+        msg.side         = (char)d[17];
+        msg.shares       = read_be32(d + 18);
+        memcpy(msg.stock, d + 22, 8);
+        msg.stock[8]     = '\0';
+        msg.price        = read_be32(d + 30) / 10000.0;
+        memcpy(msg.mpid, d + 34, 4);
+        msg.mpid[4]      = '\0';
         return m;
     }
 
@@ -430,17 +467,19 @@ private:
     }
 
     static inline ParsedMessage parse_stock_directory(const uint8_t* d, size_t len) noexcept {
-        // STOCK_DIRECTORY layout (17 bytes, simplified):
+        // STOCK_DIRECTORY layout (18 bytes):
         // [0]    = 'R'
         // [1..8] = timestamp_ns
         // [9..16]= stock symbol
+        // [17]   = market_category ('Q'=NASDAQ, 'N'=NYSE)
         ParsedMessage m{};
-        if (len < 17) { m.type = MsgType::ERROR; return m; }
+        if (len < 18) { m.type = MsgType::ERROR; return m; }
 
         m.type = MsgType::STOCK_DIRECTORY;
         m.data.stock_directory.timestamp_ns = read_be64(d + 1);
         memcpy(m.data.stock_directory.stock, d + 9, 8);
         m.data.stock_directory.stock[8] = '\0';
+        m.data.stock_directory.market_category = (char)d[17];
         return m;
     }
 };

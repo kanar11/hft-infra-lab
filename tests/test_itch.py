@@ -118,6 +118,22 @@ def test_parse_stock_directory():
     assert result['market_category'] == 'Q'
     print("  PASS: test_parse_stock_directory")
 
+def test_parse_add_order_mpid():
+    """Test parsing of ITCH add order with MPID messages."""
+    """Testuje analizę wiadomości ITCH dodania zlecenia z MPID."""
+    msg = struct.pack('!c q q c I 8s I 4s',
+        b'F', 1000000, 1004, b'B', 200, b'TSLA    ', 2500000, b'GSCO')
+    parser = ITCHMessage()
+    result = parser.parse(msg)
+    assert result['type'] == 'ADD_ORDER_MPID'
+    assert result['order_ref'] == 1004
+    assert result['side'] == 'BUY'
+    assert result['shares'] == 200
+    assert result['stock'] == 'TSLA'
+    assert result['price'] == 250.0
+    assert result['mpid'] == 'GSCO'
+    print("  PASS: test_parse_add_order_mpid")
+
 def test_parse_speed():
     """Test that ITCH parser is fast enough (under 1 millisecond)."""
     """Testuje czy parser ITCH jest wystarczająco szybki (poniżej 1 milisekundy)."""
@@ -140,6 +156,7 @@ if __name__ == '__main__':
         test_parse_order_cancelled,
         test_parse_system_event,
         test_parse_stock_directory,
+        test_parse_add_order_mpid,
         test_parse_speed,
     ]
     passed = 0
