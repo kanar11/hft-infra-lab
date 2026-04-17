@@ -15,6 +15,7 @@ router/router_demo
 logger/logger_demo
 strategy/strategy_demo
 fix-protocol/fix_demo
+ouch-protocol/ouch_demo
 
 # Python
 __pycache__/
