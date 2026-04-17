@@ -3,7 +3,7 @@
 Unit tests and performance benchmarks for all HFT modules.
 *Testy jednostkowe i wzorce wydajności dla wszystkich modułów HFT.*
 
-## Test Suite (55 tests)
+## Test Suite (65 tests)
 
 | File | Module | Tests |
 |------|--------|-------|
@@ -13,6 +13,7 @@ Unit tests and performance benchmarks for all HFT modules.
 | `test_fix.py` | FIX 4.2 Parser | 7 (order types, malformed tags, speed) |
 | `test_router.py` | Smart Order Router | 10 (best price, latency, split, fees, inactive venues, speed) |
 | `test_risk.py` | Risk Manager | 10 (limits, circuit breaker, kill switch, drawdown, rate limit, speed) |
+| `test_logger.py` | Trade Logger | 10 (log, filter, trail, summary, CSV output, kill switch, speed) |
 
 ## Run Tests
 ```bash

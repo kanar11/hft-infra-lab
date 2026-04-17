@@ -19,6 +19,7 @@ test: build
 	python3 tests/test_fix.py
 	python3 tests/test_router.py
 	python3 tests/test_risk.py
+	python3 tests/test_logger.py
 
 benchmark:
 	python3 tests/benchmark.py
@@ -46,6 +47,7 @@ lint:
 	@python3 -m py_compile fix-protocol/fix_parser.py
 	@python3 -m py_compile multicast/mc_sender.py
 	@python3 -m py_compile multicast/mc_receiver.py
+	@python3 -m py_compile logger/trade_logger.py
 	@python3 -m py_compile multicast/mc_receiver_latency.py
 	@python3 -m py_compile tests/benchmark.py
 	@python3 -m py_compile tests/benchmark_chart.py

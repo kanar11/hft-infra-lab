@@ -35,6 +35,9 @@ jobs:
       - name: Run Risk tests
         run: python tests/test_risk.py
 
+      - name: Run Logger tests
+        run: python tests/test_logger.py
+
       - name: Run benchmarks
         run: python tests/benchmark.py
 
