@@ -4,7 +4,7 @@
 
 Complete low-latency infrastructure lab for HFT systems — kernel tuning, networking, order management, and monitoring.
 
-*Kompletne laboratorium infrastruktury niskooponenciacyjnej dla systemów HFT — dostrajanie jądra, sieci, zarządzanie zamówieniami i monitorowanie.*
+*Kompletne laboratorium infrastruktury niskooponenciacyjnej dla systemów HFT — dostrajanie kernela, sieci, zarządzanie zamówieniami i monitorowanie.*
 
 ## Performance Highlights / Wyniki wydajności (Red Hat EL10, VirtualBox 2-core VM)
 - Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
