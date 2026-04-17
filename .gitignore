@@ -18,6 +18,7 @@ fix-protocol/fix_demo
 ouch-protocol/ouch_demo
 dpdk-bypass/dpdk_demo
 monitoring/monitor_demo
+multicast/multicast_demo
 
 # Python
 __pycache__/

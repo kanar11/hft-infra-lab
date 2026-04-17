@@ -21,6 +21,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
 - Ping-pong thread latency: **81ns p50**, 120ns p99 (8.3M round-trips/sec)
 - Orderbook insert: **40ns p50**, 85ns avg (11.8M ops/sec)
+- Multicast serialization (C++): **23.2M msg/sec** (serialize+deserialize, p50=20ns)
 - DPDK poll mode (C++): **19.9M pkt/sec**, 2.3x faster than interrupt mode
 - Estimated tick-to-trade: **~5.8 μs** (software-only, VM) — [full breakdown](docs/tick-to-trade.md)
 
@@ -36,7 +37,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | kernel-config/ | Hugepages, CPU isolation, sysctl, IRQ affinity | Bash |
 | linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
 | network-latency/ | Network latency and jitter measurement | Bash |
-| multicast/ | Market data feed sender/receiver with latency | Python |
+| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | Python + C++ |
 | orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
 | fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | Python + C++ |
 | itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | Python + C++ |

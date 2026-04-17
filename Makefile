@@ -22,6 +22,7 @@ build:
 	$(CXX) $(CXXFLAGS) -o ouch-protocol/ouch_demo ouch-protocol/ouch_demo.cpp
 	$(CXX) $(CXXFLAGS) -o dpdk-bypass/dpdk_demo dpdk-bypass/dpdk_demo.cpp
 	$(CXX) $(CXXFLAGS) -o monitoring/monitor_demo monitoring/monitor_demo.cpp
+	$(CXX) $(CXXFLAGS) -o multicast/multicast_demo multicast/multicast_demo.cpp
 
 test: build
 	python3 tests/test_oms.py
@@ -50,6 +51,7 @@ benchmark:
 	./ouch-protocol/ouch_demo 500000
 	./dpdk-bypass/dpdk_demo 100000
 	./monitoring/monitor_demo 200000
+	./multicast/multicast_demo 200000
 
 simulate:
 	python3 simulator/market_sim.py 10000
@@ -89,3 +91,4 @@ clean:
 	rm -f ouch-protocol/ouch_demo
 	rm -f dpdk-bypass/dpdk_demo
 	rm -f monitoring/monitor_demo
+	rm -f multicast/multicast_demo

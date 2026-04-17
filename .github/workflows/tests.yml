@@ -76,3 +76,4 @@ jobs:
           ./ouch-protocol/ouch_demo 100000
           ./dpdk-bypass/dpdk_demo 50000
           ./monitoring/monitor_demo 50000
+          ./multicast/multicast_demo 50000
