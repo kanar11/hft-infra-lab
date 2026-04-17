@@ -1,39 +1,52 @@
-# Risk Manager / Zarządca Ryzyka
+# Risk Manager / Menedżer Ryzyka
 
-Standalone pre-trade risk engine with circuit breaker and kill switch.
-*Autonomiczny silnik kontroli ryzyka przed zawarciem transakcji z wyłącznikiem obwodu i przyciskiem wyłączenia.*
+Standalone pre-trade risk engine with circuit breaker and kill switch — Python + C++.
+*Autonomiczny silnik kontroli ryzyka z przełącznikiem obwodu i wyłącznikiem awaryjnym — Python + C++.*
+
+## Performance Comparison / Porównanie wydajności
+
+| Metric | Python | C++ |
+|--------|--------|-----|
+| **Throughput** | ~200K checks/sec | **7.9M checks/sec** (40x faster) |
+| **Latency (p50)** | ~4,500 ns | **91 ns** |
+| **Latency (p99)** | ~8,000 ns | **140 ns** |
 
 ## Features / Funkcje
-- **Per-symbol position limit**: Max shares in any single instrument
-*Limit pozycji na symbol: maksymalna liczba akcji w dowolnym instrumencie.*
 
-- **Portfolio exposure limit**: Max total absolute exposure across all symbols
-*Limit ekspozycji portfela: maksymalna całkowita ekspozycja bezwzględna na wszystkie symbole.*
+- **Per-symbol position limit** — max shares in one instrument
+- **Portfolio exposure limit** — max total absolute exposure
+- **Daily P&L loss limit** — circuit breaker triggers kill switch
+- **Drawdown limit** — max % drop from peak P&L
+- **Order rate limiting** — max orders per second
+- **Order value limit** — max notional value per order
+- **Kill switch** — halts all trading instantly (manual or automatic)
 
-- **Daily P&L loss limit**: Circuit breaker trips and activates kill switch
-*Limit dzienny straty zysku/straty: przełącznik obwodu się włącza i aktywuje przycisk wyłączenia.*
+## Pipeline / Potok
 
-- **Drawdown limit**: Max drawdown from peak P&L triggers kill switch
-*Limit drawdownu: maksymalny drawdown od szczytowego zysku/straty uruchamia przycisk wyłączenia.*
-
-- **Order rate limiting**: Max orders per second
-*Ograniczenie szybkości zleceń: maksymalna liczba zleceń na sekundę.*
-
-- **Order value limit**: Max notional value per order
-*Limit wartości zlecenia: maksymalna wartość nominalna na zlecenie.*
-
-- **Kill switch**: Halts all trading instantly (manual or automatic)
-*Przycisk wyłączenia: natychmiast wstrzymuje całą transakcję (ręcznie lub automatycznie).*
-
-## Run
-```bash
-# Standalone demo (200 orders, circuit breaker demo)
-python3 risk/risk_manager.py
-
-# Unit tests (10)
-python3 tests/test_risk.py
+```
+Strategy → Router → **Risk Manager** → OMS → Exchange
 ```
 
-## Performance
-- Risk check latency: ~4,500 ns per order
-- All checks run in a single pass (no early exit optimization needed at this latency)
+Every order MUST pass all 7 risk checks before reaching the OMS.
+*Każde zlecenie MUSI przejść wszystkie 7 kontroli ryzyka zanim dotrze do OMS.*
+
+## Files / Pliki
+
+| File | Description |
+|------|-------------|
+| `risk_manager.py` | Python implementation (reference, with beginner comments) |
+| `risk_manager.hpp` | C++ header-only implementation |
+| `risk_demo.cpp` | C++ demo with 14 unit tests + throughput benchmark |
+
+## Run / Uruchomienie
+
+```bash
+# Python
+python3 risk/risk_manager.py
+python3 tests/test_risk.py
+
+# C++ (build + run)
+make build
+./risk/risk_demo              # tests + benchmark (1M checks)
+./risk/risk_demo 5000000      # 5M checks
+```

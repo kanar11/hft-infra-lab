@@ -10,6 +10,7 @@ itch_parser/benchmark_itch
 benchmarks/latency_benchmark
 benchmarks/orderbook_benchmark
 oms/oms_demo
+risk/risk_demo
 
 # Python
 __pycache__/

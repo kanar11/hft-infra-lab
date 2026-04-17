@@ -14,6 +14,7 @@ build:
 	$(CXX) $(CXXFLAGS) -o benchmarks/latency_benchmark benchmarks/latency_benchmark.cpp
 	$(CXX) $(CXXFLAGS) -o benchmarks/orderbook_benchmark benchmarks/orderbook_benchmark.cpp
 	$(CXX) $(CXXFLAGS) -o oms/oms_demo oms/oms_demo.cpp
+	$(CXX) $(CXXFLAGS) -o risk/risk_demo risk/risk_demo.cpp
 
 test: build
 	python3 tests/test_oms.py
@@ -34,6 +35,7 @@ benchmark:
 	./benchmarks/latency_benchmark 100000
 	./benchmarks/orderbook_benchmark 100000
 	./oms/oms_demo 500000
+	./risk/risk_demo 500000
 
 simulate:
 	python3 simulator/market_sim.py 10000
@@ -65,3 +67,4 @@ clean:
 	rm -f itch_parser/benchmark_itch
 	rm -f benchmarks/latency_benchmark benchmarks/orderbook_benchmark
 	rm -f oms/oms_demo
+	rm -f risk/risk_demo

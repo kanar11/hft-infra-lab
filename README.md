@@ -11,6 +11,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - ITCH parser (C++): **60M msg/sec** (16ns/msg, p50=40ns, p99=50ns)
 - ITCH parser (Python): **~1M msg/sec** (~1000ns/msg)
 - OMS (C++): **11.6M orders/sec** (submit+fill, p50=60ns, p99=121ns, fixed-point prices)
+- Risk Manager (C++): **7.9M checks/sec** (p50=91ns, p99=140ns)
 - OUCH encoding: **1.7M msg/sec** (Python)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
@@ -43,7 +44,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | monitoring/ | Real-time infra monitor with alerts | Python |
 | strategy/ | Mean reversion trading strategy (SMA signals, ~2300ns latency) | Python |
 | router/ | Smart Order Router — venue selection by price, latency, split | Python |
-| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits | Python |
+| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits (7.9M checks/sec) | Python + C++ |
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
 | simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→OMS→P&L) | Python |
 | logger/ | Trade Logger / Audit Trail — nanosecond event logging, CSV export | Python |
