@@ -13,6 +13,7 @@ oms/oms_demo
 risk/risk_demo
 router/router_demo
 logger/logger_demo
+strategy/strategy_demo
 
 # Python
 __pycache__/

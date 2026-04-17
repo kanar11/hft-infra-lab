@@ -14,6 +14,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - Risk Manager (C++): **7.9M checks/sec** (p50=91ns, p99=140ns)
 - Smart Router (C++): **9.7M routes/sec** (p50=70ns, p99=150ns)
 - Trade Logger (C++): **14.3M events/sec** (p50=41ns, p99=60ns)
+- Mean Reversion Strategy (C++): **8.0M ticks/sec** (p50=100ns, p99=121ns)
 - OUCH encoding: **1.7M msg/sec** (Python)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
@@ -44,7 +45,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
 | oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | Python + C++ |
 | monitoring/ | Real-time infra monitor with alerts | Python |
-| strategy/ | Mean reversion trading strategy (SMA signals, ~2300ns latency) | Python |
+| strategy/ | Mean reversion trading strategy (8.0M ticks/sec, 100ns p50) | Python + C++ |
 | router/ | Smart Order Router — venue selection by price, latency, split (9.7M routes/sec) | Python + C++ |
 | risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits (7.9M checks/sec) | Python + C++ |
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
