@@ -11,6 +11,7 @@ benchmarks/latency_benchmark
 benchmarks/orderbook_benchmark
 oms/oms_demo
 risk/risk_demo
+router/router_demo
 
 # Python
 __pycache__/
