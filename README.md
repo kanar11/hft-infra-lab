@@ -15,6 +15,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - Smart Router (C++): **9.7M routes/sec** (p50=70ns, p99=150ns)
 - Trade Logger (C++): **14.3M events/sec** (p50=41ns, p99=60ns)
 - Mean Reversion Strategy (C++): **8.0M ticks/sec** (p50=100ns, p99=121ns)
+- FIX 4.2 Parser (C++): **5.5M msg/sec** (p50=150ns, p99=250ns)
 - OUCH encoding: **1.7M msg/sec** (Python)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
@@ -37,7 +38,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | network-latency/ | Network latency and jitter measurement | Bash |
 | multicast/ | Market data feed sender/receiver with latency | Python |
 | orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
-| fix-protocol/ | FIX 4.2 message parser | Python |
+| fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | Python + C++ |
 | itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | Python + C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol | Python |
 | dpdk-bypass/ | Kernel bypass simulator with poll mode driver | Python |

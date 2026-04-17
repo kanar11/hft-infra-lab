@@ -18,6 +18,7 @@ build:
 	$(CXX) $(CXXFLAGS) -o router/router_demo router/router_demo.cpp
 	$(CXX) $(CXXFLAGS) -o logger/logger_demo logger/logger_demo.cpp
 	$(CXX) $(CXXFLAGS) -o strategy/strategy_demo strategy/strategy_demo.cpp
+	$(CXX) $(CXXFLAGS) -o fix-protocol/fix_demo fix-protocol/fix_demo.cpp
 
 test: build
 	python3 tests/test_oms.py
@@ -42,6 +43,7 @@ benchmark:
 	./router/router_demo 500000
 	./logger/logger_demo 500000
 	./strategy/strategy_demo 500000
+	./fix-protocol/fix_demo 500000
 
 simulate:
 	python3 simulator/market_sim.py 10000
@@ -77,3 +79,4 @@ clean:
 	rm -f router/router_demo
 	rm -f logger/logger_demo
 	rm -f strategy/strategy_demo
+	rm -f fix-protocol/fix_demo
