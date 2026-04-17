@@ -64,7 +64,7 @@ jobs:
           ./orderbook/latency_histogram 100000
           ./lockfree/spsc_queue
           ./memory-latency/cache_latency
-          ./itch_parser/benchmark_itch
+          ./itch-parser/benchmark_itch
           ./benchmarks/latency_benchmark 50000
           ./benchmarks/orderbook_benchmark 50000
           ./oms/oms_demo 100000

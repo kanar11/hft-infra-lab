@@ -50,9 +50,9 @@ Python do prototypowania i C++ na krytyczną ścieżkę.*
 
 ```bash
 # Python demo / Demo Pythona
-python3 itch_parser/itch_parser.py
+python3 itch-parser/itch_parser.py
 
 # C++ benchmark / Benchmark C++
 make build
-./itch_parser/benchmark_itch
+./itch-parser/benchmark_itch
 ```

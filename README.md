@@ -22,7 +22,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - Ping-pong thread latency: **81ns p50**, 120ns p99 (8.3M round-trips/sec)
 - Orderbook insert: **40ns p50**, 85ns avg (11.8M ops/sec)
 - DPDK poll mode (C++): **19.9M pkt/sec**, 2.3x faster than interrupt mode
-- Estimated tick-to-trade: **~5.8 μs** (software-only, VM)
+- Estimated tick-to-trade: **~5.8 μs** (software-only, VM) — [full breakdown](docs/tick-to-trade.md)
 
 ## Benchmarks
 
@@ -39,7 +39,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | multicast/ | Market data feed sender/receiver with latency | Python |
 | orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
 | fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | Python + C++ |
-| itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | Python + C++ |
+| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | Python + C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | Python + C++ |
 | dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | Python + C++ |
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |

@@ -6,8 +6,16 @@ Testy jednostkowe dla parsera protokołu ITCH 5.0.
 import os
 import sys
 import struct
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from itch_parser.itch_parser import ITCHMessage
+import importlib.util
+
+# itch-parser has a hyphen — can't use normal import
+_spec = importlib.util.spec_from_file_location(
+    "itch_parser",
+    os.path.join(os.path.dirname(__file__), '..', 'itch-parser', 'itch_parser.py')
+)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+ITCHMessage = _mod.ITCHMessage
 
 def test_parse_add_order():
     """Test parsing of ITCH add order messages."""

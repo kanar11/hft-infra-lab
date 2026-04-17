@@ -6,7 +6,7 @@ orderbook/benchmark_orderbook
 orderbook/latency_histogram
 lockfree/spsc_queue
 memory-latency/cache_latency
-itch_parser/benchmark_itch
+itch-parser/benchmark_itch
 benchmarks/latency_benchmark
 benchmarks/orderbook_benchmark
 oms/oms_demo

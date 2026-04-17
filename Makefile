@@ -10,7 +10,7 @@ build:
 	$(CXX) $(CXXFLAGS) -o orderbook/latency_histogram orderbook/latency_histogram.cpp
 	$(CXX) $(CXXFLAGS) -o lockfree/spsc_queue lockfree/spsc_queue.cpp
 	$(CXX) $(CXXFLAGS) -o memory-latency/cache_latency memory-latency/cache_latency.cpp
-	$(CXX) $(CXXFLAGS) -o itch_parser/benchmark_itch itch_parser/benchmark_itch.cpp
+	$(CXX) $(CXXFLAGS) -o itch-parser/benchmark_itch itch-parser/benchmark_itch.cpp
 	$(CXX) $(CXXFLAGS) -o benchmarks/latency_benchmark benchmarks/latency_benchmark.cpp
 	$(CXX) $(CXXFLAGS) -o benchmarks/orderbook_benchmark benchmarks/orderbook_benchmark.cpp
 	$(CXX) $(CXXFLAGS) -o oms/oms_demo oms/oms_demo.cpp
@@ -58,7 +58,7 @@ lint:
 	@echo "=== Syntax check: all Python files ==="
 	@python3 -m py_compile config_loader.py
 	@python3 -m py_compile oms/oms.py
-	@python3 -m py_compile itch_parser/itch_parser.py
+	@python3 -m py_compile itch-parser/itch_parser.py
 	@python3 -m py_compile strategy/mean_reversion.py
 	@python3 -m py_compile router/smart_router.py
 	@python3 -m py_compile risk/risk_manager.py
@@ -78,7 +78,7 @@ lint:
 clean:
 	rm -f orderbook/orderbook orderbook/orderbook_v2 orderbook/benchmark_orderbook
 	rm -f orderbook/latency_histogram lockfree/spsc_queue memory-latency/cache_latency
-	rm -f itch_parser/benchmark_itch
+	rm -f itch-parser/benchmark_itch
 	rm -f benchmarks/latency_benchmark benchmarks/orderbook_benchmark
 	rm -f oms/oms_demo
 	rm -f risk/risk_demo

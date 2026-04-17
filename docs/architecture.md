@@ -73,8 +73,8 @@ Multicast Receiver (multicast/mc_receiver.py)
     │
     ▼
 ITCH 5.0 Parser
-    ├── Python (itch_parser/itch_parser.py)     ~1M msg/sec
-    └── C++    (itch_parser/itch_parser.hpp)    60M msg/sec, 16ns/msg
+    ├── Python (itch-parser/itch_parser.py)     ~1M msg/sec
+    └── C++    (itch-parser/itch_parser.hpp)    60M msg/sec, 16ns/msg
     │
     │  Parses 9 message types: A, F, D, U, E, C, P, S, R
     │  Big-endian byte swapping, zero-copy where possible
