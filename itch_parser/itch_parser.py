@@ -2,11 +2,11 @@
 """
 NASDAQ ITCH 5.0 Binary Protocol Parser
 
-Parses all 8 ITCH message types: ADD_ORDER, ADD_ORDER_MPID, DELETE_ORDER,
+Parses all 9 ITCH message types: ADD_ORDER, ADD_ORDER_MPID, DELETE_ORDER,
 REPLACE_ORDER, ORDER_EXECUTED, ORDER_CANCELLED, TRADE, SYSTEM_EVENT,
 and STOCK_DIRECTORY. Used for processing direct market data feeds.
 
-Parsuje wszystkie 8 typów wiadomości ITCH: ADD_ORDER, ADD_ORDER_MPID, DELETE_ORDER,
+Parsuje wszystkie 9 typów wiadomości ITCH: ADD_ORDER, ADD_ORDER_MPID, DELETE_ORDER,
 REPLACE_ORDER, ORDER_EXECUTED, ORDER_CANCELLED, TRADE, SYSTEM_EVENT
 i STOCK_DIRECTORY. Używane do przetwarzania bezpośrednich kanałów danych rynkowych.
 """

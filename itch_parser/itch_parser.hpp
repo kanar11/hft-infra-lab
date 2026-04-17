@@ -23,13 +23,14 @@
  *
  * Message sizes (bytes) / Rozmiary wiadomości (bajtów):
  *   A = ADD_ORDER       34 bytes
+ *   F = ADD_ORDER_MPID  38 bytes
  *   D = DELETE_ORDER    17 bytes
  *   U = REPLACE_ORDER   33 bytes
  *   E = ORDER_EXECUTED  29 bytes
  *   C = ORDER_CANCELLED 21 bytes
  *   P = TRADE           42 bytes
  *   S = SYSTEM_EVENT    10 bytes
- *   R = STOCK_DIRECTORY 17 bytes
+ *   R = STOCK_DIRECTORY 18 bytes
  */
 
 #pragma once
