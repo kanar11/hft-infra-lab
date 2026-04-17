@@ -10,6 +10,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
 - ITCH parser (C++): **60M msg/sec** (16ns/msg, p50=40ns, p99=50ns)
 - ITCH parser (Python): **~1M msg/sec** (~1000ns/msg)
+- OMS (C++): **11.6M orders/sec** (submit+fill, p50=60ns, p99=121ns, fixed-point prices)
 - OUCH encoding: **1.7M msg/sec** (Python)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
@@ -38,7 +39,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | dpdk-bypass/ | Kernel bypass simulator with poll mode driver | Python |
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
-| oms/ | Order Management System with risk checks, P&L | Python |
+| oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | Python + C++ |
 | monitoring/ | Real-time infra monitor with alerts | Python |
 | strategy/ | Mean reversion trading strategy (SMA signals, ~2300ns latency) | Python |
 | router/ | Smart Order Router — venue selection by price, latency, split | Python |
