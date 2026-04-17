@@ -20,6 +20,7 @@ build:
 	$(CXX) $(CXXFLAGS) -o strategy/strategy_demo strategy/strategy_demo.cpp
 	$(CXX) $(CXXFLAGS) -o fix-protocol/fix_demo fix-protocol/fix_demo.cpp
 	$(CXX) $(CXXFLAGS) -o ouch-protocol/ouch_demo ouch-protocol/ouch_demo.cpp
+	$(CXX) $(CXXFLAGS) -o dpdk-bypass/dpdk_demo dpdk-bypass/dpdk_demo.cpp
 
 test: build
 	python3 tests/test_oms.py
@@ -46,6 +47,7 @@ benchmark:
 	./strategy/strategy_demo 500000
 	./fix-protocol/fix_demo 500000
 	./ouch-protocol/ouch_demo 500000
+	./dpdk-bypass/dpdk_demo 100000
 
 simulate:
 	python3 simulator/market_sim.py 10000
@@ -83,3 +85,4 @@ clean:
 	rm -f strategy/strategy_demo
 	rm -f fix-protocol/fix_demo
 	rm -f ouch-protocol/ouch_demo
+	rm -f dpdk-bypass/dpdk_demo

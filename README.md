@@ -42,7 +42,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | Python + C++ |
 | itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | Python + C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | Python + C++ |
-| dpdk-bypass/ | Kernel bypass simulator with poll mode driver | Python |
+| dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | Python + C++ |
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
 | oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | Python + C++ |
