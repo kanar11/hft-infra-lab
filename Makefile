@@ -16,6 +16,7 @@ build:
 	$(CXX) $(CXXFLAGS) -o oms/oms_demo oms/oms_demo.cpp
 	$(CXX) $(CXXFLAGS) -o risk/risk_demo risk/risk_demo.cpp
 	$(CXX) $(CXXFLAGS) -o router/router_demo router/router_demo.cpp
+	$(CXX) $(CXXFLAGS) -o logger/logger_demo logger/logger_demo.cpp
 
 test: build
 	python3 tests/test_oms.py
@@ -38,6 +39,7 @@ benchmark:
 	./oms/oms_demo 500000
 	./risk/risk_demo 500000
 	./router/router_demo 500000
+	./logger/logger_demo 500000
 
 simulate:
 	python3 simulator/market_sim.py 10000
@@ -71,3 +73,4 @@ clean:
 	rm -f oms/oms_demo
 	rm -f risk/risk_demo
 	rm -f router/router_demo
+	rm -f logger/logger_demo
