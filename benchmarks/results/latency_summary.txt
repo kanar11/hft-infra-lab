@@ -1,0 +1,13 @@
+=== Ping-Pong Latency Benchmark ===
+Rounds: 100000
+
+--- Results ---
+  Total time:  12.05 ms
+  Avg RTT:     121 ns
+  Min:         50 ns
+  p50:         81 ns
+  p90:         110 ns
+  p99:         120 ns
+  p99.9:       3196 ns
+  Max:         147054 ns
+  Throughput:  8.3 M round-trips/sec

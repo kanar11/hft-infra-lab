@@ -1,0 +1,8 @@
+=== Orderbook Micro-Benchmark ===
+Operations per test: 100000
+
+--- Results (nanoseconds) ---
+  Operation        avg   p50   p90   p99     max  throughput
+  ADD           avg=    85 ns  p50=  40  p90=  50  p99=1413  max=754385  (11.8 M ops/sec)
+  CANCEL        avg=   296 ns  p50= 280  p90= 451  p99= 561  max=755927  (3.4 M ops/sec)
+  MATCH         avg=   114 ns  p50=  90  p90= 241  p99= 281  max= 31689  (8.7 M ops/sec)

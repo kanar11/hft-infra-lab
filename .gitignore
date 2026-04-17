@@ -7,6 +7,8 @@ orderbook/latency_histogram
 lockfree/spsc_queue
 memory-latency/cache_latency
 itch_parser/benchmark_itch
+benchmarks/latency_benchmark
+benchmarks/orderbook_benchmark
 
 # Python
 __pycache__/

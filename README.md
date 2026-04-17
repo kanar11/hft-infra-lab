@@ -13,7 +13,10 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - OUCH encoding: **1.7M msg/sec** (Python)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
+- Ping-pong thread latency: **81ns p50**, 120ns p99 (8.3M round-trips/sec)
+- Orderbook insert: **40ns p50**, 85ns avg (11.8M ops/sec)
 - DPDK poll mode: **5.6x latency reduction** vs interrupts
+- Estimated tick-to-trade: **~5.8 μs** (software-only, VM)
 
 ## Benchmarks
 
@@ -39,10 +42,11 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | strategy/ | Mean reversion trading strategy (SMA signals, ~2300ns latency) | Python |
 | router/ | Smart Order Router — venue selection by price, latency, split | Python |
 | risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits | Python |
+| benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
 | simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→OMS→P&L) | Python |
 | logger/ | Trade Logger / Audit Trail — nanosecond event logging, CSV export | Python |
 | tests/ | Unit tests (65) and benchmarks | Python |
-| docs/ | Technical write-up on Linux tuning, benchmark charts | Markdown |
+| docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |
 
 ## Quick Start / Szybki start
 
