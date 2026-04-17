@@ -56,7 +56,7 @@ achieve **sub-microsecond** tick-to-trade latency.
 *Na bare-metal z kernel bypass i izolacją CPU, ten pipeline mógłby osiągnąć
 opóźnienie tick-to-trade **poniżej mikrosekundy**.*
 
-## How We Measured / Jak mierzyliśmy
+## How it was Measured 
 
 Each component was benchmarked independently using `std::chrono::high_resolution_clock`
 with 100K+ iterations per measurement. Percentiles were calculated from sorted
