@@ -46,7 +46,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
 | oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | Python + C++ |
-| monitoring/ | Real-time infra monitor with alerts | Python |
+| monitoring/ | Real-time infra monitor — /proc parser, alerts (8.6M parse/sec) | Python + C++ |
 | strategy/ | Mean reversion trading strategy (8.0M ticks/sec, 100ns p50) | Python + C++ |
 | router/ | Smart Order Router — venue selection by price, latency, split (9.7M routes/sec) | Python + C++ |
 | risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits (7.9M checks/sec) | Python + C++ |

@@ -17,6 +17,7 @@ strategy/strategy_demo
 fix-protocol/fix_demo
 ouch-protocol/ouch_demo
 dpdk-bypass/dpdk_demo
+monitoring/monitor_demo
 
 # Python
 __pycache__/
