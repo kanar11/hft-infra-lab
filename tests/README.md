@@ -27,6 +27,7 @@ python3 tests/test_ouch.py
 python3 tests/test_fix.py
 python3 tests/test_router.py
 python3 tests/test_risk.py
+python3 tests/test_logger.py
 ```
 
 ## Benchmarks

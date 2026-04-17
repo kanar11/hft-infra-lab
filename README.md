@@ -17,12 +17,11 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - Mean Reversion Strategy (C++): **8.0M ticks/sec** (p50=100ns, p99=121ns)
 - FIX 4.2 Parser (C++): **5.5M msg/sec** (p50=150ns, p99=250ns)
 - OUCH 4.2 Encoder (C++): **19.9M msg/sec** (p50=30ns, p99=40ns)
-- OUCH encoding: **1.7M msg/sec** (Python)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)
 - Cache latency: L1=1.6ns, L2=4.3ns, L3=154ns, RAM=100-110ns
 - Ping-pong thread latency: **81ns p50**, 120ns p99 (8.3M round-trips/sec)
 - Orderbook insert: **40ns p50**, 85ns avg (11.8M ops/sec)
-- DPDK poll mode: **5.6x latency reduction** vs interrupts
+- DPDK poll mode (C++): **19.9M pkt/sec**, 2.3x faster than interrupt mode
 - Estimated tick-to-trade: **~5.8 μs** (software-only, VM)
 
 ## Benchmarks
@@ -68,9 +67,9 @@ docker run hft-lab make simulate  # simulator only
 
 ### Manual
 ```bash
-make build      # compile all C++ modules (orderbook, lockfree, cache_latency, itch_parser, benchmarks)
-make test       # run all unit tests (65/65: OMS, ITCH, OUCH, FIX, Router, Risk, Logger)
-make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency histogram)
+make build      # compile all C++ modules (18 binaries: orderbook, OMS, ITCH, FIX, OUCH, DPDK, risk, router, logger, strategy, monitoring, benchmarks)
+make test       # run all unit tests (65: OMS, ITCH, OUCH, FIX, Router, Risk, Logger)
+make benchmark  # run all performance benchmarks (orderbook, ITCH, OMS, FIX, OUCH, DPDK, risk, router, logger, strategy, monitoring)
 make simulate   # run end-to-end market data simulator (10K messages)
 ```
 

@@ -64,3 +64,15 @@ jobs:
           ./orderbook/latency_histogram 100000
           ./lockfree/spsc_queue
           ./memory-latency/cache_latency
+          ./itch_parser/benchmark_itch
+          ./benchmarks/latency_benchmark 50000
+          ./benchmarks/orderbook_benchmark 50000
+          ./oms/oms_demo 100000
+          ./risk/risk_demo 100000
+          ./router/router_demo 100000
+          ./logger/logger_demo 100000
+          ./strategy/strategy_demo 100000
+          ./fix-protocol/fix_demo 100000
+          ./ouch-protocol/ouch_demo 100000
+          ./dpdk-bypass/dpdk_demo 50000
+          ./monitoring/monitor_demo 50000
