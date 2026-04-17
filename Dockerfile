@@ -22,7 +22,7 @@ RUN make build
 # Default: run tests, then benchmarks, then simulator
 CMD echo "=== HFT Infrastructure Lab ===" && \
     echo "" && \
-    echo "[1/3] Running tests (54/54)..." && \
+    echo "[1/3] Running tests (65/65)..." && \
     make test && \
     echo "" && \
     echo "[2/3] Running benchmarks..." && \

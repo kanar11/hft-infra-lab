@@ -36,6 +36,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | itch_parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | Python + C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol | Python |
 | dpdk-bypass/ | Kernel bypass simulator with poll mode driver | Python |
+| memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
 | oms/ | Order Management System with risk checks, P&L | Python |
 | monitoring/ | Real-time infra monitor with alerts | Python |
@@ -60,7 +61,7 @@ docker run hft-lab make simulate  # simulator only
 
 ### Manual
 ```bash
-make build      # compile all C++ modules (orderbook, lockfree, cache_latency, itch_parser)
+make build      # compile all C++ modules (orderbook, lockfree, cache_latency, itch_parser, benchmarks)
 make test       # run all unit tests (65/65: OMS, ITCH, OUCH, FIX, Router, Risk, Logger)
 make benchmark  # run performance benchmarks (orderbook, ITCH, OMS, latency histogram)
 make simulate   # run end-to-end market data simulator (10K messages)
