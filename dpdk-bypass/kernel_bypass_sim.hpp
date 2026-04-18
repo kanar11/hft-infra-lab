@@ -33,6 +33,7 @@
 #include <thread>
 #include <atomic>
 #include <algorithm>
+#include <vector>
 
 // Simulated packet size (typical market data message)
 // Rozmiar symulowanego pakietu (typowa wiadomość danych rynkowych)
