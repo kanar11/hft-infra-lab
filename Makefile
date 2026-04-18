@@ -32,6 +32,9 @@ test: build
 	python3 tests/test_router.py
 	python3 tests/test_risk.py
 	python3 tests/test_logger.py
+	python3 tests/test_multicast.py
+	python3 tests/test_monitoring.py
+	python3 tests/test_dpdk.py
 
 benchmark:
 	python3 tests/benchmark.py
@@ -75,6 +78,9 @@ lint:
 	@python3 -m py_compile multicast/mc_receiver_latency.py
 	@python3 -m py_compile tests/benchmark.py
 	@python3 -m py_compile tests/benchmark_chart.py
+	@python3 -m py_compile tests/test_multicast.py
+	@python3 -m py_compile tests/test_monitoring.py
+	@python3 -m py_compile tests/test_dpdk.py
 	@echo "All Python files OK"
 
 clean:

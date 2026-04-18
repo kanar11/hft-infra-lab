@@ -38,6 +38,15 @@ jobs:
       - name: Run Logger tests
         run: python tests/test_logger.py
 
+      - name: Run Multicast tests
+        run: python tests/test_multicast.py
+
+      - name: Run Monitoring tests
+        run: python tests/test_monitoring.py
+
+      - name: Run DPDK tests
+        run: python tests/test_dpdk.py
+
       - name: Run benchmarks
         run: python tests/benchmark.py
 

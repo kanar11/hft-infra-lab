@@ -53,7 +53,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
 | simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→OMS→P&L) | Python |
 | logger/ | Trade Logger / Audit Trail — nanosecond event logging (14.3M events/sec) | C++ + Python |
-| tests/ | Unit tests (65) and benchmarks | Python |
+| tests/ | Unit tests (110) and benchmarks | Python |
 | docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |
 
 ## Quick Start
@@ -69,7 +69,7 @@ docker run hft-lab make simulate  # simulator only
 ### Manual
 ```bash
 make build      # compile all C++ modules (18 binaries: orderbook, OMS, ITCH, FIX, OUCH, DPDK, risk, router, logger, strategy, monitoring, benchmarks)
-make test       # run all unit tests (65: OMS, ITCH, OUCH, FIX, Router, Risk, Logger)
+make test       # run all unit tests (110: OMS, ITCH, OUCH, FIX, Router, Risk, Logger, Multicast, Monitoring, DPDK)
 make benchmark  # run all performance benchmarks (orderbook, ITCH, OMS, FIX, OUCH, DPDK, risk, router, logger, strategy, monitoring)
 make simulate   # run end-to-end market data simulator (10K messages)
 ```
