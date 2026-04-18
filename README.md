@@ -37,22 +37,22 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | kernel-config/ | Hugepages, CPU isolation, sysctl, IRQ affinity | Bash |
 | linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
 | network-latency/ | Network latency and jitter measurement | Bash |
-| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | Python + C++ |
+| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | Python  C++ |
 | orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
-| fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | Python + C++ |
-| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | Python + C++ |
-| ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | Python + C++ |
-| dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | Python + C++ |
+| fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | Python  C++ |
+| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | Python  C++ |
+| ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | Python  C++ |
+| dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | Python  C++ |
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
-| oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | Python + C++ |
-| monitoring/ | Real-time infra monitor — /proc parser, alerts (8.6M parse/sec) | Python + C++ |
-| strategy/ | Mean reversion trading strategy (8.0M ticks/sec, 100ns p50) | Python + C++ |
-| router/ | Smart Order Router — venue selection by price, latency, split (9.7M routes/sec) | Python + C++ |
-| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits (7.9M checks/sec) | Python + C++ |
+| oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | Python  C++ |
+| monitoring/ | Real-time infra monitor — /proc parser, alerts (8.6M parse/sec) | Python  C++ |
+| strategy/ | Mean reversion trading strategy (8.0M ticks/sec, 100ns p50) | Python  C++ |
+| router/ | Smart Order Router — venue selection by price, latency, split (9.7M routes/sec) | Python  C++ |
+| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits (7.9M checks/sec) | Python  C++ |
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
 | simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→OMS→P&L) | Python |
-| logger/ | Trade Logger / Audit Trail — nanosecond event logging (14.3M events/sec) | Python + C++ |
+| logger/ | Trade Logger / Audit Trail — nanosecond event logging (14.3M events/sec) | Python  C++ |
 | tests/ | Unit tests (65) and benchmarks | Python |
 | docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |
 
