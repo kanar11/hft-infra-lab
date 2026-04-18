@@ -39,7 +39,7 @@ benchmark:
 	cd orderbook && ./latency_histogram
 	cd lockfree && ./spsc_queue
 	cd memory-latency && ./cache_latency
-	cd itch_parser && ./benchmark_itch
+	cd itch-parser && ./benchmark_itch
 	./benchmarks/latency_benchmark 100000
 	./benchmarks/orderbook_benchmark 100000
 	./oms/oms_demo 500000
@@ -89,6 +89,4 @@ clean:
 	rm -f strategy/strategy_demo
 	rm -f fix-protocol/fix_demo
 	rm -f ouch-protocol/ouch_demo
-	rm -f dpdk-bypass/dpdk_demo
-	rm -f monitoring/monitor_demo
-	rm -f multicast/multicast_demo
+	
