@@ -40,14 +40,18 @@ from io import StringIO
 # Like a single-key lock on a shared room: if someone is inside, others must wait
 # threading.Lock: mutex (wzajemne wykluczanie) — tylko jeden wątek może go trzymać naraz
 # Jak zamek na jednym kluczu do wspólnego pokoju: jeśli ktoś jest w środku, inni muszą czekać
-from threading import Lock
+from threading import Lock, Thread
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 # collections.deque: double-ended queue — O(1) append and popleft, perfect for ring buffers
 # collections.deque: kolejka dwustronna — O(1) append i popleft, idealna do buforów pierścieniowych
 from collections import deque
+# queue.Queue: thread-safe FIFO queue — used to decouple hot path from disk I/O
+# queue.Queue: bezpieczna wątkowo kolejka FIFO — oddziela gorącą ścieżkę od I/O dyskowego
+from queue import Queue, Empty
 import statistics
+import atexit
 
 
 class EventType(Enum):
@@ -188,8 +192,15 @@ class TradeLogger:
         # Jak 'wc -l' ale per typ zdarzenia — przydatne do statystyk podsumowujących
         self._counters: Dict[str, int] = {}
 
-        # If log file specified, write CSV header
-        # Jeśli podano plik logu, zapisz nagłówek CSV
+        # _write_queue: thread-safe queue for async file writes
+        # The hot path (log()) just puts a row on the queue — no disk I/O under the lock
+        # _write_queue: bezpieczna wątkowo kolejka do asynchronicznych zapisów do pliku
+        # Gorąca ścieżka (log()) tylko wstawia wiersz do kolejki — bez I/O dyskowego pod lockiem
+        self._write_queue: Optional[Queue] = None
+        self._flush_thread: Optional[Thread] = None
+
+        # If log file specified, write CSV header and start async flush thread
+        # Jeśli podano plik logu, zapisz nagłówek CSV i uruchom wątek asynchronicznego zrzutu
         if self._log_file:
             with open(self._log_file, 'w', newline='') as f:
                 writer = csv.writer(f)
@@ -197,13 +208,77 @@ class TradeLogger:
                     'sequence', 'timestamp_ns', 'event_type', 'order_id',
                     'symbol', 'side', 'quantity', 'price', 'details'
                 ])
+            self._write_queue = Queue()
+            self._flush_thread = Thread(target=self._flush_worker, daemon=True,
+                                        name='logger-flush')
+            self._flush_thread.start()
+            # Register cleanup so pending writes are flushed on exit
+            atexit.register(self.flush)
+
+    def _flush_worker(self) -> None:
+        """
+        Background thread that drains the write queue and appends rows to CSV.
+        Runs as a daemon thread — exits when the main process ends.
+        This keeps disk I/O completely off the hot path.
+
+        Wątek w tle który opróżnia kolejkę zapisu i dopisuje wiersze do CSV.
+        Działa jako wątek daemon — kończy się gdy główny proces się kończy.
+        Dzięki temu I/O dyskowe jest całkowicie poza gorącą ścieżką.
+        """
+        batch = []
+        while True:
+            try:
+                # Block up to 50ms waiting for first item, then drain greedily
+                # Czekaj do 50ms na pierwszy element, potem opróżniaj zachłannie
+                row = self._write_queue.get(timeout=0.05)
+                batch.append(row)
+                count = 1
+                # Drain everything currently in the queue (non-blocking)
+                while True:
+                    try:
+                        batch.append(self._write_queue.get_nowait())
+                        count += 1
+                    except Empty:
+                        break
+                # Write entire batch in one open() call
+                with open(self._log_file, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerows(batch)
+                # Mark all items as done so flush()/join() can unblock
+                for _ in range(count):
+                    self._write_queue.task_done()
+                batch.clear()
+            except Empty:
+                continue
+            except Exception:
+                # If file write fails, don't crash the logger — mark done and drop
+                for _ in range(len(batch)):
+                    self._write_queue.task_done()
+                batch.clear()
+                continue
+
+    def flush(self) -> None:
+        """
+        Flush all pending writes to disk. Call before shutdown if you need
+        to guarantee all events are persisted.
+        Zrzuć wszystkie oczekujące zapisy na dysk.
+        """
+        if self._write_queue is None:
+            return
+        # Wait until queue is drained
+        self._write_queue.join()
 
     def log(self, event_type: EventType, order_id: int = 0,
             symbol: str = '', side: str = '', quantity: int = 0,
             price: float = 0.0, details: str = '') -> TradeEvent:
         """
         Record a trade event. Thread-safe via mutex lock.
+        File I/O is deferred to an async flush thread — the lock only covers
+        in-memory operations for minimal latency.
+
         Zapisz zdarzenie handlowe. Bezpieczne wątkowo przez blokadę mutex.
+        I/O plikowe jest odroczone do wątku asynchronicznego zrzutu — lock
+        obejmuje tylko operacje w pamięci dla minimalnej latencji.
 
         Args:
             event_type: what happened (EventType enum value)
@@ -236,9 +311,9 @@ class TradeLogger:
         )
 
         # with self._lock: acquires the mutex — like 'flock /tmp/lockfile' in bash
-        # Any other thread calling log() at the same time will block here until we're done
+        # ONLY in-memory operations are done under the lock — no disk I/O!
         # with self._lock: przejmuje mutex — jak 'flock /tmp/lockfile' w bashu
-        # Każdy inny wątek wywołujący log() w tym samym czasie zablokuje się tutaj aż skończymy
+        # TYLKO operacje w pamięci pod lockiem — bez I/O dyskowego!
         with self._lock:
             self._sequence += 1
             self._total_logged += 1
@@ -248,16 +323,15 @@ class TradeLogger:
             # Aktualizuj licznik dla tego typu zdarzenia
             key = event_type.value
             self._counters[key] = self._counters.get(key, 0) + 1
+            seq = self._sequence
 
-            # Append to CSV file if configured
-            # Dopisz do pliku CSV jeśli skonfigurowany
-            if self._log_file:
-                with open(self._log_file, 'a', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([
-                        self._sequence, timestamp, event_type.value,
-                        order_id, symbol, side, quantity, price, details
-                    ])
+        # Enqueue CSV row for async write — OUTSIDE the lock
+        # Wstaw wiersz CSV do kolejki asynchronicznego zapisu — POZA lockiem
+        if self._write_queue is not None:
+            self._write_queue.put([
+                seq, timestamp, event_type.value,
+                order_id, symbol, side, quantity, price, details
+            ])
 
         return event
 

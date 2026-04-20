@@ -125,6 +125,9 @@ def test_csv_output():
         logger.log(EventType.ORDER_FILL, order_id=1, symbol='AAPL',
                    side='BUY', quantity=100, price=150.25)
 
+        # Flush async write queue before reading the file
+        logger.flush()
+
         with open(csv_path, 'r') as f:
             lines = f.readlines()
         # Header + 2 data rows

@@ -24,6 +24,8 @@
 #include <cstdio>
 #include <chrono>
 #include <algorithm>
+#include <unordered_set>
+#include <string>
 
 // Max events we store in memory (fixed array, no heap allocation on hot path)
 // Like a pre-allocated ring buffer — when full, oldest events are overwritten
@@ -70,22 +72,32 @@ inline const char* event_type_str(EventType t) noexcept {
 
 
 // === TradeEvent — one row in the audit trail ===
-// Fixed-size struct: no std::string, no heap — fits in cache line
-// Struktura o stałym rozmiarze: bez std::string, bez sterty — mieści się w linii cache
+// Fixed-size struct: no std::string, no heap
+// Fields ordered to minimize padding: 8-byte fields first, then 4-byte, then smaller
+// alignas(64) ensures each event starts on a cache line boundary for prefetch-friendly access
+// Struktura o stałym rozmiarze: bez std::string, bez sterty
+// Pola ułożone by minimalizować padding: najpierw 8-bajtowe, potem 4-bajtowe, potem mniejsze
 
-struct TradeEvent {
+struct alignas(64) TradeEvent {
+    // --- 8-byte aligned fields first (no padding between them) ---
     int64_t   timestamp_ns;     // nanosecond timestamp / znacznik czasu w nanosekundach
-    EventType event_type;       // what happened / co się stało
-    int32_t   order_id;         // order identifier / identyfikator zlecenia
-    char      symbol[9];        // stock ticker, e.g. "AAPL" / symbol giełdowy
-    char      side[8];          // "BUY" or "SELL" / "BUY" lub "SELL"
-    int32_t   quantity;         // number of shares / liczba akcji
     double    price;            // price per share / cena za akcję
-    char      details[64];      // extra info / dodatkowe informacje
+
+    // --- 4-byte fields ---
+    int32_t   order_id;         // order identifier / identyfikator zlecenia
+    int32_t   quantity;         // number of shares / liczba akcji
+
+    // --- 1-byte + char arrays (packed tightly) ---
+    EventType event_type;       // what happened / co się stało (1 byte)
+    char      symbol[9];        // stock ticker, e.g. "AAPL" / symbol giełdowy
+    char      side[5];          // "BUY"/"SELL" + null
+    char      details[33];      // extra info / dodatkowe informacje (trimmed to fill cache line)
+    // Total: 8+8+4+4+1+9+5+33 = 72 bytes → padded to 128 bytes (2 cache lines) by alignas(64)
 
     TradeEvent() noexcept
-        : timestamp_ns(0), event_type(EventType::ORDER_SUBMIT),
-          order_id(0), quantity(0), price(0.0) {
+        : timestamp_ns(0), price(0.0),
+          order_id(0), quantity(0),
+          event_type(EventType::ORDER_SUBMIT) {
         symbol[0] = '\0';
         side[0] = '\0';
         details[0] = '\0';
@@ -202,10 +214,10 @@ public:
 
         std::strncpy(e.symbol, symbol, 8);
         e.symbol[8] = '\0';
-        std::strncpy(e.side, side, 7);
-        e.side[7] = '\0';
-        std::strncpy(e.details, details, 63);
-        e.details[63] = '\0';
+        std::strncpy(e.side, side, 4);
+        e.side[4] = '\0';
+        std::strncpy(e.details, details, 32);
+        e.details[32] = '\0';
 
         // Update counter for this event type
         int idx = static_cast<int>(type);
@@ -269,41 +281,31 @@ public:
     bool buffer_full() const noexcept { return event_count_ >= max_events_; }
 
     // unique_orders: count distinct order IDs (excluding 0)
+    // O(N) using hash set instead of O(N²) nested loop
     // Like 'sort -u' on the order_id column
-    // Jak 'sort -u' na kolumnie order_id
-    int unique_orders() const noexcept {
-        int ids[MAX_TRACKED_IDS];
-        int n = 0;
+    // O(N) używając hash set zamiast O(N²) zagnieżdżonej pętli
+    int unique_orders() const {
+        std::unordered_set<int32_t> ids;
+        ids.reserve(std::min(event_count_, MAX_TRACKED_IDS));
         for (int i = 0; i < event_count_; ++i) {
             int32_t oid = events_[i].order_id;
-            if (oid <= 0) continue;
-            bool found = false;
-            for (int j = 0; j < n; ++j) {
-                if (ids[j] == oid) { found = true; break; }
-            }
-            if (!found && n < MAX_TRACKED_IDS) ids[n++] = oid;
+            if (oid > 0) ids.insert(oid);
         }
-        return n;
+        return static_cast<int>(ids.size());
     }
 
     // unique_symbols: count distinct stock symbols (excluding empty)
-    // Jak 'sort -u' na kolumnie symbol
-    int unique_symbols() const noexcept {
-        char syms[MAX_TRACKED_IDS][9];
-        int n = 0;
+    // O(N) using hash set instead of O(N²) nested loop
+    // O(N) używając hash set zamiast O(N²) zagnieżdżonej pętli
+    int unique_symbols() const {
+        std::unordered_set<std::string> syms;
+        syms.reserve(std::min(event_count_, MAX_TRACKED_IDS));
         for (int i = 0; i < event_count_; ++i) {
-            if (events_[i].symbol[0] == '\0') continue;
-            bool found = false;
-            for (int j = 0; j < n; ++j) {
-                if (std::strcmp(syms[j], events_[i].symbol) == 0) { found = true; break; }
-            }
-            if (!found && n < MAX_TRACKED_IDS) {
-                std::strncpy(syms[n], events_[i].symbol, 8);
-                syms[n][8] = '\0';
-                n++;
+            if (events_[i].symbol[0] != '\0') {
+                syms.emplace(events_[i].symbol);
             }
         }
-        return n;
+        return static_cast<int>(syms.size());
     }
 
     // time_span_ms: milliseconds from first to last event
