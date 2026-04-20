@@ -1,7 +1,32 @@
-.PHONY: build test benchmark simulate lint clean
+.PHONY: build test benchmark simulate clean all
 
 CXX      = g++
 CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -pthread
+
+# All binary targets
+BINS = \
+	orderbook/orderbook \
+	orderbook/orderbook_v2 \
+	orderbook/benchmark_orderbook \
+	orderbook/latency_histogram \
+	lockfree/spsc_queue \
+	memory-latency/cache_latency \
+	itch-parser/benchmark_itch \
+	benchmarks/latency_benchmark \
+	benchmarks/orderbook_benchmark \
+	oms/oms_demo \
+	risk/risk_demo \
+	router/router_demo \
+	logger/logger_demo \
+	strategy/strategy_demo \
+	fix-protocol/fix_demo \
+	ouch-protocol/ouch_demo \
+	dpdk-bypass/dpdk_demo \
+	monitoring/monitor_demo \
+	multicast/multicast_demo \
+	simulator/sim_demo
+
+all: build
 
 build:
 	$(CXX) $(CXXFLAGS) -o orderbook/orderbook orderbook/orderbook.cpp
@@ -23,76 +48,84 @@ build:
 	$(CXX) $(CXXFLAGS) -o dpdk-bypass/dpdk_demo dpdk-bypass/dpdk_demo.cpp
 	$(CXX) $(CXXFLAGS) -o monitoring/monitor_demo monitoring/monitor_demo.cpp
 	$(CXX) $(CXXFLAGS) -o multicast/multicast_demo multicast/multicast_demo.cpp
+	$(CXX) $(CXXFLAGS) -o simulator/sim_demo simulator/sim_demo.cpp
 
+# Run all unit tests (each demo includes built-in tests)
 test: build
-	python3 tests/test_oms.py
-	python3 tests/test_itch.py
-	python3 tests/test_ouch.py
-	python3 tests/test_fix.py
-	python3 tests/test_router.py
-	python3 tests/test_risk.py
-	python3 tests/test_logger.py
-	python3 tests/test_multicast.py
-	python3 tests/test_monitoring.py
-	python3 tests/test_dpdk.py
+	./oms/oms_demo 0
+	./risk/risk_demo 0
+	./router/router_demo 0
+	./logger/logger_demo 0
+	./strategy/strategy_demo 0
+	./fix-protocol/fix_demo 0
+	./ouch-protocol/ouch_demo 0
+	./dpdk-bypass/dpdk_demo 0
+	./monitoring/monitor_demo 0
+	./multicast/multicast_demo 0
+	./simulator/sim_demo 0
 
-benchmark:
-	python3 tests/benchmark.py
-	cd orderbook && ./benchmark_orderbook
-	cd orderbook && ./latency_histogram
-	cd lockfree && ./spsc_queue
-	cd memory-latency && ./cache_latency
-	cd itch-parser && ./benchmark_itch
+# Run throughput benchmarks for all modules
+benchmark: build
+	@echo "=== Orderbook ==="
+	./orderbook/benchmark_orderbook
+	./orderbook/latency_histogram
+	@echo ""
+	@echo "=== Lock-Free Queue ==="
+	./lockfree/spsc_queue
+	@echo ""
+	@echo "=== Cache Latency ==="
+	./memory-latency/cache_latency
+	@echo ""
+	@echo "=== ITCH Parser ==="
+	./itch-parser/benchmark_itch
+	@echo ""
+	@echo "=== Latency Benchmark ==="
 	./benchmarks/latency_benchmark 100000
+	@echo ""
+	@echo "=== Orderbook Benchmark ==="
 	./benchmarks/orderbook_benchmark 100000
+	@echo ""
+	@echo "=== OMS ==="
 	./oms/oms_demo 500000
+	@echo ""
+	@echo "=== Risk Manager ==="
 	./risk/risk_demo 500000
+	@echo ""
+	@echo "=== Smart Router ==="
 	./router/router_demo 500000
+	@echo ""
+	@echo "=== Trade Logger ==="
 	./logger/logger_demo 500000
+	@echo ""
+	@echo "=== Mean Reversion Strategy ==="
 	./strategy/strategy_demo 500000
+	@echo ""
+	@echo "=== FIX Protocol ==="
 	./fix-protocol/fix_demo 500000
+	@echo ""
+	@echo "=== OUCH Protocol ==="
 	./ouch-protocol/ouch_demo 500000
+	@echo ""
+	@echo "=== DPDK Bypass ==="
 	./dpdk-bypass/dpdk_demo 100000
+	@echo ""
+	@echo "=== Monitoring ==="
 	./monitoring/monitor_demo 200000
+	@echo ""
+	@echo "=== Multicast ==="
 	./multicast/multicast_demo 200000
+	@echo ""
+	@echo "=== Market Simulator (E2E) ==="
+	./simulator/sim_demo 50000
 
-simulate:
-	python3 simulator/market_sim.py 10000
-
-lint:
-	@echo "=== Syntax check: all Python files ==="
-	@python3 -m py_compile config_loader.py
-	@python3 -m py_compile oms/oms.py
-	@python3 -m py_compile itch-parser/itch_parser.py
-	@python3 -m py_compile strategy/mean_reversion.py
-	@python3 -m py_compile router/smart_router.py
-	@python3 -m py_compile risk/risk_manager.py
-	@python3 -m py_compile simulator/market_sim.py
-	@python3 -m py_compile monitoring/infra_monitor.py
-	@python3 -m py_compile dpdk-bypass/kernel_bypass_sim.py
-	@python3 -m py_compile ouch-protocol/ouch_sender.py
-	@python3 -m py_compile fix-protocol/fix_parser.py
-	@python3 -m py_compile multicast/mc_sender.py
-	@python3 -m py_compile multicast/mc_receiver.py
-	@python3 -m py_compile logger/trade_logger.py
-	@python3 -m py_compile multicast/mc_receiver_latency.py
-	@python3 -m py_compile tests/benchmark.py
-	@python3 -m py_compile tests/benchmark_chart.py
-	@python3 -m py_compile tests/test_multicast.py
-	@python3 -m py_compile tests/test_monitoring.py
-	@python3 -m py_compile tests/test_dpdk.py
-	@echo "All Python files OK"
+# Run end-to-end market simulation
+simulate: build
+	./simulator/sim_demo 10000
+	./simulator/sim_demo 10000 --strategy
+	./simulator/sim_demo 10000 --router
+	./simulator/sim_demo 10000 --strategy --router
 
 clean:
-	rm -f orderbook/orderbook orderbook/orderbook_v2 orderbook/benchmark_orderbook
-	rm -f orderbook/latency_histogram lockfree/spsc_queue memory-latency/cache_latency
-	rm -f itch-parser/benchmark_itch
-	rm -f benchmarks/latency_benchmark benchmarks/orderbook_benchmark
-	rm -f oms/oms_demo
-	rm -f risk/risk_demo
-	rm -f router/router_demo
-	rm -f logger/logger_demo
-	rm -f strategy/strategy_demo
-	rm -f fix-protocol/fix_demo
-	rm -f ouch-protocol/ouch_demo
-	
+	rm -f $(BINS)
+	find . -name '*.o' -delete
+	find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true

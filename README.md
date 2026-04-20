@@ -9,7 +9,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 ## Performance Highlights / Wyniki wydajności (Red Hat EL10, VirtualBox 2-core VM)
 - Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
 - ITCH parser (C++): **60M msg/sec** (16ns/msg, p50=40ns, p99=50ns)
-- ITCH parser (Python): **~1M msg/sec** (~1000ns/msg)
+- Market Simulator E2E (C++): **573K msg/sec** (full pipeline: ITCH gen→parse→OMS→P&L)
 - OMS (C++): **11.6M orders/sec** (submit+fill, p50=60ns, p99=121ns, fixed-point prices)
 - Risk Manager (C++): **7.9M checks/sec** (p50=91ns, p99=140ns)
 - Smart Router (C++): **9.7M routes/sec** (p50=70ns, p99=150ns)
@@ -37,23 +37,22 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | kernel-config/ | Hugepages, CPU isolation, sysctl, IRQ affinity | Bash |
 | linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
 | network-latency/ | Network latency and jitter measurement | Bash |
-| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | C++ + Python |
+| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | C++ |
 | orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
-| fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | C++ + Python |
-| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types) | C++ + Python |
-| ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | C++ + Python |
-| dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | C++ + Python |
+| fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | C++ |
+| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types, 60M msg/sec) | C++ |
+| ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | C++ |
+| dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | C++ |
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |
 | lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
-| oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | C++ + Python |
-| monitoring/ | Real-time infra monitor — /proc parser, alerts (8.6M parse/sec) | C++ + Python |
-| strategy/ | Mean reversion trading strategy (8.0M ticks/sec, 100ns p50) | C++ + Python |
-| router/ | Smart Order Router — venue selection by price, latency, split (9.7M routes/sec) | C++ + Python |
-| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits (7.9M checks/sec) | C++ + Python |
+| oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | C++ |
+| monitoring/ | Real-time infra monitor — /proc parser, alerts (8.6M parse/sec) | C++ |
+| strategy/ | Mean reversion trading strategy (8.0M ticks/sec, 100ns p50) | C++ |
+| router/ | Smart Order Router — venue selection by price, latency, split (9.7M routes/sec) | C++ |
+| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits (7.9M checks/sec) | C++ |
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
-| simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→OMS→P&L) | Python |
-| logger/ | Trade Logger / Audit Trail — nanosecond event logging (14.3M events/sec) | C++ + Python |
-| tests/ | Unit tests (110) and benchmarks | Python |
+| simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→Router→OMS→P&L) | C++ |
+| logger/ | Trade Logger / Audit Trail — nanosecond event logging (14.3M events/sec) | C++ |
 | docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |
 
 ## Quick Start
@@ -68,10 +67,10 @@ docker run hft-lab make simulate  # simulator only
 
 ### Manual
 ```bash
-make build      # compile all C++ modules (18 binaries: orderbook, OMS, ITCH, FIX, OUCH, DPDK, risk, router, logger, strategy, monitoring, benchmarks)
-make test       # run all unit tests (110: OMS, ITCH, OUCH, FIX, Router, Risk, Logger, Multicast, Monitoring, DPDK)
-make benchmark  # run all performance benchmarks (orderbook, ITCH, OMS, FIX, OUCH, DPDK, risk, router, logger, strategy, monitoring)
-make simulate   # run end-to-end market data simulator (10K messages)
+make build      # compile all 20 C++ binaries
+make test       # run all built-in unit tests (200+)
+make benchmark  # run all throughput benchmarks
+make simulate   # run end-to-end market simulator (direct, strategy, router, full pipeline)
 ```
 
 ## Environment 
