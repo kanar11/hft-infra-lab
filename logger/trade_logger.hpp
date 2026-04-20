@@ -105,8 +105,12 @@ class TradeLogger {
     // Zdarzenia na stercie — za duże na stos (1M × ~120 bajtów ≈ 120MB)
     // Jak mmap() w Linuxie — alokujemy duży blok raz na starcie, potem wypełniamy
     TradeEvent* events_;
+    int         max_events_;
     int         event_count_;
+    int         head_;           // ring buffer write position / pozycja zapisu bufora pierścieniowego
     int         sequence_;
+    int         total_logged_;   // total events ever logged (doesn't decrease on wrap)
+    bool        ring_mode_;      // true = wrap around when full; false = stop when full
 
     // Per-type counters (like 'wc -l' per event type)
     // Liczniki per typ (jak 'wc -l' per typ zdarzenia)
@@ -119,8 +123,14 @@ class TradeLogger {
     }
 
 public:
-    TradeLogger() : event_count_(0), sequence_(0) {
-        events_ = new TradeEvent[MAX_EVENTS];
+    // ring_mode: if true, oldest events are overwritten when buffer is full
+    //            if false (default), log() returns nullptr when full
+    // ring_mode: jeśli true, najstarsze zdarzenia nadpisywane gdy bufor pełny
+    //            jeśli false (domyślnie), log() zwraca nullptr gdy pełny
+    explicit TradeLogger(bool ring_mode = false, int capacity = MAX_EVENTS)
+        : max_events_(capacity), event_count_(0), head_(0),
+          sequence_(0), total_logged_(0), ring_mode_(ring_mode) {
+        events_ = new TradeEvent[max_events_];
         std::memset(counters_, 0, sizeof(counters_));
     }
 
@@ -133,17 +143,57 @@ public:
     TradeLogger(const TradeLogger&) = delete;
     TradeLogger& operator=(const TradeLogger&) = delete;
 
+    // Move constructor — transfer ownership of the buffer
+    TradeLogger(TradeLogger&& other) noexcept
+        : events_(other.events_), max_events_(other.max_events_),
+          event_count_(other.event_count_), head_(other.head_),
+          sequence_(other.sequence_), total_logged_(other.total_logged_),
+          ring_mode_(other.ring_mode_) {
+        std::memcpy(counters_, other.counters_, sizeof(counters_));
+        other.events_ = nullptr;
+        other.event_count_ = 0;
+    }
+
+    TradeLogger& operator=(TradeLogger&& other) noexcept {
+        if (this != &other) {
+            delete[] events_;
+            events_ = other.events_;
+            max_events_ = other.max_events_;
+            event_count_ = other.event_count_;
+            head_ = other.head_;
+            sequence_ = other.sequence_;
+            total_logged_ = other.total_logged_;
+            ring_mode_ = other.ring_mode_;
+            std::memcpy(counters_, other.counters_, sizeof(counters_));
+            other.events_ = nullptr;
+            other.event_count_ = 0;
+        }
+        return *this;
+    }
+
     // log: record a trade event — the hot-path function
     // O(1) — just writes to the next slot in the array
+    // In ring_mode, wraps around when full instead of stopping
     // log: zapisz zdarzenie handlowe — funkcja na gorącej ścieżce
     // O(1) — po prostu zapisuje do następnego slotu w tablicy
+    // W ring_mode, zawija się gdy pełny zamiast się zatrzymywać
     TradeEvent* log(EventType type, int32_t order_id = 0,
                     const char* symbol = "", const char* side = "",
                     int32_t quantity = 0, double price = 0.0,
                     const char* details = "") noexcept {
-        if (event_count_ >= MAX_EVENTS) return nullptr;  // buffer full
+        if (event_count_ >= max_events_ && !ring_mode_) return nullptr;  // buffer full, not ring mode
 
-        TradeEvent& e = events_[event_count_];
+        int slot;
+        if (ring_mode_) {
+            slot = head_ % max_events_;
+            head_ = (head_ + 1) % max_events_;
+            if (event_count_ < max_events_) event_count_++;
+        } else {
+            slot = event_count_;
+            event_count_++;
+        }
+
+        TradeEvent& e = events_[slot];
         e.timestamp_ns = now_ns();
         e.event_type = type;
         e.order_id = order_id;
@@ -163,7 +213,7 @@ public:
             counters_[idx]++;
 
         sequence_++;
-        event_count_++;
+        total_logged_++;
         return &e;
     }
 
@@ -212,7 +262,11 @@ public:
 
     // Accessors
     int total_events() const noexcept { return event_count_; }
+    int total_logged() const noexcept { return total_logged_; }
     int sequence() const noexcept { return sequence_; }
+    int capacity() const noexcept { return max_events_; }
+    bool is_ring_mode() const noexcept { return ring_mode_; }
+    bool buffer_full() const noexcept { return event_count_ >= max_events_; }
 
     // unique_orders: count distinct order IDs (excluding 0)
     // Like 'sort -u' on the order_id column
@@ -287,6 +341,105 @@ public:
                    event_type_str(e.event_type), e.symbol, e.side,
                    e.quantity, e.price, e.details);
         }
+    }
+
+    // --- Time-Range Queries ---
+    // get_events_in_range: copy events within a timestamp window to output buffer
+    // Returns how many events matched
+    // Kopiuj zdarzenia w oknie czasowym do bufora wyjściowego
+    int get_events_in_range(TradeEvent* out, int max_out,
+                            int64_t start_ns, int64_t end_ns) const noexcept {
+        int count = 0;
+        for (int i = 0; i < event_count_ && count < max_out; ++i) {
+            const TradeEvent& e = events_[i];
+            if (e.timestamp_ns >= start_ns && e.timestamp_ns <= end_ns) {
+                out[count++] = e;
+            }
+        }
+        return count;
+    }
+
+    // --- Latency Statistics ---
+    // Struct to hold percentile latency results
+    struct LatencyStats {
+        int     count;
+        int64_t min_ns;
+        int64_t max_ns;
+        int64_t mean_ns;
+        int64_t p50_ns;
+        int64_t p90_ns;
+        int64_t p99_ns;
+    };
+
+    // get_latency_stats: compute inter-event latency percentiles
+    // Oblicz percentyle opóźnień między zdarzeniami
+    LatencyStats get_latency_stats() const noexcept {
+        LatencyStats stats = {0, 0, 0, 0, 0, 0, 0};
+        if (event_count_ < 2) return stats;
+
+        // Allocate latency array (up to 1M entries — stack is too small, use heap)
+        int n = event_count_ - 1;
+        int64_t* latencies = new int64_t[n];
+
+        int64_t sum = 0;
+        for (int i = 0; i < n; ++i) {
+            latencies[i] = events_[i + 1].timestamp_ns - events_[i].timestamp_ns;
+            sum += latencies[i];
+        }
+
+        std::sort(latencies, latencies + n);
+
+        stats.count = n;
+        stats.min_ns = latencies[0];
+        stats.max_ns = latencies[n - 1];
+        stats.mean_ns = sum / n;
+        stats.p50_ns = latencies[n / 2];
+        stats.p90_ns = latencies[(int)(n * 0.90)];
+        stats.p99_ns = latencies[std::min((int)(n * 0.99), n - 1)];
+
+        delete[] latencies;
+        return stats;
+    }
+
+    // --- JSON Export ---
+    // export_json: write all events to stdout in JSON format
+    // Zapisz wszystkie zdarzenia na stdout w formacie JSON
+    void export_json() const {
+        printf("{\n  \"total_logged\": %d,\n  \"events_in_buffer\": %d,\n  \"events\": [\n",
+               total_logged_, event_count_);
+        for (int i = 0; i < event_count_; ++i) {
+            const TradeEvent& e = events_[i];
+            printf("    {\"timestamp_ns\": %ld, \"event_type\": \"%s\", "
+                   "\"order_id\": %d, \"symbol\": \"%s\", \"side\": \"%s\", "
+                   "\"quantity\": %d, \"price\": %.2f, \"details\": \"%s\"}%s\n",
+                   e.timestamp_ns, event_type_str(e.event_type),
+                   e.order_id, e.symbol, e.side,
+                   e.quantity, e.price, e.details,
+                   (i < event_count_ - 1) ? "," : "");
+        }
+        printf("  ]\n}\n");
+    }
+
+    // export_json_to_file: write JSON to a file path
+    // Zapisz JSON do pliku
+    bool export_json_to_file(const char* filepath) const {
+        FILE* f = std::fopen(filepath, "w");
+        if (!f) return false;
+        fprintf(f, "{\n  \"total_logged\": %d,\n  \"events_in_buffer\": %d,\n  \"events\": [\n",
+                total_logged_, event_count_);
+        for (int i = 0; i < event_count_; ++i) {
+            const TradeEvent& e = events_[i];
+            fprintf(f, "    {\"timestamp_ns\": %ld, \"event_type\": \"%s\", "
+                    "\"order_id\": %d, \"symbol\": \"%s\", \"side\": \"%s\", "
+                    "\"quantity\": %d, \"price\": %.2f, \"details\": \"%s\"}%s\n",
+                    e.timestamp_ns, event_type_str(e.event_type),
+                    e.order_id, e.symbol, e.side,
+                    e.quantity, e.price, e.details,
+                    (i < event_count_ - 1) ? "," : "");
+        }
+        fprintf(f, "  ]\n}\n");
+        std::fclose(f);
+        return true;
     }
 
     // export_csv: write all events to stdout in CSV format

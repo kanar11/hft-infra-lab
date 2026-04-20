@@ -41,9 +41,13 @@ from io import StringIO
 # threading.Lock: mutex (wzajemne wykluczanie) — tylko jeden wątek może go trzymać naraz
 # Jak zamek na jednym kluczu do wspólnego pokoju: jeśli ktoś jest w środku, inni muszą czekać
 from threading import Lock
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass, field, asdict
 from enum import Enum
+# collections.deque: double-ended queue — O(1) append and popleft, perfect for ring buffers
+# collections.deque: kolejka dwustronna — O(1) append i popleft, idealna do buforów pierścieniowych
+from collections import deque
+import statistics
 
 
 class EventType(Enum):
@@ -130,20 +134,33 @@ class TradeLogger:
         print(logger.get_summary())
     """
 
-    def __init__(self, log_file: Optional[str] = None):
+    def __init__(self, log_file: Optional[str] = None, max_events: int = 0):
         """
         Initialize the trade logger.
         Inicjalizacja loggera transakcji.
 
         Args:
-            log_file: optional path to write CSV audit file
-                      opcjonalna ścieżka do zapisu pliku audytu CSV
-                      If None, events are only kept in memory.
-                      Jeśli None, zdarzenia są przechowywane tylko w pamięci.
+            log_file:   optional path to write CSV audit file
+                        opcjonalna ścieżka do zapisu pliku audytu CSV
+                        If None, events are only kept in memory.
+                        Jeśli None, zdarzenia są przechowywane tylko w pamięci.
+            max_events: maximum number of events to keep in memory (0 = unlimited).
+                        When the buffer is full, oldest events are dropped (ring buffer).
+                        maksymalna liczba zdarzeń w pamięci (0 = bez limitu).
+                        Gdy bufor jest pełny, najstarsze zdarzenia są usuwane (bufor pierścieniowy).
         """
-        # _events: list that stores all TradeEvent objects — our in-memory audit trail
-        # _events: lista przechowująca wszystkie obiekty TradeEvent — nasza ścieżka audytu w pamięci
-        self._events: List[TradeEvent] = []
+        # _max_events: ring buffer capacity (0 means unlimited, use plain list)
+        # _max_events: pojemność bufora pierścieniowego (0 = bez limitu, użyj zwykłej listy)
+        self._max_events: int = max_events
+
+        # _events: stores all TradeEvent objects — our in-memory audit trail
+        # When max_events > 0, uses deque with maxlen for automatic ring buffer behavior
+        # _events: przechowuje wszystkie obiekty TradeEvent — nasza ścieżka audytu w pamięci
+        # Gdy max_events > 0, używa deque z maxlen dla automatycznego zachowania bufora pierścieniowego
+        if max_events > 0:
+            self._events: deque = deque(maxlen=max_events)
+        else:
+            self._events: List[TradeEvent] = []
 
         # _lock: mutex that prevents two threads from writing simultaneously
         # Like 'flock' in bash — ensures only one process writes to the log at a time
@@ -160,6 +177,10 @@ class TradeLogger:
         # _sequence: monotonicznie rosnący licznik — gwarantuje kolejność zdarzeń
         # Nawet jeśli dwa zdarzenia mają ten sam timestamp, numer sekwencji mówi, które było pierwsze
         self._sequence: int = 0
+
+        # _total_logged: total events ever logged (doesn't decrease when ring buffer wraps)
+        # _total_logged: łączna liczba zalogowanych zdarzeń (nie maleje gdy bufor pierścieniowy się zawija)
+        self._total_logged: int = 0
 
         # _counters: dict tracking how many of each event type we've seen
         # Like 'wc -l' but per event type — useful for summary stats
@@ -220,6 +241,7 @@ class TradeLogger:
         # Każdy inny wątek wywołujący log() w tym samym czasie zablokuje się tutaj aż skończymy
         with self._lock:
             self._sequence += 1
+            self._total_logged += 1
             self._events.append(event)
 
             # Update counter for this event type
@@ -255,7 +277,7 @@ class TradeLogger:
             List of matching TradeEvent objects.
         """
         with self._lock:
-            results = self._events[:]
+            results = list(self._events)
 
         if order_id is not None:
             results = [e for e in results if e.order_id == order_id]
@@ -313,7 +335,7 @@ class TradeLogger:
                     'time_span_ms': 0.0
                 }
 
-            events = self._events[:]
+            events = list(self._events)
             counters = dict(self._counters)
 
         order_ids = set(e.order_id for e in events if e.order_id > 0)
@@ -328,6 +350,208 @@ class TradeLogger:
             'unique_symbols': len(symbols),
             'time_span_ms': round(time_span_ms, 3)
         }
+
+    def total_logged(self) -> int:
+        """
+        Total number of events ever logged (includes events dropped by ring buffer).
+        Łączna liczba kiedykolwiek zalogowanych zdarzeń (w tym usunięte przez bufor pierścieniowy).
+        """
+        return self._total_logged
+
+    def events_in_buffer(self) -> int:
+        """
+        Number of events currently in the memory buffer.
+        Liczba zdarzeń aktualnie w buforze pamięci.
+        """
+        return len(self._events)
+
+    def buffer_full(self) -> bool:
+        """
+        Whether the ring buffer is at capacity (always False if max_events=0).
+        Czy bufor pierścieniowy jest pełny (zawsze False jeśli max_events=0).
+        """
+        if self._max_events <= 0:
+            return False
+        return len(self._events) >= self._max_events
+
+    # --- JSON Export ---
+
+    def event_to_dict(self, event: TradeEvent) -> Dict[str, Any]:
+        """
+        Convert a TradeEvent to a plain dictionary (JSON-serializable).
+        Konwertuj TradeEvent na zwykły słownik (serializowalny do JSON).
+        """
+        return {
+            'timestamp_ns': event.timestamp_ns,
+            'event_type': event.event_type.value,
+            'order_id': event.order_id,
+            'symbol': event.symbol,
+            'side': event.side,
+            'quantity': event.quantity,
+            'price': event.price,
+            'details': event.details
+        }
+
+    def export_json(self, filepath: Optional[str] = None, indent: int = 2) -> str:
+        """
+        Export all events as JSON. Optionally write to a file.
+        Eksportuj wszystkie zdarzenia jako JSON. Opcjonalnie zapisz do pliku.
+
+        Args:
+            filepath: if provided, writes JSON to this file path
+            indent:   JSON indentation (default 2 spaces)
+
+        Returns:
+            JSON string of all events.
+        """
+        with self._lock:
+            events = list(self._events)
+
+        data = {
+            'total_logged': self._total_logged,
+            'events_in_buffer': len(events),
+            'events': [self.event_to_dict(e) for e in events]
+        }
+
+        json_str = json.dumps(data, indent=indent)
+
+        if filepath:
+            with open(filepath, 'w') as f:
+                f.write(json_str)
+
+        return json_str
+
+    def export_jsonl(self, filepath: Optional[str] = None) -> str:
+        """
+        Export events as JSON Lines (one JSON object per line).
+        Ideal for streaming / log aggregation pipelines (like ELK, Splunk).
+        Eksportuj zdarzenia jako JSON Lines (jeden obiekt JSON na linię).
+
+        Args:
+            filepath: if provided, writes JSONL to this file path
+
+        Returns:
+            JSONL string.
+        """
+        with self._lock:
+            events = list(self._events)
+
+        lines = [json.dumps(self.event_to_dict(e)) for e in events]
+        jsonl_str = '\n'.join(lines)
+
+        if filepath:
+            with open(filepath, 'w') as f:
+                f.write(jsonl_str)
+                f.write('\n')
+
+        return jsonl_str
+
+    # --- Time-Range Queries ---
+
+    def get_events_in_range(self, start_ns: int, end_ns: int,
+                            event_type: Optional[EventType] = None,
+                            symbol: Optional[str] = None) -> List[TradeEvent]:
+        """
+        Query events within a nanosecond timestamp range.
+        Zapytaj o zdarzenia w zakresie znaczników czasu (nanosekundy).
+
+        Args:
+            start_ns: start of time window (inclusive)
+            end_ns:   end of time window (inclusive)
+            event_type: optional filter by event type
+            symbol:     optional filter by symbol
+
+        Returns:
+            List of TradeEvent objects within the time range.
+        """
+        with self._lock:
+            events = list(self._events)
+
+        results = [e for e in events if start_ns <= e.timestamp_ns <= end_ns]
+
+        if event_type is not None:
+            results = [e for e in results if e.event_type == event_type]
+        if symbol is not None:
+            results = [e for e in results if e.symbol == symbol]
+
+        return results
+
+    def get_events_last_ms(self, ms: float,
+                           event_type: Optional[EventType] = None) -> List[TradeEvent]:
+        """
+        Get events from the last N milliseconds.
+        Pobierz zdarzenia z ostatnich N milisekund.
+
+        Args:
+            ms: how many milliseconds back to look
+            event_type: optional filter
+
+        Returns:
+            List of recent TradeEvent objects.
+        """
+        now = time.time_ns()
+        start_ns = now - int(ms * 1_000_000)
+        return self.get_events_in_range(start_ns, now, event_type=event_type)
+
+    # --- Latency Statistics ---
+
+    def get_inter_event_latencies_ns(self) -> List[int]:
+        """
+        Compute nanosecond gaps between consecutive events.
+        Useful for detecting stalls, bursts, or gaps in logging.
+        Oblicz przerwy w nanosekundach między kolejnymi zdarzeniami.
+
+        Returns:
+            List of inter-event latencies in nanoseconds.
+        """
+        with self._lock:
+            events = list(self._events)
+
+        if len(events) < 2:
+            return []
+
+        return [events[i].timestamp_ns - events[i - 1].timestamp_ns
+                for i in range(1, len(events))]
+
+    def get_latency_stats(self) -> Dict[str, Any]:
+        """
+        Compute percentile statistics for inter-event latencies.
+        Oblicz statystyki percentylowe dla opóźnień między zdarzeniami.
+
+        Returns:
+            Dict with min, max, mean, p50, p90, p99 in nanoseconds.
+        """
+        latencies = self.get_inter_event_latencies_ns()
+        if not latencies:
+            return {'count': 0, 'min_ns': 0, 'max_ns': 0, 'mean_ns': 0,
+                    'p50_ns': 0, 'p90_ns': 0, 'p99_ns': 0}
+
+        latencies_sorted = sorted(latencies)
+        n = len(latencies_sorted)
+
+        return {
+            'count': n,
+            'min_ns': latencies_sorted[0],
+            'max_ns': latencies_sorted[-1],
+            'mean_ns': int(statistics.mean(latencies_sorted)),
+            'p50_ns': latencies_sorted[n // 2],
+            'p90_ns': latencies_sorted[int(n * 0.90)],
+            'p99_ns': latencies_sorted[min(int(n * 0.99), n - 1)]
+        }
+
+    def get_order_lifecycle_ns(self, order_id: int) -> Optional[int]:
+        """
+        Get the total lifecycle duration of an order in nanoseconds
+        (from first event to last event for that order_id).
+        Pobierz łączny czas cyklu życia zlecenia w nanosekundach.
+
+        Returns:
+            Duration in ns, or None if order not found / only one event.
+        """
+        events = self.get_events(order_id=order_id)
+        if len(events) < 2:
+            return None
+        return events[-1].timestamp_ns - events[0].timestamp_ns
 
     def get_log_speed_ns(self) -> int:
         """
@@ -420,6 +644,46 @@ def demo():
     # Benchmark
     speed = logger.get_log_speed_ns()
     print(f"\n  Log speed: {speed} ns/event")
+
+    # --- New features demo ---
+
+    # JSON export
+    print("\n--- JSON Export (first 2 events) ---")
+    json_data = json.loads(logger.export_json())
+    for ev in json_data['events'][:2]:
+        print(f"  {ev['event_type']:15s}  {ev['symbol']}  {ev['side']}  qty={ev['quantity']}")
+    print(f"  ... ({json_data['events_in_buffer']} events total)")
+
+    # Latency stats
+    print("\n--- Inter-Event Latency Stats ---")
+    lstats = logger.get_latency_stats()
+    if lstats['count'] > 0:
+        print(f"  Events:  {lstats['count']}")
+        print(f"  Min:     {lstats['min_ns']} ns")
+        print(f"  p50:     {lstats['p50_ns']} ns")
+        print(f"  p99:     {lstats['p99_ns']} ns")
+        print(f"  Max:     {lstats['max_ns']} ns")
+
+    # Order lifecycle
+    print("\n--- Order Lifecycle Durations ---")
+    for oid in [1, 2, 3]:
+        dur = logger.get_order_lifecycle_ns(oid)
+        if dur is not None:
+            print(f"  Order #{oid}: {dur} ns ({dur / 1_000_000:.3f} ms)")
+        else:
+            print(f"  Order #{oid}: single event (no lifecycle)")
+
+    # Ring buffer demo
+    print("\n--- Ring Buffer Demo (max_events=5) ---")
+    ring_logger = TradeLogger(max_events=5)
+    for i in range(8):
+        ring_logger.log(EventType.ORDER_SUBMIT, order_id=i + 1, symbol='TEST',
+                        side='BUY', quantity=100, price=1.0)
+    print(f"  Total logged:     {ring_logger.total_logged()}")
+    print(f"  Events in buffer: {ring_logger.events_in_buffer()}")
+    print(f"  Buffer full:      {ring_logger.buffer_full()}")
+    buffered = ring_logger.get_events()
+    print(f"  Buffered order IDs: {[e.order_id for e in buffered]}")
 
 
 if __name__ == '__main__':
