@@ -76,4 +76,4 @@ make simulate   # run end-to-end market simulator (direct, strategy, router, ful
 ## Environment 
 - OS: Red Hat Enterprise Linux 10.1 (Coughlan)
 - VM: VirtualBox (2 CPU, 4GB RAM, 40GB disk)
-- Kernel: 6.12.0-124.
+- Kernel: 6.12.0-124. 
