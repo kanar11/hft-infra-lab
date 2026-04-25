@@ -3,13 +3,13 @@
 Parses Financial Information eXchange messages for order routing.
 *Analizuje komunikaty Financial Information eXchange do routingu zamówień.*
 
-## Performance Comparison / Porównanie wydajności
+## Performance / Wydajność
 
-| Metric | Python | C++ |
-|--------|--------|-----|
-| **Throughput** | ~400K msg/sec | **5.5M msg/sec** (14x faster) |
-| **Latency (p50)** | ~2,300 ns | **150 ns** |
-| **Latency (p99)** | ~5,000 ns | **250 ns** |
+| Metric | C++ |
+|--------|-----|
+| **Throughput** | **5.5M msg/sec** |
+| **Latency (p50)** | **150 ns** |
+| **Latency (p99)** | **250 ns** |
 
 ## Supported Message Types / Obsługiwane typy wiadomości
 
@@ -31,17 +31,12 @@ Parses Financial Information eXchange messages for order routing.
 
 | File | Description |
 |------|-------------|
-| `fix_parser.py` | Python implementation (reference, with beginner comments) |
 | `fix_parser.hpp` | C++ header-only implementation |
 | `fix_demo.cpp` | C++ demo with 27 unit tests + throughput benchmark |
 
 ## Run / Uruchomienie
 
 ```bash
-# Python
-python3 fix-protocol/fix_parser.py
-python3 tests/test_fix.py
-
 # C++ (build + run)
 make build
 ./fix-protocol/fix_demo              # tests + benchmark (1M parses)

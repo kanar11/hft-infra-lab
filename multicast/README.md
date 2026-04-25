@@ -3,14 +3,13 @@
 UDP multicast sender and receiver for simulating exchange market data feeds.
 *Nadajnik i odbiornik UDP multicast do symulowania kanałów danych giełdowych.*
 
-## Implementations / Implementacje
+## Performance / Wydajność
 
-| | Python | C++ (`multicast.hpp`) |
-|---|---|---|
-| Throughput / Przepustowość | ~100K msg/sec | **23.2M msg/sec** |
-| Latency / Opóźnienie | ~10 μs/msg | **20 ns/msg** (p50) |
-| Wire format / Format sieciowy | Text ("SEQ=0 TS=...") | Binary (40 bytes, big-endian) |
-| Use case / Zastosowanie | Testing, demo | Production hot path |
+| Metric | Result |
+|---|---|
+| Throughput / Przepustowość | **23.2M msg/sec** |
+| Latency / Opóźnienie | **20 ns/msg** (p50) |
+| Wire format / Format sieciowy | Binary (40 bytes, big-endian) |
 
 ## Binary Wire Format / Binarny format sieciowy (40 bytes)
 
@@ -28,19 +27,12 @@ UDP multicast sender and receiver for simulating exchange market data feeds.
 ## Files / Pliki
 | File | Description / Opis |
 |------|---|
-| `mc_sender.py` | Python sender — text-based multicast messages |
-| `mc_receiver.py` | Python receiver — basic message display |
-| `mc_receiver_latency.py` | Python receiver — per-message latency measurement |
 | `multicast.hpp` | C++ header-only — binary serialization, UDP sender/receiver, LatencyStats |
 | `multicast_demo.cpp` | 38 unit tests (roundtrip, endian, UDP loopback) + throughput benchmark |
 
 ## Run / Uruchomienie
 ```bash
-# C++ (from project root)
 make build
-./multicast/multicast_demo 100000
-
-# Python (two terminals)
-python3 multicast/mc_sender.py          # Terminal 1
-python3 multicast/mc_receiver_latency.py  # Terminal 2
+./multicast/multicast_demo 100000    # benchmark
+./multicast/multicast_demo 0         # tests only
 ```

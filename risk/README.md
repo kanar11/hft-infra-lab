@@ -1,15 +1,15 @@
 # Risk Manager / Menedżer Ryzyka
 
-Standalone pre-trade risk engine with circuit breaker and kill switch — Python + C++.
-*Autonomiczny silnik kontroli ryzyka z przełącznikiem obwodu i wyłącznikiem awaryjnym — Python + C++.*
+Standalone pre-trade risk engine with circuit breaker and kill switch.
+*Autonomiczny silnik kontroli ryzyka z przełącznikiem obwodu i wyłącznikiem awaryjnym.*
 
-## Performance Comparison / Porównanie wydajności
+## Performance / Wydajność
 
-| Metric | Python | C++ |
-|--------|--------|-----|
-| **Throughput** | ~200K checks/sec | **7.9M checks/sec** (40x faster) |
-| **Latency (p50)** | ~4,500 ns | **91 ns** |
-| **Latency (p99)** | ~8,000 ns | **140 ns** |
+| Metric | C++ |
+|--------|-----|
+| **Throughput** | **7.9M checks/sec** |
+| **Latency (p50)** | **91 ns** |
+| **Latency (p99)** | **140 ns** |
 
 ## Features / Funkcje
 
@@ -34,17 +34,12 @@ Every order MUST pass all 7 risk checks before reaching the OMS.
 
 | File | Description |
 |------|-------------|
-| `risk_manager.py` | Python implementation (reference, with beginner comments) |
 | `risk_manager.hpp` | C++ header-only implementation |
 | `risk_demo.cpp` | C++ demo with 14 unit tests + throughput benchmark |
 
 ## Run / Uruchomienie
 
 ```bash
-# Python
-python3 risk/risk_manager.py
-python3 tests/test_risk.py
-
 # C++ (build + run)
 make build
 ./risk/risk_demo              # tests + benchmark (1M checks)

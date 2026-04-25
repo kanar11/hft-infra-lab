@@ -30,22 +30,10 @@ ITCH Generator → ITCH Parser → [Strategy] → [Router] → OMS (risk checks)
 6. Tracks positions and realized P&L per symbol
 *Śledzi pozycje i zrealizowany zysk/stratę na symbol.*
 
-## Run
+## Run / Uruchomienie
 ```bash
 # Default: 10,000 messages, direct mode
 make simulate
-
-# Custom message count
-python3 simulator/market_sim.py 50000
-
-# With mean reversion strategy
-python3 simulator/market_sim.py 10000 --strategy
-
-# With strategy + smart order routing
-python3 simulator/market_sim.py 10000 --strategy --router
-
-# Router only (no strategy, all orders routed through SOR)
-python3 simulator/market_sim.py 10000 --router
 ```
 
 ## Performance (Red Hat EL10, VirtualBox 2-core VM)

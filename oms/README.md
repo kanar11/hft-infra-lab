@@ -1,18 +1,18 @@
 # Order Management System / System zarządzania zleceniami
 
-Full order lifecycle management with pre-trade risk checks — Python + C++.
+Full order lifecycle management with pre-trade risk checks.
 
-*Pełne zarządzanie cyklem życia zlecenia z kontrolami ryzyka przed transakcją — Python + C++.*
+*Pełne zarządzanie cyklem życia zlecenia z kontrolami ryzyka przed transakcją.*
 
-## Performance Comparison / Porównanie wydajności
+## Performance / Wydajność
 
-| Metric | Python | C++ |
-|--------|--------|-----|
-| **Throughput** | ~35K orders/sec | **11.6M orders/sec** (330x faster) |
-| **Latency (p50)** | ~28,000 ns | **60 ns** |
-| **Latency (p99)** | ~50,000 ns | **121 ns** |
-| **Price handling** | float64 | Fixed-point int64 (no FP on hot path) |
-| **Order lookup** | dict (hash) | unordered_map (hash, O(1)) |
+| Metric | C++ |
+|--------|-----|
+| **Throughput** | **11.6M orders/sec** |
+| **Latency (p50)** | **60 ns** |
+| **Latency (p99)** | **121 ns** |
+| **Price handling** | Fixed-point int64 (no FP on hot path) |
+| **Order lookup** | unordered_map (hash, O(1)) |
 
 ## Features / Funkcje
 
@@ -38,17 +38,13 @@ a giełdą. W produkcyjnym HFT, OMS musi: walidować zlecenia w < 100ns,
 
 | File | Description |
 |------|-------------|
-| `oms.py` | Python implementation (reference, with beginner comments) |
 | `oms.hpp` | C++ header-only implementation (production-style) |
 | `oms_demo.cpp` | C++ demo with 17 unit tests + throughput benchmark |
 
 ## Run / Uruchomienie
 
 ```bash
-# Python version
-python3 oms/oms.py
-
-# C++ version (build + run)
+# C++ (build + run)
 make build
 ./oms/oms_demo            # tests + benchmark (default: 1M orders)
 ./oms/oms_demo 5000000    # benchmark with 5M orders
@@ -56,7 +52,7 @@ make build
 
 ## Risk Checks / Kontrole ryzyka
 
-Both versions enforce:
+Pre-trade checks enforce:
 - **Max order value**: rejects if `price × quantity > limit`
 - **Max position size**: rejects if projected position exceeds limit
 

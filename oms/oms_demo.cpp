@@ -22,8 +22,8 @@
 #include <numeric>
 
 
-// === Functional Tests — same as Python test_oms.py ===
-// === Testy Funkcjonalne — te same co Python test_oms.py ===
+// === Functional Tests ===
+// === Testy Funkcjonalne ===
 
 static int tests_passed = 0;
 static int tests_total = 0;

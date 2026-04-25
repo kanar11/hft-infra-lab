@@ -3,13 +3,13 @@
 Thread-safe trade event logger with nanosecond timestamps.
 *Bezpieczny wątkowo logger zdarzeń handlowych z nanosekundowymi znacznikami czasu.*
 
-## Performance Comparison / Porównanie wydajności
+## Performance / Wydajność
 
-| Metric | Python | C++ |
-|--------|--------|-----|
-| **Throughput** | ~200K events/sec | **14.3M events/sec** (71x faster) |
-| **Latency (p50)** | ~4,700 ns | **41 ns** |
-| **Latency (p99)** | ~8,000 ns | **60 ns** |
+| Metric | C++ |
+|--------|-----|
+| **Throughput** | **14.3M events/sec** |
+| **Latency (p50)** | **41 ns** |
+| **Latency (p99)** | **60 ns** |
 
 ## Why This Exists / Dlaczego to istnieje
 
@@ -39,18 +39,12 @@ i odrzucenie ryzyka były logowane z precyzyjnymi znacznikami czasu.*
 
 | File | Description |
 |------|-------------|
-| `trade_logger.py` | Python implementation (reference, with beginner comments) |
 | `trade_logger.hpp` | C++ header-only implementation |
 | `logger_demo.cpp` | C++ demo with 30 unit tests + throughput benchmark |
-| `../tests/test_logger.py` | 10 Python unit tests |
 
 ## Run / Uruchomienie
 
 ```bash
-# Python
-python3 logger/trade_logger.py
-python3 tests/test_logger.py
-
 # C++ (build + run)
 make build
 ./logger/logger_demo              # tests + benchmark (500K events)
@@ -61,7 +55,7 @@ make build
 
 | This Lab | Production |
 |----------|------------|
-| Python list + mutex | Lock-free ring buffer in shared memory |
-| `time.time_ns()` | Hardware TSC (RDTSC instruction) |
+| std::vector + mutex | Lock-free ring buffer in shared memory |
+| `std::chrono::steady_clock` | Hardware TSC (RDTSC instruction) |
 | CSV file output | Binary log + async flush to SSD |
 | Single process | Separate logger process (no latency on hot path) |
