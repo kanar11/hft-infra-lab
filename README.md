@@ -67,7 +67,7 @@ docker run hft-lab make simulate  # simulator only
 
 ### Manual
 ```bash
-make build      # compile all 20 C++ binaries
+make build      # compile all 21 C++ binaries
 make test       # run all built-in unit tests (200+)
 make benchmark  # run all throughput benchmarks
 make simulate   # run end-to-end market simulator (direct, strategy, router, full pipeline)

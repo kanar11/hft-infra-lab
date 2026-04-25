@@ -358,6 +358,7 @@ int main(int argc, char* argv[]) {
     printf("\n%d/%d tests passed\n", g_pass, g_pass + g_fail);
     if (g_fail > 0) return 1;
 
-    benchmark_serialize(iterations);
+    if (iterations > 0)
+        benchmark_serialize(iterations);
     return 0;
 }

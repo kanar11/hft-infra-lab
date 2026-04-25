@@ -2,12 +2,12 @@
  * Order Management System (OMS) — C++ Implementation
  * System Zarządzania Zleceniami (OMS) — implementacja C++
  *
- * This is the C++ counterpart of oms.py. In real HFT, the OMS sits on
- * the critical path between strategy signals and exchange connections.
- * Every microsecond saved here = better fills and more profit.
+ * In real HFT, the OMS sits on the critical path between strategy
+ * signals and exchange connections. Every microsecond saved here
+ * = better fills and more profit.
  *
- * To jest odpowiednik oms.py w C++. W prawdziwym HFT, OMS znajduje się
- * na krytycznej ścieżce między sygnałami strategii a połączeniami z giełdą.
+ * W prawdziwym HFT, OMS znajduje się na krytycznej ścieżce między
+ * sygnałami strategii a połączeniami z giełdą.
  * Każda zaoszczędzona mikrosekunda = lepsze realizacje i większy zysk.
  *
  * Performance comparison / Porównanie wydajności:

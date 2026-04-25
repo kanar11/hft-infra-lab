@@ -2,8 +2,8 @@
  * NASDAQ ITCH 5.0 Binary Protocol Parser — C++ Implementation
  * Parser protokołu binarnego NASDAQ ITCH 5.0 — implementacja C++
  *
- * This is the C++ counterpart of itch_parser.py.
- * To jest odpowiednik itch_parser.py w C++.
+ * C++ implementation for ultra-low-latency market data parsing.
+ * Implementacja C++ do parsowania danych rynkowych z ultra-niskim opóźnieniem.
  *
  * WHY C++ HERE?
  * In real HFT systems, market data parsing is on the critical path:

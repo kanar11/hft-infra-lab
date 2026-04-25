@@ -2,13 +2,11 @@
  * Risk Manager — C++ Implementation
  * Menedżer Ryzyka — implementacja C++
  *
- * This is the C++ counterpart of risk_manager.py. The risk manager sits
- * between the strategy and the OMS — every order MUST pass risk checks
- * before it can be sent to the exchange.
+ * The risk manager sits between the strategy and the OMS — every order
+ * MUST pass risk checks before it can be sent to the exchange.
  *
- * To jest odpowiednik risk_manager.py w C++. Menedżer ryzyka siedzi
- * między strategią a OMS — każde zlecenie MUSI przejść kontrole ryzyka
- * zanim może być wysłane na giełdę.
+ * Menedżer ryzyka siedzi między strategią a OMS — każde zlecenie MUSI
+ * przejść kontrole ryzyka zanim może być wysłane na giełdę.
  *
  * WHY C++ HERE:
  * Risk checks are on the critical path. If risk check takes 5μs in Python
