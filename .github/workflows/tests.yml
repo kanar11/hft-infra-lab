@@ -7,50 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test-python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Run OMS tests
-        run: python tests/test_oms.py
-
-      - name: Run ITCH tests
-        run: python tests/test_itch.py
-
-      - name: Run OUCH tests
-        run: python tests/test_ouch.py
-
-      - name: Run FIX tests
-        run: python tests/test_fix.py
-
-      - name: Run Router tests
-        run: python tests/test_router.py
-
-      - name: Run Risk tests
-        run: python tests/test_risk.py
-
-      - name: Run Logger tests
-        run: python tests/test_logger.py
-
-      - name: Run Multicast tests
-        run: python tests/test_multicast.py
-
-      - name: Run Monitoring tests
-        run: python tests/test_monitoring.py
-
-      - name: Run DPDK tests
-        run: python tests/test_dpdk.py
-
-      - name: Run benchmarks
-        run: python tests/benchmark.py
-
-  build-cpp:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,13 +18,48 @@ jobs:
       - name: Build all C++ modules
         run: make build
 
-      - name: Run orderbook demo
-        run: ./orderbook/orderbook
+      - name: Run orderbook tests
+        run: |
+          ./orderbook/orderbook
+          ./orderbook/orderbook_v2
 
-      - name: Run orderbook_v2 demo
-        run: ./orderbook/orderbook_v2
+      - name: Run OMS tests
+        run: ./oms/oms_demo 0
 
-      - name: Run C++ benchmarks
+      - name: Run Risk Manager tests
+        run: ./risk/risk_demo 0
+
+      - name: Run Smart Router tests
+        run: ./router/router_demo 0
+
+      - name: Run Trade Logger tests
+        run: ./logger/logger_demo 0
+
+      - name: Run Strategy tests
+        run: ./strategy/strategy_demo 0
+
+      - name: Run FIX Protocol tests
+        run: ./fix-protocol/fix_demo 0
+
+      - name: Run OUCH Protocol tests
+        run: ./ouch-protocol/ouch_demo 0
+
+      - name: Run DPDK Bypass tests
+        run: ./dpdk-bypass/dpdk_demo 0
+
+      - name: Run Monitoring tests
+        run: ./monitoring/monitor_demo 0
+
+      - name: Run Multicast tests
+        run: ./multicast/multicast_demo 0
+
+      - name: Run Market Simulator tests
+        run: ./simulator/sim_demo 0
+
+      - name: Run Integration tests
+        run: ./tests/test_all
+
+      - name: Run benchmarks
         run: |
           ./orderbook/benchmark_orderbook
           ./orderbook/latency_histogram 100000
@@ -86,3 +78,4 @@ jobs:
           ./dpdk-bypass/dpdk_demo 50000
           ./monitoring/monitor_demo 50000
           ./multicast/multicast_demo 50000
+          ./simulator/sim_demo 50000

@@ -1,43 +1,39 @@
-# Tests & Benchmarks / Testy i Wzorce Wydajności
+# Tests & Benchmarks
 
-Unit tests and performance benchmarks for all HFT modules.
-*Testy jednostkowe i wzorce wydajności dla wszystkich modułów HFT.*
+All tests are C++ with built-in assertions. Each module demo includes unit tests that run before benchmarks.
 
-## Test Suite (65 tests)
+## Test Suite (200+ assertions)
 
-| File | Module | Tests |
-|------|--------|-------|
-| `test_oms.py` | Order Management System | 10 (submit, risk checks, fill, cancel, positions, P&L accuracy) |
-| `test_itch.py` | ITCH 5.0 Parser | 11 (add, sell, delete, trade, replace, executed, cancelled, system event, stock directory, add_mpid, speed) |
-| `test_ouch.py` | OUCH 4.2 Protocol | 7 (encoding, parsing, truncation, precision) |
-| `test_fix.py` | FIX 4.2 Parser | 7 (order types, malformed tags, speed) |
-| `test_router.py` | Smart Order Router | 10 (best price, latency, split, fees, inactive venues, speed) |
-| `test_risk.py` | Risk Manager | 10 (limits, circuit breaker, kill switch, drawdown, rate limit, speed) |
-| `test_logger.py` | Trade Logger | 10 (log, filter, trail, summary, CSV output, kill switch, speed) |
+| Binary | Module | Tests |
+|--------|--------|-------|
+| `oms/oms_demo` | Order Management System | submit, risk checks, fill, cancel, positions, P&L |
+| `risk/risk_demo` | Risk Manager | limits, circuit breaker, kill switch, drawdown, rate limit |
+| `router/router_demo` | Smart Order Router | best price, latency, split, fees, inactive venues |
+| `logger/logger_demo` | Trade Logger | log, filter, trail, summary, ring buffer, latency stats |
+| `strategy/strategy_demo` | Mean Reversion Strategy | signals, SMA, threshold, hold detection |
+| `fix-protocol/fix_demo` | FIX 4.2 Parser | order types, malformed tags, encoding |
+| `ouch-protocol/ouch_demo` | OUCH 4.2 Protocol | encoding, parsing, truncation, precision |
+| `dpdk-bypass/dpdk_demo` | DPDK Bypass | poll vs interrupt, packet processing |
+| `monitoring/monitor_demo` | Infrastructure Monitor | /proc parsing, alerts, thresholds |
+| `multicast/multicast_demo` | Multicast | serialize, deserialize, market data |
+| `simulator/sim_demo` | Market Simulator | generator, parser integration, full pipeline |
+| `tests/test_all` | Integration | cross-module pipeline, end-to-end validation |
 
-## Run Tests
+## Run
+
 ```bash
-# All tests (from project root)
-make test
+make build      # compile everything
+make test       # run all unit tests
+make benchmark  # run throughput benchmarks
+make simulate   # run full market simulation (4 modes)
 
-# Individual test files
-python3 tests/test_oms.py
-python3 tests/test_itch.py
-python3 tests/test_ouch.py
-python3 tests/test_fix.py
-python3 tests/test_router.py
-python3 tests/test_risk.py
-python3 tests/test_logger.py
-```
-
-## Benchmarks
-```bash
-# Python benchmarks (ITCH throughput, OMS throughput)
-python3 tests/benchmark.py
-
-# C++ benchmarks (run from project root)
-make benchmark
+# Individual module tests
+./oms/oms_demo 0
+./logger/logger_demo 0
+./simulator/sim_demo 0
 ```
 
 ## CI
-Tests run automatically on every push via GitHub Actions. See `.github/workflows/tests.yml`.
+
+Tests run automatically on every push via GitHub Actions (`.github/workflows/tests.yml`).
+All tests are pure C++ — no Python required.

@@ -24,7 +24,8 @@ BINS = \
 	dpdk-bypass/dpdk_demo \
 	monitoring/monitor_demo \
 	multicast/multicast_demo \
-	simulator/sim_demo
+	simulator/sim_demo \
+	tests/test_all
 
 all: build
 
@@ -49,6 +50,7 @@ build:
 	$(CXX) $(CXXFLAGS) -o monitoring/monitor_demo monitoring/monitor_demo.cpp
 	$(CXX) $(CXXFLAGS) -o multicast/multicast_demo multicast/multicast_demo.cpp
 	$(CXX) $(CXXFLAGS) -o simulator/sim_demo simulator/sim_demo.cpp
+	$(CXX) $(CXXFLAGS) -o tests/test_all tests/test_all.cpp
 
 # Run all unit tests (each demo includes built-in tests)
 test: build
@@ -63,6 +65,7 @@ test: build
 	./monitoring/monitor_demo 0
 	./multicast/multicast_demo 0
 	./simulator/sim_demo 0
+	./tests/test_all
 
 # Run throughput benchmarks for all modules
 benchmark: build
