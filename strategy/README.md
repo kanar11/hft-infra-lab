@@ -3,13 +3,13 @@
 Simple mean reversion strategy for the HFT pipeline demo.
 *Prosta strategia powrotu do średniej dla demonstracji potoku HFT.*
 
-## Performance Comparison / Porównanie wydajności
+## Performance / Wydajność
 
-| Metric | Python | C++ |
-|--------|--------|-----|
-| **Throughput** | ~430K ticks/sec | **8.0M ticks/sec** (19x faster) |
-| **Latency (p50)** | ~2,300 ns | **100 ns** |
-| **Latency (p99)** | ~5,000 ns | **121 ns** |
+| Metric | C++ |
+|--------|-----|
+| **Throughput** | **8.0M ticks/sec** |
+| **Latency (p50)** | **100 ns** |
+| **Latency (p99)** | **121 ns** |
 
 ## Logic / Logika
 
@@ -31,17 +31,12 @@ Simple mean reversion strategy for the HFT pipeline demo.
 
 | File | Description |
 |------|-------------|
-| `mean_reversion.py` | Python implementation (reference, with beginner comments) |
 | `mean_reversion.hpp` | C++ header-only implementation |
 | `strategy_demo.cpp` | C++ demo with 44 unit tests + throughput benchmark |
 
 ## Run / Uruchomienie
 
 ```bash
-# Python
-python3 strategy/mean_reversion.py
-python3 simulator/market_sim.py 10000 --strategy
-
 # C++ (build + run)
 make build
 ./strategy/strategy_demo              # tests + benchmark (1M ticks)

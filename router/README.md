@@ -3,13 +3,13 @@
 Routes orders to the best execution venue based on price, latency, and liquidity.
 *Kieruje zlecenia do najlepszej giełdy wykonania w oparciu o cenę, opóźnienie i płynność.*
 
-## Performance Comparison / Porównanie wydajności
+## Performance / Wydajność
 
-| Metric | Python | C++ |
-|--------|--------|-----|
-| **Throughput** | ~200K routes/sec | **9.7M routes/sec** (48x faster) |
-| **Latency (p50)** | ~4,000 ns | **70 ns** |
-| **Latency (p99)** | ~8,000 ns | **150 ns** |
+| Metric | C++ |
+|--------|-----|
+| **Throughput** | **9.7M routes/sec** |
+| **Latency (p50)** | **70 ns** |
+| **Latency (p99)** | **150 ns** |
 
 ## Routing Strategies / Strategie Routingu
 
@@ -37,17 +37,12 @@ Strategy → **Router** → Risk → OMS → Exchange
 
 | File | Description |
 |------|-------------|
-| `smart_router.py` | Python implementation (reference, with beginner comments) |
 | `smart_router.hpp` | C++ header-only implementation |
 | `router_demo.cpp` | C++ demo with 12 unit tests + throughput benchmark |
 
 ## Run / Uruchomienie
 
 ```bash
-# Python
-python3 router/smart_router.py
-python3 tests/test_router.py
-
 # C++ (build + run)
 make build
 ./router/router_demo              # tests + benchmark (1M routes)

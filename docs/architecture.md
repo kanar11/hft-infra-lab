@@ -67,14 +67,12 @@ każda nanosekunda opóźnienia oznacza gorsze ceny.*
 Exchange ITCH feed (binary, UDP multicast)
     │
     ▼
-Multicast Receiver (multicast/mc_receiver.py)
+Multicast Receiver (multicast/mc_receiver.hpp)
     │  Joins multicast group 239.1.1.1:5001
     │  Measures receive latency (μs precision)
     │
     ▼
-ITCH 5.0 Parser
-    ├── Python (itch-parser/itch_parser.py)     ~1M msg/sec
-    └── C++    (itch-parser/itch_parser.hpp)    60M msg/sec, 16ns/msg
+ITCH 5.0 Parser (itch-parser/itch_parser.hpp)    60M msg/sec, 16ns/msg
     │
     │  Parses 9 message types: A, F, D, U, E, C, P, S, R
     │  Big-endian byte swapping, zero-copy where possible
@@ -86,8 +84,8 @@ Order Book (orderbook/orderbook_v2.cpp)
     │  Fixed-point int64 prices (no floating point on hot path)
     │
     ▼
-Strategy (strategy/mean_reversion.py)
-       SMA crossover signals, ~2300ns decision latency
+Strategy (strategy/mean_reversion.hpp)
+       SMA crossover signals, 100ns decision latency
 ```
 
 ### Order Path / Ścieżka zlecenia
@@ -96,7 +94,7 @@ Strategy (strategy/mean_reversion.py)
 Strategy generates signal (BUY/SELL)
     │
     ▼
-Risk Manager (risk/risk_manager.py)
+Risk Manager (risk/risk_manager.hpp)
     │  ✓ Order value limit
     │  ✓ Position limit (per-symbol + portfolio)
     │  ✓ Circuit breaker (daily loss limit)
@@ -106,22 +104,22 @@ Risk Manager (risk/risk_manager.py)
     │
     ▼ (ACCEPT or REJECT)
     │
-Smart Order Router (router/smart_router.py)
+Smart Order Router (router/smart_router.hpp)
     │  Strategies: best_price, lowest_latency, split
     │  Venue selection based on price, latency, fees
     │
     ▼
-OMS — Order Management System (oms/oms.py)
+OMS — Order Management System (oms/oms.hpp)
     │  Order lifecycle: PENDING → SUBMITTED → FILLED/CANCELLED
     │  Position tracking with average cost basis
     │  Real-time P&L calculation
     │
     ▼
-OUCH 4.2 Encoder (ouch-protocol/ouch_sender.py)
-    │  Structured → binary (1.7M msg/sec)
+OUCH 4.2 Encoder (ouch-protocol/ouch_protocol.hpp)
+    │  Structured → binary (19.9M msg/sec)
     │
     ▼
-FIX 4.2 Sender (fix-protocol/fix_parser.py)
+FIX 4.2 Sender (fix-protocol/fix_parser.hpp)
     │  Structured → FIX tag=value format
     │
     ▼
@@ -131,12 +129,12 @@ Exchange receives our order
 ### Support Systems / Systemy wspomagające
 
 ```
-Trade Logger (logger/trade_logger.py)
+Trade Logger (logger/trade_logger.hpp)
     │  Records every event with nanosecond timestamps
     │  Audit trail for regulatory compliance (SEC, MiFID II)
     │  CSV export, filtering by order/symbol/type
     │
-Monitoring (monitoring/infra_monitor.py)
+Monitoring (monitoring/infra_monitor.hpp)
     │  CPU, memory, network, disk monitoring
     │  Alert thresholds with notifications
     │
@@ -180,8 +178,8 @@ Total tick-to-trade:       ~5.8 μs
 ```
 ┌────────────────────────────────────────────┐
 │              Application Layer              │
-│  Python: OMS, Risk, Router, Strategy, ITCH │
-│  C++: Orderbook, ITCH, SPSC Queue, Cache   │
+│  C++: OMS, Risk, Router, Strategy, ITCH,   │
+│  Orderbook, SPSC Queue, Cache              │
 ├────────────────────────────────────────────┤
 │               OS / Kernel Layer             │
 │  Red Hat EL10, hugepages, CPU isolation,   │

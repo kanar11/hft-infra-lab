@@ -3,13 +3,13 @@
 Binary order entry protocol for sending orders TO the exchange.
 *Binarny protokół wprowadzania zleceń do wysyłania zleceń NA giełdę.*
 
-## Performance Comparison / Porównanie wydajności
+## Performance / Wydajność
 
-| Metric | Python | C++ |
-|--------|--------|-----|
-| **Throughput** | ~1.7M msg/sec | **19.9M msg/sec** (12x faster) |
-| **Latency (p50)** | ~575 ns | **30 ns** |
-| **Latency (p99)** | ~1,000 ns | **40 ns** |
+| Metric | C++ |
+|--------|-----|
+| **Throughput** | **19.9M msg/sec** |
+| **Latency (p50)** | **30 ns** |
+| **Latency (p99)** | **40 ns** |
 
 ## Message Types / Typy wiadomości
 
@@ -33,17 +33,12 @@ Binary order entry protocol for sending orders TO the exchange.
 
 | File | Description |
 |------|-------------|
-| `ouch_sender.py` | Python implementation (reference, with beginner comments) |
 | `ouch_protocol.hpp` | C++ header-only implementation |
 | `ouch_demo.cpp` | C++ demo with 33 unit tests + throughput benchmark |
 
 ## Run / Uruchomienie
 
 ```bash
-# Python
-python3 ouch-protocol/ouch_sender.py
-python3 tests/test_ouch.py
-
 # C++ (build + run)
 make build
 ./ouch-protocol/ouch_demo              # tests + benchmark (1M encodes)

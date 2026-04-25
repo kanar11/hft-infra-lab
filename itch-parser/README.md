@@ -1,18 +1,14 @@
 # NASDAQ ITCH 5.0 Binary Protocol Parser
 
-Parses binary market data feed messages from NASDAQ. Two implementations:
-**Python** for prototyping and **C++** for the hot path.
+Parses binary market data feed messages from NASDAQ.
+*Analizuje binarne komunikaty źródła danych rynkowych z NASDAQ.*
 
-*Analizuje binarne komunikaty źródła danych rynkowych z NASDAQ. Dwie implementacje:
-Python do prototypowania i C++ na krytyczną ścieżkę.*
+## Performance / Wydajność
 
-## Implementations / Implementacje
-
-| | Python (`itch_parser.py`) | C++ (`itch_parser.hpp`) |
-|---|---|---|
-| Throughput / Przepustowość | ~1M msg/sec | **60M msg/sec** |
-| Latency / Opóźnienie | ~1000 ns/msg | **16 ns/msg** (p99=50ns) |
-| Use case / Zastosowanie | Testing, prototyping | Production hot path |
+| Metric | C++ (`itch_parser.hpp`) |
+|--------|------------------------|
+| Throughput / Przepustowość | **60M msg/sec** |
+| Latency / Opóźnienie | **16 ns/msg** (p99=50ns) |
 
 ## Supported Messages / Obsługiwane wiadomości (9 types / typów)
 
@@ -42,16 +38,12 @@ Python do prototypowania i C++ na krytyczną ścieżkę.*
 
 | File | Description / Opis |
 |------|---|
-| `itch_parser.py` | Python parser — all 9 message types, with demo |
 | `itch_parser.hpp` | C++ header-only parser — zero-alloc, inline byte-swap |
 | `benchmark_itch.cpp` | C++ benchmark — 10M messages, throughput + latency percentiles |
 
 ## Run / Uruchomienie
 
 ```bash
-# Python demo / Demo Pythona
-python3 itch-parser/itch_parser.py
-
 # C++ benchmark / Benchmark C++
 make build
 ./itch-parser/benchmark_itch

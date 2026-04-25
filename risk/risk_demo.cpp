@@ -30,7 +30,7 @@ static int tests_total = 0;
 } while(0)
 
 
-// === Tests — mirror Python test_risk.py ===
+// === Unit Tests ===
 
 void test_allow_normal_order() {
     RiskManager rm;

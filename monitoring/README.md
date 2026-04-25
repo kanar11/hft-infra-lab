@@ -19,22 +19,18 @@ Real-time system monitoring for HFT infrastructure — parses /proc filesystem f
 ## Files / Pliki
 | File | Description |
 |------|-------------|
-| `infra_monitor.py` | Python monitor — real-time console output, JSON logging |
 | `infra_monitor.hpp` | C++ header-only — /proc parser, AlertThresholds, 8.6M parse/sec |
 | `monitor_demo.cpp` | 26 unit tests (mock /proc data) + throughput benchmark |
 
 ## Performance / Wydajność
 
-| Metric | Python | C++ |
-|--------|--------|-----|
-| /proc/stat parse | ~100K/sec | **8.6M/sec** (90ns p50) |
+| Metric | Result |
+|--------|--------|
+| /proc/stat parse | **8.6M/sec** (90ns p50) |
 
 ## Run / Uruchomienie
 ```bash
-# C++ (from project root)
 make build
-./monitoring/monitor_demo 50000
-
-# Python (real-time monitoring)
-python3 infra_monitor.py
+./monitoring/monitor_demo 50000    # benchmark
+./monitoring/monitor_demo 0        # tests only
 ```

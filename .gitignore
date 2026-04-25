@@ -22,18 +22,9 @@ multicast/multicast_demo
 simulator/sim_demo
 tests/test_all
 
-# Python
+# Build artifacts
 __pycache__/
 *.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-.venv/
-venv/
-.pytest_cache/
-.coverage
-htmlcov/
 
 # Logs and results
 *.log
