@@ -281,10 +281,10 @@ int main(int argc, char* argv[]) {
     int iterations = 500'000;
     if (argc > 1) {
         iterations = std::atoi(argv[1]);
-        if (iterations <= 0) iterations = 500'000;
     }
 
-    benchmark(iterations);
+    if (iterations > 0)
+        benchmark(iterations);
 
     return (tests_passed == tests_total) ? 0 : 1;
 }
