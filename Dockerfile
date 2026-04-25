@@ -12,7 +12,7 @@ RUN microdnf install -y gcc-c++ make && \
 WORKDIR /hft-infra-lab
 COPY . .
 
-# Build all 20 C++ binaries
+# Build all 21 C++ binaries
 RUN make build
 
 # Default: run tests, then benchmarks, then simulator

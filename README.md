@@ -53,6 +53,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
 | simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→Router→OMS→P&L) | C++ |
 | logger/ | Trade Logger / Audit Trail — nanosecond event logging (14.3M events/sec) | C++ |
+| tests/ | Integration test suite — cross-module pipeline validation (107 assertions) | C++ |
 | docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |
 
 ## Quick Start
