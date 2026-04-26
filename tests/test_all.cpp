@@ -27,6 +27,8 @@
 static int tests_passed = 0;
 static int tests_failed = 0;
 static int tests_total = 0;
+static int section_start = 0;
+static const char* section_name = "";
 
 #define ASSERT(cond, msg) do { \
     tests_total++; \
@@ -38,7 +40,16 @@ static int tests_total = 0;
     } \
 } while(0)
 
-#define SECTION(name) printf("\n--- %s ---\n", name)
+#define SECTION(name) do { \
+    if (section_start > 0 || tests_total > 0) { \
+        printf("  %s: %d assertions\n", section_name, tests_total - section_start); \
+    } \
+    printf("\n--- %s ---\n", name); \
+    section_name  = name; \
+    section_start = tests_total; \
+} while(0)
+
+#define END_SECTIONS() printf("  %s: %d assertions\n", section_name, tests_total - section_start)
 
 
 // =====================================================
@@ -117,7 +128,6 @@ void test_itch_parser() {
     pm = parser.parse(unk_msg, 10);
     ASSERT(pm.type == MsgType::UNKNOWN, "itch_unknown_type");
 
-    printf("  ITCH: %d assertions\n", 10);
 }
 
 
@@ -172,7 +182,6 @@ void test_oms() {
 
     ASSERT(oms.order_count() == 3, "oms_order_count");
 
-    printf("  OMS: %d assertions\n", 16);
 }
 
 
@@ -211,7 +220,6 @@ void test_risk() {
     auto post_reset = risk.check_order("AAPL", "BUY", 10.0, 1);
     ASSERT(post_reset.action == RiskAction::ALLOW, "risk_accept_after_reset");
 
-    printf("  Risk: %d assertions\n", 8);
 }
 
 
@@ -264,7 +272,6 @@ void test_router() {
     rd = empty_router.route_order("BUY", 100);
     ASSERT(!rd.valid, "router_no_venues_invalid");
 
-    printf("  Router: %d assertions\n", 7);
 }
 
 
@@ -321,7 +328,6 @@ void test_logger() {
     ASSERT(empty.total_events() == 0, "logger_empty");
     ASSERT(empty.time_span_ms() == 0.0, "logger_empty_span");
 
-    printf("  Logger: %d assertions\n", 20);
 }
 
 
@@ -364,7 +370,6 @@ void test_strategy() {
     strategy.on_market_data("MSFT", 410.0, 0);
     // Should not crash or mix up
 
-    printf("  Strategy: assertions passed\n");
 }
 
 
@@ -406,7 +411,6 @@ void test_fix() {
     msg4.parse("");
     ASSERT(msg4.field_count() == 0, "fix_empty_msg");
 
-    printf("  FIX: %d assertions\n", 12);
 }
 
 
@@ -442,7 +446,6 @@ void test_ouch() {
     ASSERT(strcmp(parsed.type, "ACCEPTED") == 0, "ouch_parse_accepted");
     ASSERT(strcmp(parsed.token, "TOK001") == 0, "ouch_accepted_token");
 
-    printf("  OUCH: %d assertions\n", 8);
 }
 
 
@@ -498,7 +501,6 @@ void test_simulator() {
     stats = run_pipeline(500, true, true, 42);
     ASSERT(stats.messages_parsed > 0, "sim_full_pipeline");
 
-    printf("  Simulator: %d assertions\n", 13);
 }
 
 
@@ -584,7 +586,6 @@ void test_integration() {
     ASSERT(oms.order_count() > 0, "integ_oms_orders");
     ASSERT(oms.position_count() > 0, "integ_positions");
 
-    printf("  Integration: %d assertions\n", 9);
 }
 
 
@@ -606,6 +607,7 @@ int main() {
     test_simulator();
     test_integration();
 
+    END_SECTIONS();
     printf("\n========================================\n");
     printf("  %d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0)
