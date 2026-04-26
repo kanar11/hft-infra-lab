@@ -1,63 +1,57 @@
+/*
+ * Order book v1 — minimal price-level matching.
+ *
+ * Aggregates qty per price level. No per-order tracking (see orderbook_v2.cpp
+ * for that). Intended as the simplest possible reference implementation.
+ *
+ * Prices are fixed-point ticks (1 tick = $0.01).
+ */
+
 #include <iostream>
 #include <map>
 #include <chrono>
 #include <cstdint>
+#include <algorithm>
 
-// Fixed-point price: stored as integer ticks (1 tick = 0.01)
-// Stała cena - przechowywana jako liczba całkowita (1 tick = 0,01)
-// e.g., 100.50 is stored as 10050
-// np. 100,50 jest przechowywane jako 10050
 using Price = std::int64_t;
 
-static Price to_ticks(double p) { return static_cast<Price>(p * 100 + 0.5); }
+static Price to_ticks(double p)  { return static_cast<Price>(p * 100 + 0.5); }
 static double to_double(Price p) { return p / 100.0; }
 
 struct Order {
-    int id;
+    int   id;
     Price price;
-    int quantity;
-    bool is_buy;
+    int   quantity;
+    bool  is_buy;
 };
 
 class OrderBook {
     std::map<Price, int, std::greater<Price>> bids;  // highest first
-    // najwyższa cena jako pierwsza
-    std::map<Price, int> asks;  // lowest first
-    // najniższa cena jako pierwsza
+    std::map<Price, int>                       asks;  // lowest first
     int trades = 0;
 
 public:
     void add_order(const Order& order) noexcept {
-        if (order.is_buy) {
-            bids[order.price] += order.quantity;
-        } else {
-            asks[order.price] += order.quantity;
-        }
+        if (order.is_buy) bids[order.price] += order.quantity;
+        else              asks[order.price] += order.quantity;
         try_match();
     }
 
     void try_match() noexcept {
         while (!bids.empty() && !asks.empty()) {
-            auto best_bid = bids.begin();
-            auto best_ask = asks.begin();
+            auto bb = bids.begin();
+            auto ba = asks.begin();
+            if (bb->first < ba->first) break;
 
-            if (best_bid->first >= best_ask->first) {
-                int fill_qty = std::min(best_bid->second, best_ask->second);
-                trades++;
-
-                best_bid->second -= fill_qty;
-                best_ask->second -= fill_qty;
-
-                if (best_bid->second == 0) bids.erase(best_bid);
-                if (best_ask->second == 0) asks.erase(best_ask);
-            } else {
-                break;
-            }
+            const int fill = std::min(bb->second, ba->second);
+            trades++;
+            bb->second -= fill;
+            ba->second -= fill;
+            if (bb->second == 0) bids.erase(bb);
+            if (ba->second == 0) asks.erase(ba);
         }
     }
 
-    // Print the current order book state
-    // Wydrukuj bieżący stan księgi zleceń
     void print_book() const {
         std::cout << "\n=== ORDER BOOK ===" << std::endl;
         std::cout << "--- ASKS ---" << std::endl;
@@ -72,12 +66,11 @@ public:
 
 int main() {
     OrderBook book;
-
     auto start = std::chrono::high_resolution_clock::now();
 
     book.add_order({1, to_ticks(100.50), 10, true});
-    book.add_order({2, to_ticks(100.30), 5, true});
-    book.add_order({3, to_ticks(101.00), 8, false});
+    book.add_order({2, to_ticks(100.30), 5,  true});
+    book.add_order({3, to_ticks(101.00), 8,  false});
     book.add_order({4, to_ticks(100.80), 12, false});
     book.print_book();
 
@@ -87,6 +80,5 @@ int main() {
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     std::cout << "\nProcessing time: " << duration.count() << " ns" << std::endl;
-
     return 0;
 }

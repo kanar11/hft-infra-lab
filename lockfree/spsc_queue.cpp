@@ -1,3 +1,17 @@
+/*
+ * Single-producer single-consumer lock-free ring buffer.
+ *
+ * Cache-line discipline:
+ *   - Producer touches head (and reads cached_tail to check fullness).
+ *   - Consumer touches tail (and reads cached_head to check emptiness).
+ *   - Each lives on its own 64-byte line, so producer/consumer never invalidate
+ *     each other's lines except when the cached snapshot is refreshed.
+ *   - The data buffer is also cache-aligned to avoid false sharing with anything
+ *     placed adjacent to the queue object.
+ *
+ * Used in HFT between the market-data thread and the trading thread.
+ */
+
 #include <iostream>
 #include <atomic>
 #include <thread>
@@ -6,88 +20,93 @@
 
 template<typename T, size_t SIZE>
 class SPSCQueue {
-    // Single Producer Single Consumer lock-free queue
-    // Bezblokująca kolejka producenta pojedynczego konsumenta
-    // Used in HFT between market data thread and trading thread
-    // Używana w HFT między wątkiem danych rynkowych a wątkiem handlu
-
     static_assert((SIZE & (SIZE - 1)) == 0, "SIZE must be power of 2");
+    static constexpr size_t MASK = SIZE - 1;
+    static constexpr size_t CACHE_LINE = 64;
 
-    T buffer[SIZE];
-    alignas(64) std::atomic<size_t> head{0};  // producer writes here
-    // producent pisze tutaj
-    alignas(64) std::atomic<size_t> tail{0};  // consumer reads here
-    // konsument czyta tutaj
-    // alignas(64) prevents false sharing between CPU cache lines
-    // alignas(64) zapobiega fałszywemu udostępnianiu między liniami cache'u procesora
+    alignas(CACHE_LINE) T buffer[SIZE];
+
+    // Producer-side state. cached_tail is a stale read of tail used to skip
+    // the expensive atomic load when the queue is known to have room.
+    alignas(CACHE_LINE) std::atomic<size_t> head{0};
+    alignas(CACHE_LINE) size_t cached_tail{0};
+
+    // Consumer-side state, mirrored.
+    alignas(CACHE_LINE) std::atomic<size_t> tail{0};
+    alignas(CACHE_LINE) size_t cached_head{0};
 
 public:
-    // Push item to queue
-    // Wstaw element do kolejki
-    bool push(const T& item) {
-        size_t h = head.load(std::memory_order_relaxed);
-        size_t next = (h + 1) & (SIZE - 1);  // bitwise AND instead of modulo
-        // bitowe AND zamiast modulo
+    bool push(const T& item) noexcept {
+        const size_t h    = head.load(std::memory_order_relaxed);
+        const size_t next = (h + 1) & MASK;
 
-        if (next == tail.load(std::memory_order_acquire))
-            return false;  // queue full
-        // kolejka pełna
+        if (next == cached_tail) {
+            cached_tail = tail.load(std::memory_order_acquire);
+            if (next == cached_tail) return false;  // full
+        }
 
         buffer[h] = item;
         head.store(next, std::memory_order_release);
         return true;
     }
 
-    // Pop item from queue
-    // Usuń element z kolejki
-    bool pop(T& item) {
-        size_t t = tail.load(std::memory_order_relaxed);
+    bool pop(T& item) noexcept {
+        const size_t t = tail.load(std::memory_order_relaxed);
 
-        if (t == head.load(std::memory_order_acquire))
-            return false;  // queue empty
-        // kolejka pusta
+        if (t == cached_head) {
+            cached_head = head.load(std::memory_order_acquire);
+            if (t == cached_head) return false;  // empty
+        }
 
         item = buffer[t];
-        tail.store((t + 1) & (SIZE - 1), std::memory_order_release);
+        tail.store((t + 1) & MASK, std::memory_order_release);
         return true;
     }
 
-    size_t size() const {
-        return (head.load() - tail.load()) & (SIZE - 1);
+    // size(): coarse snapshot — head and tail are loaded separately, so the value
+    // is approximate under concurrent push/pop. Use only for diagnostics.
+    size_t size() const noexcept {
+        return (head.load(std::memory_order_acquire) -
+                tail.load(std::memory_order_acquire)) & MASK;
+    }
+
+    bool empty() const noexcept {
+        return head.load(std::memory_order_acquire) ==
+               tail.load(std::memory_order_acquire);
     }
 };
 
 struct MarketData {
-    int seq;
-    double price;
-    int quantity;
+    int       seq;
+    double    price;
+    int       quantity;
     long long timestamp_ns;
 };
 
-// Benchmark queue throughput with producer-consumer pattern
-// Benchmark przepustowości kolejki w schemacie producent-konsument
+// Benchmark: producer pushes NUM_MESSAGES, consumer measures end-to-end latency.
 void benchmark_throughput() {
     SPSCQueue<MarketData, 65536> queue;
-    const int NUM_MESSAGES = 10000000;
+    const int NUM_MESSAGES = 10'000'000;
     std::atomic<bool> done{false};
     long long total_latency = 0;
     int received = 0;
 
-    // Consumer thread (trading logic)
-    // Wątek konsumenta (logika handlu)
     auto consumer = std::thread([&]() {
         MarketData msg;
-        while (!done || queue.size() > 0) {
+        // Consumer-side termination: only stop when producer signalled done AND
+        // the queue is genuinely empty (checked through the same atomic loads as pop()).
+        while (true) {
             if (queue.pop(msg)) {
-                auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+                const auto now = std::chrono::high_resolution_clock::now()
+                                 .time_since_epoch().count();
                 total_latency += (now - msg.timestamp_ns);
                 received++;
+            } else if (done.load(std::memory_order_acquire) && queue.empty()) {
+                break;
             }
         }
     });
 
-    // Producer thread (market data)
-    // Wątek producenta (dane rynkowe)
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < NUM_MESSAGES; i++) {
@@ -97,11 +116,10 @@ void benchmark_throughput() {
             (i % 10 + 1) * 100,
             std::chrono::high_resolution_clock::now().time_since_epoch().count()
         };
-        while (!queue.push(msg)) {}  // spin until space available
-        // obracaj się aż do dostępu miejsca
+        while (!queue.push(msg)) {}  // spin until space
     }
 
-    done = true;
+    done.store(true, std::memory_order_release);
     consumer.join();
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -112,41 +130,33 @@ void benchmark_throughput() {
     std::cout << "Time:         " << elapsed_ms << " ms" << std::endl;
 
     if (received > 0 && elapsed_ms > 0) {
-        double msgs_per_sec = (double)received / (elapsed_ms / 1000.0);
-        double avg_latency = (double)total_latency / received;
-        std::cout << "Throughput:   " << (int)msgs_per_sec << " msg/sec" << std::endl;
-        std::cout << "Avg latency:  " << (int)avg_latency << " ns" << std::endl;
+        const double msgs_per_sec = (double)received / (elapsed_ms / 1000.0);
+        const double avg_latency  = (double)total_latency / received;
+        std::cout << "Throughput:   " << (long long)msgs_per_sec << " msg/sec" << std::endl;
+        std::cout << "Avg latency:  " << (long long)avg_latency << " ns" << std::endl;
     } else {
-        std::cout << "Throughput:   N/A (no messages received)" << std::endl;
+        std::cout << "Throughput:   N/A" << std::endl;
         std::cout << "Avg latency:  N/A" << std::endl;
     }
     std::cout << "Queue size:   65536 slots" << std::endl;
-    std::cout << "Cache lines:  head and tail on separate 64-byte lines (no false sharing)" << std::endl;
+    std::cout << "Cache lines:  head, tail, and cached snapshots on separate 64-byte lines" << std::endl;
 }
 
-// Demonstrate basic queue operations
-// Zademonstruj podstawowe operacje kolejki
 void demo() {
     std::cout << "=== SPSC Queue Demo ===" << std::endl;
     SPSCQueue<MarketData, 1024> queue;
 
-    // Simulate market data producer
-    // Symuluj producenta danych rynkowych
     for (int i = 0; i < 5; i++) {
         MarketData msg{i, 150.25 + i * 0.01, 100, 0};
         queue.push(msg);
         std::cout << "  PUSH: seq=" << msg.seq << " price=" << msg.price << std::endl;
     }
-
     std::cout << "  Queue size: " << queue.size() << std::endl;
 
-    // Simulate trading logic consumer
-    // Symuluj konsumenta logiki handlu
     MarketData msg;
     while (queue.pop(msg)) {
         std::cout << "  POP:  seq=" << msg.seq << " price=" << msg.price << std::endl;
     }
-
     std::cout << "  Queue size: " << queue.size() << std::endl;
 }
 
