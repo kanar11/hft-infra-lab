@@ -273,7 +273,7 @@ public:
         // More efficient than orders_[id] = order because it constructs in-place
         // emplace: wstaw do mapy bez kopiowania (semantyka przenoszenia)
         // Bardziej wydajne niż orders_[id] = order bo konstruuje w miejscu
-        auto [it, _] = orders_.emplace(id, order);
+        auto it = orders_.emplace(id, order).first;
         return &it->second;
     }
 
@@ -300,8 +300,7 @@ public:
         uint64_t sym_key = sym_to_key(order.symbol);
         auto pos_it = positions_.find(sym_key);
         if (pos_it == positions_.end()) {
-            auto [new_it, _] = positions_.emplace(sym_key, Position(order.symbol));
-            pos_it = new_it;
+            pos_it = positions_.emplace(sym_key, Position(order.symbol)).first;
         }
         Position& pos = pos_it->second;
 

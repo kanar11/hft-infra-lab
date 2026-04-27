@@ -170,7 +170,7 @@ void test_oms() {
     partial = oms.get_order(o4->order_id);
     ASSERT(partial->status == OrderStatus::FILLED, "oms_full_fill");
 
-    ASSERT(oms.order_count() == 3, "oms_order_count");
+    ASSERT(oms.order_count() == 3u, "oms_order_count");
 
     printf("  OMS: %d assertions\n", 16);
 }
@@ -578,8 +578,8 @@ void test_integration() {
     ASSERT(logger.get_counter(EventType::SYSTEM_STOP) == 1, "integ_system_stop");
     ASSERT(logger.get_counter(EventType::ORDER_SUBMIT) > 0, "integ_submits_logged");
     ASSERT(logger.get_counter(EventType::ORDER_FILL) > 0, "integ_fills_logged");
-    ASSERT(oms.order_count() > 0, "integ_oms_orders");
-    ASSERT(oms.position_count() > 0, "integ_positions");
+    ASSERT(oms.order_count() > 0u, "integ_oms_orders");
+    ASSERT(oms.position_count() > 0u, "integ_positions");
 
     printf("  Integration: %d assertions\n", 9);
 }
@@ -596,7 +596,7 @@ void test_negative_cases() {
     {
         OMS oms(1000, 200000.0);
         oms.fill_order(9999, 100, 150.0);  // should print WARNING but not crash
-        ASSERT(oms.order_count() == 0, "neg_fill_unknown_no_crash");
+        ASSERT(oms.order_count() == 0u, "neg_fill_unknown_no_crash");
     }
 
     // OMS position limit: accumulate to limit then reject next order
