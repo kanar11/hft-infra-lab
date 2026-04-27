@@ -57,11 +57,11 @@ void test_filter_by_event_type() {
     logger.log(EventType::ORDER_SUBMIT, 2);
 
     TradeEvent buf[16];
-    int fills = logger.get_events_filtered(buf, 16, -1,
+    int fills = logger.get_events_filtered(buf, 16, 0,
         static_cast<int>(EventType::ORDER_FILL));
     ASSERT(fills == 1, "test_filter_fills");
 
-    int submits = logger.get_events_filtered(buf, 16, -1,
+    int submits = logger.get_events_filtered(buf, 16, 0,
         static_cast<int>(EventType::ORDER_SUBMIT));
     ASSERT(submits == 2, "test_filter_submits");
 }
@@ -73,7 +73,7 @@ void test_filter_by_symbol() {
     logger.log(EventType::ORDER_SUBMIT, 3, "AAPL");
 
     TradeEvent buf[16];
-    int n = logger.get_events_filtered(buf, 16, -1, -1, "AAPL");
+    int n = logger.get_events_filtered(buf, 16, 0, -1, "AAPL");
     ASSERT(n == 2, "test_filter_by_symbol");
 }
 
@@ -120,7 +120,7 @@ void test_kill_switch_event() {
     logger.log(EventType::KILL_SWITCH, 0, "", "", 0, 0.0, "manual_trigger");
 
     TradeEvent buf[4];
-    int n = logger.get_events_filtered(buf, 4, -1,
+    int n = logger.get_events_filtered(buf, 4, 0,
         static_cast<int>(EventType::KILL_SWITCH));
     ASSERT(n == 1, "test_kill_switch_count");
     ASSERT(std::strcmp(buf[0].details, "manual_trigger") == 0, "test_kill_switch_details");

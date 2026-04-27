@@ -195,7 +195,6 @@ public:
             }
             safe_copy(resp.type, "ACCEPTED");
             strip_padding(resp.token, data + 1, 14);
-            resp.side[0] = (data[15] == 'B') ? 'B' : 'S';
             safe_copy(resp.side, (data[15] == 'B') ? "BUY" : "SELL");
             resp.shares = read_u32_be(data + 16);
             strip_padding(resp.stock, data + 20, 8);
