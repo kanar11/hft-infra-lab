@@ -194,7 +194,7 @@ void benchmark(int num_encodes) {
         total_end - total_start).count();
 
     std::sort(latencies.begin(), latencies.end());
-    int n = latencies.size();
+    int n = static_cast<int>(latencies.size());
     double avg = static_cast<double>(total_ns) / n;
     double throughput = n / (total_ns / 1e9) / 1e6;
 
