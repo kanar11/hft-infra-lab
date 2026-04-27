@@ -20,7 +20,7 @@ jobs:
           cppcheck --enable=warning,performance,portability \
                    --std=c++17 --error-exitcode=1 \
                    --suppress=missingIncludeSystem \
-                   oms/ risk/ router/ logger/ strategy/ \
+                   config/ oms/ risk/ router/ logger/ strategy/ \
                    fix-protocol/ ouch-protocol/ lockfree/ \
                    multicast/ simulator/ tests/
 

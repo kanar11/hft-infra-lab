@@ -26,6 +26,7 @@
 // Include all pipeline modules
 #include "../itch-parser/itch_parser.hpp"
 #include "../oms/oms.hpp"
+#include "../config/config_loader.hpp"
 #include "../strategy/mean_reversion.hpp"
 #include "../router/smart_router.hpp"
 
@@ -310,24 +311,54 @@ struct PipelineStats {
 inline PipelineStats run_pipeline(int num_messages = 1000,
                                    bool use_strategy = false,
                                    bool use_router = false,
-                                   uint64_t seed = 42) {
+                                   uint64_t seed = 42,
+                                   const HFTConfig* cfg = nullptr) {
     PipelineStats stats = {};
+
+    // Resolve parameters: config file wins over hardcoded defaults
+    int    strat_window    = cfg ? cfg->strategy.window        : 20;
+    double strat_threshold = cfg ? cfg->strategy.threshold_pct : 0.1;
+    int    strat_size      = cfg ? cfg->strategy.order_size     : 100;
+    int    oms_max_pos     = cfg ? cfg->oms.max_position        : 1000;
+    double oms_max_val     = cfg ? cfg->oms.max_order_value     : 100000.0;
 
     // Initialize components
     MarketDataGenerator generator(seed);
     ITCHParser parser;
-    OMS oms(1000, 100000.0);
-    MeanReversionStrategy strategy(20, 0.1, 100);
-    SmartOrderRouter router(RoutingStrategy::BEST_PRICE, 500);
+    OMS oms(oms_max_pos, oms_max_val);
+    MeanReversionStrategy strategy(strat_window, strat_threshold, strat_size);
+
+    // Router strategy from config
+    RoutingStrategy rr = RoutingStrategy::BEST_PRICE;
+    int split_thr = 500;
+    if (cfg) {
+        if (std::strcmp(cfg->router.default_strategy, "LOWEST_LATENCY") == 0)
+            rr = RoutingStrategy::LOWEST_LATENCY;
+        else if (std::strcmp(cfg->router.default_strategy, "SPLIT") == 0)
+            rr = RoutingStrategy::SPLIT;
+        split_thr = cfg->router.split_threshold;
+    }
+    SmartOrderRouter router(rr, split_thr);
 
     if (use_router) {
-        Venue nyse, nasdaq, bats;
-        std::strncpy(nyse.name, "NYSE", 15);     nyse.latency_ns = 500;    nyse.fee_per_share = 0.003;
-        std::strncpy(nasdaq.name, "NASDAQ", 15);  nasdaq.latency_ns = 350;  nasdaq.fee_per_share = 0.002;
-        std::strncpy(bats.name, "BATS", 15);      bats.latency_ns = 250;    bats.fee_per_share = 0.001;
-        router.add_venue(nyse);
-        router.add_venue(nasdaq);
-        router.add_venue(bats);
+        // Prefer venues from config; fall back to hardcoded defaults
+        if (cfg && !cfg->router.venues.empty()) {
+            for (const auto& vc : cfg->router.venues) {
+                Venue v;
+                std::strncpy(v.name, vc.name, 15);
+                v.latency_ns    = vc.latency_ns;
+                v.fee_per_share = vc.fee_per_share;
+                router.add_venue(v);
+            }
+        } else {
+            Venue nyse, nasdaq, bats;
+            std::strncpy(nyse.name,    "NYSE",   15); nyse.latency_ns = 500;   nyse.fee_per_share = 0.003;
+            std::strncpy(nasdaq.name,  "NASDAQ", 15); nasdaq.latency_ns = 350; nasdaq.fee_per_share = 0.002;
+            std::strncpy(bats.name,    "BATS",   15); bats.latency_ns = 250;   bats.fee_per_share = 0.001;
+            router.add_venue(nyse);
+            router.add_venue(nasdaq);
+            router.add_venue(bats);
+        }
     }
 
     // [1/4] Generate market data

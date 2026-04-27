@@ -6,6 +6,7 @@
  */
 
 #include "market_sim.hpp"
+#include "../config/config_loader.hpp"
 #include <cstdlib>
 #include <cstring>
 
@@ -138,21 +139,27 @@ int main(int argc, char* argv[]) {
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_total);
 
-    // Benchmark
-    int num_messages = 10000;
+    // Load config — defaults from config.yaml, overridable via HFT_ env vars
+    HFTConfig cfg = load_config("config.yaml");
+    print_config(cfg);
+
+    // CLI args override config values
     bool use_strategy = false;
-    bool use_router = false;
+    bool use_router   = false;
+    int  num_messages = cfg.simulator.num_messages;
+    int  seed         = cfg.simulator.seed;
 
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--strategy") == 0) use_strategy = true;
-        else if (std::strcmp(argv[i], "--router") == 0) use_router = true;
+        if      (std::strcmp(argv[i], "--strategy") == 0) use_strategy = true;
+        else if (std::strcmp(argv[i], "--router")   == 0) use_router   = true;
         else {
             int n = std::atoi(argv[i]);
             if (n > 0) num_messages = n;
         }
     }
 
-    PipelineStats stats = run_pipeline(num_messages, use_strategy, use_router, 42);
+    PipelineStats stats = run_pipeline(num_messages, use_strategy, use_router,
+                                       static_cast<uint64_t>(seed), &cfg);
     print_pipeline_stats(stats, use_strategy, use_router);
 
     return (tests_passed == tests_total) ? 0 : 1;

@@ -10,9 +10,21 @@
  */
 
 #include "risk_manager.hpp"
+#include "../config/config_loader.hpp"
 #include <vector>
 #include <algorithm>
 #include <numeric>
+
+static RiskLimits risk_limits_from_config(const HFTConfig& cfg) {
+    RiskLimits l;
+    l.max_position_per_symbol = cfg.risk.max_position_per_symbol;
+    l.max_portfolio_exposure  = cfg.risk.max_portfolio_exposure;
+    l.max_daily_loss          = static_cast<int64_t>(cfg.risk.max_daily_loss);
+    l.max_orders_per_second   = cfg.risk.max_orders_per_second;
+    l.max_order_value         = static_cast<int64_t>(cfg.risk.max_order_value);
+    l.max_drawdown_pct        = cfg.risk.max_drawdown_pct;
+    return l;
+}
 
 
 // === Test Framework ===
@@ -185,6 +197,16 @@ int main(int argc, char* argv[]) {
     test_check_speed();
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_total);
+
+    // Load config and show active limits
+    HFTConfig cfg = load_config("config.yaml");
+    if (!cfg.loaded) cfg = load_config("../config.yaml");
+    RiskLimits limits = risk_limits_from_config(cfg);
+    printf("\nActive risk limits (from %s):\n", cfg.loaded ? cfg.source : "defaults");
+    printf("  max_order_value:         %.0f\n", (double)limits.max_order_value);
+    printf("  max_position_per_symbol: %d\n",   limits.max_position_per_symbol);
+    printf("  max_orders_per_second:   %d\n",   limits.max_orders_per_second);
+    printf("  max_daily_loss:          %.0f\n", (double)limits.max_daily_loss);
 
     int num_checks = 1'000'000;
     if (argc > 1) {
