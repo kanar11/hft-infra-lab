@@ -30,8 +30,8 @@
 #include <cstdlib>
 #include <chrono>
 
-// Max CPUs we track
-static constexpr int MAX_CPUS = 16;
+// Max CPUs we track — 128 covers current server hardware; increase if needed
+static constexpr int MAX_CPUS = 128;
 // Max network interfaces
 static constexpr int MAX_IFACES = 4;
 

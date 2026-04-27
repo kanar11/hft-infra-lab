@@ -182,14 +182,16 @@ struct Position {
 // === Klasa OMS — główny System Zarządzania Zleceniami ===
 
 class OMS {
-    // unordered_map: hash table — O(1) average lookup by key
-    // orders_: maps order_id → Order (like Python's self.orders = {})
-    // positions_: maps symbol string → Position
-    // unordered_map: tablica hashująca — średnie O(1) wyszukiwanie po kluczu
-    // orders_: mapuje order_id → Order (jak self.orders = {} w Pythonie)
-    // positions_: mapuje string symbolu → Position
     std::unordered_map<uint64_t, Order> orders_;
-    std::unordered_map<std::string, Position> positions_;
+    std::unordered_map<uint64_t, Position> positions_;  // key = symbol packed into uint64_t (no heap alloc)
+
+    // Pack up to 8 ASCII chars into a uint64_t — avoids std::string allocation on every lookup
+    static uint64_t sym_to_key(const char* sym) noexcept {
+        uint64_t key = 0;
+        for (int i = 0; i < 8 && sym[i] != '\0'; ++i)
+            key |= (static_cast<uint64_t>(static_cast<unsigned char>(sym[i])) << (i * 8));
+        return key;
+    }
 
     uint64_t next_id_;
     int32_t  max_position_;
@@ -247,7 +249,7 @@ public:
 
         // Risk check: position limit
         // Kontrola ryzyka: limit pozycji
-        std::string sym_key(symbol);
+        uint64_t sym_key = sym_to_key(symbol);
         auto pos_it = positions_.find(sym_key);
         int32_t current_qty = (pos_it != positions_.end()) ? pos_it->second.net_qty : 0;
         int32_t projected = current_qty + (side == Side::BUY ? (int32_t)quantity : -(int32_t)quantity);
@@ -279,7 +281,10 @@ public:
     // fill_order: przetwórz raport wykonania — zaktualizuj pozycję i P&L
     void fill_order(uint64_t order_id, uint32_t fill_qty, double fill_price_f) noexcept {
         auto it = orders_.find(order_id);
-        if (it == orders_.end()) return;
+        if (it == orders_.end()) {
+            printf("[OMS] WARNING: fill for unknown order_id=%lu\n", (unsigned long)order_id);
+            return;
+        }
 
         Order& order = it->second;
         int64_t fill_price = to_fixed(fill_price_f);
@@ -292,7 +297,7 @@ public:
 
         // Update position — same logic as Python version
         // Aktualizuj pozycję — ta sama logika co w wersji Python
-        std::string sym_key(order.symbol);
+        uint64_t sym_key = sym_to_key(order.symbol);
         auto pos_it = positions_.find(sym_key);
         if (pos_it == positions_.end()) {
             auto [new_it, _] = positions_.emplace(sym_key, Position(order.symbol));
@@ -318,7 +323,8 @@ public:
         // Recalculate average price
         // Przelicz średnią cenę
         if (pos.net_qty > 0) {
-            pos.avg_price = pos.total_cost / pos.net_qty;
+            // Round-half-up to minimize fixed-point drift over many fills
+            pos.avg_price = (pos.total_cost + pos.net_qty / 2) / pos.net_qty;
         } else if (pos.net_qty == 0) {
             pos.avg_price = 0;
             pos.total_cost = 0;
@@ -346,7 +352,7 @@ public:
     }
 
     const Position* get_position(const char* symbol) const noexcept {
-        auto it = positions_.find(std::string(symbol));
+        auto it = positions_.find(sym_to_key(symbol));
         return (it != positions_.end()) ? &it->second : nullptr;
     }
 

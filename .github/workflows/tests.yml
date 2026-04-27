@@ -12,8 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install g++
-        run: sudo apt-get update && sudo apt-get install -y g++
+      - name: Install g++ and cppcheck
+        run: sudo apt-get update && sudo apt-get install -y g++ cppcheck
+
+      - name: Static analysis (cppcheck)
+        run: |
+          cppcheck --enable=warning,performance,portability \
+                   --std=c++17 --error-exitcode=1 \
+                   --suppress=missingIncludeSystem \
+                   oms/ risk/ router/ logger/ strategy/ \
+                   fix-protocol/ ouch-protocol/ lockfree/ \
+                   multicast/ simulator/ tests/
 
       - name: Build all C++ modules
         run: make build

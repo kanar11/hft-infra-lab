@@ -21,6 +21,7 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <vector>
 
 // Include all pipeline modules
 #include "../itch-parser/itch_parser.hpp"
@@ -334,7 +335,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
 
     // Pre-allocate message buffer
     int total_msgs = num_messages + 6;  // +6 for system events
-    GeneratedMessage* messages = new GeneratedMessage[total_msgs];
+    std::vector<GeneratedMessage> messages(total_msgs);
     int msg_idx = 0;
 
     // Start of day system events
@@ -358,7 +359,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     // [2/4] Parse all messages
     auto parse_start = std::chrono::high_resolution_clock::now();
 
-    ParsedMessage* parsed = new ParsedMessage[msg_idx];
+    std::vector<ParsedMessage> parsed(msg_idx);
     for (int i = 0; i < msg_idx; ++i) {
         parsed[i] = parser.parse(messages[i].data, messages[i].length);
         switch (parsed[i].type) {
@@ -456,10 +457,6 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             stats.total_pnl += to_float(pos->realized_pnl);
         }
     }
-
-    // Cleanup
-    delete[] messages;
-    delete[] parsed;
 
     return stats;
 }

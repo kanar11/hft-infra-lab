@@ -343,21 +343,18 @@ void test_strategy() {
     Signal s = strategy.on_market_data("AAPL", 150.0, 0);
     // May or may not trigger depending on threshold
 
-    // Price significantly below mean — should trigger BUY
+    // Price significantly below mean — 145 is 3.3% below SMA=150, threshold=1% → must trigger BUY
     s = strategy.on_market_data("AAPL", 145.0, 0);
-    // With 1% threshold and price 3.3% below, should get BUY
-    if (s.valid) {
-        ASSERT(strcmp(s.side, "BUY") == 0, "strategy_buy_signal");
-    }
+    ASSERT(s.valid, "strategy_buy_signal_valid");
+    ASSERT(strcmp(s.side, "BUY") == 0, "strategy_buy_signal");
 
-    // Price significantly above mean — should trigger SELL
+    // Reset: feed 5 prices at 150 so SMA≈150, then spike to 160 (6.7% above) → must trigger SELL
     for (int i = 0; i < 5; ++i) {
-        strategy.on_market_data("AAPL", 150.0, 0);  // reset mean
+        strategy.on_market_data("AAPL", 150.0, 0);
     }
     s = strategy.on_market_data("AAPL", 160.0, 0);
-    if (s.valid) {
-        ASSERT(strcmp(s.side, "SELL") == 0, "strategy_sell_signal");
-    }
+    ASSERT(s.valid, "strategy_sell_signal_valid");
+    ASSERT(strcmp(s.side, "SELL") == 0, "strategy_sell_signal");
 
     // Different stocks tracked independently
     strategy.on_market_data("TSLA", 245.0, 0);
@@ -589,6 +586,76 @@ void test_integration() {
 
 
 // =====================================================
+// Negative / Edge-Case Tests
+// =====================================================
+
+void test_negative_cases() {
+    SECTION("Negative Cases");
+
+    // fill_order with non-existent order_id must not crash
+    {
+        OMS oms(1000, 200000.0);
+        oms.fill_order(9999, 100, 150.0);  // should print WARNING but not crash
+        ASSERT(oms.order_count() == 0, "neg_fill_unknown_no_crash");
+    }
+
+    // OMS position limit: accumulate to limit then reject next order
+    {
+        OMS oms(100, 1000000.0);  // max_position=100
+        Order* o = oms.submit_order("AAPL", Side::BUY, 10.0, 100);
+        ASSERT(o != nullptr, "neg_pos_limit_first_ok");
+        // After submitting 100 shares the projected position = 100 = max → next BUY rejected
+        Order* o2 = oms.submit_order("AAPL", Side::BUY, 10.0, 1);
+        ASSERT(o2 == nullptr, "neg_pos_limit_reject");
+    }
+
+    // Risk: order at exact max_order_value boundary should be rejected
+    {
+        RiskLimits limits;
+        limits.max_order_value = 10000;   // $10,000
+        limits.max_position_per_symbol = 10000;
+        limits.max_orders_per_second = 10000;
+        RiskManager risk(limits);
+        // 10001 × $1 = $10,001 > limit → reject
+        auto r = risk.check_order("AAPL", "BUY", 1.0, 10001);
+        ASSERT(r.action != RiskAction::ALLOW, "neg_risk_over_limit");
+        // 9999 × $1 = $9,999 ≤ limit → accept
+        auto r2 = risk.check_order("AAPL", "BUY", 1.0, 9999);
+        ASSERT(r2.action == RiskAction::ALLOW, "neg_risk_under_limit");
+    }
+
+    // OUCH: parse nullptr data must return "ERROR" without crash
+    {
+        OUCHResponse resp = OUCHMessage::parse_response(nullptr, 0);
+        ASSERT(strcmp(resp.type, "ERROR") == 0, "neg_ouch_null_data");
+    }
+
+    // OUCH: parse truncated Accepted message (< 41 bytes)
+    {
+        uint8_t short_buf[10] = {'A', 0};
+        OUCHResponse resp = OUCHMessage::parse_response(short_buf, 10);
+        ASSERT(strcmp(resp.type, "ERROR") == 0, "neg_ouch_short_accepted");
+    }
+
+    // OMS: reject order with zero quantity
+    {
+        OMS oms(1000, 1000000.0);
+        Order* o = oms.submit_order("AAPL", Side::BUY, 150.0, 0);
+        ASSERT(o == nullptr, "neg_oms_zero_qty");
+    }
+
+    // OMS: reject order with negative/zero price
+    {
+        OMS oms(1000, 1000000.0);
+        Order* o = oms.submit_order("AAPL", Side::BUY, 0.0, 100);
+        ASSERT(o == nullptr, "neg_oms_zero_price");
+    }
+
+    printf("  Negative: %d assertions\n", 9);
+}
+
+
+// =====================================================
 // Main
 // =====================================================
 
@@ -605,6 +672,7 @@ int main() {
     test_ouch();
     test_simulator();
     test_integration();
+    test_negative_cases();
 
     printf("\n========================================\n");
     printf("  %d/%d tests passed", tests_passed, tests_total);

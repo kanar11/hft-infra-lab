@@ -304,8 +304,8 @@ public:
         fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
         if (fd_ < 0) return false;
 
-        // Allow multiple receivers on same port
-        // Pozwól na wielu odbiorców na tym samym porcie
+        // Allow multiple receivers on same port (non-fatal if unsupported)
+        // Pozwól na wielu odbiorców na tym samym porcie (niekrytyczne)
         int reuse = 1;
         ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
@@ -321,7 +321,11 @@ public:
 
         // Join multicast group / Dołącz do grupy multicast
         struct ip_mreq mreq{};
-        ::inet_aton(group, &mreq.imr_multiaddr);
+        if (::inet_aton(group, &mreq.imr_multiaddr) == 0) {
+            // inet_aton returns 0 on invalid address
+            ::close(fd_); fd_ = -1;
+            return false;
+        }
         mreq.imr_interface.s_addr = INADDR_ANY;
         if (::setsockopt(fd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
             ::close(fd_); fd_ = -1;
@@ -340,6 +344,7 @@ public:
         uint8_t buf[MC_MSG_SIZE + 16];
         ssize_t n = ::recv(fd_, buf, sizeof(buf), 0);
         uint64_t recv_ts = now_ns();
+        if (n <= 0) return 0;  // error or connection closed
         if (n < static_cast<ssize_t>(MC_MSG_SIZE)) return 0;
         if (!deserialize(buf, static_cast<size_t>(n), msg)) return 0;
         return recv_ts;

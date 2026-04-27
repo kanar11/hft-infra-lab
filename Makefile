@@ -1,7 +1,7 @@
 .PHONY: build test benchmark simulate clean all
 
 CXX      = g++
-CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -pthread
+CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -Werror -pthread
 
 # All binary targets
 BINS = \

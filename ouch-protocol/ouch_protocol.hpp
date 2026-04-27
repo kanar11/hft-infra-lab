@@ -113,6 +113,13 @@ class OUCHMessage {
             now.time_since_epoch()).count();
     }
 
+    // Bounds-checked string copy — prevents buffer overflow on malformed input
+    template<int N>
+    static void safe_copy(char (&dst)[N], const char* src) noexcept {
+        std::strncpy(dst, src, N - 1);
+        dst[N - 1] = '\0';
+    }
+
     // Strip trailing spaces from a padded field
     // Usuń końcowe spacje z dopełnionego pola
     static void strip_padding(char* dst, const uint8_t* src, int len) noexcept {
@@ -172,8 +179,8 @@ public:
         OUCHResponse resp;
 
         if (!data || len < 1) {
-            std::strcpy(resp.type, "ERROR");
-            std::strcpy(resp.error_msg, "empty response");
+            safe_copy(resp.type, "ERROR");
+            safe_copy(resp.error_msg, "empty response");
             return resp;
         }
 
@@ -181,14 +188,15 @@ public:
 
         if (msg_type == 'A') {  // Accepted
             if (len < 41) {
-                std::strcpy(resp.type, "ERROR");
-                std::snprintf(resp.error_msg, 63, "ACCEPTED too short: %d < 41 bytes", len);
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "ACCEPTED too short: %d < 41 bytes", len);
                 return resp;
             }
-            std::strcpy(resp.type, "ACCEPTED");
+            safe_copy(resp.type, "ACCEPTED");
             strip_padding(resp.token, data + 1, 14);
             resp.side[0] = (data[15] == 'B') ? 'B' : 'S';
-            std::strcpy(resp.side, (data[15] == 'B') ? "BUY" : "SELL");
+            safe_copy(resp.side, (data[15] == 'B') ? "BUY" : "SELL");
             resp.shares = read_u32_be(data + 16);
             strip_padding(resp.stock, data + 20, 8);
             resp.price = read_u32_be(data + 28) / 10000.0;
@@ -197,11 +205,12 @@ public:
 
         } else if (msg_type == 'C') {  // Cancelled
             if (len < 20) {
-                std::strcpy(resp.type, "ERROR");
-                std::snprintf(resp.error_msg, 63, "CANCELLED too short: %d < 20 bytes", len);
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "CANCELLED too short: %d < 20 bytes", len);
                 return resp;
             }
-            std::strcpy(resp.type, "CANCELLED");
+            safe_copy(resp.type, "CANCELLED");
             strip_padding(resp.token, data + 1, 14);
             resp.shares = read_u32_be(data + 15);
             resp.reason[0] = static_cast<char>(data[19]);
@@ -209,18 +218,19 @@ public:
 
         } else if (msg_type == 'E') {  // Executed
             if (len < 31) {
-                std::strcpy(resp.type, "ERROR");
-                std::snprintf(resp.error_msg, 63, "EXECUTED too short: %d < 31 bytes", len);
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "EXECUTED too short: %d < 31 bytes", len);
                 return resp;
             }
-            std::strcpy(resp.type, "EXECUTED");
+            safe_copy(resp.type, "EXECUTED");
             strip_padding(resp.token, data + 1, 14);
             resp.shares = read_u32_be(data + 15);
             resp.price = read_u32_be(data + 19) / 10000.0;
             resp.match_number = read_u64_be(data + 23);
 
         } else {
-            std::strcpy(resp.type, "UNKNOWN");
+            safe_copy(resp.type, "UNKNOWN");
         }
 
         return resp;
