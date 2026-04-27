@@ -52,8 +52,30 @@ public:
         return true;
     }
 
-    size_t size() const {
-        return (head.load() - tail.load()) & (SIZE - 1);
+    // empty(): safe to call from CONSUMER thread only.
+    // tail is stable (consumer is the sole writer); head read with acquire
+    // ensures we see all items the producer has committed.
+    bool empty() const noexcept {
+        return tail.load(std::memory_order_relaxed)
+            == head.load(std::memory_order_acquire);
+    }
+
+    // full(): safe to call from PRODUCER thread only.
+    // head is stable (producer is the sole writer); tail read with acquire
+    // ensures we see all slots the consumer has freed.
+    bool full() const noexcept {
+        size_t h = head.load(std::memory_order_relaxed);
+        return ((h + 1) & (SIZE - 1)) == tail.load(std::memory_order_acquire);
+    }
+
+    // size(): APPROXIMATE — two separate atomic loads, not a single snapshot.
+    // Between the two loads the producer or consumer may advance their pointer,
+    // so the result can be off by ±1.  Use empty()/full() on the hot path;
+    // reserve size() for monitoring/diagnostics where an approximation is fine.
+    size_t size() const noexcept {
+        size_t h = head.load(std::memory_order_acquire);
+        size_t t = tail.load(std::memory_order_acquire);
+        return (h - t) & (SIZE - 1);
     }
 };
 
@@ -77,7 +99,7 @@ void benchmark_throughput() {
     // Wątek konsumenta (logika handlu)
     auto consumer = std::thread([&]() {
         MarketData msg;
-        while (!done || queue.size() > 0) {
+        while (!done.load(std::memory_order_relaxed) || !queue.empty()) {
             if (queue.pop(msg)) {
                 auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
                 total_latency += (now - msg.timestamp_ns);
