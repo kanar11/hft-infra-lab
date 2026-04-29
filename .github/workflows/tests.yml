@@ -22,7 +22,9 @@ jobs:
                    --suppress=missingIncludeSystem \
                    config/ oms/ risk/ router/ logger/ strategy/ \
                    fix-protocol/ ouch-protocol/ lockfree/ \
-                   multicast/ simulator/ tests/
+                   multicast/ simulator/ tests/ \
+                   orderbook/ itch-parser/ memory-latency/ \
+                   benchmarks/ dpdk-bypass/ monitoring/
 
       - name: Build all C++ modules
         run: make build

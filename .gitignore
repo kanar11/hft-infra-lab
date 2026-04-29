@@ -1,5 +1,7 @@
+# Build directory (objects, dependency files)
+build/
+
 # Compiled binaries
-*.o
 orderbook/orderbook
 orderbook/orderbook_v2
 orderbook/benchmark_orderbook
@@ -37,6 +39,9 @@ monitor_log_*
 *.swp
 *.swo
 *~
+
+# Claude Code (local config / worktrees)
+.claude/
 
 # OS files
 .DS_Store
