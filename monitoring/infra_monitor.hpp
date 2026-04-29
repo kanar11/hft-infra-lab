@@ -240,14 +240,11 @@ class InfraMonitor {
     }
 
 public:
-    InfraMonitor() noexcept : prev_ctx_(0), prev_time_ns_(0) {
-        prev_cpu_ = {0, 0, 0.0};
-    }
+    InfraMonitor() noexcept
+        : prev_cpu_{0, 0, 0.0}, prev_ctx_(0), prev_time_ns_(0) {}
 
     InfraMonitor(const AlertThresholds& t) noexcept
-        : thresholds_(t), prev_ctx_(0), prev_time_ns_(0) {
-        prev_cpu_ = {0, 0, 0.0};
-    }
+        : thresholds_(t), prev_cpu_{0, 0, 0.0}, prev_ctx_(0), prev_time_ns_(0) {}
 
     // collect_cpu: read and parse /proc/stat
     CpuStats collect_cpu() noexcept {

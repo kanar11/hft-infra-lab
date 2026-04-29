@@ -92,7 +92,7 @@ struct PriceWindow {
     bool   active;             // is this slot in use?
 
     PriceWindow() noexcept
-        : count(0), head(0), window_size(20), active(false) {
+        : prices{}, count(0), head(0), window_size(20), active(false) {
         symbol[0] = '\0';
     }
 

@@ -99,6 +99,7 @@ void benchmark_throughput() {
     // Wątek konsumenta (logika handlu)
     auto consumer = std::thread([&]() {
         MarketData msg;
+        // cppcheck-suppress uninitvar  // queue is the SPSCQueue declared above
         while (!done.load(std::memory_order_relaxed) || !queue.empty()) {
             if (queue.pop(msg)) {
                 auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();

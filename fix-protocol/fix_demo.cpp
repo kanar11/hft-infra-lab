@@ -93,6 +93,7 @@ void test_generic_field_lookup() {
     // Tag 49 = SenderCompID
     const char* sender = msg.get_field(49);
     ASSERT(sender != nullptr, "test_generic_field_exists");
+    if (!sender) return;
     ASSERT(std::strcmp(sender, "TRADER1") == 0, "test_generic_field_value");
     // Tag 999 doesn't exist
     ASSERT(msg.get_field(999) == nullptr, "test_generic_field_missing");

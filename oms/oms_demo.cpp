@@ -44,6 +44,7 @@ void test_submit_order() {
     OMS oms(1000, 100000.0);
     auto* order = oms.submit_order("AAPL", Side::BUY, 150.00, 100);
     ASSERT(order != nullptr, "test_submit_order");
+    if (!order) return;
     ASSERT(order->status == OrderStatus::SENT, "test_submit_status");
 }
 

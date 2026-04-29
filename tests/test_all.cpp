@@ -132,12 +132,14 @@ void test_oms() {
     // Submit and fill a buy order
     Order* o1 = oms.submit_order("AAPL", Side::BUY, 150.25, 100);
     ASSERT(o1 != nullptr, "oms_submit_buy");
+    if (!o1) return;
     ASSERT(o1->order_id == 1, "oms_order_id_1");
     ASSERT(o1->side == Side::BUY, "oms_side_buy");
 
     oms.fill_order(1, 100, 150.25);
     const Order* filled = oms.get_order(1);
     ASSERT(filled != nullptr, "oms_get_filled");
+    if (!filled) return;
     ASSERT(filled->status == OrderStatus::FILLED, "oms_status_filled");
     ASSERT(filled->filled_qty == 100, "oms_filled_qty");
 
@@ -155,11 +157,13 @@ void test_oms() {
     // Position tracking
     const Position* pos = oms.get_position("AAPL");
     ASSERT(pos != nullptr, "oms_position_exists");
+    if (!pos) return;
     ASSERT(pos->net_qty == 100, "oms_position_qty");
 
     // Partial fill
     Order* o4 = oms.submit_order("MSFT", Side::BUY, 410.00, 200);
     ASSERT(o4 != nullptr, "oms_submit_partial");
+    if (!o4) return;
     oms.fill_order(o4->order_id, 100, 410.00);
     const Order* partial = oms.get_order(o4->order_id);
     ASSERT(partial->status == OrderStatus::PARTIAL, "oms_partial_status");
