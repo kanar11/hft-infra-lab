@@ -603,12 +603,16 @@ void test_negative_cases() {
         ASSERT(oms.order_count() == 0u, "neg_fill_unknown_no_crash");
     }
 
-    // OMS position limit: accumulate to limit then reject next order
+    // OMS position limit: fill to limit then reject next order
+    // Note: OMS tracks realized position (post-fill), not pending exposure,
+    // so the first order must be filled before the limit kicks in.
     {
         OMS oms(100, 1000000.0);  // max_position=100
         Order* o = oms.submit_order("AAPL", Side::BUY, 10.0, 100);
         ASSERT(o != nullptr, "neg_pos_limit_first_ok");
-        // After submitting 100 shares the projected position = 100 = max → next BUY rejected
+        if (!o) return;
+        oms.fill_order(o->order_id, 100, 10.0);
+        // Realized position now 100 = max → next BUY would project to 101, rejected
         Order* o2 = oms.submit_order("AAPL", Side::BUY, 10.0, 1);
         ASSERT(o2 == nullptr, "neg_pos_limit_reject");
     }
