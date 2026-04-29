@@ -11,12 +11,14 @@
 #include <cstring>
 
 static int tests_passed = 0;
+static int tests_failed = 0;
 static int tests_total = 0;
 
 #define ASSERT(cond, msg) do { \
     tests_total++; \
     if (!(cond)) { \
         printf("  FAIL: %s (%s)\n", msg, #cond); \
+        tests_failed++; \
     } else { \
         printf("  PASS: %s\n", msg); \
         tests_passed++; \
@@ -137,7 +139,9 @@ int main(int argc, char* argv[]) {
     test_pipeline_full();
     test_rng_deterministic();
 
-    printf("\n%d/%d tests passed\n", tests_passed, tests_total);
+    printf("\n%d/%d tests passed", tests_passed, tests_total);
+    if (tests_failed > 0) printf("  (%d FAILED)", tests_failed);
+    printf("\n");
 
     // Load config — defaults from config.yaml, overridable via HFT_ env vars
     HFTConfig cfg = load_config("config.yaml");
@@ -162,5 +166,5 @@ int main(int argc, char* argv[]) {
                                        static_cast<uint64_t>(seed), &cfg);
     print_pipeline_stats(stats, use_strategy, use_router);
 
-    return (tests_passed == tests_total) ? 0 : 1;
+    return (tests_failed == 0) ? 0 : 1;
 }

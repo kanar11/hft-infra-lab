@@ -14,12 +14,14 @@
 #include <cmath>
 
 static int tests_passed = 0;
+static int tests_failed = 0;
 static int tests_total = 0;
 
 #define ASSERT(cond, msg) do { \
     tests_total++; \
     if (!(cond)) { \
         printf("  FAIL: %s (%s)\n", msg, #cond); \
+        tests_failed++; \
     } else { \
         printf("  PASS: %s\n", msg); \
         tests_passed++; \
@@ -178,7 +180,7 @@ void benchmark(int iterations) {
         int64_t total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
             total_end - total_start).count();
         std::sort(latencies.begin(), latencies.end());
-        int n = latencies.size();
+        int n = static_cast<int>(latencies.size());
         printf("--- /proc/stat parse ---\n");
         printf("  Avg: %.0f ns  p50: %ld ns  p99: %ld ns  Throughput: %.1f M/sec\n",
                (double)total_ns / n, latencies[n/2], latencies[(int)(n*0.99)],
@@ -203,7 +205,7 @@ void benchmark(int iterations) {
         int64_t total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
             total_end - total_start).count();
         std::sort(latencies.begin(), latencies.end());
-        int n = latencies.size();
+        int n = static_cast<int>(latencies.size());
         printf("--- /proc/meminfo parse ---\n");
         printf("  Avg: %.0f ns  p50: %ld ns  p99: %ld ns  Throughput: %.1f M/sec\n",
                (double)total_ns / n, latencies[n/2], latencies[(int)(n*0.99)],
@@ -228,7 +230,7 @@ void benchmark(int iterations) {
         int64_t total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
             total_end - total_start).count();
         std::sort(latencies.begin(), latencies.end());
-        int n = latencies.size();
+        int n = static_cast<int>(latencies.size());
         printf("--- /proc/net/dev parse ---\n");
         printf("  Avg: %.0f ns  p50: %ld ns  p99: %ld ns  Throughput: %.1f M/sec\n",
                (double)total_ns / n, latencies[n/2], latencies[(int)(n*0.99)],
@@ -254,7 +256,7 @@ void benchmark(int iterations) {
         int64_t total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
             total_end - total_start).count();
         std::sort(latencies.begin(), latencies.end());
-        int n = latencies.size();
+        int n = static_cast<int>(latencies.size());
         printf("--- Live /proc/meminfo read+parse ---\n");
         printf("  Avg: %.0f ns  p50: %ld ns  p99: %ld ns  Throughput: %.1f K/sec\n",
                (double)total_ns / n, latencies[n/2], latencies[(int)(n*0.99)],
@@ -276,7 +278,9 @@ int main(int argc, char* argv[]) {
     test_live_proc_read();
     test_parse_speed();
 
-    printf("\n%d/%d tests passed\n", tests_passed, tests_total);
+    printf("\n%d/%d tests passed", tests_passed, tests_total);
+    if (tests_failed > 0) printf("  (%d FAILED)", tests_failed);
+    printf("\n");
 
     int iterations = 500'000;
     if (argc > 1) {
@@ -286,5 +290,5 @@ int main(int argc, char* argv[]) {
     if (iterations > 0)
         benchmark(iterations);
 
-    return (tests_passed == tests_total) ? 0 : 1;
+    return (tests_failed == 0) ? 0 : 1;
 }

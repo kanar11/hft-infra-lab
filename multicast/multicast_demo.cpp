@@ -21,11 +21,19 @@
 // Test helpers / Helpery testowe
 // ============================================================
 
-static int g_pass = 0, g_fail = 0;
+static int tests_passed = 0;
+static int tests_failed = 0;
+static int tests_total = 0;
 
-#define ASSERT(cond, name) do { \
-    if (cond) { printf("  PASS: %s\n", name); ++g_pass; } \
-    else      { printf("  FAIL: %s (line %d)\n", name, __LINE__); ++g_fail; } \
+#define ASSERT(cond, msg) do { \
+    tests_total++; \
+    if (!(cond)) { \
+        printf("  FAIL: %s (%s)\n", msg, #cond); \
+        tests_failed++; \
+    } else { \
+        printf("  PASS: %s\n", msg); \
+        tests_passed++; \
+    } \
 } while(0)
 
 // ============================================================
@@ -355,8 +363,10 @@ int main(int argc, char* argv[]) {
     test_latency_stats_empty();
     test_udp_loopback();
 
-    printf("\n%d/%d tests passed\n", g_pass, g_pass + g_fail);
-    if (g_fail > 0) return 1;
+    printf("\n%d/%d tests passed", tests_passed, tests_total);
+    if (tests_failed > 0) printf("  (%d FAILED)", tests_failed);
+    printf("\n");
+    if (tests_failed > 0) return 1;
 
     if (iterations > 0)
         benchmark_serialize(iterations);

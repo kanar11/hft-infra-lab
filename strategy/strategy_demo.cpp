@@ -12,12 +12,14 @@
 #include <cmath>
 
 static int tests_passed = 0;
+static int tests_failed = 0;
 static int tests_total = 0;
 
 #define ASSERT(cond, msg) do { \
     tests_total++; \
     if (!(cond)) { \
         printf("  FAIL: %s (%s)\n", msg, #cond); \
+        tests_failed++; \
     } else { \
         printf("  PASS: %s\n", msg); \
         tests_passed++; \
@@ -242,7 +244,9 @@ int main(int argc, char* argv[]) {
     test_deviation_sign();
     test_decision_speed();
 
-    printf("\n%d/%d tests passed\n", tests_passed, tests_total);
+    printf("\n%d/%d tests passed", tests_passed, tests_total);
+    if (tests_failed > 0) printf("  (%d FAILED)", tests_failed);
+    printf("\n");
 
     int num_ticks = 1'000'000;
     if (argc > 1) {
@@ -252,5 +256,5 @@ int main(int argc, char* argv[]) {
 
     benchmark(num_ticks);
 
-    return (tests_passed == tests_total) ? 0 : 1;
+    return (tests_failed == 0) ? 0 : 1;
 }
