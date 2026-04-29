@@ -603,18 +603,39 @@ void test_negative_cases() {
         ASSERT(oms.order_count() == 0u, "neg_fill_unknown_no_crash");
     }
 
-    // OMS position limit: fill to limit then reject next order
-    // Note: OMS tracks realized position (post-fill), not pending exposure,
-    // so the first order must be filled before the limit kicks in.
+    // OMS position limit (pending exposure): two submits without any fill — second blocked
+    // by pending exposure from the first. Prevents overcommit when submits race ahead of fills.
     {
         OMS oms(100, 1000000.0);  // max_position=100
         Order* o = oms.submit_order("AAPL", Side::BUY, 10.0, 100);
         ASSERT(o != nullptr, "neg_pos_limit_first_ok");
-        if (!o) return;
-        oms.fill_order(o->order_id, 100, 10.0);
-        // Realized position now 100 = max → next BUY would project to 101, rejected
+        // Realized=0, pending=+100, next BUY 1 → exposure=101 > 100 → reject
         Order* o2 = oms.submit_order("AAPL", Side::BUY, 10.0, 1);
         ASSERT(o2 == nullptr, "neg_pos_limit_reject");
+    }
+
+    // Cancel releases pending exposure: after cancelling we should have capacity again.
+    {
+        OMS oms(100, 1000000.0);
+        Order* o = oms.submit_order("AAPL", Side::BUY, 10.0, 100);
+        ASSERT(o != nullptr, "neg_cancel_first_submit");
+        if (!o) return;
+        oms.cancel_order(o->order_id);
+        // Pending now 0 — same-size order should fit again
+        Order* o2 = oms.submit_order("AAPL", Side::BUY, 10.0, 100);
+        ASSERT(o2 != nullptr, "neg_cancel_releases_pending");
+    }
+
+    // Partial fill: pending decreases by filled amount, remaining still counts toward limit.
+    {
+        OMS oms(100, 1000000.0);
+        Order* o = oms.submit_order("AAPL", Side::BUY, 10.0, 100);
+        ASSERT(o != nullptr, "neg_partial_first_submit");
+        if (!o) return;
+        oms.fill_order(o->order_id, 30, 10.0);  // realized=30, pending=70 (100-30 unfilled)
+        // exposure for new BUY 1 = 30 + 70 + 1 = 101 → reject
+        Order* o2 = oms.submit_order("AAPL", Side::BUY, 10.0, 1);
+        ASSERT(o2 == nullptr, "neg_partial_pending_blocks");
     }
 
     // Risk: order at exact max_order_value boundary should be rejected

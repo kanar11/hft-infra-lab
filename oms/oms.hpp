@@ -160,18 +160,19 @@ struct Order {
 
 struct Position {
     char    symbol[9];
-    int32_t net_qty;
+    int32_t net_qty;         // realized — updated only on fill
+    int32_t pending_qty;     // pending exposure — signed sum of remaining qty on open orders (BUY+, SELL-)
     int64_t avg_price;       // fixed-point
     int64_t realized_pnl;    // fixed-point (accumulated P&L * PRICE_SCALE)
     int64_t total_cost;      // fixed-point (sum of qty * price for open position)
 
     Position() noexcept
-        : net_qty(0), avg_price(0), realized_pnl(0), total_cost(0) {
+        : net_qty(0), pending_qty(0), avg_price(0), realized_pnl(0), total_cost(0) {
         symbol[0] = '\0';
     }
 
     explicit Position(const char* sym) noexcept
-        : net_qty(0), avg_price(0), realized_pnl(0), total_cost(0) {
+        : net_qty(0), pending_qty(0), avg_price(0), realized_pnl(0), total_cost(0) {
         std::strncpy(symbol, sym, 8);
         symbol[8] = '\0';
     }
@@ -253,17 +254,17 @@ public:
             return nullptr;
         }
 
-        // Risk check: position limit
-        // Kontrola ryzyka: limit pozycji
+        // Risk check: position limit (realized + pending + new)
+        // Pending exposure prevents overcommit when multiple submits race ahead of fills.
+        // Kontrola ryzyka: limit pozycji (zrealizowana + pending + nowe)
         uint64_t sym_key = sym_to_key(symbol);
         auto pos_it = positions_.find(sym_key);
-        int32_t current_qty = (pos_it != positions_.end()) ? pos_it->second.net_qty : 0;
-        int32_t projected = current_qty + (side == Side::BUY ? (int32_t)quantity : -(int32_t)quantity);
+        int32_t current_realized = (pos_it != positions_.end()) ? pos_it->second.net_qty     : 0;
+        int32_t current_pending  = (pos_it != positions_.end()) ? pos_it->second.pending_qty : 0;
+        int32_t signed_new = (side == Side::BUY) ? (int32_t)quantity : -(int32_t)quantity;
+        int32_t exposure = current_realized + current_pending + signed_new;
 
-        // abs(): absolute value — distance from zero (always positive)
-        // Same as 'if [ $val -lt 0 ]; then val=$((-val)); fi' in bash
-        // abs(): wartość bezwzględna — odległość od zera (zawsze dodatnia)
-        if (std::abs(projected) > max_position_) {
+        if (std::abs(exposure) > max_position_) {
             return nullptr;
         }
 
@@ -275,11 +276,15 @@ public:
         order.status = OrderStatus::SENT;
         order.sent_ns = now_ns();
 
-        // emplace: insert into map without copying (move semantics)
-        // More efficient than orders_[id] = order because it constructs in-place
-        // emplace: wstaw do mapy bez kopiowania (semantyka przenoszenia)
-        // Bardziej wydajne niż orders_[id] = order bo konstruuje w miejscu
         auto it = orders_.emplace(id, order).first;
+
+        // Reserve pending capacity now that the order is accepted.
+        // Position is created lazily here (not just on first fill) so pending bookkeeping is consistent.
+        if (pos_it == positions_.end()) {
+            pos_it = positions_.emplace(sym_key, Position(symbol)).first;
+        }
+        pos_it->second.pending_qty += signed_new;
+
         return &it->second;
     }
 
@@ -306,9 +311,14 @@ public:
         uint64_t sym_key = sym_to_key(order.symbol);
         auto pos_it = positions_.find(sym_key);
         if (pos_it == positions_.end()) {
+            // Position normally created at submit time; fallback for legacy paths.
             pos_it = positions_.emplace(sym_key, Position(order.symbol)).first;
         }
         Position& pos = pos_it->second;
+
+        // Move filled qty from pending to realized
+        int32_t signed_fill = (order.side == Side::BUY) ? (int32_t)fill_qty : -(int32_t)fill_qty;
+        pos.pending_qty -= signed_fill;
 
         if (order.side == Side::BUY) {
             // Buying: add to total cost and quantity
@@ -336,14 +346,21 @@ public:
         }
     }
 
-    // cancel_order: cancel an active order
-    // cancel_order: anuluj aktywne zlecenie
+    // cancel_order: cancel an active order — release its pending exposure
+    // cancel_order: anuluj aktywne zlecenie — zwolnij rezerwę pending
     void cancel_order(uint64_t order_id) noexcept {
         auto it = orders_.find(order_id);
         if (it == orders_.end()) return;
 
         Order& order = it->second;
         if (order.status == OrderStatus::SENT || order.status == OrderStatus::PARTIAL) {
+            // Release the unfilled remainder from the pending pool
+            int32_t remaining = (int32_t)order.quantity - (int32_t)order.filled_qty;
+            int32_t signed_remaining = (order.side == Side::BUY) ? remaining : -remaining;
+            auto pos_it = positions_.find(sym_to_key(order.symbol));
+            if (pos_it != positions_.end()) {
+                pos_it->second.pending_qty -= signed_remaining;
+            }
             order.status = OrderStatus::CANCELLED;
         }
     }
