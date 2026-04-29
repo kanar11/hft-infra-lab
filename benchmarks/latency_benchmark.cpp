@@ -195,10 +195,10 @@ int main(int argc, char* argv[]) {
     // Like: "99% of round-trips were faster than this value"
     // Obliczanie percentyli: posortuj wszystkie opóźnienia, wybierz wartość na pozycji X%
     // Jak: "99% okrążeń było szybszych niż ta wartość"
-    int64_t p50  = latencies[rounds / 2];
-    int64_t p90  = latencies[(int)(rounds * 0.90)];
-    int64_t p99  = latencies[(int)(rounds * 0.99)];
-    int64_t p999 = latencies[(int)(rounds * 0.999)];
+    int64_t p50  = latencies[static_cast<size_t>(rounds) / 2];
+    int64_t p90  = latencies[static_cast<size_t>(rounds * 0.90)];
+    int64_t p99  = latencies[static_cast<size_t>(rounds * 0.99)];
+    int64_t p999 = latencies[static_cast<size_t>(rounds * 0.999)];
     int64_t min_lat = latencies.front();
     int64_t max_lat = latencies.back();
 
@@ -220,7 +220,7 @@ int main(int argc, char* argv[]) {
     printf("round,latency_ns\n");
     // Print every 100th sample to keep CSV manageable
     for (int i = 0; i < rounds; i += std::max(1, rounds / 10000)) {
-        printf("%d,%ld\n", i, latencies[i]);
+        printf("%d,%ld\n", i, latencies[static_cast<size_t>(i)]);
     }
 
     return 0;

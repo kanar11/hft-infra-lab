@@ -159,11 +159,11 @@ struct BenchResult {
 
     void compute() {
         std::sort(latencies.begin(), latencies.end());
-        int n = latencies.size();
+        int n = static_cast<int>(latencies.size());
         min_ns = latencies.front();
-        p50_ns = latencies[n / 2];
-        p90_ns = latencies[(int)(n * 0.90)];
-        p99_ns = latencies[(int)(n * 0.99)];
+        p50_ns = latencies[static_cast<size_t>(n / 2)];
+        p90_ns = latencies[static_cast<size_t>(n * 0.90)];
+        p99_ns = latencies[static_cast<size_t>(n * 0.99)];
         max_ns = latencies.back();
         int64_t total = std::accumulate(latencies.begin(), latencies.end(), (int64_t)0);
         avg_ns = static_cast<double>(total) / n;
@@ -278,13 +278,13 @@ int main(int argc, char* argv[]) {
     printf("operation,round,latency_ns\n");
     int step = std::max(1, ops / 5000);
     for (int i = 0; i < ops; i += step) {
-        printf("ADD,%d,%ld\n", i, add_result.latencies[i]);
+        printf("ADD,%d,%ld\n", i, add_result.latencies[static_cast<size_t>(i)]);
     }
     for (int i = 0; i < ops; i += step) {
-        printf("CANCEL,%d,%ld\n", i, cancel_result.latencies[i]);
+        printf("CANCEL,%d,%ld\n", i, cancel_result.latencies[static_cast<size_t>(i)]);
     }
     for (int i = 0; i < ops; i += step) {
-        printf("MATCH,%d,%ld\n", i, match_result.latencies[i]);
+        printf("MATCH,%d,%ld\n", i, match_result.latencies[static_cast<size_t>(i)]);
     }
 
     return 0;
