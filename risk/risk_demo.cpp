@@ -72,13 +72,44 @@ void test_reject_portfolio_exposure() {
     RiskLimits limits;
     limits.max_portfolio_exposure = 150;
     RiskManager rm(limits);
-    // Fill up with 100 AAPL
+    // Submit 100 AAPL (pending, not yet filled)
     auto r1 = rm.check_order("AAPL", "BUY", 10.0, 100);
     ASSERT(r1.action == RiskAction::ALLOW, "test_portfolio_first_allow");
-    rm.update_position("AAPL", "BUY", 100);
+    rm.on_order_sent("AAPL", "BUY", 100);
     // Now try 100 TSLA — total exposure would be 200 > 150
     auto r2 = rm.check_order("TSLA", "BUY", 10.0, 100);
     ASSERT(r2.action == RiskAction::REJECT, "test_reject_portfolio_exposure");
+}
+
+void test_pending_blocks_position() {
+    RiskLimits limits;
+    limits.max_position_per_symbol = 100;
+    RiskManager rm(limits);
+    auto r1 = rm.check_order("AAPL", "BUY", 10.0, 100);
+    ASSERT(r1.action == RiskAction::ALLOW, "test_pending_first_allow");
+    rm.on_order_sent("AAPL", "BUY", 100);
+    // realized=0, pending=100 → next BUY 1 would project to 101 > 100
+    auto r2 = rm.check_order("AAPL", "BUY", 10.0, 1);
+    ASSERT(r2.action == RiskAction::REJECT, "test_pending_blocks_position");
+}
+
+void test_cancel_releases_pending() {
+    RiskLimits limits;
+    limits.max_position_per_symbol = 100;
+    RiskManager rm(limits);
+    rm.on_order_sent("AAPL", "BUY", 100);
+    rm.on_order_cancelled("AAPL", "BUY", 100);
+    // pending back to 0 — same-size order should fit again
+    auto r = rm.check_order("AAPL", "BUY", 10.0, 100);
+    ASSERT(r.action == RiskAction::ALLOW, "test_cancel_releases_pending");
+}
+
+void test_fill_flows_pending_to_realized() {
+    RiskManager rm;
+    rm.on_order_sent("AAPL", "BUY", 100);
+    rm.update_position("AAPL", "BUY", 30);  // partial fill
+    ASSERT(rm.get_position("AAPL") == 30, "test_fill_realized");
+    ASSERT(rm.get_pending("AAPL") == 70,  "test_fill_pending_remaining");
 }
 
 void test_circuit_breaker() {
@@ -191,6 +222,9 @@ int main(int argc, char* argv[]) {
     test_reject_order_value();
     test_reject_position_limit();
     test_reject_portfolio_exposure();
+    test_pending_blocks_position();
+    test_cancel_releases_pending();
+    test_fill_flows_pending_to_realized();
     test_circuit_breaker();
     test_kill_switch_manual();
     test_kill_switch_deactivate();

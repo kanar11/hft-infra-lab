@@ -114,9 +114,10 @@ struct RiskLimits {
 class RiskManager {
     RiskLimits limits_;
 
-    // Position tracking: symbol → net quantity
-    // Śledzenie pozycji: symbol → ilość netto
+    // Position tracking: realized (post-fill) and pending (in-flight, signed BUY+/SELL-)
+    // Śledzenie pozycji: zrealizowane (po fillu) i pending (w locie, sygnowane BUY+/SELL-)
     std::unordered_map<std::string, int32_t> positions_;
+    std::unordered_map<std::string, int32_t> pending_;
 
     // P&L state
     double daily_pnl_;
@@ -177,36 +178,28 @@ public:
             return make_reject("Order value exceeds limit", t0);
         }
 
-        // 3. Per-symbol position limit
-        // 3. Limit pozycji na symbol
+        // 3. Per-symbol position limit (realized + pending + new)
+        // 3. Limit pozycji na symbol (zrealizowana + pending + nowe)
         bool is_buy = (side[0] == 'B');
         std::string sym_key(symbol);
-        int32_t current_pos = 0;
-        auto pos_it = positions_.find(sym_key);
-        if (pos_it != positions_.end()) {
-            current_pos = pos_it->second;
-        }
-        int32_t projected = current_pos + (is_buy ? quantity : -quantity);
+        int32_t signed_new = is_buy ? quantity : -quantity;
+        int32_t projected  = lookup(positions_, sym_key)
+                           + lookup(pending_,   sym_key)
+                           + signed_new;
         if (std::abs(projected) > limits_.max_position_per_symbol) {
             return make_reject("Position limit exceeded", t0);
         }
 
-        // 4. Portfolio exposure check
-        // 4. Sprawdzenie ekspozycji portfela
-        // Calculate total absolute exposure if this order goes through
-        // Oblicz całkowitą bezwzględną ekspozycję jeśli to zlecenie przejdzie
-        int64_t total_exposure = 0;
-        for (const auto& [sym, qty] : positions_) {
-            if (sym == sym_key) {
-                total_exposure += std::abs(projected);
-            } else {
-                total_exposure += std::abs(qty);
-            }
+        // 4. Portfolio exposure check — sum |realized + pending| across all symbols
+        // 4. Sprawdzenie ekspozycji portfela — suma |zrealizowane + pending| po wszystkich symbolach
+        int64_t total_exposure = std::abs(projected);  // this symbol post-trade
+        for (const auto& [sym, real] : positions_) {
+            if (sym != sym_key) total_exposure += std::abs(real + lookup(pending_, sym));
         }
-        // If symbol not in positions yet, add its projected exposure
-        // Jeśli symbolu jeszcze nie ma w pozycjach, dodaj jego prognozowaną ekspozycję
-        if (pos_it == positions_.end()) {
-            total_exposure += std::abs(projected);
+        for (const auto& [sym, pend] : pending_) {
+            // symbols seen only in pending_ (no realized yet)
+            if (sym != sym_key && positions_.find(sym) == positions_.end())
+                total_exposure += std::abs(pend);
         }
         if (total_exposure > limits_.max_portfolio_exposure) {
             return make_reject("Portfolio exposure exceeded", t0);
@@ -261,12 +254,24 @@ public:
         return RiskCheckResult(RiskAction::ALLOW, "All checks passed", elapsed);
     }
 
-    // update_position: called after a fill to update tracked positions
-    // update_position: wywoływane po realizacji do aktualizacji śledzonych pozycji
+    // on_order_sent: caller sent an accepted order to the venue — reserve pending capacity
+    // on_order_sent: caller wysłał zaakceptowane zlecenie na giełdę — zarezerwuj pending
+    void on_order_sent(const char* symbol, const char* side, int32_t quantity) noexcept {
+        pending_[symbol] += (side[0] == 'B' ? quantity : -quantity);
+    }
+
+    // on_order_cancelled: caller cancelled the unfilled remainder — release pending
+    // on_order_cancelled: caller anulował niewypełnioną resztę — zwolnij pending
+    void on_order_cancelled(const char* symbol, const char* side, int32_t remaining) noexcept {
+        pending_[symbol] -= (side[0] == 'B' ? remaining : -remaining);
+    }
+
+    // update_position: called after a fill — flow filled qty from pending to realized
+    // update_position: wywoływane po fillu — przepływ wypełnionej qty z pending do realized
     void update_position(const char* symbol, const char* side, int32_t quantity) noexcept {
-        std::string sym_key(symbol);
-        bool is_buy = (side[0] == 'B');
-        positions_[sym_key] += (is_buy ? quantity : -quantity);
+        int32_t signed_q = (side[0] == 'B' ? quantity : -quantity);
+        positions_[symbol] += signed_q;
+        pending_[symbol]   -= signed_q;
     }
 
     // update_pnl: called after each fill to track daily P&L
@@ -286,13 +291,16 @@ public:
         daily_pnl_ = 0.0;
         peak_pnl_ = 0.0;
         order_timestamps_.clear();
+        pending_.clear();
         kill_switch_active_ = false;
     }
 
     // Accessors for testing
     int32_t get_position(const char* symbol) const noexcept {
-        auto it = positions_.find(std::string(symbol));
-        return (it != positions_.end()) ? it->second : 0;
+        return lookup(positions_, std::string(symbol));
+    }
+    int32_t get_pending(const char* symbol) const noexcept {
+        return lookup(pending_, std::string(symbol));
     }
 
     double get_daily_pnl() const noexcept { return daily_pnl_; }
@@ -317,5 +325,12 @@ private:
         total_rejects_++;
         total_latency_ns_ += elapsed;
         return RiskCheckResult(RiskAction::REJECT, reason, elapsed);
+    }
+
+    // lookup: return value for key or 0 if absent (no insert)
+    static int32_t lookup(const std::unordered_map<std::string, int32_t>& m,
+                          const std::string& key) noexcept {
+        auto it = m.find(key);
+        return (it != m.end()) ? it->second : 0;
     }
 };
