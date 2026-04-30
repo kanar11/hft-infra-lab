@@ -152,10 +152,14 @@ int main(int argc, char* argv[]) {
     bool use_router   = false;
     int  num_messages = cfg.simulator.num_messages;
     int  seed         = cfg.simulator.seed;
+    int  fill_latency = 0;     // 0 = zero-latency (legacy); --latency N enables in-flight queue
 
     for (int i = 1; i < argc; ++i) {
         if      (std::strcmp(argv[i], "--strategy") == 0) use_strategy = true;
         else if (std::strcmp(argv[i], "--router")   == 0) use_router   = true;
+        else if (std::strcmp(argv[i], "--latency")  == 0 && i + 1 < argc) {
+            fill_latency = std::atoi(argv[++i]);
+        }
         else {
             int n = std::atoi(argv[i]);
             if (n > 0) num_messages = n;
@@ -163,7 +167,7 @@ int main(int argc, char* argv[]) {
     }
 
     PipelineStats stats = run_pipeline(num_messages, use_strategy, use_router,
-                                       static_cast<uint64_t>(seed), &cfg);
+                                       static_cast<uint64_t>(seed), &cfg, fill_latency);
     print_pipeline_stats(stats, use_strategy, use_router);
 
     return (tests_failed == 0) ? 0 : 1;

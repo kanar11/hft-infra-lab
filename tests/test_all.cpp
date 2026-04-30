@@ -499,7 +499,13 @@ void test_simulator() {
     stats = run_pipeline(500, true, true, 42);
     ASSERT(stats.messages_parsed > 0, "sim_full_pipeline");
 
-    printf("  Simulator: %d assertions\n", 13);
+    // Test pipeline with realistic fill latency — orders queue then drain
+    stats = run_pipeline(200, false, false, 42, nullptr, /*fill_latency_iters=*/5);
+    ASSERT(stats.orders_submitted > 0, "sim_latency_submitted");
+    ASSERT(stats.orders_filled == stats.orders_submitted, "sim_latency_all_drained");
+    ASSERT(stats.max_in_flight_orders > 0, "sim_latency_in_flight_peak");
+
+    printf("  Simulator: %d assertions\n", 16);
 }
 
 

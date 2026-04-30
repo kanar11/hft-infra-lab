@@ -288,6 +288,8 @@ struct PipelineStats {
     int     orders_submitted;
     int     orders_filled;
     int     orders_rejected;
+    int     max_in_flight_orders;   // peak count of submitted-but-unfilled orders
+    int     fill_latency_iters;     // iterations of simulated fill ack delay (0 = zero-latency)
     double  gen_ms;
     double  parse_ms;
     double  oms_ms;
@@ -303,6 +305,16 @@ struct PipelineStats {
 };
 
 
+// Pending fill tied to a submitted order — drained when current_iter reaches due_iter.
+// Pending fill powiązany z wysłanym zleceniem — drainowany gdy current_iter osiągnie due_iter.
+struct PendingFill {
+    uint64_t order_id;
+    int32_t  shares;
+    double   price;
+    int      due_iter;
+};
+
+
 // ============================================================
 // run_pipeline — full end-to-end simulation
 // Pełna symulacja od końca do końca
@@ -312,8 +324,10 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
                                    bool use_strategy = false,
                                    bool use_router = false,
                                    uint64_t seed = 42,
-                                   const HFTConfig* cfg = nullptr) {
+                                   const HFTConfig* cfg = nullptr,
+                                   int fill_latency_iters = 0) {
     PipelineStats stats = {};
+    stats.fill_latency_iters = fill_latency_iters;
 
     // Resolve parameters: config file wins over hardcoded defaults
     int    strat_window    = cfg ? cfg->strategy.window        : 20;
@@ -411,7 +425,20 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     // [3/4] Route through OMS
     auto oms_start = std::chrono::high_resolution_clock::now();
 
+    // FIFO of in-flight fills; size() == pending_qty across the OMS for these orders.
+    // Kolejka FIFO fillów w locie; size() = liczba pending zleceń w OMS.
+    std::vector<PendingFill> pending_fills;
+
     for (int i = 0; i < msg_idx; ++i) {
+        // Drain any fills whose ack deadline has been reached
+        size_t drained = 0;
+        for (; drained < pending_fills.size() && pending_fills[drained].due_iter <= i; ++drained) {
+            const PendingFill& pf = pending_fills[drained];
+            oms.fill_order(pf.order_id, pf.shares, pf.price);
+            stats.orders_filled++;
+        }
+        if (drained > 0) pending_fills.erase(pending_fills.begin(), pending_fills.begin() + drained);
+
         const ParsedMessage& pm = parsed[i];
         const char* stock = nullptr;
         double price = 0.0;
@@ -468,12 +495,25 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         Order* order = oms.submit_order(stock, oms_side, fill_price, shares);
         if (order) {
             stats.orders_submitted++;
-            oms.fill_order(order->order_id, shares, fill_price);
-            stats.orders_filled++;
+            if (fill_latency_iters <= 0) {
+                oms.fill_order(order->order_id, shares, fill_price);
+                stats.orders_filled++;
+            } else {
+                pending_fills.push_back({order->order_id, shares, fill_price, i + fill_latency_iters});
+                int in_flight = static_cast<int>(pending_fills.size());
+                if (in_flight > stats.max_in_flight_orders) stats.max_in_flight_orders = in_flight;
+            }
         } else {
             stats.orders_rejected++;
         }
     }
+
+    // Final drain — settle any orders still in-flight at end of message stream
+    for (const auto& pf : pending_fills) {
+        oms.fill_order(pf.order_id, pf.shares, pf.price);
+        stats.orders_filled++;
+    }
+    pending_fills.clear();
 
     auto oms_end = std::chrono::high_resolution_clock::now();
     stats.oms_ms = std::chrono::duration<double, std::milli>(oms_end - oms_start).count();
@@ -524,6 +564,10 @@ inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool
     printf("  Submitted: %d\n", s.orders_submitted);
     printf("  Filled:    %d\n", s.orders_filled);
     printf("  Rejected:  %d\n", s.orders_rejected);
+    if (s.fill_latency_iters > 0) {
+        printf("  Max in-flight: %d  (fill latency: %d iters)\n",
+               s.max_in_flight_orders, s.fill_latency_iters);
+    }
     if (s.oms_ms > 0)
         printf("  OMS throughput: %.0f orders/sec\n\n", s.orders_submitted / (s.oms_ms / 1000.0));
 
