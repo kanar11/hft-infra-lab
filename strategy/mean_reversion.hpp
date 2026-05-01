@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cmath>
 #include <chrono>
+#include <algorithm>
 
 // Max stocks we track simultaneously (fixed array, no heap on hot path)
 // Like /proc/sys/fs/file-max — a hard limit on open resources
@@ -162,13 +163,14 @@ class MeanReversionStrategy {
     }
 
 public:
-    // window: number of prices for moving average (like 'tail -n window')
+    // window: number of prices for moving average (like 'tail -n window').
+    //         Clamped to [1, MAX_WINDOW] — 0 or negative would divide-by-zero in add()/sma().
     // threshold_pct: deviation threshold in percent (0.1 = 0.1%)
     // order_size: default order quantity
     MeanReversionStrategy(int window = 20, double threshold_pct = 0.1,
                            int32_t order_size = 100) noexcept
         : stock_count_(0),
-          window_size_(window > MAX_WINDOW ? MAX_WINDOW : window),
+          window_size_(std::max(1, std::min(window, MAX_WINDOW))),
           threshold_(threshold_pct / 100.0),
           order_size_(order_size) {}
 
@@ -180,7 +182,9 @@ public:
         int64_t t0 = now_ns();
         Signal sig;
 
-        PriceWindow* w = find_or_create(stock);
+        // Reject NaN/Inf prices — they would propagate silently into deviation
+        // Odrzuć NaN/Inf — propagowałyby się cicho do sygnału
+        PriceWindow* w = (std::isfinite(price) && price > 0.0) ? find_or_create(stock) : nullptr;
         if (!w) {
             stats_.holds++;
             stats_.total_latency_ns += (now_ns() - t0);
@@ -198,9 +202,14 @@ public:
         }
 
         double sma = w->sma();
-        // deviation = (price - sma) / sma
-        // How far from average as a fraction (0.01 = 1% above)
-        // Jak daleko od średniej jako ułamek (0.01 = 1% powyżej)
+        // Guard divide-by-zero: SMA can't be ≤0 unless every price was ≤0
+        // (filtered above), but keep the check defensive.
+        if (sma <= 0.0) {
+            stats_.holds++;
+            stats_.total_latency_ns += (now_ns() - t0);
+            return sig;
+        }
+        // deviation = (price - sma) / sma — fraction (0.01 = 1% above)
         double deviation = (price - sma) / sma;
 
         if (deviation > threshold_) {

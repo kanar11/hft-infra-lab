@@ -14,6 +14,7 @@
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <limits>
 
 // All module headers
 #include "../itch-parser/itch_parser.hpp"
@@ -369,6 +370,31 @@ void test_strategy() {
     // Should not crash or mix up
 
     printf("  Strategy: assertions passed\n");
+}
+
+
+void test_strategy_edge_cases() {
+    SECTION("Strategy Edge Cases");
+
+    // window=0 and negative window must clamp to ≥1 — no divide-by-zero in add()/sma()
+    MeanReversionStrategy s0(0,  1.0, 100);  s0.on_market_data("AAPL", 150.0, 0);
+    MeanReversionStrategy sn(-5, 1.0, 100);  sn.on_market_data("AAPL", 150.0, 0);
+    ASSERT(true, "strategy_window_clamp_no_crash");  // reaching here = no UB
+
+    // NaN / Inf / non-positive prices must be rejected (HOLD), not propagated
+    MeanReversionStrategy s(5, 1.0, 100);
+    for (int i = 0; i < 5; ++i) s.on_market_data("AAPL", 150.0, 0);  // build SMA=150
+    ASSERT(!s.on_market_data("AAPL", std::nan(""), 0).valid,                          "strategy_nan_holds");
+    ASSERT(!s.on_market_data("AAPL", std::numeric_limits<double>::infinity(), 0).valid, "strategy_inf_holds");
+    ASSERT(!s.on_market_data("AAPL", -10.0, 0).valid,        "strategy_negative_holds");
+    ASSERT(!s.on_market_data("AAPL", 0.0, 0).valid,          "strategy_zero_holds");
+
+    // Sub-threshold deviation must HOLD (only deviation strictly > threshold triggers).
+    // After many 150s the SMA stays ~150; 151.0 ≈ 0.66% < 1% threshold → HOLD.
+    Signal sub = s.on_market_data("AAPL", 151.0, 0);
+    ASSERT(!sub.valid, "strategy_sub_threshold_holds");
+
+    printf("  Strategy edge: 6 assertions\n");
 }
 
 
@@ -746,6 +772,7 @@ int main() {
     test_router();
     test_logger();
     test_strategy();
+    test_strategy_edge_cases();
     test_fix();
     test_ouch();
     test_spsc_queue();
