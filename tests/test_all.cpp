@@ -461,7 +461,7 @@ void test_ouch() {
 void test_spsc_queue() {
     SECTION("SPSC Queue (concurrent)");
 
-    SPSCQueue<int, 4096> q;
+    SPSCQueue<int, 4096> q{};
     constexpr int N = 100'000;
     std::atomic<bool> stop{false};
     int last_seq = -1;
@@ -470,6 +470,7 @@ void test_spsc_queue() {
     // Consumer drains until producer signals stop and queue is empty
     std::thread consumer([&]() {
         int v = 0;
+        // cppcheck-suppress uninitvar  // q is the SPSCQueue declared above (template ctor not modeled)
         while (!stop.load(std::memory_order_relaxed) || !q.empty()) {
             if (q.pop(v)) {
                 if (v <  last_seq + 1) repeat = true;  // out-of-order or duplicate
