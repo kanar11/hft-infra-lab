@@ -12,6 +12,8 @@
 #include <cstring>
 #include <cmath>
 #include <chrono>
+#include <thread>
+#include <atomic>
 
 // All module headers
 #include "../itch-parser/itch_parser.hpp"
@@ -22,6 +24,7 @@
 #include "../strategy/mean_reversion.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../ouch-protocol/ouch_protocol.hpp"
+#include "../lockfree/spsc_queue.hpp"
 #include "../simulator/market_sim.hpp"
 
 static int tests_passed = 0;
@@ -451,6 +454,45 @@ void test_ouch() {
 // Market Simulator Integration Tests
 // =====================================================
 
+// =====================================================
+// SPSC Queue — concurrent stress test
+// =====================================================
+
+void test_spsc_queue() {
+    SECTION("SPSC Queue (concurrent)");
+
+    SPSCQueue<int, 4096> q;
+    constexpr int N = 100'000;
+    std::atomic<bool> stop{false};
+    int last_seq = -1;
+    bool gap = false, repeat = false;
+
+    // Consumer drains until producer signals stop and queue is empty
+    std::thread consumer([&]() {
+        int v = 0;
+        while (!stop.load(std::memory_order_relaxed) || !q.empty()) {
+            if (q.pop(v)) {
+                if (v <  last_seq + 1) repeat = true;  // out-of-order or duplicate
+                if (v >  last_seq + 1) gap    = true;  // missing element
+                last_seq = v;
+            }
+        }
+    });
+
+    // Producer pushes 0..N-1 in order, spinning if queue is full
+    for (int i = 0; i < N; ++i) while (!q.push(i)) {}
+    stop.store(true, std::memory_order_relaxed);
+    consumer.join();
+
+    ASSERT(last_seq == N - 1, "spsc_all_received");
+    ASSERT(!gap,             "spsc_no_gaps");
+    ASSERT(!repeat,          "spsc_no_repeats_or_reorders");
+    ASSERT(q.empty(),        "spsc_drained");
+
+    printf("  SPSC: 4 assertions (%d msgs)\n", N);
+}
+
+
 void test_simulator() {
     SECTION("Market Simulator");
 
@@ -705,6 +747,7 @@ int main() {
     test_strategy();
     test_fix();
     test_ouch();
+    test_spsc_queue();
     test_simulator();
     test_integration();
     test_negative_cases();

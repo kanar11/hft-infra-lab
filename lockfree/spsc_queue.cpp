@@ -1,83 +1,12 @@
+// SPSC queue benchmark + demo. Class itself lives in spsc_queue.hpp so other
+// modules can reuse it. / Klasa w spsc_queue.hpp dla reuse w innych modułach.
+
 #include <iostream>
-#include <atomic>
 #include <thread>
 #include <chrono>
-#include <vector>
+#include <atomic>
 
-template<typename T, size_t SIZE>
-class SPSCQueue {
-    // Single Producer Single Consumer lock-free queue
-    // Bezblokująca kolejka producenta pojedynczego konsumenta
-    // Used in HFT between market data thread and trading thread
-    // Używana w HFT między wątkiem danych rynkowych a wątkiem handlu
-
-    static_assert((SIZE & (SIZE - 1)) == 0, "SIZE must be power of 2");
-
-    T buffer[SIZE];
-    alignas(64) std::atomic<size_t> head{0};  // producer writes here
-    // producent pisze tutaj
-    alignas(64) std::atomic<size_t> tail{0};  // consumer reads here
-    // konsument czyta tutaj
-    // alignas(64) prevents false sharing between CPU cache lines
-    // alignas(64) zapobiega fałszywemu udostępnianiu między liniami cache'u procesora
-
-public:
-    // Push item to queue
-    // Wstaw element do kolejki
-    bool push(const T& item) {
-        size_t h = head.load(std::memory_order_relaxed);
-        size_t next = (h + 1) & (SIZE - 1);  // bitwise AND instead of modulo
-        // bitowe AND zamiast modulo
-
-        if (next == tail.load(std::memory_order_acquire))
-            return false;  // queue full
-        // kolejka pełna
-
-        buffer[h] = item;
-        head.store(next, std::memory_order_release);
-        return true;
-    }
-
-    // Pop item from queue
-    // Usuń element z kolejki
-    bool pop(T& item) {
-        size_t t = tail.load(std::memory_order_relaxed);
-
-        if (t == head.load(std::memory_order_acquire))
-            return false;  // queue empty
-        // kolejka pusta
-
-        item = buffer[t];
-        tail.store((t + 1) & (SIZE - 1), std::memory_order_release);
-        return true;
-    }
-
-    // empty(): safe to call from CONSUMER thread only.
-    // tail is stable (consumer is the sole writer); head read with acquire
-    // ensures we see all items the producer has committed.
-    bool empty() const noexcept {
-        return tail.load(std::memory_order_relaxed)
-            == head.load(std::memory_order_acquire);
-    }
-
-    // full(): safe to call from PRODUCER thread only.
-    // head is stable (producer is the sole writer); tail read with acquire
-    // ensures we see all slots the consumer has freed.
-    bool full() const noexcept {
-        size_t h = head.load(std::memory_order_relaxed);
-        return ((h + 1) & (SIZE - 1)) == tail.load(std::memory_order_acquire);
-    }
-
-    // size(): APPROXIMATE — two separate atomic loads, not a single snapshot.
-    // Between the two loads the producer or consumer may advance their pointer,
-    // so the result can be off by ±1.  Use empty()/full() on the hot path;
-    // reserve size() for monitoring/diagnostics where an approximation is fine.
-    size_t size() const noexcept {
-        size_t h = head.load(std::memory_order_acquire);
-        size_t t = tail.load(std::memory_order_acquire);
-        return (h - t) & (SIZE - 1);
-    }
-};
+#include "spsc_queue.hpp"
 
 struct MarketData {
     int seq;
@@ -98,8 +27,7 @@ void benchmark_throughput() {
     // Consumer thread (trading logic)
     // Wątek konsumenta (logika handlu)
     auto consumer = std::thread([&]() {
-        MarketData msg;
-        // cppcheck-suppress uninitvar  // queue is the SPSCQueue declared above
+        MarketData msg{};
         while (!done.load(std::memory_order_relaxed) || !queue.empty()) {
             if (queue.pop(msg)) {
                 auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
