@@ -206,9 +206,7 @@ inline MarketDataMessage make_message(
     msg.msg_type     = static_cast<char>(type);
     // Copy symbol, space-pad / Kopiuj symbol, dopełnij spacjami
     std::memset(msg.symbol, ' ', 8);
-    size_t len = 0;
-    // cppcheck-suppress arrayIndexOutOfBoundsCond
-    while (len < 8 && sym[len]) { msg.symbol[len] = sym[len]; ++len; }
+    std::memcpy(msg.symbol, sym, std::strnlen(sym, 8));
     return msg;
 }
 

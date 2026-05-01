@@ -187,16 +187,12 @@ class OMS {
     std::unordered_map<uint64_t, Position> positions_;  // key = symbol packed into uint64_t (no heap alloc)
 
     // Pack up to 8 ASCII chars into a uint64_t — avoids std::string allocation on every lookup.
-    // Caller contract: sym is null-terminated within 8 bytes (Order::symbol is char[9]).
+    // strnlen bounds the read (≤ 8) so the loop body is safe regardless of caller buffer size.
     static uint64_t sym_to_key(const char* sym) noexcept {
         uint64_t key = 0;
-        for (int i = 0; i < 8; ++i) {
-            // cppcheck-suppress arrayIndexOutOfBounds
-            // cppcheck-suppress arrayIndexOutOfBoundsCond
-            const char c = sym[i];
-            if (c == '\0') break;
-            key |= (static_cast<uint64_t>(static_cast<unsigned char>(c)) << (i * 8));
-        }
+        const size_t len = std::strnlen(sym, 8);
+        for (size_t i = 0; i < len; ++i)
+            key |= (static_cast<uint64_t>(static_cast<unsigned char>(sym[i])) << (i * 8));
         return key;
     }
 
