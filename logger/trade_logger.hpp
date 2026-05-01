@@ -151,8 +151,9 @@ class TradeLogger {
     alignas(64) std::atomic<int> flush_tail_{0}; // flush thread reads (its own counter)
 
     // Non-atomic counters — only accessed by trading thread (or single-threaded queries)
-    int sequence_{0};       // monotonic counter embedded into each event
-    int total_logged_{0};   // total events ever passed to log() (doesn't decrease on wrap)
+    // 64-bit so they survive long sessions: at 25M evt/s, int32 wraps in ~85s.
+    uint64_t sequence_{0};       // monotonic counter embedded into each event
+    uint64_t total_logged_{0};   // total events ever passed to log() (doesn't decrease on wrap)
     bool ring_mode_;
 
     // Per-type counters (updated by trading thread only)
@@ -176,19 +177,27 @@ class TradeLogger {
         return ts.tv_sec * 1'000'000'000LL + ts.tv_nsec;
     }
 
+    // drain_to_file: write contiguous spans from t..h to flush_file_, returns final t.
+    // Batches into one fwrite per contiguous range — one syscall per drain instead of N.
+    int drain_to_file(int t, int h) noexcept {
+        while (t != h) {
+            int slot   = ring_mode_ ? (t % max_events_) : t;
+            int contig = ring_mode_ ? std::min(max_events_ - slot, h - t) : (h - t);
+            std::fwrite(&events_[slot], sizeof(TradeEvent), contig, flush_file_);
+            t += contig;
+        }
+        return t;
+    }
+
     // flush_loop: background thread — drains ring buffer to binary file
     // Reads up to head_ (acquire), writes raw TradeEvent records to disk.
     void flush_loop() noexcept {
         while (true) {
             int h = head_.load(std::memory_order_acquire);
             int t = flush_tail_.load(std::memory_order_relaxed);
-
-            while (t != h) {
-                int slot = ring_mode_ ? (t % max_events_) : t;
-                std::fwrite(&events_[slot], sizeof(TradeEvent), 1, flush_file_);
-                t++;
+            if (t != h) {
+                t = drain_to_file(t, h);
                 flush_tail_.store(t, std::memory_order_relaxed);
-                h = head_.load(std::memory_order_acquire);  // re-read in case more arrived
             }
 
             if (!flush_running_.load(std::memory_order_relaxed)) break;
@@ -198,14 +207,10 @@ class TradeLogger {
             std::this_thread::sleep_for(std::chrono::microseconds(50));
         }
 
-        // Drain any remaining events after flush_running_ = false
+        // Final drain after flush_running_ = false (publisher may still race in)
         int h = head_.load(std::memory_order_acquire);
-        int t = flush_tail_.load(std::memory_order_relaxed);
-        while (t != h) {
-            int slot = ring_mode_ ? (t % max_events_) : t;
-            std::fwrite(&events_[slot], sizeof(TradeEvent), 1, flush_file_);
-            t++;
-        }
+        int t = drain_to_file(flush_tail_.load(std::memory_order_relaxed), h);
+        flush_tail_.store(t, std::memory_order_relaxed);
         std::fflush(flush_file_);
     }
 
@@ -287,7 +292,7 @@ public:
         TradeEvent& e = events_[slot];
         e.mono_ns     = mono_ns();
         e.wall_ns     = wall_ns_now();
-        e.sequence_no = static_cast<uint64_t>(++sequence_);
+        e.sequence_no = ++sequence_;
         e.order_id    = order_id;
         e.price       = price;
         e.quantity    = quantity;
@@ -315,8 +320,8 @@ public:
         int h = head_.load(std::memory_order_relaxed);
         return ring_mode_ ? std::min(h, max_events_) : h;
     }
-    int total_logged()  const noexcept { return total_logged_; }
-    int sequence()      const noexcept { return sequence_; }
+    uint64_t total_logged() const noexcept { return total_logged_; }
+    uint64_t sequence()     const noexcept { return sequence_; }
     int capacity()      const noexcept { return max_events_; }
     bool is_ring_mode() const noexcept { return ring_mode_; }
     bool buffer_full()  const noexcept {
@@ -438,7 +443,7 @@ public:
     void print_summary() const {
         printf("\n=== Logger Summary ===\n");
         printf("  Total events:   %d\n", total_events());
-        printf("  Total logged:   %d\n", total_logged_);
+        printf("  Total logged:   %lu\n", (unsigned long)total_logged_);
         printf("  Unique orders:  %d\n", unique_orders());
         printf("  Unique symbols: %d\n", unique_symbols());
         printf("  Time span:      %.3f ms\n", time_span_ms());
@@ -479,55 +484,48 @@ public:
     }
 
     // export_csv / export_json: offline reporting, includes both timestamps
-    void export_csv() const {
-        printf("seq,mono_ns,wall_ns,event_type,order_id,symbol,side,quantity,price,details\n");
-        int n = total_events();
-        for (int i = 0; i < n; ++i) {
-            const TradeEvent& e = events_[i];
-            printf("%lu,%ld,%ld,%s,%lu,%s,%s,%d,%.4f,%s\n",
-                   (unsigned long)e.sequence_no, e.mono_ns, e.wall_ns,
-                   event_type_str(e.event_type),
-                   (unsigned long)e.order_id, e.symbol, e.side,
-                   e.quantity, e.price, e.details);
-        }
+    void export_csv()                                const { export_csv_to(stdout); }
+    void export_json()                               const { export_json_to(stdout); }
+    bool export_csv_to_file(const char* filepath)    const { return write_to_file(filepath, &TradeLogger::export_csv_to); }
+    bool export_json_to_file(const char* filepath)   const { return write_to_file(filepath, &TradeLogger::export_json_to); }
+
+private:
+    static void write_csv_row(FILE* f, const TradeEvent& e) noexcept {
+        fprintf(f, "%lu,%ld,%ld,%s,%lu,%s,%s,%d,%.4f,%s\n",
+                (unsigned long)e.sequence_no, e.mono_ns, e.wall_ns,
+                event_type_str(e.event_type),
+                (unsigned long)e.order_id, e.symbol, e.side,
+                e.quantity, e.price, e.details);
+    }
+    static void write_json_obj(FILE* f, const TradeEvent& e, bool last) noexcept {
+        fprintf(f, "    {\"seq\": %lu, \"mono_ns\": %ld, \"wall_ns\": %ld, "
+                "\"event_type\": \"%s\", \"order_id\": %lu, "
+                "\"symbol\": \"%s\", \"side\": \"%s\", "
+                "\"quantity\": %d, \"price\": %.4f, \"details\": \"%s\"}%s\n",
+                (unsigned long)e.sequence_no, e.mono_ns, e.wall_ns,
+                event_type_str(e.event_type), (unsigned long)e.order_id,
+                e.symbol, e.side, e.quantity, e.price, e.details,
+                last ? "" : ",");
     }
 
-    void export_json() const {
+    void export_csv_to(FILE* f) const {
+        fprintf(f, "seq,mono_ns,wall_ns,event_type,order_id,symbol,side,quantity,price,details\n");
         int n = total_events();
-        printf("{\n  \"total_logged\": %d,\n  \"events_in_buffer\": %d,\n  \"events\": [\n",
-               total_logged_, n);
-        for (int i = 0; i < n; ++i) {
-            const TradeEvent& e = events_[i];
-            printf("    {\"seq\": %lu, \"mono_ns\": %ld, \"wall_ns\": %ld, "
-                   "\"event_type\": \"%s\", \"order_id\": %lu, "
-                   "\"symbol\": \"%s\", \"side\": \"%s\", "
-                   "\"quantity\": %d, \"price\": %.4f, \"details\": \"%s\"}%s\n",
-                   (unsigned long)e.sequence_no, e.mono_ns, e.wall_ns,
-                   event_type_str(e.event_type), (unsigned long)e.order_id,
-                   e.symbol, e.side, e.quantity, e.price, e.details,
-                   (i < n - 1) ? "," : "");
-        }
-        printf("  ]\n}\n");
+        for (int i = 0; i < n; ++i) write_csv_row(f, events_[i]);
+    }
+    void export_json_to(FILE* f) const {
+        int n = total_events();
+        fprintf(f, "{\n  \"total_logged\": %lu,\n  \"events_in_buffer\": %d,\n  \"events\": [\n",
+                (unsigned long)total_logged_, n);
+        for (int i = 0; i < n; ++i) write_json_obj(f, events_[i], i == n - 1);
+        fprintf(f, "  ]\n}\n");
     }
 
-    bool export_json_to_file(const char* filepath) const {
+    // write_to_file: open in "w", invoke a member writer, close. Returns false on fopen failure.
+    bool write_to_file(const char* filepath, void (TradeLogger::*writer)(FILE*) const) const {
         FILE* f = std::fopen(filepath, "w");
         if (!f) return false;
-        int n = total_events();
-        fprintf(f, "{\n  \"total_logged\": %d,\n  \"events_in_buffer\": %d,\n  \"events\": [\n",
-                total_logged_, n);
-        for (int i = 0; i < n; ++i) {
-            const TradeEvent& e = events_[i];
-            fprintf(f, "    {\"seq\": %lu, \"mono_ns\": %ld, \"wall_ns\": %ld, "
-                    "\"event_type\": \"%s\", \"order_id\": %lu, "
-                    "\"symbol\": \"%s\", \"side\": \"%s\", "
-                    "\"quantity\": %d, \"price\": %.4f, \"details\": \"%s\"}%s\n",
-                    (unsigned long)e.sequence_no, e.mono_ns, e.wall_ns,
-                    event_type_str(e.event_type), (unsigned long)e.order_id,
-                    e.symbol, e.side, e.quantity, e.price, e.details,
-                    (i < n - 1) ? "," : "");
-        }
-        fprintf(f, "  ]\n}\n");
+        (this->*writer)(f);
         std::fclose(f);
         return true;
     }
