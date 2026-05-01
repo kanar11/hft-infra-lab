@@ -91,11 +91,15 @@ public:
             return now_ns() - t0;
         }
 
-        // Work on a copy (we modify it with strtok-like scanning)
-        // Pracuj na kopii (modyfikujemy ją skanowaniem w stylu strtok)
+        // Work on a copy (we modify it with strtok-like scanning).
+        // memchr bounds the search at sizeof(buf) so an untrusted message
+        // without a null terminator can't make us read past 1024 bytes.
+        // Pracuj na kopii. memchr ogranicza scan do 1024 bajtów dla bezpieczeństwa.
         char buf[1024];
-        int len = std::strlen(raw_msg);
-        if (len >= 1024) len = 1023;
+        const void* nul = std::memchr(raw_msg, '\0', sizeof(buf));
+        int len = nul
+                ? static_cast<int>(static_cast<const char*>(nul) - raw_msg)
+                : static_cast<int>(sizeof(buf)) - 1;
         std::memcpy(buf, raw_msg, len);
         buf[len] = '\0';
 

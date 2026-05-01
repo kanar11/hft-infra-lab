@@ -755,7 +755,60 @@ void test_negative_cases() {
         ASSERT(o == nullptr, "neg_oms_zero_price");
     }
 
-    printf("  Negative: %d assertions\n", 9);
+    // FIX: input with no '|' or '=' delimiters → 0 fields, no crash
+    {
+        FIXMessage msg;
+        msg.parse("ABCDEFGHIJK");
+        ASSERT(msg.field_count() == 0, "neg_fix_no_delimiters");
+    }
+
+    // FIX: long input without null terminator within 1024 bytes → bounded scan
+    {
+        char raw[1500];
+        std::memset(raw, '|', sizeof(raw) - 1);
+        raw[sizeof(raw) - 1] = '\0';  // null only at index 1499
+        FIXMessage msg;
+        msg.parse(raw);  // memchr bounds the scan to 1024 — must not crash
+        ASSERT(msg.field_count() == 0, "neg_fix_long_input_no_crash");
+    }
+
+    // OUCH: truncated Cancelled (< 20 bytes) → ERROR
+    {
+        uint8_t buf[10] = {'C', 0};
+        OUCHResponse resp = OUCHMessage::parse_response(buf, 10);
+        ASSERT(strcmp(resp.type, "ERROR") == 0, "neg_ouch_short_cancelled");
+    }
+
+    // OUCH: truncated Executed (< 31 bytes) → ERROR
+    {
+        uint8_t buf[20] = {'E', 0};
+        OUCHResponse resp = OUCHMessage::parse_response(buf, 20);
+        ASSERT(strcmp(resp.type, "ERROR") == 0, "neg_ouch_short_executed");
+    }
+
+    // OUCH: unknown message type → "UNKNOWN"
+    {
+        uint8_t buf[10] = {'Z', 0};
+        OUCHResponse resp = OUCHMessage::parse_response(buf, 10);
+        ASSERT(strcmp(resp.type, "UNKNOWN") == 0, "neg_ouch_unknown_type");
+    }
+
+    // ITCH: nullptr / zero-length must return ERROR, not crash
+    {
+        ITCHParser p;
+        auto pm = p.parse(nullptr, 0);
+        ASSERT(pm.type == MsgType::ERROR, "neg_itch_null_data");
+    }
+
+    // ITCH: oversized buffer for ADD_ORDER — parser only reads first 34 bytes, rest ignored
+    {
+        ITCHParser p;
+        uint8_t buf[1000] = {'A'};  // type 'A', remaining bytes zero
+        auto pm = p.parse(buf, sizeof(buf));
+        ASSERT(pm.type == MsgType::ADD_ORDER, "neg_itch_oversized_buffer");
+    }
+
+    printf("  Negative: %d assertions\n", 16);
 }
 
 
