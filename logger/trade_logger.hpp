@@ -225,17 +225,13 @@ public:
         stop_async_flush();
     }
 
-    TradeLogger(const TradeLogger&) = delete;
+    TradeLogger(const TradeLogger&)            = delete;
     TradeLogger& operator=(const TradeLogger&) = delete;
-
-    TradeLogger(TradeLogger&& other) noexcept
-        : events_(std::move(other.events_)), max_events_(other.max_events_),
-          sequence_(other.sequence_), total_logged_(other.total_logged_),
-          ring_mode_(other.ring_mode_) {
-        head_.store(other.head_.load());
-        flush_tail_.store(other.flush_tail_.load());
-        std::memcpy(counters_, other.counters_, sizeof(counters_));
-    }
+    // Move would have to transfer flush_thread_, flush_file_, flush_running_
+    // and atomically resync head_/flush_tail_. Not worth the complexity
+    // for a trading-thread-pinned object — disallow.
+    TradeLogger(TradeLogger&&)                 = delete;
+    TradeLogger& operator=(TradeLogger&&)      = delete;
 
     // --------------------------------------------------------
     // start_async_flush: open binary file and start flush thread.
@@ -277,15 +273,18 @@ public:
     // log: record a trade event — the HOT PATH (O(1), no allocation)
     //
     // Captures both CLOCK_MONOTONIC and CLOCK_REALTIME at call time.
-    // Embeds a monotonic sequence_no so regulators can detect missing events.
+    // Returns the embedded sequence_no (>0) on success, or 0 if the
+    // non-ring buffer is full. We don't return a pointer to the slot
+    // because in ring mode the slot would be overwritten by later
+    // log() calls — callers can only safely use the sequence number.
     // --------------------------------------------------------
-    TradeEvent* log(EventType type, uint64_t order_id = 0,
-                    const char* symbol = "", const char* side = "",
-                    int32_t quantity = 0, double price = 0.0,
-                    const char* details = "") noexcept {
+    uint64_t log(EventType type, uint64_t order_id = 0,
+                 const char* symbol = "", const char* side = "",
+                 int32_t quantity = 0, double price = 0.0,
+                 const char* details = "") noexcept {
         int head = head_.load(std::memory_order_relaxed);
 
-        if (!ring_mode_ && head >= max_events_) return nullptr;
+        if (!ring_mode_ && head >= max_events_) return 0;
 
         int slot = ring_mode_ ? (head % max_events_) : head;
 
@@ -310,7 +309,7 @@ public:
 
         // Release store: flush thread won't read this slot until it sees head_+1
         head_.store(head + 1, std::memory_order_release);
-        return &e;
+        return e.sequence_no;
     }
 
     // --------------------------------------------------------

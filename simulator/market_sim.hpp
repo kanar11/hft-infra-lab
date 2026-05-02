@@ -109,6 +109,10 @@ class MarketDataGenerator {
     int64_t order_ref_;
     ActiveOrder active_orders_[MAX_ACTIVE_ORDERS];
     int active_count_;
+    // Scratch buffer for random_active_order — kept as a member so each call
+    // doesn't push 32 KB onto the stack. Overwritten on every use; never read
+    // before being filled, so no init needed.
+    int active_indices_[MAX_ACTIVE_ORDERS];
 
     // Pack big-endian helpers (ITCH uses network byte order)
     // Pomocniki pakowania big-endian (ITCH używa sieciowej kolejności bajtów)
@@ -127,19 +131,17 @@ class MarketDataGenerator {
     // Find a random active order, return index or -1
     int random_active_order() noexcept {
         if (active_count_ == 0) return -1;
-        // Collect active indices
-        int indices[MAX_ACTIVE_ORDERS];
         int n = 0;
         for (int i = 0; i < MAX_ACTIVE_ORDERS && n < active_count_; ++i) {
-            if (active_orders_[i].active) indices[n++] = i;
+            if (active_orders_[i].active) active_indices_[n++] = i;
         }
         if (n == 0) return -1;
-        return indices[rng_.rand_int(n)];
+        return active_indices_[rng_.rand_int(n)];
     }
 
 public:
     explicit MarketDataGenerator(uint64_t seed = 42) noexcept
-        : rng_(seed), seq_(0), order_ref_(1000), active_count_(0) {
+        : rng_(seed), seq_(0), order_ref_(1000), active_count_(0), active_indices_{} {
         for (int i = 0; i < MAX_ACTIVE_ORDERS; ++i)
             active_orders_[i].active = false;
     }
