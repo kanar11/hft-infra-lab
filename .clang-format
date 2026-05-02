@@ -1,0 +1,34 @@
+---
+# Style for hft-infra-lab — close to what the codebase already does.
+# This file documents the convention; running clang-format is optional.
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++17
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+# Function bodies on next line, but everything else attached.
+BreakBeforeBraces: Attach
+
+# Pointer/reference attached to the type, matches existing code (`const char* sym`).
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Multi-line argument lists align under the opening paren.
+AlignAfterOpenBracket: Align
+ContinuationIndentWidth: 4
+
+# Allow short bodies on one line (matches lots of `noexcept { return ...; }` lines).
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+
+# Sort #includes within their group but don't reorder system vs project groups.
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+
+# Don't break long string literals — bilingual comments stay on one line.
+BreakStringLiterals: false

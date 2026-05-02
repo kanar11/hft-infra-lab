@@ -1,7 +1,7 @@
 .PHONY: all build test benchmark simulate clean
 
-CXX      := g++
-CXXFLAGS := -O2 -std=c++17 -Wall -Wextra -Werror -pthread
+CXX      ?= g++
+CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra -Werror -pthread
 
 BUILDDIR := build
 
