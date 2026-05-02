@@ -87,39 +87,29 @@ struct StrategyStats {
 struct PriceWindow {
     char   symbol[9];
     double prices[MAX_WINDOW];
+    double running_sum;        // incremental sum of prices in window — O(1) sma()
     int    count;              // how many prices stored (up to window size)
     int    head;               // write position in circular buffer
     int    window_size;        // target window (e.g., 20)
     bool   active;             // is this slot in use?
 
     PriceWindow() noexcept
-        : prices{}, count(0), head(0), window_size(20), active(false) {
+        : prices{}, running_sum(0.0), count(0), head(0), window_size(20), active(false) {
         symbol[0] = '\0';
     }
 
-    // add: append price to circular buffer
-    // Like appending to 'tail -n 20' — oldest price is automatically dropped
-    // Jak dodawanie do 'tail -n 20' — najstarsza cena automatycznie znika
+    // add: append price; maintains running_sum so sma() stays O(1)
+    // dodaj cenę; aktualizuj running_sum aby sma() pozostała O(1)
     void add(double price) noexcept {
+        if (count == window_size) running_sum -= prices[head];  // evict oldest
         prices[head] = price;
+        running_sum += price;
         head = (head + 1) % window_size;
         if (count < window_size) count++;
     }
 
-    // sma: calculate Simple Moving Average
-    // Sum all prices and divide by count — O(window_size)
-    // Zsumuj wszystkie ceny i podziel przez liczbę — O(window_size)
-    double sma() const noexcept {
-        if (count == 0) return 0.0;
-        double sum = 0.0;
-        // When buffer is full, we read from (head) to (head + count - 1) mod window_size
-        // Gdy bufor jest pełny, czytamy od head w kółko
-        for (int i = 0; i < count; ++i) {
-            int idx = (head - count + i + window_size) % window_size;
-            sum += prices[idx];
-        }
-        return sum / count;
-    }
+    // sma: Simple Moving Average — O(1) thanks to running_sum
+    double sma() const noexcept { return count == 0 ? 0.0 : running_sum / count; }
 
     bool full() const noexcept { return count >= window_size; }
 };

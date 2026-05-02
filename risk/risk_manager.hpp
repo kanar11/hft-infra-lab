@@ -39,7 +39,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
-#include <vector>
+#include <deque>
 #include <chrono>
 #include <cstdio>
 #include <cmath>
@@ -119,6 +119,10 @@ class RiskManager {
     std::unordered_map<std::string, int32_t> positions_;
     std::unordered_map<std::string, int32_t> pending_;
 
+    // Denormalized portfolio exposure: sum_s |positions_[s] + pending_[s]|.
+    // Maintained as an invariant by every mutator so check_order is O(1).
+    int64_t total_abs_exposure_;
+
     // P&L state
     double daily_pnl_;
     double peak_pnl_;
@@ -127,9 +131,9 @@ class RiskManager {
     // Wyłącznik awaryjny
     bool kill_switch_active_;
 
-    // Rate limiting: timestamps of recent orders (nanoseconds)
-    // Ograniczanie szybkości: znaczniki czasu ostatnich zleceń (nanosekundy)
-    std::vector<int64_t> order_timestamps_;
+    // Rate limiting: timestamps of recent orders (nanoseconds).
+    // deque so the head-pruning while-loop is O(M) total amortised, not O(M²) like vector::erase.
+    std::deque<int64_t> order_timestamps_;
 
     // Statistics
     uint64_t total_checks_;
@@ -147,14 +151,13 @@ public:
     // Konstruktor — odpowiednik __init__ w Pythonie
     explicit RiskManager(const RiskLimits& limits = RiskLimits()) noexcept
         : limits_(limits),
+          total_abs_exposure_(0),
           daily_pnl_(0.0),
           peak_pnl_(0.0),
           kill_switch_active_(false),
           total_checks_(0),
           total_rejects_(0),
-          total_latency_ns_(0) {
-        order_timestamps_.reserve(limits.max_orders_per_second * 2);
-    }
+          total_latency_ns_(0) {}
 
     // check_order: run all pre-trade risk checks
     // Returns RiskCheckResult with ALLOW, REJECT, or KILL
@@ -190,18 +193,11 @@ public:
             return make_reject("Position limit exceeded", t0);
         }
 
-        // 4. Portfolio exposure check — sum |realized + pending| across all symbols
-        // 4. Sprawdzenie ekspozycji portfela — suma |zrealizowane + pending| po wszystkich symbolach
-        int64_t total_exposure = std::abs(projected);  // this symbol post-trade
-        for (const auto& [sym, real] : positions_) {
-            if (sym != sym_key) total_exposure += std::abs(real + lookup(pending_, sym));
-        }
-        for (const auto& [sym, pend] : pending_) {
-            // symbols seen only in pending_ (no realized yet)
-            if (sym != sym_key && positions_.find(sym) == positions_.end())
-                total_exposure += std::abs(pend);
-        }
-        if (total_exposure > limits_.max_portfolio_exposure) {
+        // 4. Portfolio exposure check — O(1) thanks to total_abs_exposure_ invariant.
+        // 4. Sprawdzenie ekspozycji portfela — O(1) dzięki utrzymywanemu total_abs_exposure_.
+        int32_t old_contrib = std::abs(lookup(positions_, sym_key) + lookup(pending_, sym_key));
+        int32_t new_contrib = std::abs(projected);
+        if (total_abs_exposure_ - old_contrib + new_contrib > limits_.max_portfolio_exposure) {
             return make_reject("Portfolio exposure exceeded", t0);
         }
 
@@ -222,29 +218,14 @@ public:
             }
         }
 
-        // 7. Rate limiting
-        // 7. Ograniczanie szybkości
-        int64_t now = now_ns();
-        int64_t one_sec_ago = now - 1'000'000'000;
-        // Remove old timestamps (older than 1 second)
-        // Usuń stare znaczniki czasu (starsze niż 1 sekunda)
-        size_t valid_start = 0;
-        for (size_t i = 0; i < order_timestamps_.size(); ++i) {
-            if (order_timestamps_[i] > one_sec_ago) {
-                valid_start = i;
-                break;
-            }
-            if (i == order_timestamps_.size() - 1) {
-                valid_start = order_timestamps_.size();
-            }
-        }
-        if (valid_start > 0 && !order_timestamps_.empty()) {
-            order_timestamps_.erase(order_timestamps_.begin(),
-                                     order_timestamps_.begin() + valid_start);
-        }
-        if (static_cast<int32_t>(order_timestamps_.size()) >= limits_.max_orders_per_second) {
+        // 7. Rate limiting — O(1) amortised: pop expired timestamps from the deque front.
+        // 7. Ograniczanie szybkości — amortised O(1): pop wygasłych z przodu deque.
+        const int64_t now         = now_ns();
+        const int64_t one_sec_ago = now - 1'000'000'000;
+        while (!order_timestamps_.empty() && order_timestamps_.front() <= one_sec_ago)
+            order_timestamps_.pop_front();
+        if (static_cast<int32_t>(order_timestamps_.size()) >= limits_.max_orders_per_second)
             return make_reject("Rate limit exceeded", t0);
-        }
         order_timestamps_.push_back(now);
 
         // All checks passed
@@ -255,19 +236,17 @@ public:
     }
 
     // on_order_sent: caller sent an accepted order to the venue — reserve pending capacity
-    // on_order_sent: caller wysłał zaakceptowane zlecenie na giełdę — zarezerwuj pending
     void on_order_sent(const char* symbol, const char* side, int32_t quantity) noexcept {
-        pending_[symbol] += (side[0] == 'B' ? quantity : -quantity);
+        adjust_pending(symbol, side[0] == 'B' ? quantity : -quantity);
     }
 
     // on_order_cancelled: caller cancelled the unfilled remainder — release pending
-    // on_order_cancelled: caller anulował niewypełnioną resztę — zwolnij pending
     void on_order_cancelled(const char* symbol, const char* side, int32_t remaining) noexcept {
-        pending_[symbol] -= (side[0] == 'B' ? remaining : -remaining);
+        adjust_pending(symbol, side[0] == 'B' ? -remaining : remaining);
     }
 
-    // update_position: called after a fill — flow filled qty from pending to realized
-    // update_position: wywoływane po fillu — przepływ wypełnionej qty z pending do realized
+    // update_position: called after a fill — flow filled qty from pending to realized.
+    // pos+pend is unchanged, so total_abs_exposure_ is unchanged.
     void update_position(const char* symbol, const char* side, int32_t quantity) noexcept {
         int32_t signed_q = (side[0] == 'B' ? quantity : -quantity);
         positions_[symbol] += signed_q;
@@ -293,6 +272,9 @@ public:
         order_timestamps_.clear();
         pending_.clear();
         kill_switch_active_ = false;
+        // Pending is gone; recompute exposure from realized positions only.
+        total_abs_exposure_ = 0;
+        for (const auto& [_, pos] : positions_) total_abs_exposure_ += std::abs(pos);
     }
 
     // Accessors for testing
@@ -332,5 +314,15 @@ private:
                           const std::string& key) noexcept {
         auto it = m.find(key);
         return (it != m.end()) ? it->second : 0;
+    }
+
+    // adjust_pending: shared mutator for on_order_sent / on_order_cancelled.
+    // Keeps total_abs_exposure_ in sync with sum_s |pos[s] + pend[s]|.
+    void adjust_pending(const char* symbol, int32_t delta) noexcept {
+        const int32_t pos      = lookup(positions_, symbol);
+        const int32_t old_pend = lookup(pending_,   symbol);
+        const int32_t new_pend = old_pend + delta;
+        pending_[symbol]      = new_pend;
+        total_abs_exposure_  += std::abs(pos + new_pend) - std::abs(pos + old_pend);
     }
 };
