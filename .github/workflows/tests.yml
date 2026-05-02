@@ -22,7 +22,7 @@ jobs:
                    --suppress=missingIncludeSystem \
                    --suppress=ctuOneDefinitionRuleViolation \
                    --inline-suppr \
-                   config/ oms/ risk/ router/ logger/ strategy/ \
+                   common/ config/ oms/ risk/ router/ logger/ strategy/ \
                    fix-protocol/ ouch-protocol/ lockfree/ \
                    multicast/ simulator/ tests/ \
                    orderbook/ itch-parser/ memory-latency/ \

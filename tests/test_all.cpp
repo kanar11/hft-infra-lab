@@ -197,11 +197,11 @@ void test_risk() {
     RiskManager risk(limits);
 
     // Accept normal order
-    auto ok = risk.check_order("AAPL", "BUY", 150.25, 100);
+    auto ok = risk.check_order("AAPL", Side::BUY, 150.25, 100);
     ASSERT(ok.action == RiskAction::ALLOW, "risk_accept_normal");
 
     // Reject overvalued order
-    auto reject_val = risk.check_order("NVDA", "BUY", 900.0, 200);
+    auto reject_val = risk.check_order("NVDA", Side::BUY, 900.0, 200);
     ASSERT(reject_val.action != RiskAction::ALLOW, "risk_reject_value");
 
     // Kill switch
@@ -210,13 +210,13 @@ void test_risk() {
     ASSERT(risk.is_kill_switch_active(), "risk_killed");
 
     // All orders rejected after kill switch
-    auto post_kill = risk.check_order("AAPL", "BUY", 10.0, 1);
+    auto post_kill = risk.check_order("AAPL", Side::BUY, 10.0, 1);
     ASSERT(post_kill.action != RiskAction::ALLOW, "risk_reject_after_kill");
 
     // Reset
     risk.deactivate_kill_switch();
     ASSERT(!risk.is_kill_switch_active(), "risk_reset");
-    auto post_reset = risk.check_order("AAPL", "BUY", 10.0, 1);
+    auto post_reset = risk.check_order("AAPL", Side::BUY, 10.0, 1);
     ASSERT(post_reset.action == RiskAction::ALLOW, "risk_accept_after_reset");
 
     printf("  Risk: %d assertions\n", 8);
@@ -623,7 +623,7 @@ void test_integration() {
 
         // Risk check
         Side side = (pm.data.add_order.side == 'B') ? Side::BUY : Side::SELL;
-        if (risk.check_order(stock, side_str, price, shares).action != RiskAction::ALLOW) {
+        if (risk.check_order(stock, side_from_str(side_str), price, shares).action != RiskAction::ALLOW) {
             logger.log(EventType::RISK_REJECT, i + 1, stock, side_str, shares, price);
             rejected++;
             continue;
@@ -721,10 +721,10 @@ void test_negative_cases() {
         limits.max_orders_per_second = 10000;
         RiskManager risk(limits);
         // 10001 × $1 = $10,001 > limit → reject
-        auto r = risk.check_order("AAPL", "BUY", 1.0, 10001);
+        auto r = risk.check_order("AAPL", Side::BUY, 1.0, 10001);
         ASSERT(r.action != RiskAction::ALLOW, "neg_risk_over_limit");
         // 9999 × $1 = $9,999 ≤ limit → accept
-        auto r2 = risk.check_order("AAPL", "BUY", 1.0, 9999);
+        auto r2 = risk.check_order("AAPL", Side::BUY, 1.0, 9999);
         ASSERT(r2.action == RiskAction::ALLOW, "neg_risk_under_limit");
     }
 

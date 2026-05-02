@@ -37,12 +37,14 @@
 
 #include <cstdint>
 #include <cstring>
-#include <string>
 #include <unordered_map>
 #include <deque>
-#include <chrono>
 #include <cstdio>
 #include <cmath>
+
+#include "../common/types.hpp"
+#include "../common/symbol_key.hpp"
+#include "../common/time_utils.hpp"
 
 
 // === Enums ===
@@ -114,10 +116,11 @@ struct RiskLimits {
 class RiskManager {
     RiskLimits limits_;
 
-    // Position tracking: realized (post-fill) and pending (in-flight, signed BUY+/SELL-)
-    // Śledzenie pozycji: zrealizowane (po fillu) i pending (w locie, sygnowane BUY+/SELL-)
-    std::unordered_map<std::string, int32_t> positions_;
-    std::unordered_map<std::string, int32_t> pending_;
+    // Position tracking: realized (post-fill) and pending (in-flight, signed BUY+/SELL-).
+    // Keyed by sym_to_key (packed uint64) — same scheme as OMS, no std::string allocation.
+    // Śledzenie pozycji: zrealizowane i pending. Klucz = sym_to_key (packed uint64).
+    std::unordered_map<uint64_t, int32_t> positions_;
+    std::unordered_map<uint64_t, int32_t> pending_;
 
     // Denormalized portfolio exposure: sum_s |positions_[s] + pending_[s]|.
     // Maintained as an invariant by every mutator so check_order is O(1).
@@ -140,12 +143,6 @@ class RiskManager {
     uint64_t total_rejects_;
     uint64_t total_latency_ns_;
 
-    static int64_t now_ns() noexcept {
-        auto now = std::chrono::high_resolution_clock::now();
-        return std::chrono::duration_cast<std::chrono::nanoseconds>(
-            now.time_since_epoch()).count();
-    }
-
 public:
     // Constructor — equivalent to Python's __init__
     // Konstruktor — odpowiednik __init__ w Pythonie
@@ -163,43 +160,33 @@ public:
     // Returns RiskCheckResult with ALLOW, REJECT, or KILL
     // check_order: uruchom wszystkie przedhandlowe kontrole ryzyka
     // Zwraca RiskCheckResult z ALLOW, REJECT lub KILL
-    RiskCheckResult check_order(const char* symbol, const char* side,
+    RiskCheckResult check_order(const char* symbol, Side side,
                                  double price, int32_t quantity) noexcept {
-        int64_t t0 = now_ns();
+        const int64_t t0 = mono_ns();
         total_checks_++;
 
         // 1. Kill switch — reject everything
-        // 1. Wyłącznik awaryjny — odrzuć wszystko
-        if (kill_switch_active_) {
-            return make_reject("Kill switch active", t0);
-        }
+        if (kill_switch_active_) return make_reject("Kill switch active", t0);
 
         // 2. Order value check
-        // 2. Sprawdzenie wartości zlecenia
         int64_t order_value = static_cast<int64_t>(price * quantity);
-        if (order_value > limits_.max_order_value) {
+        if (order_value > limits_.max_order_value)
             return make_reject("Order value exceeds limit", t0);
-        }
 
         // 3. Per-symbol position limit (realized + pending + new)
-        // 3. Limit pozycji na symbol (zrealizowana + pending + nowe)
-        bool is_buy = (side[0] == 'B');
-        std::string sym_key(symbol);
-        int32_t signed_new = is_buy ? quantity : -quantity;
-        int32_t projected  = lookup(positions_, sym_key)
-                           + lookup(pending_,   sym_key)
-                           + signed_new;
-        if (std::abs(projected) > limits_.max_position_per_symbol) {
+        const uint64_t key       = sym_to_key(symbol);
+        const int32_t  signed_new = (side == Side::BUY) ? quantity : -quantity;
+        const int32_t  cur_pos   = lookup(positions_, key);
+        const int32_t  cur_pend  = lookup(pending_,   key);
+        const int32_t  projected = cur_pos + cur_pend + signed_new;
+        if (std::abs(projected) > limits_.max_position_per_symbol)
             return make_reject("Position limit exceeded", t0);
-        }
 
-        // 4. Portfolio exposure check — O(1) thanks to total_abs_exposure_ invariant.
-        // 4. Sprawdzenie ekspozycji portfela — O(1) dzięki utrzymywanemu total_abs_exposure_.
-        int32_t old_contrib = std::abs(lookup(positions_, sym_key) + lookup(pending_, sym_key));
-        int32_t new_contrib = std::abs(projected);
-        if (total_abs_exposure_ - old_contrib + new_contrib > limits_.max_portfolio_exposure) {
+        // 4. Portfolio exposure check — O(1) via total_abs_exposure_ invariant.
+        const int32_t old_contrib = std::abs(cur_pos + cur_pend);
+        const int32_t new_contrib = std::abs(projected);
+        if (total_abs_exposure_ - old_contrib + new_contrib > limits_.max_portfolio_exposure)
             return make_reject("Portfolio exposure exceeded", t0);
-        }
 
         // 5. Circuit breaker (daily loss limit)
         // 5. Przełącznik obwodu (dzienny limit strat)
@@ -219,8 +206,7 @@ public:
         }
 
         // 7. Rate limiting — O(1) amortised: pop expired timestamps from the deque front.
-        // 7. Ograniczanie szybkości — amortised O(1): pop wygasłych z przodu deque.
-        const int64_t now         = now_ns();
+        const int64_t now         = mono_ns();
         const int64_t one_sec_ago = now - 1'000'000'000;
         while (!order_timestamps_.empty() && order_timestamps_.front() <= one_sec_ago)
             order_timestamps_.pop_front();
@@ -228,29 +214,28 @@ public:
             return make_reject("Rate limit exceeded", t0);
         order_timestamps_.push_back(now);
 
-        // All checks passed
-        // Wszystkie kontrole przeszły
-        int64_t elapsed = now_ns() - t0;
+        const int64_t elapsed = mono_ns() - t0;
         total_latency_ns_ += elapsed;
         return RiskCheckResult(RiskAction::ALLOW, "All checks passed", elapsed);
     }
 
     // on_order_sent: caller sent an accepted order to the venue — reserve pending capacity
-    void on_order_sent(const char* symbol, const char* side, int32_t quantity) noexcept {
-        adjust_pending(symbol, side[0] == 'B' ? quantity : -quantity);
+    void on_order_sent(const char* symbol, Side side, int32_t quantity) noexcept {
+        adjust_pending(sym_to_key(symbol), side == Side::BUY ? quantity : -quantity);
     }
 
     // on_order_cancelled: caller cancelled the unfilled remainder — release pending
-    void on_order_cancelled(const char* symbol, const char* side, int32_t remaining) noexcept {
-        adjust_pending(symbol, side[0] == 'B' ? -remaining : remaining);
+    void on_order_cancelled(const char* symbol, Side side, int32_t remaining) noexcept {
+        adjust_pending(sym_to_key(symbol), side == Side::BUY ? -remaining : remaining);
     }
 
     // update_position: called after a fill — flow filled qty from pending to realized.
     // pos+pend is unchanged, so total_abs_exposure_ is unchanged.
-    void update_position(const char* symbol, const char* side, int32_t quantity) noexcept {
-        int32_t signed_q = (side[0] == 'B' ? quantity : -quantity);
-        positions_[symbol] += signed_q;
-        pending_[symbol]   -= signed_q;
+    void update_position(const char* symbol, Side side, int32_t quantity) noexcept {
+        const int32_t signed_q = (side == Side::BUY) ? quantity : -quantity;
+        const uint64_t key = sym_to_key(symbol);
+        positions_[key] += signed_q;
+        pending_[key]   -= signed_q;
     }
 
     // update_pnl: called after each fill to track daily P&L
@@ -274,16 +259,12 @@ public:
         kill_switch_active_ = false;
         // Pending is gone; recompute exposure from realized positions only.
         total_abs_exposure_ = 0;
-        for (const auto& [_, pos] : positions_) total_abs_exposure_ += std::abs(pos);
+        for (const auto& kv : positions_) total_abs_exposure_ += std::abs(kv.second);
     }
 
     // Accessors for testing
-    int32_t get_position(const char* symbol) const noexcept {
-        return lookup(positions_, std::string(symbol));
-    }
-    int32_t get_pending(const char* symbol) const noexcept {
-        return lookup(pending_, std::string(symbol));
-    }
+    int32_t get_position(const char* symbol) const noexcept { return lookup(positions_, sym_to_key(symbol)); }
+    int32_t get_pending(const char* symbol)  const noexcept { return lookup(pending_,   sym_to_key(symbol)); }
 
     double get_daily_pnl() const noexcept { return daily_pnl_; }
     uint64_t get_total_checks() const noexcept { return total_checks_; }
@@ -310,19 +291,19 @@ private:
     }
 
     // lookup: return value for key or 0 if absent (no insert)
-    static int32_t lookup(const std::unordered_map<std::string, int32_t>& m,
-                          const std::string& key) noexcept {
+    static int32_t lookup(const std::unordered_map<uint64_t, int32_t>& m,
+                          uint64_t key) noexcept {
         auto it = m.find(key);
         return (it != m.end()) ? it->second : 0;
     }
 
     // adjust_pending: shared mutator for on_order_sent / on_order_cancelled.
     // Keeps total_abs_exposure_ in sync with sum_s |pos[s] + pend[s]|.
-    void adjust_pending(const char* symbol, int32_t delta) noexcept {
-        const int32_t pos      = lookup(positions_, symbol);
-        const int32_t old_pend = lookup(pending_,   symbol);
+    void adjust_pending(uint64_t key, int32_t delta) noexcept {
+        const int32_t pos      = lookup(positions_, key);
+        const int32_t old_pend = lookup(pending_,   key);
         const int32_t new_pend = old_pend + delta;
-        pending_[symbol]      = new_pend;
+        pending_[key]         = new_pend;
         total_abs_exposure_  += std::abs(pos + new_pend) - std::abs(pos + old_pend);
     }
 };

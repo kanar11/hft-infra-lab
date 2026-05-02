@@ -48,7 +48,7 @@ static int tests_total = 0;
 
 void test_allow_normal_order() {
     RiskManager rm;
-    auto r = rm.check_order("AAPL", "BUY", 150.0, 100);
+    auto r = rm.check_order("AAPL", Side::BUY, 150.0, 100);
     ASSERT(r.action == RiskAction::ALLOW, "test_allow_normal_order");
 }
 
@@ -56,7 +56,7 @@ void test_reject_order_value() {
     RiskLimits limits;
     limits.max_order_value = 10000;
     RiskManager rm(limits);
-    auto r = rm.check_order("AAPL", "BUY", 150.0, 100);  // 15000 > 10000
+    auto r = rm.check_order("AAPL", Side::BUY, 150.0, 100);  // 15000 > 10000
     ASSERT(r.action == RiskAction::REJECT, "test_reject_order_value");
 }
 
@@ -64,7 +64,7 @@ void test_reject_position_limit() {
     RiskLimits limits;
     limits.max_position_per_symbol = 50;
     RiskManager rm(limits);
-    auto r = rm.check_order("AAPL", "BUY", 150.0, 100);  // 100 > 50
+    auto r = rm.check_order("AAPL", Side::BUY, 150.0, 100);  // 100 > 50
     ASSERT(r.action == RiskAction::REJECT, "test_reject_position_limit");
 }
 
@@ -73,11 +73,11 @@ void test_reject_portfolio_exposure() {
     limits.max_portfolio_exposure = 150;
     RiskManager rm(limits);
     // Submit 100 AAPL (pending, not yet filled)
-    auto r1 = rm.check_order("AAPL", "BUY", 10.0, 100);
+    auto r1 = rm.check_order("AAPL", Side::BUY, 10.0, 100);
     ASSERT(r1.action == RiskAction::ALLOW, "test_portfolio_first_allow");
-    rm.on_order_sent("AAPL", "BUY", 100);
+    rm.on_order_sent("AAPL", Side::BUY, 100);
     // Now try 100 TSLA — total exposure would be 200 > 150
-    auto r2 = rm.check_order("TSLA", "BUY", 10.0, 100);
+    auto r2 = rm.check_order("TSLA", Side::BUY, 10.0, 100);
     ASSERT(r2.action == RiskAction::REJECT, "test_reject_portfolio_exposure");
 }
 
@@ -85,11 +85,11 @@ void test_pending_blocks_position() {
     RiskLimits limits;
     limits.max_position_per_symbol = 100;
     RiskManager rm(limits);
-    auto r1 = rm.check_order("AAPL", "BUY", 10.0, 100);
+    auto r1 = rm.check_order("AAPL", Side::BUY, 10.0, 100);
     ASSERT(r1.action == RiskAction::ALLOW, "test_pending_first_allow");
-    rm.on_order_sent("AAPL", "BUY", 100);
+    rm.on_order_sent("AAPL", Side::BUY, 100);
     // realized=0, pending=100 → next BUY 1 would project to 101 > 100
-    auto r2 = rm.check_order("AAPL", "BUY", 10.0, 1);
+    auto r2 = rm.check_order("AAPL", Side::BUY, 10.0, 1);
     ASSERT(r2.action == RiskAction::REJECT, "test_pending_blocks_position");
 }
 
@@ -97,17 +97,17 @@ void test_cancel_releases_pending() {
     RiskLimits limits;
     limits.max_position_per_symbol = 100;
     RiskManager rm(limits);
-    rm.on_order_sent("AAPL", "BUY", 100);
-    rm.on_order_cancelled("AAPL", "BUY", 100);
+    rm.on_order_sent("AAPL", Side::BUY, 100);
+    rm.on_order_cancelled("AAPL", Side::BUY, 100);
     // pending back to 0 — same-size order should fit again
-    auto r = rm.check_order("AAPL", "BUY", 10.0, 100);
+    auto r = rm.check_order("AAPL", Side::BUY, 10.0, 100);
     ASSERT(r.action == RiskAction::ALLOW, "test_cancel_releases_pending");
 }
 
 void test_fill_flows_pending_to_realized() {
     RiskManager rm;
-    rm.on_order_sent("AAPL", "BUY", 100);
-    rm.update_position("AAPL", "BUY", 30);  // partial fill
+    rm.on_order_sent("AAPL", Side::BUY, 100);
+    rm.update_position("AAPL", Side::BUY, 30);  // partial fill
     ASSERT(rm.get_position("AAPL") == 30, "test_fill_realized");
     ASSERT(rm.get_pending("AAPL") == 70,  "test_fill_pending_remaining");
 }
@@ -117,7 +117,7 @@ void test_circuit_breaker() {
     limits.max_daily_loss = 1000;
     RiskManager rm(limits);
     rm.update_pnl(-1500.0);  // loss > 1000
-    auto r = rm.check_order("AAPL", "BUY", 10.0, 1);
+    auto r = rm.check_order("AAPL", Side::BUY, 10.0, 1);
     ASSERT(r.action == RiskAction::REJECT, "test_circuit_breaker");
     ASSERT(rm.is_kill_switch_active(), "test_circuit_breaker_kills");
 }
@@ -125,7 +125,7 @@ void test_circuit_breaker() {
 void test_kill_switch_manual() {
     RiskManager rm;
     rm.activate_kill_switch();
-    auto r = rm.check_order("AAPL", "BUY", 10.0, 1);
+    auto r = rm.check_order("AAPL", Side::BUY, 10.0, 1);
     ASSERT(r.action == RiskAction::REJECT, "test_kill_switch_manual");
 }
 
@@ -133,7 +133,7 @@ void test_kill_switch_deactivate() {
     RiskManager rm;
     rm.activate_kill_switch();
     rm.deactivate_kill_switch();
-    auto r = rm.check_order("AAPL", "BUY", 10.0, 1);
+    auto r = rm.check_order("AAPL", Side::BUY, 10.0, 1);
     ASSERT(r.action == RiskAction::ALLOW, "test_kill_switch_deactivate");
 }
 
@@ -143,7 +143,7 @@ void test_drawdown_limit() {
     RiskManager rm(limits);
     rm.update_pnl(10000.0);   // peak = 10000
     rm.update_pnl(-1000.0);   // now 9000, drawdown = 10%
-    auto r = rm.check_order("AAPL", "BUY", 10.0, 1);
+    auto r = rm.check_order("AAPL", Side::BUY, 10.0, 1);
     ASSERT(r.action == RiskAction::REJECT, "test_drawdown_limit");
     ASSERT(rm.is_kill_switch_active(), "test_drawdown_kills");
 }
@@ -160,7 +160,7 @@ void test_reset_daily() {
 void test_check_speed() {
     RiskManager rm;
     auto start = std::chrono::high_resolution_clock::now();
-    auto r [[maybe_unused]] = rm.check_order("AAPL", "BUY", 150.0, 100);
+    auto r [[maybe_unused]] = rm.check_order("AAPL", Side::BUY, 150.0, 100);
     auto end = std::chrono::high_resolution_clock::now();
     int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     ASSERT(ns < 1'000'000, "test_check_speed");  // under 1ms
@@ -188,7 +188,7 @@ void benchmark(int num_checks) {
     for (int i = 0; i < num_checks; ++i) {
         auto start = std::chrono::high_resolution_clock::now();
 
-        rm.check_order("AAPL", "BUY", 150.0 + (i % 100) * 0.01, 1);
+        rm.check_order("AAPL", Side::BUY, 150.0 + (i % 100) * 0.01, 1);
 
         auto end = std::chrono::high_resolution_clock::now();
         latencies.push_back(

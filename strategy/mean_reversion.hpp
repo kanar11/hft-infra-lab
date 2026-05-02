@@ -24,8 +24,9 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
-#include <chrono>
 #include <algorithm>
+
+#include "../common/time_utils.hpp"
 
 // Max stocks we track simultaneously (fixed array, no heap on hot path)
 // Like /proc/sys/fs/file-max — a hard limit on open resources
@@ -125,12 +126,6 @@ class MeanReversionStrategy {
     int32_t     order_size_;
     StrategyStats stats_;
 
-    static int64_t now_ns() noexcept {
-        auto now = std::chrono::high_resolution_clock::now();
-        return std::chrono::duration_cast<std::chrono::nanoseconds>(
-            now.time_since_epoch()).count();
-    }
-
     // find_or_create: get price window for a stock symbol
     // Like hash table lookup — O(N) scan but N is small (≤64)
     // Jak wyszukiwanie w hash tablicy — O(N) ale N jest małe (≤64)
@@ -169,7 +164,7 @@ public:
     // To jest GORĄCA ŚCIEŻKA — wywoływana przy każdej aktualizacji danych rynkowych
     Signal on_market_data(const char* stock, double price,
                           int64_t timestamp_ns = 0) noexcept {
-        int64_t t0 = now_ns();
+        int64_t t0 = mono_ns();
         Signal sig;
 
         // Reject NaN/Inf prices — they would propagate silently into deviation
@@ -177,7 +172,7 @@ public:
         PriceWindow* w = (std::isfinite(price) && price > 0.0) ? find_or_create(stock) : nullptr;
         if (!w) {
             stats_.holds++;
-            stats_.total_latency_ns += (now_ns() - t0);
+            stats_.total_latency_ns += (mono_ns() - t0);
             return sig;  // invalid = HOLD
         }
 
@@ -187,7 +182,7 @@ public:
         // Potrzebujemy pełnego okna przed generowaniem sygnałów
         if (!w->full()) {
             stats_.holds++;
-            stats_.total_latency_ns += (now_ns() - t0);
+            stats_.total_latency_ns += (mono_ns() - t0);
             return sig;  // invalid = HOLD
         }
 
@@ -196,7 +191,7 @@ public:
         // (filtered above), but keep the check defensive.
         if (sma <= 0.0) {
             stats_.holds++;
-            stats_.total_latency_ns += (now_ns() - t0);
+            stats_.total_latency_ns += (mono_ns() - t0);
             return sig;
         }
         // deviation = (price - sma) / sma — fraction (0.01 = 1% above)
@@ -240,7 +235,7 @@ public:
             stats_.holds++;
         }
 
-        stats_.total_latency_ns += (now_ns() - t0);
+        stats_.total_latency_ns += (mono_ns() - t0);
         return sig;
     }
 

@@ -47,9 +47,12 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
-#include <chrono>
 #include <cstdio>
 #include <cmath>
+
+#include "../common/types.hpp"
+#include "../common/symbol_key.hpp"
+#include "../common/time_utils.hpp"
 
 
 // PRICE_SCALE: multiplier to convert float prices to fixed-point integers
@@ -89,13 +92,10 @@ enum class OrderStatus : uint8_t {
     REJECTED  = 5
 };
 
-enum class Side : uint8_t {
-    BUY  = 0,
-    SELL = 1
-};
+// Side enum + side_str live in common/types.hpp — included above.
+// Side jest w common/types.hpp.
 
-// Convert enum to string for printing (like Python's .value)
-// Konwertuj enum na string do wyświetlania (jak .value w Pythonie)
+// Convert OrderStatus enum to string for printing
 inline const char* status_str(OrderStatus s) noexcept {
     switch (s) {
         case OrderStatus::NEW:       return "NEW";
@@ -106,10 +106,6 @@ inline const char* status_str(OrderStatus s) noexcept {
         case OrderStatus::REJECTED:  return "REJECTED";
         default:                     return "UNKNOWN";
     }
-}
-
-inline const char* side_str(Side s) noexcept {
-    return s == Side::BUY ? "BUY" : "SELL";
 }
 
 
@@ -184,32 +180,11 @@ struct Position {
 
 class OMS {
     std::unordered_map<uint64_t, Order> orders_;
-    std::unordered_map<uint64_t, Position> positions_;  // key = symbol packed into uint64_t (no heap alloc)
-
-    // Pack up to 8 ASCII chars into a uint64_t — avoids std::string allocation on every lookup.
-    // memchr bounds the search (≤ 8) so the loop body is safe regardless of caller buffer size.
-    static uint64_t sym_to_key(const char* sym) noexcept {
-        uint64_t key = 0;
-        const void* end = std::memchr(sym, '\0', 8);
-        const size_t len = end ? static_cast<size_t>(static_cast<const char*>(end) - sym) : 8;
-        for (size_t i = 0; i < len; ++i)
-            key |= (static_cast<uint64_t>(static_cast<unsigned char>(sym[i])) << (i * 8));
-        return key;
-    }
+    std::unordered_map<uint64_t, Position> positions_;  // key = sym_to_key(symbol)
 
     uint64_t next_id_;
     int32_t  max_position_;
     int64_t  max_order_value_;   // in dollars (NOT fixed-point)
-
-    // now_ns: get current time in nanoseconds — used for latency measurement
-    // Uses std::chrono which maps to clock_gettime(CLOCK_MONOTONIC) on Linux
-    // now_ns: pobierz bieżący czas w nanosekundach — do pomiaru opóźnień
-    // Używa std::chrono, które mapuje się na clock_gettime(CLOCK_MONOTONIC) na Linuxie
-    static int64_t now_ns() noexcept {
-        auto now = std::chrono::high_resolution_clock::now();
-        return std::chrono::duration_cast<std::chrono::nanoseconds>(
-            now.time_since_epoch()).count();
-    }
 
 public:
     // Constructor — equivalent to Python's __init__
@@ -227,7 +202,7 @@ public:
     // (nullptr to odpowiednik None w Pythonie)
     Order* submit_order(const char* symbol, Side side, double price_f,
                         uint32_t quantity) noexcept {
-        int64_t t0 = now_ns();
+        int64_t t0 = mono_ns();
         int64_t price = to_fixed(price_f);
 
         // Input validation — same checks as Python version
@@ -271,7 +246,7 @@ public:
         Order order(id, symbol, side, price, quantity);
         order.created_ns = t0;
         order.status = OrderStatus::SENT;
-        order.sent_ns = now_ns();
+        order.sent_ns = mono_ns();
 
         auto it = orders_.emplace(id, order).first;
 
@@ -301,7 +276,7 @@ public:
         order.status = (order.filled_qty >= order.quantity)
                        ? OrderStatus::FILLED
                        : OrderStatus::PARTIAL;
-        order.filled_ns = now_ns();
+        order.filled_ns = mono_ns();
 
         // Update position — same logic as Python version
         // Aktualizuj pozycję — ta sama logika co w wersji Python

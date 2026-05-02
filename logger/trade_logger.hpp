@@ -31,7 +31,6 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
-#include <ctime>
 #include <chrono>
 #include <algorithm>
 #include <atomic>
@@ -40,6 +39,8 @@
 #include <vector>
 #include <unordered_set>
 #include <string>
+
+#include "../common/time_utils.hpp"
 
 // Max events in the in-memory ring buffer.
 // At 128 bytes/event: 1M events = 128 MB — allocated once at startup.
@@ -164,18 +165,7 @@ class TradeLogger {
     std::atomic<bool> flush_running_{false};
     FILE*             flush_file_{nullptr};
 
-    // Two-clock timestamping: monotonic for latency, wall for regulators
-    static int64_t mono_ns() noexcept {
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        return ts.tv_sec * 1'000'000'000LL + ts.tv_nsec;
-    }
-
-    static int64_t wall_ns_now() noexcept {
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
-        return ts.tv_sec * 1'000'000'000LL + ts.tv_nsec;
-    }
+    // mono_ns and wall_ns provided by common/time_utils.hpp
 
     // drain_to_file: write contiguous spans from t..h to flush_file_, returns final t.
     // Batches into one fwrite per contiguous range — one syscall per drain instead of N.
@@ -247,7 +237,7 @@ public:
         std::memcpy(hdr.magic, "HFTLOG\0\0", 8);
         hdr.version      = 1;
         hdr.record_size  = sizeof(TradeEvent);
-        hdr.created_wall_ns = wall_ns_now();
+        hdr.created_wall_ns = wall_ns();
         std::fwrite(&hdr, sizeof(hdr), 1, flush_file_);
         std::fflush(flush_file_);
 
@@ -290,7 +280,7 @@ public:
 
         TradeEvent& e = events_[slot];
         e.mono_ns     = mono_ns();
-        e.wall_ns     = wall_ns_now();
+        e.wall_ns     = wall_ns();
         e.sequence_no = ++sequence_;
         e.order_id    = order_id;
         e.price       = price;
@@ -474,7 +464,7 @@ public:
         std::memcpy(hdr.magic, "HFTLOG\0\0", 8);
         hdr.version         = 1;
         hdr.record_size     = sizeof(TradeEvent);
-        hdr.created_wall_ns = wall_ns_now();
+        hdr.created_wall_ns = wall_ns();
         std::fwrite(&hdr, sizeof(hdr), 1, f);
         int n = total_events();
         std::fwrite(events_.get(), sizeof(TradeEvent), n, f);
