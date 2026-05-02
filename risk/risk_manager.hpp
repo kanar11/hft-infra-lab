@@ -284,7 +284,7 @@ public:
 
 private:
     RiskCheckResult make_reject(const char* reason, int64_t t0) noexcept {
-        int64_t elapsed = now_ns() - t0;
+        int64_t elapsed = mono_ns() - t0;
         total_rejects_++;
         total_latency_ns_ += elapsed;
         return RiskCheckResult(RiskAction::REJECT, reason, elapsed);
