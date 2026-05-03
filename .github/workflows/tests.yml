@@ -29,17 +29,25 @@ jobs:
                    benchmarks/ dpdk-bypass/ monitoring/
 
   build-and-test:
-    # TODO: re-enable clang++ matrix once we know which clang-only warnings
-    # appear (it failed step 4 on first try; need the build log to fix).
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install g++
-        run: sudo apt-get update && sudo apt-get install -y g++
+      - name: Install ${{ matrix.compiler }}
+        run: |
+          sudo apt-get update
+          if [ "${{ matrix.compiler }}" = "clang++" ]; then
+            sudo apt-get install -y clang
+          else
+            sudo apt-get install -y g++
+          fi
 
       - name: Build all C++ modules
-        run: make build
+        run: make build CXX=${{ matrix.compiler }}
 
       - name: Run orderbook tests
         run: |
@@ -103,6 +111,26 @@ jobs:
           ./multicast/multicast_demo 50000
           ./simulator/sim_demo 50000
 
-  # TODO: sanitizers job (ASAN+UBSAN+TSAN) — first attempt failed in
-  # step 5 "Run instrumented integration tests"; either a real bug
-  # or a sanitizer false positive. Re-add once we can read the log.
+  sanitizers:
+    # ASAN+UBSAN on the integration suite, TSAN on the SPSC stress benchmark.
+    # Catches buffer overruns, divide-by-zero, signed overflow (ASAN/UBSAN) and
+    # data races / memory ordering bugs (TSAN) that the normal CI run can't see.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install g++
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - name: Build tests/test_all with ASAN + UBSAN
+        run: |
+          g++ -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+              -std=c++17 -Wall -Wextra -Werror -pthread \
+              -o tests/test_all tests/test_all.cpp
+      - name: Run instrumented integration tests
+        run: ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 ./tests/test_all
+      - name: Build SPSC stress with TSAN
+        run: |
+          g++ -O1 -g -fsanitize=thread -fno-omit-frame-pointer \
+              -std=c++17 -Wall -Wextra -pthread \
+              -o lockfree/spsc_queue lockfree/spsc_queue.cpp
+      - name: Run TSAN-instrumented SPSC stress
+        run: TSAN_OPTIONS=halt_on_error=1 ./lockfree/spsc_queue

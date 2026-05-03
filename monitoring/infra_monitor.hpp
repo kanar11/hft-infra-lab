@@ -219,8 +219,9 @@ inline NetworkStats parse_net_dev(const char* content) noexcept {
 class InfraMonitor {
     AlertThresholds thresholds_;
     CpuStats        prev_cpu_;
-    int64_t         prev_ctx_;
-    int64_t         prev_time_ns_;
+    // prev_ctx_ / prev_time_ns_ removed — they were initialized but never
+    // read. If we add per-sample context-switch and elapsed-time deltas,
+    // re-introduce them as locals or as fields written-and-read.
 
     static int64_t now_ns() noexcept {
         auto now = std::chrono::high_resolution_clock::now();
@@ -240,11 +241,10 @@ class InfraMonitor {
     }
 
 public:
-    InfraMonitor() noexcept
-        : prev_cpu_{0, 0, 0.0}, prev_ctx_(0), prev_time_ns_(0) {}
+    InfraMonitor() noexcept : prev_cpu_{0, 0, 0.0} {}
 
     InfraMonitor(const AlertThresholds& t) noexcept
-        : thresholds_(t), prev_cpu_{0, 0, 0.0}, prev_ctx_(0), prev_time_ns_(0) {}
+        : thresholds_(t), prev_cpu_{0, 0, 0.0} {}
 
     // collect_cpu: read and parse /proc/stat
     CpuStats collect_cpu() noexcept {

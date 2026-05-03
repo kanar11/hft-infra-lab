@@ -472,28 +472,28 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
 
         double fill_price = price;
+        Side   oms_side   = side_from_str(side_str);
 
         if (use_strategy) {
-            // Strategy mode: feed price, trade only on signals
+            // Strategy mode: feed price, trade only on signals.
+            // Resolve Side BEFORE 'signal' goes out of scope — signal.side
+            // is a pointer into the local Signal struct (ASAN flagged
+            // stack-use-after-scope when we let side_str alias it).
             Signal signal = strategy.on_market_data(stock, price, 0);
             if (!signal.valid) continue;
-            side_str = signal.side;
-            shares = signal.quantity;
+            oms_side   = side_from_str(signal.side);
+            shares     = signal.quantity;
             fill_price = signal.price;
 
             if (use_router) {
-                RouteDecision route = router.route_order(side_str, shares);
+                RouteDecision route = router.route_order(signal.side, shares);
                 if (route.valid) fill_price = route.price;
             }
-        } else {
-            // Direct mode
-            if (use_router) {
-                RouteDecision route = router.route_order(side_str, shares);
-                if (route.valid) fill_price = route.price;
-            }
+        } else if (use_router) {
+            RouteDecision route = router.route_order(side_str, shares);
+            if (route.valid) fill_price = route.price;
         }
 
-        Side oms_side = (std::strcmp(side_str, "BUY") == 0) ? Side::BUY : Side::SELL;
         Order* order = oms.submit_order(stock, oms_side, fill_price, shares);
         if (order) {
             stats.orders_submitted++;
