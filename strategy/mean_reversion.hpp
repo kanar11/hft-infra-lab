@@ -125,6 +125,7 @@ class MeanReversionStrategy {
     double      threshold_;        // deviation threshold (e.g., 0.001 = 0.1%)
     int32_t     order_size_;
     StrategyStats stats_;
+    bool        overflow_warned_ = false;  // print MAX_STOCKS warning once per run
 
     // find_or_create: get price window for a stock symbol
     // Like hash table lookup — O(N) scan but N is small (≤64)
@@ -135,8 +136,16 @@ class MeanReversionStrategy {
             if (std::strcmp(windows_[i].symbol, stock) == 0)
                 return &windows_[i];
         }
-        // Create new
-        if (stock_count_ >= MAX_STOCKS) return nullptr;
+        // Create new — but warn loudly if we run out of slots, otherwise the
+        // strategy silently ignores new symbols and the user has no signal.
+        if (stock_count_ >= MAX_STOCKS) {
+            if (!overflow_warned_) {
+                printf("[Strategy] WARNING: MAX_STOCKS=%d reached; new symbol '%.*s' ignored\n",
+                       MAX_STOCKS, 8, stock);
+                overflow_warned_ = true;
+            }
+            return nullptr;
+        }
         PriceWindow& w = windows_[stock_count_++];
         w.active = true;
         w.window_size = window_size_;

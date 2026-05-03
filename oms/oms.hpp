@@ -322,7 +322,10 @@ public:
     // cancel_order: anuluj aktywne zlecenie — zwolnij rezerwę pending
     void cancel_order(uint64_t order_id) noexcept {
         auto it = orders_.find(order_id);
-        if (it == orders_.end()) return;
+        if (it == orders_.end()) {
+            printf("[OMS] WARNING: cancel for unknown order_id=%lu\n", (unsigned long)order_id);
+            return;
+        }
 
         Order& order = it->second;
         if (order.status == OrderStatus::SENT || order.status == OrderStatus::PARTIAL) {
@@ -334,6 +337,11 @@ public:
                 pos_it->second.pending_qty -= signed_remaining;
             }
             order.status = OrderStatus::CANCELLED;
+        } else {
+            // Already FILLED / CANCELLED / REJECTED — silently ignore would
+            // hide double-cancel bugs upstream. Warn once so the caller sees it.
+            printf("[OMS] WARNING: cancel for inactive order_id=%lu (status=%s)\n",
+                   (unsigned long)order_id, status_str(order.status));
         }
     }
 
