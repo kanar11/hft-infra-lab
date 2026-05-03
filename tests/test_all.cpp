@@ -755,6 +755,7 @@ void test_integration() {
     ASSERT(logger.total_events() > 10, "integ_logged_events");
     ASSERT(submitted > 0, "integ_submitted");
     ASSERT(filled == submitted, "integ_all_filled");
+    ASSERT(submitted + rejected > 0, "integ_orders_attempted");
     ASSERT(logger.get_counter(EventType::SYSTEM_START) == 1, "integ_system_start");
     ASSERT(logger.get_counter(EventType::SYSTEM_STOP) == 1, "integ_system_stop");
     ASSERT(logger.get_counter(EventType::ORDER_SUBMIT) > 0, "integ_submits_logged");
@@ -762,7 +763,7 @@ void test_integration() {
     ASSERT(oms.order_count() > 0u, "integ_oms_orders");
     ASSERT(oms.position_count() > 0u, "integ_positions");
 
-    printf("  Integration: %d assertions\n", 9);
+    printf("  Integration: %d assertions\n", 10);
 }
 
 
