@@ -520,6 +520,108 @@ void test_spsc_queue() {
 }
 
 
+// =====================================================
+// Logger async flush — exercise start/stop and binary file output
+// =====================================================
+
+void test_logger_async_flush() {
+    SECTION("Logger async flush");
+    const char* path = "/tmp/hft_logger_async_test.bin";
+    std::remove(path);  // ensure clean slate
+
+    {
+        TradeLogger logger;
+        ASSERT(logger.start_async_flush(path), "async_started");
+        for (int i = 0; i < 50; ++i)
+            logger.log(EventType::ORDER_SUBMIT, i + 1, "AAPL", "BUY", 100, 150.25);
+        logger.stop_async_flush();  // blocks until drained
+    }
+
+    FILE* f = std::fopen(path, "rb");
+    ASSERT(f != nullptr, "async_file_exists");
+    if (f) {
+        std::fseek(f, 0, SEEK_END);
+        long size = std::ftell(f);
+        std::fclose(f);
+        // header (64) + 50 events * 128 = 64 + 6400 = 6464
+        ASSERT(size == 64 + 50 * 128, "async_file_correct_size");
+    }
+    std::remove(path);
+}
+
+
+// =====================================================
+// Risk rate limiter — bursts above max_orders_per_second get rejected
+// =====================================================
+
+void test_risk_rate_limiter() {
+    SECTION("Risk rate limiter");
+    RiskLimits l;
+    l.max_orders_per_second = 5;
+    RiskManager rm(l);
+
+    for (int i = 0; i < 5; ++i) {
+        auto r = rm.check_order("AAPL", Side::BUY, 1.0, 1);
+        ASSERT(r.action == RiskAction::ALLOW, "rate_within_burst");
+    }
+    auto over = rm.check_order("AAPL", Side::BUY, 1.0, 1);
+    ASSERT(over.action == RiskAction::REJECT, "rate_burst_rejected");
+    ASSERT(strstr(over.reason, "Rate") != nullptr, "rate_reason_correct");
+}
+
+
+// =====================================================
+// Risk drawdown with peak=0 — must skip the check, never reject
+// =====================================================
+
+void test_risk_drawdown_no_peak() {
+    SECTION("Risk drawdown peak=0");
+    RiskLimits l;
+    l.max_drawdown_pct = 5.0;
+    RiskManager rm(l);
+
+    // No P&L history yet — drawdown check skips when peak <= 0
+    auto r1 = rm.check_order("AAPL", Side::BUY, 1.0, 1);
+    ASSERT(r1.action == RiskAction::ALLOW, "drawdown_zero_peak_allow");
+
+    // Negative P&L without ever hitting a peak — drawdown still skips
+    rm.update_pnl(-100.0);
+    auto r2 = rm.check_order("AAPL", Side::BUY, 1.0, 1);
+    ASSERT(r2.action == RiskAction::ALLOW, "drawdown_no_peak_no_kill");
+    ASSERT(!rm.is_kill_switch_active(), "drawdown_no_peak_not_killed");
+}
+
+
+// =====================================================
+// FIX + OUCH + ITCH interleaved — three protocols on one wire-of-life
+// =====================================================
+
+void test_protocols_interleaved() {
+    SECTION("FIX + OUCH + ITCH interleaved");
+
+    FIXMessage fix;
+    ITCHParser itch;
+    uint8_t buf41[41] = {'A'};   // OUCH Accepted
+    uint8_t buf31[31] = {'E'};   // OUCH Executed
+    uint8_t itch_a[34] = {'A'};  // ITCH Add Order
+    uint8_t itch_d[17] = {'D'};  // ITCH Delete Order
+
+    // Round 1
+    fix.parse("8=FIX.4.2|35=D|55=AAPL|54=1|44=150.25|38=100");
+    ASSERT(fix.field_count() > 0,                                   "ileave_fix_1");
+    ASSERT(strcmp(OUCHMessage::parse_response(buf41, 41).type,
+                  "ACCEPTED") == 0,                                 "ileave_ouch_1");
+    ASSERT(itch.parse(itch_a, 34).type == MsgType::ADD_ORDER,       "ileave_itch_1");
+
+    // Round 2 — different messages, same parsers
+    fix.parse("8=FIX.4.2|35=8|55=TSLA|54=2");
+    ASSERT(fix.field_count() == 4,                                  "ileave_fix_2");
+    ASSERT(strcmp(OUCHMessage::parse_response(buf31, 31).type,
+                  "EXECUTED") == 0,                                 "ileave_ouch_2");
+    ASSERT(itch.parse(itch_d, 17).type == MsgType::DELETE_ORDER,    "ileave_itch_2");
+}
+
+
 void test_simulator() {
     SECTION("Market Simulator");
 
@@ -829,6 +931,10 @@ int main() {
     test_fix();
     test_ouch();
     test_spsc_queue();
+    test_logger_async_flush();
+    test_risk_rate_limiter();
+    test_risk_drawdown_no_peak();
+    test_protocols_interleaved();
     test_simulator();
     test_integration();
     test_negative_cases();
