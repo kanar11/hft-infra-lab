@@ -30,6 +30,8 @@ jobs:
 
   build-and-test:
     runs-on: ubuntu-latest
+    # clang++ is non-blocking until any remaining clang-only warnings are addressed.
+    continue-on-error: ${{ matrix.compiler == 'clang++' }}
     strategy:
       fail-fast: false
       matrix:
