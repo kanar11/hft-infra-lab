@@ -127,13 +127,13 @@ def render(commits: List[Tuple[str, str]]) -> str:
 
     lines.append("## Known follow-ups")
     lines.append("")
-    lines.append("- `clang++` build still has warnings — run with `-Werror -Wall -Wextra` "
-                 "and inspect; currently `continue-on-error` in CI.")
     lines.append("- Bilingual (PL+ENG) comment style is inconsistent across modules — "
                  "ad-hoc cleanup, not blocking.")
     lines.append("- `cppcheck-suppress uninitvar` on `SPSCQueue<T,SIZE>{}` "
                  "in `tests/test_all.cpp` is a known cppcheck template-modeling "
                  "limitation, intentionally kept.")
+    lines.append("- CI matrix could be extended with macOS / `-fsanitize=memory` "
+                 "/ `clang-tidy` once we want stricter coverage.")
     lines.append("")
     return "\n".join(lines)
 

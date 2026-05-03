@@ -1,6 +1,6 @@
 # HFT Infra Lab — Refactor Session Summary
 
-`46ea0dd` → `3980462` &mdash; **27 commits** across 7 planned phases plus 5 follow-up rounds.
+`46ea0dd` → `07a6da8` &mdash; **29 commits** across 7 planned phases plus 5 follow-up rounds.
 
 ## What got done
 
@@ -37,7 +37,7 @@
 - [`7edeec8`](https://github.com/kanar11/hft-infra-lab/commit/7edeec8) refactor: replace cppcheck arrayIndexOutOfBounds suppresses with strnlen
 - [`681359f`](https://github.com/kanar11/hft-infra-lab/commit/681359f) refactor(arch): consolidate Side enum, sym_to_key, time helpers in common/
 
-### Fixes (10)
+### Fixes (11)
 
 - [`46ea0dd`](https://github.com/kanar11/hft-infra-lab/commit/46ea0dd) fix: cppcheck narrowingConversion вЂ” size_t to int in latency benchmarks
 - [`64fcd07`](https://github.com/kanar11/hft-infra-lab/commit/64fcd07) fix(benchmarks): cast vector indices to size_t
@@ -49,6 +49,7 @@
 - [`d8400d2`](https://github.com/kanar11/hft-infra-lab/commit/d8400d2) fix: three latent bugs from post-session review
 - [`6b886bb`](https://github.com/kanar11/hft-infra-lab/commit/6b886bb) fix(risk): replace stale now_ns() reference with mono_ns()
 - [`2498695`](https://github.com/kanar11/hft-infra-lab/commit/2498695) fix: real bug surfaced by ASAN + clang -Wunused-private-field
+- [`07a6da8`](https://github.com/kanar11/hft-infra-lab/commit/07a6da8) fix(test): use 'rejected' counter so clang -Wunused-but-set-variable passes
 
 ### Hardening (1)
 
@@ -70,8 +71,12 @@
 
 - [`a2c1f21`](https://github.com/kanar11/hft-infra-lab/commit/a2c1f21) chore: warn on OMS double-cancel and Strategy MAX_STOCKS overflow
 
+### Other (1)
+
+- [`7a37feb`](https://github.com/kanar11/hft-infra-lab/commit/7a37feb) docs: scripts/session_summary.py + generated SESSION_SUMMARY.md
+
 ## Known follow-ups
 
-- `clang++` build still has warnings — run with `-Werror -Wall -Wextra` and inspect; currently `continue-on-error` in CI.
 - Bilingual (PL+ENG) comment style is inconsistent across modules — ad-hoc cleanup, not blocking.
 - `cppcheck-suppress uninitvar` on `SPSCQueue<T,SIZE>{}` in `tests/test_all.cpp` is a known cppcheck template-modeling limitation, intentionally kept.
+- CI matrix could be extended with macOS / `-fsanitize=memory` / `clang-tidy` once we want stricter coverage.
