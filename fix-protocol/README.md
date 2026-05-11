@@ -3,7 +3,7 @@
 Parses Financial Information eXchange messages for order routing.
 *Analizuje komunikaty Financial Information eXchange do routingu zamówień.*
 
-## Performance / Wydajność
+## Performance 
 
 | Metric | C++ |
 |--------|-----|
@@ -34,7 +34,7 @@ Parses Financial Information eXchange messages for order routing.
 | `fix_parser.hpp` | C++ header-only implementation |
 | `fix_demo.cpp` | C++ demo with 27 unit tests + throughput benchmark |
 
-## Run / Uruchomienie
+## Run 
 
 ```bash
 # C++ (build + run)
