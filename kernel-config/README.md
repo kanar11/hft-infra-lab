@@ -14,7 +14,7 @@ Linux kernel hardening for low-latency trading infrastructure.
 - `grub_params.txt` — boot parameters
 - `verify_tuning.sh` — verification script
 
-## Usage / Użytkowanie
+## Run
 ```bash
 sudo cp sysctl_hft.conf /etc/sysctl.conf
 sudo sysctl -p
