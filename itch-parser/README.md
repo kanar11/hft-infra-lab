@@ -3,7 +3,7 @@
 Parses binary market data feed messages from NASDAQ.
 *Analizuje binarne komunikaty źródła danych rynkowych z NASDAQ.*
 
-## Performance / Wydajność
+## Performance 
 
 | Metric | C++ (`itch_parser.hpp`) |
 |--------|------------------------|
@@ -12,7 +12,7 @@ Parses binary market data feed messages from NASDAQ.
 
 ## Supported Messages / Obsługiwane wiadomości (9 types / typów)
 
-| Code | Type | Size | Description / Opis |
+| Code | Type | Size | Description |
 |------|------|------|---|
 | A | ADD_ORDER | 34 B | New limit order / Nowe zlecenie z limitem |
 | F | ADD_ORDER_MPID | 38 B | New order with Market Participant ID / Nowe zlecenie z ID uczestnika |
@@ -34,14 +34,14 @@ Parses binary market data feed messages from NASDAQ.
 *OUCH: binarne, wysyłanie zleceń DO giełdy (tylko zapis)*
 *FIX: tekstowe, komunikacja dwukierunkowa*
 
-## Files / Pliki
+## Files 
 
 | File | Description / Opis |
 |------|---|
 | `itch_parser.hpp` | C++ header-only parser — zero-alloc, inline byte-swap |
 | `benchmark_itch.cpp` | C++ benchmark — 10M messages, throughput + latency percentiles |
 
-## Run / Uruchomienie
+## Run 
 
 ```bash
 # C++ benchmark / Benchmark C++
