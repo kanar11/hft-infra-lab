@@ -3,7 +3,7 @@
 Standalone pre-trade risk engine with circuit breaker and kill switch.
 *Autonomiczny silnik kontroli ryzyka z przełącznikiem obwodu i wyłącznikiem awaryjnym.*
 
-## Performance / Wydajność
+## Performance
 
 | Metric | C++ |
 |--------|-----|
