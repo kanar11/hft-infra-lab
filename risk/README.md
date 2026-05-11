@@ -37,7 +37,7 @@ Every order MUST pass all 7 risk checks before reaching the OMS.
 | `risk_manager.hpp` | C++ header-only implementation |
 | `risk_demo.cpp` | C++ demo with 14 unit tests + throughput benchmark |
 
-## Run / Uruchomienie
+## Run
 
 ```bash
 # C++ (build + run)
