@@ -3,7 +3,7 @@
 Thread-safe trade event logger with nanosecond timestamps.
 *Bezpieczny wątkowo logger zdarzeń handlowych z nanosekundowymi znacznikami czasu.*
 
-## Performance / Wydajność
+## Performance 
 
 | Metric | C++ |
 |--------|-----|
