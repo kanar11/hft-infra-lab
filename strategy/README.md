@@ -3,7 +3,7 @@
 Simple mean reversion strategy for the HFT pipeline demo.
 *Prosta strategia powrotu do średniej dla demonstracji potoku HFT.*
 
-## Performance / Wydajność
+## Performance 
 
 | Metric | C++ |
 |--------|-----|
