@@ -39,7 +39,7 @@ The ~460 ns theoretical minimum assumes perfect cache alignment and no
 contention. In practice on our VirtualBox 2-core VM, additional overhead
 comes from:
 
-| Factor / Czynnik | Estimated Impact / Szacowany wpływ |
+| Factor / Czynnik | Estimated Impact |
 |---|---|
 | VM overhead (VirtualBox) | +2-3 μs |
 | Cache misses (L3/RAM) | +150-300 ns |
