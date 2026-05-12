@@ -21,7 +21,7 @@ Market Data → ITCH Parse → Strategy Decision → Risk Check → OMS Submit �
 
 ## Latency Breakdown (C++, p50) / Rozbicie opóźnień (C++, p50)
 
-| Stage / Etap | Component / Komponent | p50 Latency | Notes / Uwagi |
+| Stage | Component | p50 Latency | Notes |
 |---|---|---|---|
 | 1. Network receive | DPDK poll mode | ~50 ns | Kernel bypass, busy-wait polling |
 | 2. Protocol decode | ITCH 5.0 parser | ~40 ns | Binary parse, big-endian swap |
