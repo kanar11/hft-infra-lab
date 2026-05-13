@@ -3,14 +3,14 @@
 End-to-end HFT pipeline that connects all modules together.
 *Pełny potok HFT łączący wszystkie moduły.*
 
-## Pipeline / Potok
+## Pipeline 
 ```
 ITCH Generator → ITCH Parser → [Strategy] → [Router] → OMS (risk checks) → Fill Engine → P&L
 ```
 
 *Generator ITCH → Parser ITCH → [Strategia] → [Router] → OMS (kontrole ryzyka) → Silnik wypełniania → Zysk i strata.*
 
-## What It Does / Co robi
+## What It Does 
 
 1. Generates realistic ITCH 5.0 binary messages (ADD_ORDER, EXECUTE, CANCEL, TRADE, SYSTEM_EVENT)
 *Generuje realistyczne wiadomości binarne ITCH 5.0 (ADD_ORDER, EXECUTE, CANCEL, TRADE, SYSTEM_EVENT).*
@@ -30,7 +30,7 @@ ITCH Generator → ITCH Parser → [Strategy] → [Router] → OMS (risk checks)
 6. Tracks positions and realized P&L per symbol
 *Śledzi pozycje i zrealizowany zysk/stratę na symbol.*
 
-## Run / Uruchomienie
+## Run
 ```bash
 # Default: 10,000 messages, direct mode
 make simulate
