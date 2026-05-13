@@ -18,7 +18,7 @@ struct MarketData {
 // Benchmark queue throughput with producer-consumer pattern
 // Benchmark przepustowości kolejki w schemacie producent-konsument
 void benchmark_throughput() {
-    SPSCQueue<MarketData, 65536> queue;
+    lockfree::SPSCQueue<MarketData, 65536> queue;
     const int NUM_MESSAGES = 10000000;
     std::atomic<bool> done{false};
     long long total_latency = 0;
@@ -79,7 +79,7 @@ void benchmark_throughput() {
 // Zademonstruj podstawowe operacje kolejki
 void demo() {
     std::cout << "=== SPSC Queue Demo ===" << std::endl;
-    SPSCQueue<MarketData, 1024> queue;
+    lockfree::SPSCQueue<MarketData, 1024> queue;
 
     // Simulate market data producer
     // Symuluj producenta danych rynkowych

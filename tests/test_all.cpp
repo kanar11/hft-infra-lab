@@ -15,6 +15,8 @@
 #include <thread>
 #include <atomic>
 #include <limits>
+#include <vector>
+#include <algorithm>
 
 // All module headers
 #include "../itch-parser/itch_parser.hpp"
@@ -26,6 +28,10 @@
 #include "../fix-protocol/fix_parser.hpp"
 #include "../ouch-protocol/ouch_protocol.hpp"
 #include "../lockfree/spsc_queue.hpp"
+#include "../lockfree/mpsc_queue.hpp"
+#include "../lockfree/mpmc_queue.hpp"
+#include "../lockfree/sequencer.hpp"
+#include "../lockfree/waitable_mpsc.hpp"
 #include "../simulator/market_sim.hpp"
 
 static int tests_passed = 0;
@@ -487,7 +493,7 @@ void test_ouch() {
 void test_spsc_queue() {
     SECTION("SPSC Queue (concurrent)");
 
-    SPSCQueue<int, 4096> q{};
+    lockfree::SPSCQueue<int, 4096> q{};
     constexpr int N = 100'000;
     std::atomic<bool> stop{false};
     int last_seq = -1;
@@ -517,6 +523,232 @@ void test_spsc_queue() {
     ASSERT(q.empty(),        "spsc_drained");
 
     printf("  SPSC: 4 assertions (%d msgs)\n", N);
+}
+
+
+// =====================================================
+// MPSC Queue — 4 producers × 25k → 1 consumer, per-producer FIFO
+// =====================================================
+
+void test_mpsc_queue() {
+    SECTION("MPSC Queue (4 producers)");
+    lockfree::MPSCQueue<uint64_t, 4096> q;
+
+    constexpr int PRODS = 4;
+    constexpr int PER   = 25'000;
+    auto encode = [](int pid, int seq) {
+        return (static_cast<uint64_t>(pid) << 32) | static_cast<uint32_t>(seq);
+    };
+
+    std::atomic<int> done{0};
+    int  last_seen[PRODS] = {-1, -1, -1, -1};
+    int  received = 0;
+    bool fifo_ok  = true;
+    bool no_dup   = true;
+
+    std::thread consumer([&]() {
+        uint64_t v;
+        while (done.load(std::memory_order_acquire) < PRODS || !q.empty()) {
+            if (q.pop(v)) {
+                const int pid = static_cast<int>(v >> 32);
+                const int seq = static_cast<int>(v & 0xFFFFFFFFu);
+                if (seq == last_seen[pid]) no_dup  = false;
+                else if (seq != last_seen[pid] + 1) fifo_ok = false;
+                last_seen[pid] = seq;
+                ++received;
+            }
+        }
+    });
+
+    std::vector<std::thread> producers;
+    for (int p = 0; p < PRODS; ++p) {
+        producers.emplace_back([&, p]() {
+            for (int s = 0; s < PER; ++s) while (!q.push(encode(p, s))) {}
+            done.fetch_add(1, std::memory_order_release);
+        });
+    }
+    for (auto& t : producers) t.join();
+    consumer.join();
+
+    ASSERT(received == PRODS * PER, "mpsc_total_count");
+    ASSERT(fifo_ok,                 "mpsc_per_producer_fifo");
+    ASSERT(no_dup,                  "mpsc_no_duplicates");
+    ASSERT(q.empty(),               "mpsc_drained");
+
+    printf("  MPSC: 4 assertions (%d producers × %d msgs)\n", PRODS, PER);
+}
+
+
+// =====================================================
+// MPMC Queue — 4 producers × 25k → 4 consumers, no-loss + no-dup
+// =====================================================
+
+void test_mpmc_queue() {
+    SECTION("MPMC Queue (4×4)");
+    lockfree::MPMCQueue<uint64_t, 4096> q;
+
+    constexpr int PRODS = 4, CONS = 4, PER = 25'000;
+    auto encode = [](int pid, int seq) {
+        return (static_cast<uint64_t>(pid) << 32) | static_cast<uint32_t>(seq);
+    };
+
+    std::atomic<int> done{0};
+    std::vector<std::vector<uint64_t>> received(CONS);
+
+    std::vector<std::thread> consumers;
+    for (int c = 0; c < CONS; ++c) {
+        consumers.emplace_back([&, c]() {
+            received[c].reserve(PRODS * PER / CONS * 2);
+            uint64_t v;
+            while (done.load(std::memory_order_acquire) < PRODS || !q.empty()) {
+                if (q.pop(v)) received[c].push_back(v);
+            }
+        });
+    }
+    std::vector<std::thread> producers;
+    for (int p = 0; p < PRODS; ++p) {
+        producers.emplace_back([&, p]() {
+            for (int s = 0; s < PER; ++s) while (!q.push(encode(p, s))) {}
+            done.fetch_add(1, std::memory_order_release);
+        });
+    }
+    for (auto& t : producers) t.join();
+    for (auto& t : consumers) t.join();
+
+    std::vector<uint64_t> all;
+    for (auto& r : received) all.insert(all.end(), r.begin(), r.end());
+    std::sort(all.begin(), all.end());
+    const bool no_dup = std::adjacent_find(all.begin(), all.end()) == all.end();
+
+    ASSERT((int)all.size() == PRODS * PER, "mpmc_total_count");
+    ASSERT(no_dup,                          "mpmc_no_duplicates");
+    ASSERT(all.front() == encode(0, 0),     "mpmc_first_present");
+    ASSERT(all.back()  == encode(PRODS - 1, PER - 1), "mpmc_last_present");
+
+    printf("  MPMC: 4 assertions (%d×%d × %d msgs)\n", PRODS, CONS, PER);
+}
+
+
+// =====================================================
+// Sequencer — 1 producer → 3 consumers, fan-out, in-order reads
+// =====================================================
+
+void test_sequencer() {
+    SECTION("Sequencer (1P × 3C fan-out)");
+    lockfree::Sequencer<int64_t, 1024> s;
+    constexpr int N = 20'000, CONS = 3;
+
+    std::vector<std::atomic<int64_t>> cseq(CONS);
+    for (auto& a : cseq) a.store(-1, std::memory_order_relaxed);
+    std::atomic<bool> producer_done{false};
+    std::atomic<bool> in_order{true};
+
+    auto min_cseq = [&]() {
+        int64_t mn = cseq[0].load(std::memory_order_acquire);
+        for (int c = 1; c < CONS; ++c) {
+            const int64_t v = cseq[c].load(std::memory_order_acquire);
+            if (v < mn) mn = v;
+        }
+        return mn;
+    };
+
+    std::vector<std::thread> consumers;
+    for (int c = 0; c < CONS; ++c) {
+        consumers.emplace_back([&, c]() {
+            int64_t next = 0;
+            for (;;) {
+                const int64_t hi = s.available();
+                while (next <= hi) {
+                    if (s.read(next) != next * 7) in_order.store(false);
+                    cseq[c].store(next, std::memory_order_release);
+                    ++next;
+                }
+                if (producer_done.load(std::memory_order_acquire) && next > s.available())
+                    break;
+            }
+        });
+    }
+    std::thread gater([&]() {
+        while (!producer_done.load(std::memory_order_acquire) || min_cseq() < N - 1) {
+            const int64_t mn = min_cseq();
+            if (mn >= 0) s.mark_consumed(mn);
+        }
+    });
+    std::thread producer([&]() {
+        for (int i = 0; i < N; ++i) {
+            int64_t seq;
+            while ((seq = s.try_claim()) == -1) {
+                const int64_t mn = min_cseq();
+                if (mn >= 0) s.mark_consumed(mn);
+            }
+            s.slot(seq) = seq * 7;
+            s.publish(seq);
+        }
+        producer_done.store(true, std::memory_order_release);
+    });
+
+    producer.join();
+    for (auto& t : consumers) t.join();
+    gater.join();
+
+    ASSERT(in_order.load(), "seq_each_consumer_in_order");
+    for (int c = 0; c < CONS; ++c)
+        ASSERT(cseq[c].load() == N - 1, "seq_consumer_finished");
+
+    printf("  Sequencer: 4 assertions (%d events × %d consumers)\n", N, CONS);
+}
+
+
+// =====================================================
+// WaitableMPSC — producer wakes parked consumer via pop_wait(timeout)
+// =====================================================
+
+void test_waitable_mpsc() {
+    SECTION("Waitable MPSC (blocking pop)");
+    using namespace std::chrono_literals;
+
+    // Fast path: push then pop_wait returns immediately.
+    {
+        lockfree::WaitableMPSCQueue<int, 8> q;
+        ASSERT(q.push(42), "wmpsc_push");
+        int v = 0;
+        const auto start = std::chrono::steady_clock::now();
+        ASSERT(q.pop_wait(v, 100ms), "wmpsc_fast_pop");
+        ASSERT(v == 42, "wmpsc_fast_value");
+        ASSERT(std::chrono::steady_clock::now() - start < 50ms, "wmpsc_fast_no_block");
+    }
+
+    // Wakeup: parked consumer wakes within deadline when producer pushes.
+    {
+        lockfree::WaitableMPSCQueue<int, 8> q;
+        std::atomic<bool> got{false};
+        std::atomic<int>  got_value{0};
+        std::thread consumer([&]() {
+            int v;
+            if (q.pop_wait(v, 500ms)) {
+                got_value.store(v, std::memory_order_relaxed);
+                got.store(true, std::memory_order_release);
+            }
+        });
+        std::this_thread::sleep_for(10ms);
+        q.push(7);
+        consumer.join();
+        ASSERT(got.load(),           "wmpsc_wakeup");
+        ASSERT(got_value.load() == 7,"wmpsc_wakeup_value");
+    }
+
+    // Timeout: pop_wait on empty queue returns false after the deadline.
+    {
+        lockfree::WaitableMPSCQueue<int, 8> q;
+        int v = 0;
+        const auto start = std::chrono::steady_clock::now();
+        const bool got = q.pop_wait(v, 20ms);
+        const auto dt = std::chrono::steady_clock::now() - start;
+        ASSERT(!got,           "wmpsc_timeout_returns_false");
+        ASSERT(dt >= 15ms,     "wmpsc_actually_waited");
+    }
+
+    printf("  WaitableMPSC: 8 assertions\n");
 }
 
 
@@ -932,6 +1164,10 @@ int main() {
     test_fix();
     test_ouch();
     test_spsc_queue();
+    test_mpsc_queue();
+    test_mpmc_queue();
+    test_sequencer();
+    test_waitable_mpsc();
     test_logger_async_flush();
     test_risk_rate_limiter();
     test_risk_drawdown_no_peak();

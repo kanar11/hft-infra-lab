@@ -1,82 +1,95 @@
 /*
- * SPSC Lock-Free Queue — C++ Implementation
- * Bezblokująca kolejka SPSC — implementacja C++
+ * SPSCQueue<T, SIZE> — single-producer single-consumer lock-free ring buffer.
  *
- * Single-Producer Single-Consumer ring buffer. Used in HFT between the
- * market-data thread and the trading thread (or any one-to-one handoff).
- * Bezblokująca kolejka jeden-do-jednego. Używana w HFT między wątkiem
- * danych rynkowych a wątkiem handlu (lub innymi przekazami 1:1).
+ * Invariants
+ * ----------
+ *   - Exactly ONE thread calls push() over the queue's lifetime.
+ *   - Exactly ONE (different) thread calls pop().
+ *   - SIZE must be a positive power of two.
  *
- * Memory ordering:
- *   producer  → push:  buffer write THEN head.store(release)
- *   consumer  → pop:   head.load(acquire) THEN buffer read
- *   release/acquire pair guarantees the consumer sees a fully-written slot.
+ * Memory ordering
+ * ---------------
+ * Each side reads its OWN counter (head for producer, tail for consumer)
+ * with std::memory_order_relaxed — sole writer, no sync needed.
  *
- *   Each side reads its own counter (head for producer, tail for consumer)
- *   with relaxed — it is the sole writer, so no synchronisation needed.
+ * Each side reads the OTHER side's counter with std::memory_order_acquire,
+ * paired with a release-store from the other thread:
  *
- * head and tail sit on separate cache lines (alignas(64)) to avoid false
- * sharing — without it, every producer write would invalidate the consumer's
- * cache line and vice versa, costing 50–100 ns per round-trip.
+ *   ┌──────────────────┐  release       acquire   ┌──────────────────┐
+ *   │ producer:        │ ───────► head ────────►  │ consumer:        │
+ *   │ buf[h] = item    │                          │ item = buf[t]    │
+ *   │ head.store(...)  │                          │ tail.store(...)  │
+ *   └──────────────────┘ ◄─────── tail ◄───────── └──────────────────┘
+ *                          acquire       release
+ *
+ * False sharing prevention
+ * ------------------------
+ * head_ and tail_ each occupy their own 64-byte cache line (alignas(64))
+ * so the producer writing head_ does not invalidate the consumer's copy
+ * of tail_. Without that separation, every push pays ~50-100 ns of cache-
+ * coherence round-trip.
  */
-
 #pragma once
 
 #include <atomic>
 #include <cstddef>
 
 
-template<typename T, size_t SIZE>
+namespace lockfree {
+
+inline constexpr std::size_t kCacheLine = 64;
+
+
+template <typename T, std::size_t SIZE>
 class SPSCQueue {
     static_assert(SIZE > 0,                       "SIZE must be positive");
-    static_assert((SIZE & (SIZE - 1)) == 0,       "SIZE must be power of 2");
+    static_assert((SIZE & (SIZE - 1)) == 0,       "SIZE must be a power of two");
 
-    T buffer[SIZE];
-    alignas(64) std::atomic<size_t> head{0};   // producer writes / producent pisze
-    alignas(64) std::atomic<size_t> tail{0};   // consumer reads  / konsument czyta
+    T buffer_[SIZE];
+    alignas(kCacheLine) std::atomic<std::size_t> head_{0};   // producer writes
+    alignas(kCacheLine) std::atomic<std::size_t> tail_{0};   // consumer writes
 
 public:
     // push: producer-only. Returns false if the queue is full.
-    // push: tylko producent. Zwraca false jeśli kolejka pełna.
-    bool push(const T& item) {
-        size_t h    = head.load(std::memory_order_relaxed);
-        size_t next = (h + 1) & (SIZE - 1);
-        if (next == tail.load(std::memory_order_acquire)) return false;
-        buffer[h] = item;
-        head.store(next, std::memory_order_release);
+    bool push(const T& item) noexcept {
+        const std::size_t h    = head_.load(std::memory_order_relaxed);
+        const std::size_t next = (h + 1) & (SIZE - 1);
+        if (next == tail_.load(std::memory_order_acquire)) return false;
+        buffer_[h] = item;
+        head_.store(next, std::memory_order_release);
         return true;
     }
 
     // pop: consumer-only. Returns false if the queue is empty.
-    // pop: tylko konsument. Zwraca false jeśli kolejka pusta.
-    bool pop(T& item) {
-        size_t t = tail.load(std::memory_order_relaxed);
-        if (t == head.load(std::memory_order_acquire)) return false;
-        item = buffer[t];
-        tail.store((t + 1) & (SIZE - 1), std::memory_order_release);
+    bool pop(T& out) noexcept {
+        const std::size_t t = tail_.load(std::memory_order_relaxed);
+        if (t == head_.load(std::memory_order_acquire)) return false;
+        out = buffer_[t];
+        tail_.store((t + 1) & (SIZE - 1), std::memory_order_release);
         return true;
     }
 
-    // empty(): consumer-side query. tail is stable (sole writer); acquire
-    // on head ensures we observe all committed items.
     bool empty() const noexcept {
-        return tail.load(std::memory_order_relaxed)
-            == head.load(std::memory_order_acquire);
+        return tail_.load(std::memory_order_relaxed)
+            == head_.load(std::memory_order_acquire);
     }
 
-    // full(): producer-side query. head is stable; acquire on tail ensures
-    // we see all slots the consumer has freed.
     bool full() const noexcept {
-        size_t h = head.load(std::memory_order_relaxed);
-        return ((h + 1) & (SIZE - 1)) == tail.load(std::memory_order_acquire);
+        const std::size_t h = head_.load(std::memory_order_relaxed);
+        return ((h + 1) & (SIZE - 1)) == tail_.load(std::memory_order_acquire);
     }
 
-    // size(): APPROXIMATE — two separate atomic loads, not a single snapshot.
-    // The result can be off by ±1 if either side advances between the loads.
-    // Use empty()/full() on the hot path; size() is for monitoring only.
-    size_t size() const noexcept {
-        size_t h = head.load(std::memory_order_acquire);
-        size_t t = tail.load(std::memory_order_acquire);
+    // size: APPROXIMATE (two atomic loads, not a snapshot). Off by ±1 under
+    // contention. Use empty()/full() on the hot path.
+    std::size_t size() const noexcept {
+        const std::size_t h = head_.load(std::memory_order_acquire);
+        const std::size_t t = tail_.load(std::memory_order_acquire);
         return (h - t) & (SIZE - 1);
     }
+
+    // capacity: usable slots. A power-of-two ring loses one slot to
+    // distinguish empty from full, so capacity == SIZE - 1.
+    static constexpr std::size_t capacity() noexcept { return SIZE - 1; }
 };
+
+}  // namespace lockfree
