@@ -33,7 +33,7 @@ class MPMCQueue {
         T                        data;
     };
 
-    Cell buffer_[SIZE];
+    Cell buffer_[SIZE]{};  // value-init; ctor body then writes correct seq per slot
     alignas(64) std::atomic<std::size_t> head_{0};  // producers CAS
     alignas(64) std::atomic<std::size_t> tail_{0};  // consumers CAS
 

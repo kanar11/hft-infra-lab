@@ -45,7 +45,7 @@ class Sequencer {
     static_assert(SIZE > 0,                       "SIZE must be positive");
     static_assert((SIZE & (SIZE - 1)) == 0,       "SIZE must be a power of two");
 
-    T buffer_[SIZE];
+    T buffer_[SIZE]{};  // value-init satisfies cppcheck uninitMemberVar
     alignas(64) std::atomic<std::int64_t> cursor_{-1};  // last published
     alignas(64) std::atomic<std::int64_t> gating_{-1};  // slowest consumer
 
