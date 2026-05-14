@@ -134,3 +134,26 @@ jobs:
               -o lockfree/spsc_queue lockfree/spsc_queue.cpp
       - name: Run TSAN-instrumented SPSC stress
         run: TSAN_OPTIONS=halt_on_error=1 ./lockfree/spsc_queue
+
+  clang-tidy:
+    # Complementary to cppcheck — catches bugprone-* and performance-* patterns
+    # cppcheck doesn't model (move semantics, range-based for, redundant copies).
+    # Limited to a representative slice of files to keep runtime under a minute;
+    # add more paths here as confidence grows.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy
+      - name: Run clang-tidy (bugprone + performance)
+        run: |
+          clang-tidy --version
+          clang-tidy \
+            -checks='-*,bugprone-*,performance-*,modernize-use-nullptr,modernize-use-override,-bugprone-easily-swappable-parameters' \
+            --warnings-as-errors='*' \
+            oms/oms_demo.cpp \
+            risk/risk_demo.cpp \
+            logger/logger_demo.cpp \
+            strategy/strategy_demo.cpp \
+            tests/test_all.cpp \
+            -- -std=c++17 -Wall -Wextra -pthread -I.
