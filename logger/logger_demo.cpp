@@ -192,10 +192,10 @@ void benchmark(int num_events) {
     std::sort(latencies.begin(), latencies.end());
     int n = static_cast<int>(latencies.size());
     double avg = static_cast<double>(total_ns) / n;
-    double throughput = n / (total_ns / 1e9) / 1e6;
+    double throughput = n / (static_cast<double>(total_ns) / 1e9) / 1e6;
 
     printf("--- Results ---\n");
-    printf("  Total time:  %.2f ms\n", total_ns / 1e6);
+    printf("  Total time:  %.2f ms\n", static_cast<double>(total_ns) / 1e6);
     printf("  Avg:         %.0f ns/event\n", avg);
     printf("  p50:         %ld ns\n", latencies[n / 2]);
     printf("  p90:         %ld ns\n", latencies[(int)(n * 0.90)]);

@@ -101,6 +101,8 @@ void test_itch_parser() {
     memset(trade_msg + 1, 0, 41);
     trade_msg[17] = 'S';
     trade_msg[21] = 200;  // shares
+    // ITCH wire format requires fixed-width 8-byte symbol, not null-terminated.
+    // NOLINTNEXTLINE(bugprone-not-null-terminated-result)
     memcpy(trade_msg + 22, "MSFT    ", 8);
     pm = parser.parse(trade_msg, 42);
     ASSERT(pm.type == MsgType::TRADE, "itch_trade_type");
@@ -473,6 +475,8 @@ void test_ouch() {
     uint8_t accepted[48];
     memset(accepted, 0, sizeof(accepted));
     accepted[0] = 'A';
+    // OUCH wire format: 14-byte fixed-width token, space-padded, not null-terminated.
+    // NOLINTNEXTLINE(bugprone-not-null-terminated-result)
     memcpy(accepted + 1, "TOK001        ", 14);
     OUCHResponse parsed = OUCHMessage::parse_response(accepted, 41);
     ASSERT(strcmp(parsed.type, "ACCEPTED") == 0, "ouch_parse_accepted");
@@ -561,6 +565,7 @@ void test_mpsc_queue() {
     });
 
     std::vector<std::thread> producers;
+    producers.reserve(PRODS);
     for (int p = 0; p < PRODS; ++p) {
         producers.emplace_back([&, p]() {
             for (int s = 0; s < PER; ++s) while (!q.push(encode(p, s))) {}
@@ -596,9 +601,10 @@ void test_mpmc_queue() {
     std::vector<std::vector<uint64_t>> received(CONS);
 
     std::vector<std::thread> consumers;
+    consumers.reserve(CONS);
     for (int c = 0; c < CONS; ++c) {
         consumers.emplace_back([&, c]() {
-            received[c].reserve(PRODS * PER / CONS * 2);
+            received[c].reserve(static_cast<std::size_t>(PRODS) * PER / CONS * 2);
             uint64_t v;
             while (done.load(std::memory_order_acquire) < PRODS || !q.empty()) {
                 if (q.pop(v)) received[c].push_back(v);
@@ -606,6 +612,7 @@ void test_mpmc_queue() {
         });
     }
     std::vector<std::thread> producers;
+    producers.reserve(PRODS);
     for (int p = 0; p < PRODS; ++p) {
         producers.emplace_back([&, p]() {
             for (int s = 0; s < PER; ++s) while (!q.push(encode(p, s))) {}
@@ -653,6 +660,7 @@ void test_sequencer() {
     };
 
     std::vector<std::thread> consumers;
+    consumers.reserve(CONS);
     for (int c = 0; c < CONS; ++c) {
         consumers.emplace_back([&, c]() {
             int64_t next = 0;
@@ -957,7 +965,7 @@ void test_integration() {
 
         const char* side_str = pm.data.add_order.side == 'B' ? "BUY" : "SELL";
         double price = pm.data.add_order.price;
-        int32_t shares = pm.data.add_order.shares;
+        int32_t shares = static_cast<int32_t>(pm.data.add_order.shares);
         const char* stock = pm.data.add_order.stock;
 
         // Log submit

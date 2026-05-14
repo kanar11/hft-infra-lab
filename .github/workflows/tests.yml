@@ -138,10 +138,7 @@ jobs:
   clang-tidy:
     # Complementary to cppcheck — catches bugprone-* and performance-* patterns
     # cppcheck doesn't model (move semantics, range-based for, redundant copies).
-    # Non-blocking until findings have been addressed; CI keeps shipping but
-    # warnings stay visible in the run log.
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Install clang-tidy

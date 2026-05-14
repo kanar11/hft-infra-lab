@@ -200,7 +200,7 @@ void benchmark(int num_ticks) {
         price += rnd * 0.15;
 
         auto start = std::chrono::high_resolution_clock::now();
-        strat.on_market_data("AAPL", price, i * 1000);
+        strat.on_market_data("AAPL", price, static_cast<int64_t>(i) * 1000);
         auto end = std::chrono::high_resolution_clock::now();
 
         latencies.push_back(
@@ -214,10 +214,10 @@ void benchmark(int num_ticks) {
     std::sort(latencies.begin(), latencies.end());
     int n = static_cast<int>(latencies.size());
     double avg = static_cast<double>(total_ns) / n;
-    double throughput = n / (total_ns / 1e9) / 1e6;
+    double throughput = n / (static_cast<double>(total_ns) / 1e9) / 1e6;
 
     printf("--- Results ---\n");
-    printf("  Total time:  %.2f ms\n", total_ns / 1e6);
+    printf("  Total time:  %.2f ms\n", static_cast<double>(total_ns) / 1e6);
     printf("  Avg:         %.0f ns/tick\n", avg);
     printf("  p50:         %ld ns\n", latencies[n / 2]);
     printf("  p90:         %ld ns\n", latencies[(int)(n * 0.90)]);
