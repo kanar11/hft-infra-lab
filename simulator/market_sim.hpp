@@ -21,6 +21,9 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <atomic>
+#include <memory>
+#include <thread>
 #include <vector>
 
 // Include all pipeline modules
@@ -29,6 +32,7 @@
 #include "../config/config_loader.hpp"
 #include "../strategy/mean_reversion.hpp"
 #include "../router/smart_router.hpp"
+#include "../lockfree/spsc_queue.hpp"
 
 
 // ============================================================
@@ -531,6 +535,67 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
     }
 
+    return stats;
+}
+
+
+// ============================================================
+// run_pipeline_threaded — generator on producer thread, parser on
+// consumer thread, hand-off via lockfree::SPSCQueue.
+//
+// This is the simplest realistic use of one of our lock-free primitives:
+// the feed-handler and the parser run on different cores, the queue
+// is the only thing connecting them. No mutex, no allocation on the hot
+// path, and the parser thread doesn't even need to know what protocol
+// the producer is generating — it just drains raw bytes.
+// ============================================================
+
+inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
+                                            uint64_t seed = 42) {
+    PipelineStats stats = {};
+
+    // SIZE = 1024: each GeneratedMessage is ~68 bytes, total ~70 KB —
+    // small enough to allocate on the heap once per call.
+    auto queue = std::make_unique<lockfree::SPSCQueue<GeneratedMessage, 1024>>();
+    std::atomic<bool> producer_done{false};
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    std::thread producer([&]() {
+        MarketDataGenerator gen(seed);
+        for (int i = 0; i < num_messages; ++i) {
+            GeneratedMessage msg = gen.generate_random_message();
+            while (!queue->push(msg)) { /* spin if consumer falls behind */ }
+        }
+        producer_done.store(true, std::memory_order_release);
+    });
+
+    std::thread consumer([&]() {
+        ITCHParser parser;
+        GeneratedMessage msg{};
+        while (!producer_done.load(std::memory_order_acquire) || !queue->empty()) {
+            if (queue->pop(msg)) {
+                const ParsedMessage pm = parser.parse(msg.data, msg.length);
+                stats.messages_generated++;
+                stats.messages_parsed++;
+                switch (pm.type) {
+                    case MsgType::ADD_ORDER:
+                    case MsgType::ADD_ORDER_MPID: stats.add_orders++; break;
+                    case MsgType::ORDER_EXECUTED:  stats.executes++; break;
+                    case MsgType::TRADE:           stats.trades++; break;
+                    case MsgType::ORDER_CANCELLED: stats.cancels++; break;
+                    case MsgType::SYSTEM_EVENT:    stats.system_events++; break;
+                    default: break;
+                }
+            }
+        }
+    });
+
+    producer.join();
+    consumer.join();
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    stats.total_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     return stats;
 }
 

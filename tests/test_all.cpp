@@ -908,7 +908,15 @@ void test_simulator() {
     ASSERT(stats.orders_filled == stats.orders_submitted, "sim_latency_all_drained");
     ASSERT(stats.max_in_flight_orders > 0, "sim_latency_in_flight_peak");
 
-    printf("  Simulator: %d assertions\n", 16);
+    // Async pipeline — producer + consumer split across threads via SPSCQueue
+    PipelineStats async_stats = run_pipeline_threaded(5'000, 42);
+    ASSERT(async_stats.messages_generated == 5'000, "sim_threaded_count_gen");
+    ASSERT(async_stats.messages_parsed    == 5'000, "sim_threaded_count_parsed");
+    ASSERT(async_stats.add_orders + async_stats.executes +
+           async_stats.trades + async_stats.cancels > 0,
+           "sim_threaded_has_data_messages");
+
+    printf("  Simulator: %d assertions\n", 19);
 }
 
 
