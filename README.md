@@ -30,6 +30,27 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 ![Throughput](docs/throughput.png)
 ![Latency](docs/latency.png)
 
+Reproduce locally: `scripts/run_benchmarks.sh` → writes [`BENCHMARKS.md`](BENCHMARKS.md).
+
+## Pipeline
+
+```mermaid
+flowchart LR
+    Feed[ITCH Feed]
+    Parser[itch-parser<br/>ITCHParser]
+    Strategy[strategy<br/>MeanReversionStrategy]
+    Router[router<br/>SmartOrderRouter]
+    Risk[risk<br/>RiskManager]
+    OMS[oms<br/>OMS]
+    Logger[logger<br/>TradeLogger]
+    Audit[(Binary<br/>audit file)]
+
+    Feed --> Parser --> Strategy --> Router --> Risk --> OMS --> Logger --> Audit
+    OMS -. positions / P&L .-> Risk
+```
+
+Each module is a header-only C++ class; `simulator/sim_demo` wires them together end-to-end. The `lockfree/` headers (SPSC/MPSC/MPMC/Sequencer/WaitableMPSC) bridge stages that run on different threads — see `run_pipeline_threaded` in `simulator/market_sim.hpp` for a producer/consumer example.
+
 ## Modules 
 
 | Module | Description | Language |
