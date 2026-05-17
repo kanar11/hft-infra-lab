@@ -88,7 +88,8 @@ static int64_t run(Book& book, const std::vector<Op>& ops) {
 // --- Sanity test (small) ---------------------------------------------------
 
 static int sanity() {
-    orderbook::FlatOrderBook<1024> b;
+    // LEVELS=16384 fits the 10000..10200 test band with headroom.
+    orderbook::FlatOrderBook<16384> b;
     b.add_buy(10050, 10);
     b.add_buy(10030,  5);
     b.add_sell(10100, 8);
