@@ -8,6 +8,7 @@ BUILDDIR := build
 SRCS := \
 	orderbook/orderbook.cpp \
 	orderbook/orderbook_v2.cpp \
+	orderbook/orderbook_flat.cpp \
 	orderbook/benchmark_orderbook.cpp \
 	orderbook/latency_histogram.cpp \
 	lockfree/spsc_queue.cpp \

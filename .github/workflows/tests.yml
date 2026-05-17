@@ -53,6 +53,7 @@ jobs:
         run: |
           ./orderbook/orderbook
           ./orderbook/orderbook_v2
+          ./orderbook/orderbook_flat 100000   # sanity + small bench
 
       - name: Run OMS tests
         run: ./oms/oms_demo 0
@@ -94,6 +95,7 @@ jobs:
         run: |
           ./orderbook/benchmark_orderbook
           ./orderbook/latency_histogram 100000
+          ./orderbook/orderbook_flat 1000000   # FlatOrderBook vs std::map head-to-head
           ./lockfree/spsc_queue
           ./memory-latency/cache_latency
           ./itch-parser/benchmark_itch

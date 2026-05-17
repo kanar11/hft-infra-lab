@@ -40,6 +40,7 @@ run_bench() {
     run_bench "Orderbook (basic)"                ./orderbook/orderbook
     run_bench "Orderbook benchmark"              ./orderbook/benchmark_orderbook
     run_bench "Orderbook latency histogram"      ./orderbook/latency_histogram 100000
+    run_bench "FlatOrderBook vs std::map"        ./orderbook/orderbook_flat 1000000
     run_bench "Lock-free SPSC queue"             ./lockfree/spsc_queue
     run_bench "Memory / cache latency"           ./memory-latency/cache_latency
     run_bench "ITCH parser"                      ./itch-parser/benchmark_itch

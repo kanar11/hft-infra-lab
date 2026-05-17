@@ -8,6 +8,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 
 ## Performance Highlights / Wyniki wydajności (Red Hat EL10, VirtualBox 2-core VM)
 - Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
+- Order book — flat-array variant (`orderbook/orderbook_flat.hpp`): **O(1) add/match, zero heap alloc** — see `./orderbook/orderbook_flat 1000000` for live head-to-head vs the std::map baseline
 - ITCH parser (C++): **60M msg/sec** (16ns/msg, p50=40ns, p99=50ns)
 - Market Simulator E2E (C++): **573K msg/sec** (full pipeline: ITCH gen→parse→OMS→P&L)
 - OMS (C++): **11.6M orders/sec** (submit+fill, p50=60ns, p99=121ns, fixed-point prices)

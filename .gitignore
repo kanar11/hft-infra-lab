@@ -4,6 +4,7 @@ build/
 # Compiled binaries
 orderbook/orderbook
 orderbook/orderbook_v2
+orderbook/orderbook_flat
 orderbook/benchmark_orderbook
 orderbook/latency_histogram
 lockfree/spsc_queue
