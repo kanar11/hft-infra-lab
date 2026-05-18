@@ -3,7 +3,7 @@
 Pointer-chasing memory latency benchmark measuring access times across L1, L2, L3 cache and main RAM.
 *Benchmark opóźnienia pamięci z śledzeniem wskaźników mierzący czasy dostępu w pamięci L1, L2, L3 i pamięci RAM.*
 
-## Why This Matters / Dlaczego to ma znaczenie
+## Why This Matters
 In HFT, every memory access matters. A TLB miss or cache miss can add 100ns+ to a hot path. This benchmark measures the real cost of memory hierarchy on your hardware.
 
 *W HFT każdy dostęp do pamięci ma znaczenie. Brakujący wpis TLB lub cache miss może dodać 100ns+ do gorącej ścieżki. Ten benchmark mierzy rzeczywisty koszt hierarchii pamięci na Twoim sprzęcie.*
