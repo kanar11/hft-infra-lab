@@ -23,6 +23,7 @@ dpdk-bypass/dpdk_demo
 monitoring/monitor_demo
 multicast/multicast_demo
 simulator/sim_demo
+replay/lobster_demo
 tests/test_all
 
 # Build artifacts

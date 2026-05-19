@@ -11,6 +11,7 @@ SRCS := \
 	orderbook/orderbook_flat.cpp \
 	orderbook/benchmark_orderbook.cpp \
 	orderbook/latency_histogram.cpp \
+	replay/lobster_demo.cpp \
 	lockfree/spsc_queue.cpp \
 	memory-latency/cache_latency.cpp \
 	itch-parser/benchmark_itch.cpp \

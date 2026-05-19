@@ -24,7 +24,7 @@ jobs:
                    --inline-suppr \
                    common/ config/ oms/ risk/ router/ logger/ strategy/ \
                    fix-protocol/ ouch-protocol/ lockfree/ \
-                   multicast/ simulator/ tests/ \
+                   multicast/ simulator/ tests/ replay/ \
                    orderbook/ itch-parser/ memory-latency/ \
                    benchmarks/ dpdk-bypass/ monitoring/
 
@@ -87,6 +87,9 @@ jobs:
 
       - name: Run Market Simulator tests
         run: ./simulator/sim_demo 0
+
+      - name: Run LOBSTER replay (bundled sample)
+        run: ./replay/lobster_demo replay/sample_aapl.csv
 
       - name: Run Integration tests
         run: ./tests/test_all

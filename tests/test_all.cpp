@@ -32,6 +32,7 @@
 #include "../lockfree/mpmc_queue.hpp"
 #include "../lockfree/sequencer.hpp"
 #include "../lockfree/waitable_mpsc.hpp"
+#include "../replay/lobster_reader.hpp"
 #include "../simulator/market_sim.hpp"
 
 static int tests_passed = 0;
@@ -862,6 +863,36 @@ void test_protocols_interleaved() {
 }
 
 
+// =====================================================
+// LOBSTER replay — parse the bundled sample CSV
+// =====================================================
+
+void test_lobster_reader() {
+    SECTION("LOBSTER reader (sample CSV)");
+
+    lobster::LobsterReader r("replay/sample_aapl.csv");
+    ASSERT(r.is_open(), "lobster_file_opens");
+    if (!r.is_open()) return;
+
+    int submits = 0, executes = 0, cancels = 0, deletes = 0;
+    lobster::LobsterMessage m;
+    while (r.next(m)) {
+        switch (m.event_type) {
+            case lobster::EventType::SUBMIT:           ++submits;  break;
+            case lobster::EventType::EXECUTE_VISIBLE:  ++executes; break;
+            case lobster::EventType::CANCEL_PARTIAL:   ++cancels;  break;
+            case lobster::EventType::DELETE:           ++deletes;  break;
+            default: break;
+        }
+    }
+    ASSERT(r.rows_bad() == 0,         "lobster_no_malformed_rows");
+    ASSERT(r.rows_read() == 20,       "lobster_all_rows_parsed");
+    ASSERT(submits  > 0,              "lobster_has_submits");
+    ASSERT(executes > 0,              "lobster_has_executes");
+    ASSERT(cancels + deletes > 0,     "lobster_has_cancels_or_deletes");
+}
+
+
 void test_simulator() {
     SECTION("Market Simulator");
 
@@ -1188,6 +1219,7 @@ int main() {
     test_risk_rate_limiter();
     test_risk_drawdown_no_peak();
     test_protocols_interleaved();
+    test_lobster_reader();
     test_simulator();
     test_integration();
     test_negative_cases();

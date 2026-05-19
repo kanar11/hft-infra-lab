@@ -52,6 +52,17 @@ flowchart LR
 
 Each module is a header-only C++ class; `simulator/sim_demo` wires them together end-to-end. The `lockfree/` headers (SPSC/MPSC/MPMC/Sequencer/WaitableMPSC) bridge stages that run on different threads — see `run_pipeline_threaded` in `simulator/market_sim.hpp` for a producer/consumer example.
 
+## Real-data replay
+
+The synthetic simulator stresses *throughput* on LCG-generated events; for an apples-to-apples check on real Nasdaq order data, use **`replay/lobster_demo`** — it streams a [LOBSTER](https://lobsterdata.com) message CSV (free sample days available) through the same OMS, Risk, and Logger:
+
+```bash
+./replay/lobster_demo replay/sample_aapl.csv                          # bundled mini-fixture (20 events)
+./replay/lobster_demo /path/to/AAPL_2012-06-21_messages.csv           # full day of real AAPL data
+```
+
+Format details and download links: [`replay/README.md`](replay/README.md).
+
 ## Modules 
 
 | Module | Description | Language |

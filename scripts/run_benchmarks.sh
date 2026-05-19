@@ -54,6 +54,7 @@ run_bench() {
     run_bench "FIX parser"                       ./fix-protocol/fix_demo 100000
     run_bench "OUCH protocol"                    ./ouch-protocol/ouch_demo 100000
     run_bench "Market Simulator (full)"          ./simulator/sim_demo 50000
+    run_bench "LOBSTER replay (sample)"          ./replay/lobster_demo replay/sample_aapl.csv
 } > "$OUT"
 
 echo "Wrote $OUT"
