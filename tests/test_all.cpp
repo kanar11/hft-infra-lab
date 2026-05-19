@@ -24,6 +24,7 @@
 #include "../risk/risk_manager.hpp"
 #include "../router/smart_router.hpp"
 #include "../logger/trade_logger.hpp"
+#include "../logger/lockfree_logger.hpp"
 #include "../strategy/mean_reversion.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../ouch-protocol/ouch_protocol.hpp"
@@ -792,6 +793,43 @@ void test_logger_async_flush() {
 
 
 // =====================================================
+// LockfreeTradeLogger — same audit semantics, SPSCQueue under the hood
+// =====================================================
+
+void test_lockfree_logger() {
+    SECTION("LockfreeTradeLogger (SPSCQueue-backed)");
+    const char* path = "/tmp/hft_lockfree_logger_test.bin";
+    std::remove(path);
+
+    // Small CAPACITY (must be power of 2) to keep the binary lean; still
+    // 100x larger than the 50 events we push.
+    {
+        lockfree_logger::LockfreeTradeLogger</*CAPACITY=*/8192> logger;
+        ASSERT(logger.start_async_flush(path), "lf_logger_started");
+        for (int i = 0; i < 50; ++i) {
+            const std::uint64_t seq =
+                logger.log(EventType::ORDER_SUBMIT, i + 1, "AAPL", "BUY", 100, 150.25);
+            ASSERT(seq == static_cast<std::uint64_t>(i + 1), "lf_logger_seq_returned");
+        }
+        ASSERT(logger.total_logged() == 50, "lf_logger_count");
+        ASSERT(logger.get_counter(EventType::ORDER_SUBMIT) == 50, "lf_logger_per_type");
+        logger.stop_async_flush();
+    }
+
+    // File size = header(64) + 50 * sizeof(TradeEvent)(128) = 6464 bytes.
+    FILE* f = std::fopen(path, "rb");
+    ASSERT(f != nullptr, "lf_logger_file_exists");
+    if (f) {
+        std::fseek(f, 0, SEEK_END);
+        const long size = std::ftell(f);
+        std::fclose(f);
+        ASSERT(size == 64 + 50 * 128, "lf_logger_file_correct_size");
+    }
+    std::remove(path);
+}
+
+
+// =====================================================
 // Risk rate limiter — bursts above max_orders_per_second get rejected
 // =====================================================
 
@@ -1216,6 +1254,7 @@ int main() {
     test_sequencer();
     test_waitable_mpsc();
     test_logger_async_flush();
+    test_lockfree_logger();
     test_risk_rate_limiter();
     test_risk_drawdown_no_peak();
     test_protocols_interleaved();
