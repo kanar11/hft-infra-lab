@@ -1,0 +1,56 @@
+name: benchmarks
+
+# Manual trigger — click "Run workflow" on the Actions page. Avoids
+# polluting commit history on every push; benchmarks only update when
+# you actually want fresh numbers (e.g. after a perf-relevant change).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # required to commit BENCHMARKS.md back to main
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install g++
+        run: sudo apt-get update && sudo apt-get install -y g++
+
+      - name: Build everything
+        run: make build
+
+      - name: Generate BENCHMARKS.md
+        run: |
+          chmod +x scripts/run_benchmarks.sh
+          scripts/run_benchmarks.sh
+
+      - name: Show what was produced
+        run: |
+          echo "=== first 40 lines ==="
+          head -40 BENCHMARKS.md
+          echo "=== file size ==="
+          wc -l BENCHMARKS.md
+
+      - name: Upload as artifact (always, even if push step is skipped)
+        uses: actions/upload-artifact@v4
+        with:
+          name: BENCHMARKS-${{ github.sha }}
+          path: BENCHMARKS.md
+          retention-days: 30
+
+      - name: Commit BENCHMARKS.md back to main
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Only commit if the file actually changed
+          if git diff --quiet -- BENCHMARKS.md; then
+            echo "No changes to BENCHMARKS.md — skipping commit"
+            exit 0
+          fi
+          git add BENCHMARKS.md
+          git commit -m "bench: refresh BENCHMARKS.md from CI run ${{ github.run_number }}
+
+          Triggered by ${{ github.actor }} on ${{ github.sha }}."
+          git push

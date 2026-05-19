@@ -31,7 +31,10 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 ![Throughput](docs/throughput.png)
 ![Latency](docs/latency.png)
 
-Reproduce locally: `scripts/run_benchmarks.sh` → writes [`BENCHMARKS.md`](BENCHMARKS.md).
+Reproduce locally with `scripts/run_benchmarks.sh`, or trigger the
+[`benchmarks` workflow](https://github.com/kanar11/hft-infra-lab/actions/workflows/benchmarks.yml)
+from the Actions tab (no local Linux needed — CI runs the script and commits
+the result to [`BENCHMARKS.md`](BENCHMARKS.md)).
 
 ## Pipeline
 
