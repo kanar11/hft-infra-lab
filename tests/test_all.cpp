@@ -365,7 +365,7 @@ void test_strategy() {
     // Price significantly below mean — 145 is 3.3% below SMA=150, threshold=1% → must trigger BUY
     s = strategy.on_market_data("AAPL", 145.0, 0);
     ASSERT(s.valid, "strategy_buy_signal_valid");
-    ASSERT(strcmp(s.side, "BUY") == 0, "strategy_buy_signal");
+    ASSERT(s.side == Side::BUY, "strategy_buy_signal");
 
     // Reset: feed 5 prices at 150 so SMA≈150, then spike to 160 (6.7% above) → must trigger SELL
     for (int i = 0; i < 5; ++i) {
@@ -373,7 +373,7 @@ void test_strategy() {
     }
     s = strategy.on_market_data("AAPL", 160.0, 0);
     ASSERT(s.valid, "strategy_sell_signal_valid");
-    ASSERT(strcmp(s.side, "SELL") == 0, "strategy_sell_signal");
+    ASSERT(s.side == Side::SELL, "strategy_sell_signal");
 
     // Different stocks tracked independently
     strategy.on_market_data("TSLA", 245.0, 0);

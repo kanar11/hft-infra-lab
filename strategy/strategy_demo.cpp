@@ -103,12 +103,12 @@ void test_multiple_stocks() {
 
     // AAPL drops → BUY AAPL
     auto sig1 = strat.on_market_data("AAPL", 148.0);
-    ASSERT(sig1.valid && std::strcmp(sig1.side, "BUY") == 0, "test_multi_aapl_buy");
+    ASSERT(sig1.valid && sig1.side == Side::BUY, "test_multi_aapl_buy");
     ASSERT(std::strcmp(sig1.stock, "AAPL") == 0, "test_multi_aapl_symbol");
 
     // TSLA rises → SELL TSLA
     auto sig2 = strat.on_market_data("TSLA", 253.0);
-    ASSERT(sig2.valid && std::strcmp(sig2.side, "SELL") == 0, "test_multi_tsla_sell");
+    ASSERT(sig2.valid && sig2.side == Side::SELL, "test_multi_tsla_sell");
     ASSERT(std::strcmp(sig2.stock, "TSLA") == 0, "test_multi_tsla_symbol");
 
     ASSERT(strat.stock_count() == 2, "test_multi_stock_count");

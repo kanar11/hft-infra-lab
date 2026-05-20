@@ -517,7 +517,9 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             fill_price = signal.price;
 
             if (use_router) {
-                RouteDecision route = router.route_order(side_str(signal.side), shares);
+                // ::side_str disambiguates the global function from the local
+                // `const char* side_str` declared earlier in the loop.
+                RouteDecision route = router.route_order(::side_str(signal.side), shares);
                 if (route.valid) fill_price = route.price;
             }
         } else if (use_router) {
