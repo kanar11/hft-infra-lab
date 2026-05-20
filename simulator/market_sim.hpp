@@ -178,7 +178,11 @@ public:
         for (int i = 0; i < MAX_ACTIVE_ORDERS; ++i) {
             if (!active_orders_[i].active) {
                 active_orders_[i].order_ref = order_ref_;
-                std::strncpy(active_orders_[i].stock, stock.symbol, 8);
+                // memcpy instead of strncpy — g++ -Wstringop-truncation flags
+                // strncpy(dst, src, 8) here as "might not be null-terminated"
+                // even though we explicitly set stock[8] = '\0' on the next line.
+                // memcpy avoids that warning and produces identical bytes.
+                std::memcpy(active_orders_[i].stock, stock.symbol, 8);
                 active_orders_[i].stock[8] = '\0';
                 active_orders_[i].side = side;
                 active_orders_[i].price = price;
