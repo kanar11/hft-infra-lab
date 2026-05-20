@@ -33,6 +33,7 @@
 #include "../lockfree/mpmc_queue.hpp"
 #include "../lockfree/sequencer.hpp"
 #include "../lockfree/waitable_mpsc.hpp"
+#include "../lockfree/varlen_ring.hpp"
 #include "../replay/lobster_reader.hpp"
 #include "../simulator/market_sim.hpp"
 
@@ -763,6 +764,58 @@ void test_waitable_mpsc() {
 
 
 // =====================================================
+// VarlenRingBuffer — variable-length messages with length prefix
+// =====================================================
+
+void test_varlen_ring() {
+    SECTION("VarlenRingBuffer (variable-size messages)");
+
+    lockfree::VarlenRingBuffer<1024> ring;
+
+    // Empty fresh
+    ASSERT(ring.empty(), "varlen_fresh_empty");
+
+    // Write three messages of different sizes
+    const char* m1 = "hello";              // 5 bytes
+    const char* m2 = "world!";             // 6 bytes
+    const char* m3 = "third message here"; // 18 bytes
+    ASSERT(ring.write(m1, 5),  "varlen_write_1");
+    ASSERT(ring.write(m2, 6),  "varlen_write_2");
+    ASSERT(ring.write(m3, 18), "varlen_write_3");
+    ASSERT(!ring.empty(),      "varlen_not_empty_after_writes");
+
+    // Read back in order
+    char buf[64] = {};
+    std::uint32_t n;
+
+    n = ring.read(buf, sizeof(buf));
+    ASSERT(n == 5,                       "varlen_read_1_len");
+    ASSERT(std::memcmp(buf, m1, 5) == 0, "varlen_read_1_content");
+
+    n = ring.read(buf, sizeof(buf));
+    ASSERT(n == 6,                       "varlen_read_2_len");
+    ASSERT(std::memcmp(buf, m2, 6) == 0, "varlen_read_2_content");
+
+    n = ring.read(buf, sizeof(buf));
+    ASSERT(n == 18,                       "varlen_read_3_len");
+    ASSERT(std::memcmp(buf, m3, 18) == 0, "varlen_read_3_content");
+
+    ASSERT(ring.empty(), "varlen_empty_after_drain");
+    ASSERT(ring.read(buf, sizeof(buf)) == 0, "varlen_read_empty_returns_0");
+
+    // Reject zero-len and over-capacity
+    ASSERT(!ring.write(m1, 0),    "varlen_reject_zero_len");
+    ASSERT(!ring.write(m1, 2048), "varlen_reject_too_big");
+
+    // Buffer-too-small on read returns 0 without consuming
+    ASSERT(ring.write(m3, 18),  "varlen_write_for_short_read_test");
+    char small[4];
+    ASSERT(ring.read(small, sizeof(small)) == 0, "varlen_short_read_no_consume");
+    ASSERT(ring.read(buf, sizeof(buf)) == 18,    "varlen_subsequent_read_ok");
+}
+
+
+// =====================================================
 // Logger async flush — exercise start/stop and binary file output
 // =====================================================
 
@@ -1253,6 +1306,7 @@ int main() {
     test_mpmc_queue();
     test_sequencer();
     test_waitable_mpsc();
+    test_varlen_ring();
     test_logger_async_flush();
     test_lockfree_logger();
     test_risk_rate_limiter();
