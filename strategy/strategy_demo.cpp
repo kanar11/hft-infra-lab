@@ -64,7 +64,7 @@ void test_buy_signal() {
     // SMA = 150.0, price = 149.0 → deviation = -0.67% (below -0.1% threshold)
     auto sig = strat.on_market_data("AAPL", 149.0);
     ASSERT(sig.valid, "test_buy_signal_valid");
-    ASSERT(std::strcmp(sig.side, "BUY") == 0, "test_buy_signal_side");
+    ASSERT(sig.side == Side::BUY, "test_buy_signal_side");
     ASSERT(sig.price == 149.0, "test_buy_signal_price");
     ASSERT(sig.quantity == 100, "test_buy_signal_qty");
 }
@@ -77,7 +77,7 @@ void test_sell_signal() {
     // SMA = 150.0, price = 151.0 → deviation = +0.67% (above +0.1% threshold)
     auto sig = strat.on_market_data("AAPL", 151.0);
     ASSERT(sig.valid, "test_sell_signal_valid");
-    ASSERT(std::strcmp(sig.side, "SELL") == 0, "test_sell_signal_side");
+    ASSERT(sig.side == Side::SELL, "test_sell_signal_side");
     ASSERT(sig.price == 151.0, "test_sell_signal_price");
 }
 
@@ -91,7 +91,7 @@ void test_sma_updates() {
     // 103 vs SMA 101 → deviation ≈ +1.98% → SELL
     auto sig = strat.on_market_data("X", 103.0);
     ASSERT(sig.valid, "test_sma_updates_signal");
-    ASSERT(std::strcmp(sig.side, "SELL") == 0, "test_sma_updates_sell");
+    ASSERT(sig.side == Side::SELL, "test_sma_updates_sell");
 }
 
 void test_multiple_stocks() {

@@ -26,6 +26,7 @@
 #include <cmath>
 #include <algorithm>
 
+#include "../common/types.hpp"
 #include "../common/time_utils.hpp"
 
 // Max stocks we track simultaneously (fixed array, no heap on hot path)
@@ -44,20 +45,19 @@ static constexpr int MAX_WINDOW = 128;
 // Generowany gdy cena wystarczająco odbiega od średniej
 
 struct Signal {
-    int64_t timestamp_ns;      // when the signal was generated / kiedy sygnał został wygenerowany
-    char    stock[9];          // stock ticker / symbol giełdowy
-    char    side[5];           // "BUY" or "SELL" / "BUY" lub "SELL"
-    double  price;             // current price / bieżąca cena
-    int32_t quantity;          // order size / wielkość zlecenia
-    double  sma;               // moving average at time of signal / średnia ruchoma w momencie sygnału
-    double  deviation_pct;     // how far from mean (%) / jak daleko od średniej (%)
-    bool    valid;             // false = HOLD (no signal) / false = HOLD (brak sygnału)
+    int64_t timestamp_ns;      // when the signal was generated
+    char    stock[9];          // stock ticker
+    Side    side;              // BUY or SELL (only meaningful when valid=true)
+    double  price;             // current price
+    int32_t quantity;          // order size
+    double  sma;               // moving average at time of signal
+    double  deviation_pct;     // how far from mean (%)
+    bool    valid;             // false = HOLD (no signal)
 
     Signal() noexcept
-        : timestamp_ns(0), price(0), quantity(0), sma(0),
-          deviation_pct(0), valid(false) {
+        : timestamp_ns(0), side(Side::BUY), price(0), quantity(0),
+          sma(0), deviation_pct(0), valid(false) {
         stock[0] = '\0';
-        side[0] = '\0';
     }
 };
 
@@ -213,8 +213,7 @@ public:
             sig.timestamp_ns = timestamp_ns;
             std::strncpy(sig.stock, stock, 8);
             sig.stock[8] = '\0';
-            std::strncpy(sig.side, "SELL", 4);
-            sig.side[4] = '\0';
+            sig.side = Side::SELL;
             sig.price = price;
             sig.quantity = order_size_;
             sig.sma = sma;
@@ -230,8 +229,7 @@ public:
             sig.timestamp_ns = timestamp_ns;
             std::strncpy(sig.stock, stock, 8);
             sig.stock[8] = '\0';
-            std::strncpy(sig.side, "BUY", 4);
-            sig.side[4] = '\0';
+            sig.side = Side::BUY;
             sig.price = price;
             sig.quantity = order_size_;
             sig.sma = sma;

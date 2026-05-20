@@ -480,17 +480,16 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
 
         if (use_strategy) {
             // Strategy mode: feed price, trade only on signals.
-            // Resolve Side BEFORE 'signal' goes out of scope — signal.side
-            // is a pointer into the local Signal struct (ASAN flagged
-            // stack-use-after-scope when we let side_str alias it).
+            // Signal::side is now a Side enum, so no more dangling-pointer
+            // aliasing risk (previously char[5] inside the local Signal).
             Signal signal = strategy.on_market_data(stock, price, 0);
             if (!signal.valid) continue;
-            oms_side   = side_from_str(signal.side);
+            oms_side   = signal.side;
             shares     = signal.quantity;
             fill_price = signal.price;
 
             if (use_router) {
-                RouteDecision route = router.route_order(signal.side, shares);
+                RouteDecision route = router.route_order(side_str(signal.side), shares);
                 if (route.valid) fill_price = route.price;
             }
         } else if (use_router) {
