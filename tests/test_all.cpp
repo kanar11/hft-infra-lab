@@ -425,7 +425,7 @@ void test_market_maker() {
     cfg.risk_aversion_ticks = 0.0;  // no skew for the symmetry test
 
     mm::MarketMaker maker(cfg, "AAPL");
-    mm::Quote q = maker.quote(/*bid=*/15000, /*ask=*/15010);
+    mm::Quote q = maker.quote(/*best_bid=*/15000, /*best_ask=*/15010);
 
     ASSERT(q.bid_size == 10,               "mm_initial_bid_size");
     ASSERT(q.ask_size == 10,               "mm_initial_ask_size");
