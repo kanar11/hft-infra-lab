@@ -25,6 +25,7 @@
 #include "../router/smart_router.hpp"
 #include "../logger/trade_logger.hpp"
 #include "../logger/lockfree_logger.hpp"
+#include "../logger/mmap_logger.hpp"
 #include "../strategy/mean_reversion.hpp"
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
@@ -952,6 +953,54 @@ void test_lockfree_logger() {
 
 
 // =====================================================
+// MmapTradeLogger — mmap-backed audit ring, no async flush thread
+// =====================================================
+
+void test_mmap_logger() {
+    SECTION("MmapTradeLogger");
+    const char* path = "/tmp/hft_mmap_logger_test.bin";
+    std::remove(path);
+
+    {
+        mmap_logger::MmapTradeLogger lg;
+        ASSERT(lg.open_file(path, /*capacity=*/100), "mmap_open");
+        ASSERT(lg.is_open(),                          "mmap_is_open");
+        for (int i = 0; i < 50; ++i) {
+            const std::uint64_t seq =
+                lg.log(EventType::ORDER_SUBMIT, i + 1, "AAPL", "BUY", 100, 150.25);
+            ASSERT(seq == static_cast<std::uint64_t>(i + 1), "mmap_seq_returned");
+        }
+        ASSERT(lg.total_logged() == 50, "mmap_count");
+        ASSERT(lg.get_counter(EventType::ORDER_SUBMIT) == 50, "mmap_per_type_counter");
+        ASSERT(lg.flush_sync(), "mmap_flush_sync_ok");
+        // close() happens in destructor
+    }
+
+    // File size = header(64) + capacity(100) * sizeof(TradeEvent)(128) = 12864
+    FILE* f = std::fopen(path, "rb");
+    ASSERT(f != nullptr, "mmap_file_exists");
+    if (f) {
+        std::fseek(f, 0, SEEK_END);
+        const long size = std::ftell(f);
+        std::fclose(f);
+        ASSERT(size == 64 + 100 * 128, "mmap_file_correct_size");
+    }
+
+    // Capacity-full path: log() returns 0 once we hit capacity.
+    {
+        mmap_logger::MmapTradeLogger small;
+        ASSERT(small.open_file("/tmp/hft_mmap_small.bin", /*capacity=*/3), "mmap_small_open");
+        ASSERT(small.log(EventType::ORDER_SUBMIT, 1) == 1, "mmap_small_1");
+        ASSERT(small.log(EventType::ORDER_SUBMIT, 2) == 2, "mmap_small_2");
+        ASSERT(small.log(EventType::ORDER_SUBMIT, 3) == 3, "mmap_small_3");
+        ASSERT(small.log(EventType::ORDER_SUBMIT, 4) == 0, "mmap_full_returns_0");
+    }
+    std::remove(path);
+    std::remove("/tmp/hft_mmap_small.bin");
+}
+
+
+// =====================================================
 // Risk rate limiter — bursts above max_orders_per_second get rejected
 // =====================================================
 
@@ -1379,6 +1428,7 @@ int main() {
     test_varlen_ring();
     test_logger_async_flush();
     test_lockfree_logger();
+    test_mmap_logger();
     test_risk_rate_limiter();
     test_risk_drawdown_no_peak();
     test_protocols_interleaved();
