@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 
 
 namespace orderbook {
@@ -57,11 +58,22 @@ public:
     static constexpr Price NO_ASK = static_cast<Price>(LEVELS);
 
 private:
+    struct OrderRef {
+        Price price;
+        Qty   qty;
+        bool  is_buy;
+    };
+
     Qty   bid_qty_[LEVELS]{};
     Qty   ask_qty_[LEVELS]{};
     Price best_bid_ = NO_BID;
     Price best_ask_ = NO_ASK;
     std::uint64_t trades_ = 0;
+
+    // Optional order-ID tracker — populated only by submit_with_id() /
+    // cancel() / modify(). The aggregated add_buy / add_sell paths never
+    // touch this map, so the lightweight aggregate API stays allocation-free.
+    std::unordered_map<std::uint64_t, OrderRef> orders_by_id_;
 
 public:
     FlatOrderBook() = default;
@@ -86,6 +98,57 @@ public:
         try_match();
         return true;
     }
+
+    // --- Order-ID-tracked variants (for cancel/modify by ID) ---
+    //
+    // These coexist with add_buy/add_sell: the ID-tracked path adds an entry
+    // to orders_by_id_ so cancel/modify can find the original (price, qty,
+    // side). If an order gets partially or fully filled by try_match, the
+    // map entry stays — a subsequent cancel decrements the level by
+    // min(remaining_at_level, order_qty), gracefully handling the fact that
+    // a flat book doesn't track per-order FIFO position.
+
+    bool submit_with_id(std::uint64_t id, Price price, Qty qty, bool is_buy) noexcept {
+        if (price < 0 || price >= static_cast<Price>(LEVELS) || qty <= 0) return false;
+        if (orders_by_id_.find(id) != orders_by_id_.end()) return false;  // dup ID
+        orders_by_id_.emplace(id, OrderRef{price, qty, is_buy});
+        if (is_buy) {
+            bid_qty_[price] += qty;
+            if (price > best_bid_) best_bid_ = price;
+        } else {
+            ask_qty_[price] += qty;
+            if (price < best_ask_) best_ask_ = price;
+        }
+        try_match();
+        return true;
+    }
+
+    bool cancel(std::uint64_t id) noexcept {
+        auto it = orders_by_id_.find(id);
+        if (it == orders_by_id_.end()) return false;
+        const OrderRef ref = it->second;
+        orders_by_id_.erase(it);
+        if (ref.is_buy) {
+            const Qty drop = std::min(ref.qty, bid_qty_[ref.price]);
+            bid_qty_[ref.price] -= drop;
+            while (best_bid_ >= 0 && bid_qty_[best_bid_] == 0) --best_bid_;
+        } else {
+            const Qty drop = std::min(ref.qty, ask_qty_[ref.price]);
+            ask_qty_[ref.price] -= drop;
+            while (best_ask_ < static_cast<Price>(LEVELS) && ask_qty_[best_ask_] == 0) ++best_ask_;
+        }
+        return true;
+    }
+
+    bool modify(std::uint64_t id, Price new_price, Qty new_qty) noexcept {
+        auto it = orders_by_id_.find(id);
+        if (it == orders_by_id_.end()) return false;
+        const bool is_buy = it->second.is_buy;
+        cancel(id);
+        return submit_with_id(id, new_price, new_qty, is_buy);
+    }
+
+    std::size_t tracked_orders() const noexcept { return orders_by_id_.size(); }
 
     Price best_bid()    const noexcept { return best_bid_; }
     Price best_ask()    const noexcept { return best_ask_; }

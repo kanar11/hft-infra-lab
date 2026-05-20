@@ -94,7 +94,6 @@ static int sanity() {
     b.add_buy(10030,  5);
     b.add_sell(10100, 8);
     b.add_sell(10080, 12);
-    // best_bid = 10050, best_ask = 10080, no crossing yet
     if (b.best_bid() != 10050) return 1;
     if (b.best_ask() != 10080) return 2;
     if (b.trades()   != 0)     return 3;
@@ -104,8 +103,31 @@ static int sanity() {
     if (b.trades() != 1)             return 4;
     if (b.bid_qty_at(10080) != 3)    return 5;
     if (b.ask_qty_at(10080) != 0)    return 6;
-    if (b.best_ask() != 10100)       return 7;  // advanced past empty 10080
+    if (b.best_ask() != 10100)       return 7;
     if (b.best_bid() != 10080)       return 8;
+
+    // --- ID-tracked submit / cancel / modify ---
+    orderbook::FlatOrderBook<16384> c;
+    if (!c.submit_with_id(/*id=*/101, 10050, 10, /*buy=*/true))  return 10;
+    if (!c.submit_with_id(/*id=*/102, 10100,  8, /*buy=*/false)) return 11;
+    if (c.best_bid() != 10050 || c.best_ask() != 10100)          return 12;
+    if (c.tracked_orders() != 2)                                  return 13;
+
+    // Cancel the bid by ID — best_bid should retreat to NO_BID
+    if (!c.cancel(101))                                           return 14;
+    if (c.bid_qty_at(10050) != 0)                                 return 15;
+    if (c.best_bid() != orderbook::FlatOrderBook<16384>::NO_BID) return 16;
+    if (c.tracked_orders() != 1)                                  return 17;
+
+    // Cancel an unknown ID — no-op, false
+    if (c.cancel(999))                                            return 18;
+
+    // Modify the ask: move from 10100 to 10090, double the qty
+    if (!c.modify(/*id=*/102, 10090, 16))                         return 19;
+    if (c.ask_qty_at(10100) != 0)                                 return 20;
+    if (c.ask_qty_at(10090) != 16)                                return 21;
+    if (c.best_ask() != 10090)                                    return 22;
+
     return 0;
 }
 
