@@ -41,20 +41,25 @@ the result to [`BENCHMARKS.md`](BENCHMARKS.md)).
 
 ```mermaid
 flowchart LR
-    Feed[ITCH Feed]
-    Parser[itch-parser<br/>ITCHParser]
-    Strategy[strategy<br/>MeanReversionStrategy]
+    SynthFeed[Synthetic ITCH<br/>MarketDataGenerator]
+    LobsterFeed[Real LOBSTER CSV<br/>replay/lobster_demo]
+    TCPFeed[TCP FIX over epoll<br/>network/fix_server_demo]
+    Parser[itch-parser / fix-protocol]
+    Strategy[strategy<br/>MeanReversion · MarketMaker]
     Router[router<br/>SmartOrderRouter]
     Risk[risk<br/>RiskManager]
     OMS[oms<br/>OMS]
-    Logger[logger<br/>TradeLogger]
+    Logger[logger<br/>TradeLogger · Lockfree · Mmap]
     Audit[(Binary<br/>audit file)]
 
-    Feed --> Parser --> Strategy --> Router --> Risk --> OMS --> Logger --> Audit
+    SynthFeed   --> Parser
+    LobsterFeed --> Parser
+    TCPFeed     --> Parser
+    Parser --> Strategy --> Router --> Risk --> OMS --> Logger --> Audit
     OMS -. positions / P&L .-> Risk
 ```
 
-Each module is a header-only C++ class; `simulator/sim_demo` wires them together end-to-end. The `lockfree/` headers (SPSC/MPSC/MPMC/Sequencer/WaitableMPSC) bridge stages that run on different threads — see `run_pipeline_threaded` in `simulator/market_sim.hpp` for a producer/consumer example.
+Each module is a header-only C++ class; `simulator/sim_demo` wires them together end-to-end. The `lockfree/` headers (SPSC/MPSC/MPMC/Sequencer/WaitableMPSC/VarlenRingBuffer) bridge stages that run on different threads — see `run_pipeline_threaded` in `simulator/market_sim.hpp` for a producer/consumer example. Python bindings (`bindings/pyhft`) wrap the OMS / Risk / FlatOrderBook for notebook-driven research.
 
 ## Real-data replay
 
@@ -75,22 +80,26 @@ Format details and download links: [`replay/README.md`](replay/README.md).
 | linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
 | network-latency/ | Network latency and jitter measurement | Bash |
 | multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | C++ |
-| orderbook/ | Matching engine with cancel, modify, benchmarks | C++ |
+| orderbook/ | Matching engine: 3 variants — std::map basic, std::map + cancel/modify, flat-array O(1) | C++ |
 | fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | C++ |
 | itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types, 60M msg/sec) | C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | C++ |
 | dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | C++ |
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |
-| lockfree/ | Lock-free SPSC queue for inter-thread comms | C++ |
-| oms/ | Order Management System with risk checks, P&L (11.6M orders/sec) | C++ |
+| lockfree/ | 6 lock-free primitives: SPSC, MPSC, MPMC, Sequencer, WaitableMPSC, VarlenRingBuffer | C++ |
+| common/ | Shared types (Side enum), sym_to_key, time helpers used across modules | C++ |
+| oms/ | Order Management System with risk checks, P&L, pending exposure (11.6M orders/sec) | C++ |
 | monitoring/ | Real-time infra monitor — /proc parser, alerts (8.6M parse/sec) | C++ |
-| strategy/ | Mean reversion trading strategy (8.0M ticks/sec, 100ns p50) | C++ |
+| strategy/ | Two strategies: reactive (mean reversion) + proactive (market maker w/ inventory skew) | C++ |
 | router/ | Smart Order Router — venue selection by price, latency, split (9.7M routes/sec) | C++ |
-| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits (7.9M checks/sec) | C++ |
+| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits, pending exposure (7.9M checks/sec) | C++ |
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
-| simulator/ | End-to-end market data pipeline (ITCH→Parser→Strategy→Router→OMS→P&L) | C++ |
-| logger/ | Trade Logger / Audit Trail — nanosecond event logging (14.3M events/sec) | C++ |
-| tests/ | Integration test suite — cross-module pipeline validation (107 assertions) | C++ |
+| simulator/ | End-to-end pipeline (ITCH→Parser→Strategy→Router→OMS→P&L), sync + threaded variants | C++ |
+| replay/ | Real Nasdaq order replay from LOBSTER CSVs through the same OMS pipeline | C++ |
+| logger/ | Trade Logger — 3 variants: hand-rolled SPSC ring, lockfree::SPSCQueue-backed, mmap-backed | C++ |
+| network/ | Epoll-based async TCP server + self-test FIX ingestion demo | C++ |
+| bindings/ | pybind11 Python extension exposing OMS, RiskManager, FlatOrderBook | C++/Python |
+| tests/ | Integration test suite — cross-module pipeline validation (200+ assertions) | C++ |
 | docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |
 
 ## Quick Start

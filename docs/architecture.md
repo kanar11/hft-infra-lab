@@ -1,5 +1,11 @@
 # System Architecture / Architektura systemu
 
+> **Scope note.** This diagram covers the *core* hot-path pipeline. The lab
+> also ships replay (`replay/lobster_demo` — real LOBSTER CSVs), networking
+> (`network/fix_server_demo` — epoll TCP), bindings (`bindings/pyhft` —
+> pybind11), three logger variants, multiple orderbook implementations, and
+> a market-maker strategy. See the root `README.md` Modules table.
+
 ## Data Flow Pipeline / Przepływ danych
 
 This is the complete path a trade takes through the system — from raw market data
