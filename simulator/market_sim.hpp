@@ -117,6 +117,10 @@ class MarketDataGenerator {
     // doesn't push 32 KB onto the stack. Overwritten on every use; never read
     // before being filled, so no init needed.
     int active_indices_[MAX_ACTIVE_ORDERS];
+    // Symbol universe — points to a pre-built StockInfo array. Defaults to the
+    // hardcoded STOCKS[] fallback if no config is supplied.
+    const StockInfo* stocks_;
+    int              n_stocks_;
 
     // Pack big-endian helpers (ITCH uses network byte order)
     // Pomocniki pakowania big-endian (ITCH używa sieciowej kolejności bajtów)
@@ -145,9 +149,17 @@ class MarketDataGenerator {
 
 public:
     explicit MarketDataGenerator(uint64_t seed = 42) noexcept
-        : rng_(seed), seq_(0), order_ref_(1000), active_count_(0), active_indices_{} {
+        : rng_(seed), seq_(0), order_ref_(1000), active_count_(0), active_indices_{},
+          stocks_(STOCKS), n_stocks_(NUM_STOCKS) {
         for (int i = 0; i < MAX_ACTIVE_ORDERS; ++i)
             active_orders_[i].active = false;
+    }
+
+    // set_stocks: override the symbol universe with config-supplied tickers
+    // (pointer ownership stays with the caller — typically points into a
+    // long-lived StockInfo vector built from HFTConfig::simulator::stocks).
+    void set_stocks(const StockInfo* arr, int n) noexcept {
+        if (arr && n > 0) { stocks_ = arr; n_stocks_ = n; }
     }
 
     int active_order_count() const noexcept { return active_count_; }
@@ -155,7 +167,7 @@ public:
     // Generate Add Order (A) message
     GeneratedMessage generate_add_order() noexcept {
         GeneratedMessage msg = {};
-        const StockInfo& stock = STOCKS[rng_.rand_int(NUM_STOCKS)];
+        const StockInfo& stock = stocks_[rng_.rand_int(n_stocks_)];
         double price = stock.base_price + rng_.rand_range(-2.0, 2.0);
         price = std::round(price * 100.0) / 100.0;
         char side = rng_.rand_int(2) ? 'S' : 'B';
@@ -239,7 +251,7 @@ public:
 
     // Generate Trade (P) message
     GeneratedMessage generate_trade() noexcept {
-        const StockInfo& stock = STOCKS[rng_.rand_int(NUM_STOCKS)];
+        const StockInfo& stock = stocks_[rng_.rand_int(n_stocks_)];
         double price = stock.base_price + rng_.rand_range(-1.0, 1.0);
         price = std::round(price * 100.0) / 100.0;
         int shares = SHARE_SIZES[rng_.rand_int(3) + 3];  // 100, 200, 500
@@ -342,8 +354,24 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     int    oms_max_pos     = cfg ? cfg->oms.max_position        : 1000;
     double oms_max_val     = cfg ? cfg->oms.max_order_value     : 100000.0;
 
+    // Build symbol universe — config (if any non-empty) overrides default STOCKS.
+    std::vector<StockInfo> sim_stocks;
+    if (cfg && !cfg->simulator.stocks.empty()) {
+        sim_stocks.reserve(cfg->simulator.stocks.size());
+        for (const auto& sc : cfg->simulator.stocks) {
+            StockInfo si{};
+            std::strncpy(si.symbol, sc.symbol, 8);
+            si.symbol[8]    = '\0';
+            si.base_price   = sc.base_price;
+            sim_stocks.push_back(si);
+        }
+    }
+    const StockInfo* active_stocks = sim_stocks.empty() ? STOCKS              : sim_stocks.data();
+    const int        n_active      = sim_stocks.empty() ? NUM_STOCKS          : static_cast<int>(sim_stocks.size());
+
     // Initialize components
     MarketDataGenerator generator(seed);
+    generator.set_stocks(active_stocks, n_active);
     ITCHParser parser;
     OMS oms(oms_max_pos, oms_max_val);
     MeanReversionStrategy strategy(strat_window, strat_threshold, strat_size);
@@ -527,8 +555,8 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     // Calculate total P&L by checking positions for all traded stocks
     // realized_pnl is stored as fixed-point int64 (× PRICE_SCALE) in OMS
     stats.total_pnl = 0.0;
-    for (int i = 0; i < NUM_STOCKS; ++i) {
-        const Position* pos = oms.get_position(STOCKS[i].symbol);
+    for (int i = 0; i < n_active; ++i) {
+        const Position* pos = oms.get_position(active_stocks[i].symbol);
         if (pos) {
             stats.total_pnl += to_float(pos->realized_pnl);
         }

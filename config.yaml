@@ -43,6 +43,23 @@ router:
 simulator:
   num_messages: 10000              # Default message count / Domyślna liczba wiadomości
   seed: 42                         # Random seed for reproducibility / Ziarno losowości
+  stocks:                          # Optional symbol universe (falls back to built-in default if omitted)
+    - symbol: AAPL
+      base_price: 175.00
+    - symbol: MSFT
+      base_price: 410.00
+    - symbol: GOOGL
+      base_price: 155.00
+    - symbol: AMZN
+      base_price: 185.00
+    - symbol: TSLA
+      base_price: 245.00
+    - symbol: META
+      base_price: 500.00
+    - symbol: NVDA
+      base_price: 880.00
+    - symbol: JPM
+      base_price: 195.00
 
 # Logging configuration / Konfiguracja logowania
 logging:

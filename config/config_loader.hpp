@@ -60,9 +60,15 @@ struct HFTConfig {
         std::vector<VenueConfig> venues;
     } router;
 
+    struct StockConfig {
+        char   symbol[9]   = {};
+        double base_price  = 100.0;
+    };
+
     struct SimulatorConfig {
         int num_messages = 10000;
         int seed         = 42;
+        std::vector<StockConfig> stocks;   // optional; falls back to hardcoded list
     } simulator;
 
     struct LoggingConfig {
@@ -145,6 +151,7 @@ inline HFTConfig load_config(const char* filepath = "config.yaml") {
     enum Section { NONE, RISK, OMS, STRATEGY, ROUTER, SIMULATOR, LOGGING };
     Section sec = NONE;
     bool in_venues = false;
+    bool in_stocks = false;
 
     char line_buf[512];
     while (std::fgets(line_buf, sizeof(line_buf), f)) {
@@ -158,6 +165,7 @@ inline HFTConfig load_config(const char* filepath = "config.yaml") {
         // --- indentation 0: section header ---
         if (ind == 0) {
             in_venues = false;
+            in_stocks = false;
             if (line == "risk:")           { sec = RISK;      continue; }
             if (line == "oms:")            { sec = OMS;       continue; }
             if (line == "strategy:")       { sec = STRATEGY;  continue; }
@@ -172,8 +180,10 @@ inline HFTConfig load_config(const char* filepath = "config.yaml") {
             std::string k, v;
             if (!kv(line, k, v)) continue;
 
-            if (k == "venues" && sec == ROUTER) { in_venues = true; continue; }
-            in_venues = false;  // any non-venues key at ind=2 exits the list
+            if (k == "venues" && sec == ROUTER)    { in_venues = true; in_stocks = false; continue; }
+            if (k == "stocks" && sec == SIMULATOR) { in_stocks = true; in_venues = false; continue; }
+            in_venues = false;  // any non-list key at ind=2 exits both lists
+            in_stocks = false;
 
             switch (sec) {
                 case RISK:
@@ -226,6 +236,24 @@ inline HFTConfig load_config(const char* filepath = "config.yaml") {
             if      (k == "name")          safe_copy(venue.name, 16, v);
             else if (k == "latency_ns")    venue.latency_ns    = static_cast<int64_t>(to_int(v));
             else if (k == "fee_per_share") venue.fee_per_share = to_dbl(v);
+            continue;
+        }
+
+        // --- indentation 4+: stock list items under simulator: ---
+        if (ind >= 4 && in_stocks && sec == SIMULATOR) {
+            std::string item = line;
+            bool is_new = (item.size() >= 2 && item[0] == '-' && item[1] == ' ');
+            if (is_new) {
+                cfg.simulator.stocks.push_back(HFTConfig::StockConfig{});
+                item = trim(item.substr(2));
+            }
+            if (cfg.simulator.stocks.empty()) cfg.simulator.stocks.push_back(HFTConfig::StockConfig{});
+            HFTConfig::StockConfig& s = cfg.simulator.stocks.back();
+
+            std::string k, v;
+            if (!kv(item, k, v)) continue;
+            if      (k == "symbol")     safe_copy(s.symbol, 9, v);
+            else if (k == "base_price") s.base_price = to_dbl(v);
             continue;
         }
     }
