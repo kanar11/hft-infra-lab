@@ -1,6 +1,13 @@
 # Build directory (objects, dependency files)
 build/
 
+# Python build artefacts (pybind11 extension)
+__pycache__/
+*.so
+*.pyd
+*.egg-info/
+bindings/build/
+
 # Compiled binaries
 orderbook/orderbook
 orderbook/orderbook_v2
