@@ -51,6 +51,7 @@ run_bench() {
     run_bench "Smart Router"                     ./router/router_demo 100000
     run_bench "Trade Logger"                     ./logger/logger_demo 100000
     run_bench "Mean Reversion Strategy"          ./strategy/strategy_demo 100000
+    run_bench "Market Maker simulation"          ./strategy/mm_demo 100000
     run_bench "FIX parser"                       ./fix-protocol/fix_demo 100000
     run_bench "OUCH protocol"                    ./ouch-protocol/ouch_demo 100000
     run_bench "Market Simulator (full)"          ./simulator/sim_demo 50000

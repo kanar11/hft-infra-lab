@@ -16,6 +16,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 - Smart Router (C++): **9.7M routes/sec** (p50=70ns, p99=150ns)
 - Trade Logger (C++): **14.3M events/sec** (p50=41ns, p99=60ns)
 - Mean Reversion Strategy (C++): **8.0M ticks/sec** (p50=100ns, p99=121ns)
+- Market Maker (C++): two-sided quoter with inventory skew, max-inventory caps — see `./strategy/mm_demo 100000` for a live simulation with adversary crosses
 - FIX 4.2 Parser (C++): **5.5M msg/sec** (p50=150ns, p99=250ns)
 - OUCH 4.2 Encoder (C++): **19.9M msg/sec** (p50=30ns, p99=40ns)
 - Lock-free SPSC queue: **17.6M msg/sec** (C++, 10M messages benchmarked)

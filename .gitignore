@@ -17,6 +17,7 @@ risk/risk_demo
 router/router_demo
 logger/logger_demo
 strategy/strategy_demo
+strategy/mm_demo
 fix-protocol/fix_demo
 ouch-protocol/ouch_demo
 dpdk-bypass/dpdk_demo

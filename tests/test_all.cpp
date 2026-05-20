@@ -26,6 +26,7 @@
 #include "../logger/trade_logger.hpp"
 #include "../logger/lockfree_logger.hpp"
 #include "../strategy/mean_reversion.hpp"
+#include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../ouch-protocol/ouch_protocol.hpp"
 #include "../lockfree/spsc_queue.hpp"
@@ -406,6 +407,72 @@ void test_strategy_edge_cases() {
     ASSERT(!sub.valid, "strategy_sub_threshold_holds");
 
     printf("  Strategy edge: 6 assertions\n");
+}
+
+
+// =====================================================
+// Market Maker — quote / fill / inventory skew / max-inventory suppression
+// =====================================================
+
+void test_market_maker() {
+    SECTION("Market Maker");
+
+    // --- Neutral state: symmetric quotes around mid ---
+    mm::MMConfig cfg;
+    cfg.quote_size          = 10;
+    cfg.half_spread_ticks   = 5;
+    cfg.max_inventory       = 100;
+    cfg.risk_aversion_ticks = 0.0;  // no skew for the symmetry test
+
+    mm::MarketMaker maker(cfg, "AAPL");
+    mm::Quote q = maker.quote(/*bid=*/15000, /*ask=*/15010);
+
+    ASSERT(q.bid_size == 10,               "mm_initial_bid_size");
+    ASSERT(q.ask_size == 10,               "mm_initial_ask_size");
+    ASSERT(q.ask_price - q.bid_price == 10,"mm_spread_two_halfspreads");
+    const int32_t mid = (15000 + 15010) / 2;
+    ASSERT(q.bid_price == mid - 5,         "mm_bid_at_mid_minus_half");
+    ASSERT(q.ask_price == mid + 5,         "mm_ask_at_mid_plus_half");
+
+    // --- Fills: BUY raises position, SELL lowers ---
+    maker.apply_fill(Side::BUY, 30, q.bid_price);
+    ASSERT(maker.position() == 30, "mm_buy_raises_position");
+    maker.apply_fill(Side::SELL, 10, q.ask_price);
+    ASSERT(maker.position() == 20, "mm_sell_lowers_position");
+    ASSERT(maker.fills_received() == 2, "mm_fills_counted");
+
+    // --- Inventory skew: long position pushes BOTH quotes down ---
+    mm::MMConfig skew_cfg = cfg;
+    skew_cfg.risk_aversion_ticks = 1.0;   // 1 tick of skew per share
+    mm::MarketMaker sk(skew_cfg, "AAPL");
+    sk.apply_fill(Side::BUY, 5, 15000);   // position = +5 → skew = -5 ticks
+    mm::Quote skq = sk.quote(15000, 15010);
+    // neutral would be bid=15000, ask=15010; with skew -5 → bid=14995, ask=15005
+    ASSERT(skq.bid_price == 14995, "mm_long_skews_bid_down");
+    ASSERT(skq.ask_price == 15005, "mm_long_skews_ask_down");
+
+    // --- Max-inventory hit: BID suppressed when at long limit ---
+    mm::MMConfig cap_cfg = cfg;
+    cap_cfg.risk_aversion_ticks = 0.0;
+    mm::MarketMaker capped(cap_cfg, "AAPL");
+    capped.apply_fill(Side::BUY, 100, 15000);  // position == +100 == max_inventory
+    mm::Quote cq = capped.quote(15000, 15010);
+    ASSERT(cq.bid_size == 0,  "mm_no_bid_at_long_cap");
+    ASSERT(cq.ask_size == 10, "mm_still_quotes_ask_at_long_cap");
+
+    // --- Symmetric: short cap suppresses ASK ---
+    mm::MarketMaker shorted(cap_cfg, "AAPL");
+    shorted.apply_fill(Side::SELL, 100, 15010);  // position == -100 == -max_inventory
+    mm::Quote sq = shorted.quote(15000, 15010);
+    ASSERT(sq.ask_size == 0,  "mm_no_ask_at_short_cap");
+    ASSERT(sq.bid_size == 10, "mm_still_quotes_bid_at_short_cap");
+
+    // --- P&L sanity: buy 10 @ 14995, sell 10 @ 15005 = +10 ticks × 10 shares = $1.00 ---
+    mm::MarketMaker pnl(cfg, "AAPL");
+    pnl.apply_fill(Side::BUY,  10, 14995);
+    pnl.apply_fill(Side::SELL, 10, 15005);
+    const double earned = pnl.pnl(/*mid_ticks=*/15000);
+    ASSERT(earned == 1.0, "mm_pnl_round_trip_one_dollar");
 }
 
 
@@ -1301,6 +1368,7 @@ int main() {
     test_logger();
     test_strategy();
     test_strategy_edge_cases();
+    test_market_maker();
     test_fix();
     test_ouch();
     test_spsc_queue();
