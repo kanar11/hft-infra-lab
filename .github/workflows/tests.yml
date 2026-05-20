@@ -24,7 +24,7 @@ jobs:
                    --inline-suppr \
                    common/ config/ oms/ risk/ router/ logger/ strategy/ \
                    fix-protocol/ ouch-protocol/ lockfree/ \
-                   multicast/ simulator/ tests/ replay/ \
+                   multicast/ simulator/ tests/ replay/ network/ \
                    orderbook/ itch-parser/ memory-latency/ \
                    benchmarks/ dpdk-bypass/ monitoring/
 
@@ -93,6 +93,9 @@ jobs:
 
       - name: Run LOBSTER replay (bundled sample)
         run: ./replay/lobster_demo replay/sample_aapl.csv
+
+      - name: Run epoll TCP FIX server (self-test, ~1s)
+        run: timeout 10 ./network/fix_server_demo
 
       - name: Run Integration tests
         run: ./tests/test_all
