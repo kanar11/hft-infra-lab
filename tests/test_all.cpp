@@ -786,32 +786,34 @@ void test_varlen_ring() {
 
     // Read back in order
     char buf[64] = {};
+    const std::uint32_t BUF_CAP = static_cast<std::uint32_t>(sizeof(buf));
     std::uint32_t n;
 
-    n = ring.read(buf, sizeof(buf));
+    n = ring.read(buf, BUF_CAP);
     ASSERT(n == 5,                       "varlen_read_1_len");
     ASSERT(std::memcmp(buf, m1, 5) == 0, "varlen_read_1_content");
 
-    n = ring.read(buf, sizeof(buf));
+    n = ring.read(buf, BUF_CAP);
     ASSERT(n == 6,                       "varlen_read_2_len");
     ASSERT(std::memcmp(buf, m2, 6) == 0, "varlen_read_2_content");
 
-    n = ring.read(buf, sizeof(buf));
-    ASSERT(n == 18,                       "varlen_read_3_len");
+    n = ring.read(buf, BUF_CAP);
+    ASSERT(n == 18u,                      "varlen_read_3_len");
     ASSERT(std::memcmp(buf, m3, 18) == 0, "varlen_read_3_content");
 
     ASSERT(ring.empty(), "varlen_empty_after_drain");
-    ASSERT(ring.read(buf, sizeof(buf)) == 0, "varlen_read_empty_returns_0");
+    ASSERT(ring.read(buf, BUF_CAP) == 0u, "varlen_read_empty_returns_0");
 
     // Reject zero-len and over-capacity
-    ASSERT(!ring.write(m1, 0),    "varlen_reject_zero_len");
-    ASSERT(!ring.write(m1, 2048), "varlen_reject_too_big");
+    ASSERT(!ring.write(m1, 0u),    "varlen_reject_zero_len");
+    ASSERT(!ring.write(m1, 2048u), "varlen_reject_too_big");
 
     // Buffer-too-small on read returns 0 without consuming
-    ASSERT(ring.write(m3, 18),  "varlen_write_for_short_read_test");
+    ASSERT(ring.write(m3, 18u),  "varlen_write_for_short_read_test");
     char small[4];
-    ASSERT(ring.read(small, sizeof(small)) == 0, "varlen_short_read_no_consume");
-    ASSERT(ring.read(buf, sizeof(buf)) == 18,    "varlen_subsequent_read_ok");
+    const std::uint32_t SMALL_CAP = static_cast<std::uint32_t>(sizeof(small));
+    ASSERT(ring.read(small, SMALL_CAP) == 0u, "varlen_short_read_no_consume");
+    ASSERT(ring.read(buf,   BUF_CAP)   == 18u,"varlen_subsequent_read_ok");
 }
 
 
