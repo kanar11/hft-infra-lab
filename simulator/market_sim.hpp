@@ -1,16 +1,18 @@
 /*
- * HFT Market Data Simulator — C++ Implementation
- * Symulator Danych Rynkowych HFT — implementacja C++
+ * MarketSim — symulator danych rynkowych end-to-end pipeline'u HFT.
  *
- * Generates synthetic ITCH market data, parses through ITCH parser,
- * routes orders through OMS with risk checks, and tracks P&L.
+ * Generuje syntetyczne wiadomości ITCH, parsuje przez ITCH parser, routuje
+ * zlecenia przez OMS z risk checkami, śledzi P&L. To "klejenie" wszystkich
+ * komponentów labu w jeden binarny demo — pokazuje że całość działa.
  *
- * Pipeline: ITCH Generator → ITCH Parser → Strategy → Router → OMS → P&L
- * Potok: Generator ITCH → Parser ITCH → Strategia → Router → OMS → P&L
+ * Pipeline: ITCH Generator → ITCH Parser → Strategy → Router → Risk → OMS → P&L
  *
- * Performance / Wydajność:
- *   Python: ~50-100K msg/sec end-to-end
- *   C++:    target 1-5M msg/sec end-to-end
+ * Dwa warianty:
+ *   - run_pipeline()           — wszystko w jednym wątku, sekwencyjnie.
+ *   - run_pipeline_threaded()  — gen / parse-strategy / oms na osobnych
+ *                                wątkach przez SPSC queue (lockfree).
+ *
+ * Wydajność (lab): ~573K msg/sec end-to-end (full pipeline).
  */
 
 #pragma once
@@ -26,7 +28,7 @@
 #include <thread>
 #include <vector>
 
-// Include all pipeline modules
+// Wszystkie moduły pipeline'u
 #include "../itch-parser/itch_parser.hpp"
 #include "../oms/oms.hpp"
 #include "../config/config_loader.hpp"
@@ -35,13 +37,9 @@
 #include "../lockfree/spsc_queue.hpp"
 
 
-// ============================================================
-// MarketDataGenerator — generates synthetic ITCH binary messages
-// Generator danych rynkowych — generuje syntetyczne wiadomości binarne ITCH
-// ============================================================
+// MarketDataGenerator — generuje syntetyczne binarne wiadomości ITCH.
 
-// Simple LCG random number generator (deterministic, no heap allocation)
-// Prosty generator liczb losowych LCG (deterministyczny, bez alokacji na stercie)
+// Prosty LCG (deterministyczny, zero heap allocation — istotne w hot path).
 struct FastRNG {
     uint64_t state;
 
@@ -52,24 +50,13 @@ struct FastRNG {
         return state >> 16;
     }
 
-    // Random int in [0, max)
-    int rand_int(int max) noexcept {
-        return static_cast<int>(next() % max);
-    }
-
-    // Random double in [0.0, 1.0)
-    double rand_double() noexcept {
-        return static_cast<double>(next() & 0xFFFFFFFF) / 4294967296.0;
-    }
-
-    // Random double in [lo, hi)
-    double rand_range(double lo, double hi) noexcept {
-        return lo + rand_double() * (hi - lo);
-    }
+    int    rand_int(int max) noexcept { return static_cast<int>(next() % max); }
+    double rand_double()      noexcept { return static_cast<double>(next() & 0xFFFFFFFF) / 4294967296.0; }
+    double rand_range(double lo, double hi) noexcept { return lo + rand_double() * (hi - lo); }
 };
 
 
-// Stock info for the generator
+// Informacje o symbolu dla generatora.
 struct StockInfo {
     char   symbol[9];
     double base_price;
@@ -84,11 +71,11 @@ static const int SHARE_SIZES[] = {10, 25, 50, 100, 200, 500};
 static constexpr int NUM_SHARE_SIZES = 6;
 
 
-// Active order tracking (fixed-size, no heap on hot path)
+// Śledzenie aktywnych zleceń (stała tablica, zero heap na hot path).
 struct ActiveOrder {
     int64_t order_ref;
     char    stock[9];
-    char    side;       // 'B' or 'S'
+    char    side;       // 'B' lub 'S'
     double  price;
     int32_t shares;
     bool    active;
@@ -96,11 +83,10 @@ struct ActiveOrder {
 
 static constexpr int MAX_ACTIVE_ORDERS = 8192;
 
-
-// Pre-built raw ITCH message buffer (max message size)
+// Pre-built bufor surowej wiadomości ITCH (max rozmiar to ramka 'P' z match_num).
 static constexpr int MAX_MSG_SIZE = 64;
 
-// A generated message with its raw bytes and length
+// Wygenerowana wiadomość — surowe bajty + długość.
 struct GeneratedMessage {
     uint8_t data[MAX_MSG_SIZE];
     int     length;
@@ -113,17 +99,16 @@ class MarketDataGenerator {
     int64_t order_ref_;
     ActiveOrder active_orders_[MAX_ACTIVE_ORDERS];
     int active_count_;
-    // Scratch buffer for random_active_order — kept as a member so each call
-    // doesn't push 32 KB onto the stack. Overwritten on every use; never read
-    // before being filled, so no init needed.
+    // Scratch buffer dla random_active_order — pole klasy żeby każde wywołanie
+    // nie wrzucało 32 KB na stos. Nadpisywany przy każdym użyciu, nigdy nie
+    // czytany przed wypełnieniem, więc init zbędny.
     int active_indices_[MAX_ACTIVE_ORDERS];
-    // Symbol universe — points to a pre-built StockInfo array. Defaults to the
-    // hardcoded STOCKS[] fallback if no config is supplied.
+    // Symbol universe — wskazuje na pre-built StockInfo. Domyślnie hardcoded
+    // STOCKS[] fallback gdy config nie został dostarczony.
     const StockInfo* stocks_;
     int              n_stocks_;
 
-    // Pack big-endian helpers (ITCH uses network byte order)
-    // Pomocniki pakowania big-endian (ITCH używa sieciowej kolejności bajtów)
+    // ITCH używa network byte order (big-endian) — pakery 32/64 bit.
     static void pack_be64(uint8_t* buf, int64_t val) noexcept {
         for (int i = 7; i >= 0; --i) { buf[i] = val & 0xFF; val >>= 8; }
     }
@@ -132,11 +117,11 @@ class MarketDataGenerator {
     }
 
     int64_t next_ts() noexcept {
-        seq_++;
-        return 34200000000000LL + seq_ * 1000000LL;  // 9:30 AM + seq ms
+        ++seq_;
+        return 34200000000000LL + seq_ * 1000000LL;  // 9:30 AM + seq * 1ms
     }
 
-    // Find a random active order, return index or -1
+    // Wylosuj indeks aktywnego zlecenia, -1 gdy brak.
     int random_active_order() noexcept {
         if (active_count_ == 0) return -1;
         int n = 0;
@@ -155,16 +140,16 @@ public:
             active_orders_[i].active = false;
     }
 
-    // set_stocks: override the symbol universe with config-supplied tickers
-    // (pointer ownership stays with the caller — typically points into a
-    // long-lived StockInfo vector built from HFTConfig::simulator::stocks).
+    // set_stocks: nadpisz symbol universe ticker'ami z configa.
+    // Ownership wskaźnika zostaje po stronie wywołującego — zwykle wskazuje
+    // na długożyjący StockInfo vector zbudowany z HFTConfig::simulator::stocks.
     void set_stocks(const StockInfo* arr, int n) noexcept {
         if (arr && n > 0) { stocks_ = arr; n_stocks_ = n; }
     }
 
     int active_order_count() const noexcept { return active_count_; }
 
-    // Generate Add Order (A) message
+    // Generuj wiadomość Add Order ('A').
     GeneratedMessage generate_add_order() noexcept {
         GeneratedMessage msg = {};
         const StockInfo& stock = stocks_[rng_.rand_int(n_stocks_)];
@@ -174,14 +159,14 @@ public:
         int shares = SHARE_SIZES[rng_.rand_int(NUM_SHARE_SIZES)];
         order_ref_++;
 
-        // Store active order
+        // Zapisz aktywne zlecenie.
         for (int i = 0; i < MAX_ACTIVE_ORDERS; ++i) {
             if (!active_orders_[i].active) {
                 active_orders_[i].order_ref = order_ref_;
-                // memcpy instead of strncpy — g++ -Wstringop-truncation flags
-                // strncpy(dst, src, 8) here as "might not be null-terminated"
-                // even though we explicitly set stock[8] = '\0' on the next line.
-                // memcpy avoids that warning and produces identical bytes.
+                // memcpy zamiast strncpy — g++ -Wstringop-truncation flagują
+                // strncpy(dst, src, 8) jako "może nie być null-terminated", mimo
+                // że explicit stock[8] = '\0' linijkę niżej. memcpy daje identyczne
+                // bajty i nie wywala warninga.
                 std::memcpy(active_orders_[i].stock, stock.symbol, 8);
                 active_orders_[i].stock[8] = '\0';
                 active_orders_[i].side = side;
@@ -193,7 +178,7 @@ public:
             }
         }
 
-        // Pack: 'A' + timestamp(8) + order_ref(8) + side(1) + shares(4) + stock(8) + price(4)
+        // Pakowanie ramki: 'A' + timestamp(8) + order_ref(8) + side(1) + shares(4) + stock(8) + price(4)
         uint8_t* d = msg.data;
         d[0] = 'A';
         pack_be64(d + 1, next_ts());
@@ -207,7 +192,7 @@ public:
         return msg;
     }
 
-    // Generate Order Executed (E) message
+    // Generuj wiadomość Order Executed ('E').
     GeneratedMessage generate_execute() noexcept {
         int idx = random_active_order();
         if (idx < 0) return generate_add_order();
@@ -233,7 +218,7 @@ public:
         return msg;
     }
 
-    // Generate Order Cancelled (C) message
+    // Generuj wiadomość Order Cancelled ('C').
     GeneratedMessage generate_cancel() noexcept {
         int idx = random_active_order();
         if (idx < 0) return generate_add_order();
@@ -253,7 +238,7 @@ public:
         return msg;
     }
 
-    // Generate Trade (P) message
+    // Generuj wiadomość Trade ('P').
     GeneratedMessage generate_trade() noexcept {
         const StockInfo& stock = stocks_[rng_.rand_int(n_stocks_)];
         double price = stock.base_price + rng_.rand_range(-1.0, 1.0);
@@ -288,7 +273,7 @@ public:
         return msg;
     }
 
-    // Generate a mixed message based on probability distribution
+    // Wymieszane wiadomości wg rozkładu prawdopodobieństwa (45% A, 25% E, 15% P, 15% C).
     GeneratedMessage generate_random_message() noexcept {
         double roll = rng_.rand_double();
         if (roll < 0.45)       return generate_add_order();
@@ -299,26 +284,22 @@ public:
 };
 
 
-// ============================================================
-// PipelineStats — results from a simulation run
-// Statystyki potoku — wyniki z uruchomienia symulacji
-// ============================================================
-
+// PipelineStats — wyniki uruchomienia symulacji.
 struct PipelineStats {
     int     messages_generated;
     int     messages_parsed;
     int     orders_submitted;
     int     orders_filled;
     int     orders_rejected;
-    int     max_in_flight_orders;   // peak count of submitted-but-unfilled orders
-    int     fill_latency_iters;     // iterations of simulated fill ack delay (0 = zero-latency)
+    int     max_in_flight_orders;   // peak submittted-but-unfilled
+    int     fill_latency_iters;     // iteracje symulowanego opóźnienia fill-ack (0 = zero-latency)
     double  gen_ms;
     double  parse_ms;
     double  oms_ms;
     double  total_ms;
     double  total_pnl;
 
-    // Message type breakdown
+    // Rozbicie typów wiadomości
     int add_orders;
     int executes;
     int trades;
@@ -327,7 +308,6 @@ struct PipelineStats {
 };
 
 
-// Pending fill tied to a submitted order — drained when current_iter reaches due_iter.
 // Pending fill powiązany z wysłanym zleceniem — drainowany gdy current_iter osiągnie due_iter.
 struct PendingFill {
     uint64_t order_id;
@@ -337,11 +317,7 @@ struct PendingFill {
 };
 
 
-// ============================================================
-// run_pipeline — full end-to-end simulation
-// Pełna symulacja od końca do końca
-// ============================================================
-
+// run_pipeline — pełna symulacja end-to-end, wszystko w jednym wątku.
 inline PipelineStats run_pipeline(int num_messages = 1000,
                                    bool use_strategy = false,
                                    bool use_router = false,
@@ -351,14 +327,14 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     PipelineStats stats = {};
     stats.fill_latency_iters = fill_latency_iters;
 
-    // Resolve parameters: config file wins over hardcoded defaults
+    // Rozwiązywanie parametrów: config file wygrywa nad hardcoded defaults.
     int    strat_window    = cfg ? cfg->strategy.window        : 20;
     double strat_threshold = cfg ? cfg->strategy.threshold_pct : 0.1;
     int    strat_size      = cfg ? cfg->strategy.order_size     : 100;
     int    oms_max_pos     = cfg ? cfg->oms.max_position        : 1000;
     double oms_max_val     = cfg ? cfg->oms.max_order_value     : 100000.0;
 
-    // Build symbol universe — config (if any non-empty) overrides default STOCKS.
+    // Symbol universe — config (jeśli niepusty) override'uje domyślne STOCKS.
     std::vector<StockInfo> sim_stocks;
     if (cfg && !cfg->simulator.stocks.empty()) {
         sim_stocks.reserve(cfg->simulator.stocks.size());
@@ -373,14 +349,14 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     const StockInfo* active_stocks = sim_stocks.empty() ? STOCKS              : sim_stocks.data();
     const int        n_active      = sim_stocks.empty() ? NUM_STOCKS          : static_cast<int>(sim_stocks.size());
 
-    // Initialize components
+    // Inicjalizacja komponentów
     MarketDataGenerator generator(seed);
     generator.set_stocks(active_stocks, n_active);
     ITCHParser parser;
     OMS oms(oms_max_pos, oms_max_val);
     MeanReversionStrategy strategy(strat_window, strat_threshold, strat_size);
 
-    // Router strategy from config
+    // Strategia routera z configa
     RoutingStrategy rr = RoutingStrategy::BEST_PRICE;
     int split_thr = 500;
     if (cfg) {
@@ -393,7 +369,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     SmartOrderRouter router(rr, split_thr);
 
     if (use_router) {
-        // Prefer venues from config; fall back to hardcoded defaults
+        // Preferuj giełdy z configa, fallback do hardcoded defaults.
         if (cfg && !cfg->router.venues.empty()) {
             for (const auto& vc : cfg->router.venues) {
                 Venue v;
@@ -413,15 +389,15 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
     }
 
-    // [1/4] Generate market data
+    // [1/4] Generowanie danych rynkowych
     auto gen_start = std::chrono::high_resolution_clock::now();
 
-    // Pre-allocate message buffer
-    int total_msgs = num_messages + 6;  // +6 for system events
+    // Pre-alokacja bufora wiadomości
+    int total_msgs = num_messages + 6;  // +6 na system events (3 start + 3 end)
     std::vector<GeneratedMessage> messages(total_msgs);
     int msg_idx = 0;
 
-    // Start of day system events
+    // Start-of-day system events
     messages[msg_idx++] = generator.generate_system_event('O');
     messages[msg_idx++] = generator.generate_system_event('S');
     messages[msg_idx++] = generator.generate_system_event('Q');
@@ -430,7 +406,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         messages[msg_idx++] = generator.generate_random_message();
     }
 
-    // End of day system events
+    // End-of-day system events
     messages[msg_idx++] = generator.generate_system_event('M');
     messages[msg_idx++] = generator.generate_system_event('E');
     messages[msg_idx++] = generator.generate_system_event('C');
@@ -439,7 +415,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     stats.gen_ms = std::chrono::duration<double, std::milli>(gen_end - gen_start).count();
     stats.messages_generated = msg_idx;
 
-    // [2/4] Parse all messages
+    // [2/4] Parsowanie wszystkich wiadomości
     auto parse_start = std::chrono::high_resolution_clock::now();
 
     std::vector<ParsedMessage> parsed(msg_idx);
@@ -460,15 +436,14 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     stats.parse_ms = std::chrono::duration<double, std::milli>(parse_end - parse_start).count();
     stats.messages_parsed = msg_idx;
 
-    // [3/4] Route through OMS
+    // [3/4] Routing przez OMS
     auto oms_start = std::chrono::high_resolution_clock::now();
 
-    // FIFO of in-flight fills; size() == pending_qty across the OMS for these orders.
     // Kolejka FIFO fillów w locie; size() = liczba pending zleceń w OMS.
     std::vector<PendingFill> pending_fills;
 
     for (int i = 0; i < msg_idx; ++i) {
-        // Drain any fills whose ack deadline has been reached
+        // Drain fillów których ack deadline już minął.
         size_t drained = 0;
         for (; drained < pending_fills.size() && pending_fills[drained].due_iter <= i; ++drained) {
             const PendingFill& pf = pending_fills[drained];
@@ -494,12 +469,12 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             side_str = pm.data.trade.side == 'B' ? "BUY" : "SELL";
             shares = pm.data.trade.shares;
         } else {
-            continue;  // skip non-tradeable messages
+            continue;  // pomiń wiadomości nietradowalne
         }
 
         if (!stock || price <= 0.0) continue;
 
-        // Update router quotes
+        // Aktualizuj quoty routera
         if (use_router) {
             double spread = price * 0.0002;
             router.update_quote("NYSE",   price - spread, price + spread, 300, 300);
@@ -511,9 +486,9 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         Side   oms_side   = side_from_str(side_str);
 
         if (use_strategy) {
-            // Strategy mode: feed price, trade only on signals.
-            // Signal::side is now a Side enum, so no more dangling-pointer
-            // aliasing risk (previously char[5] inside the local Signal).
+            // Tryb strategy: karm cenę, traduj tylko na sygnałach.
+            // Signal::side jest enumem Side — nie ma już dangling-pointer aliasing
+            // risk (wcześniej był char[5] wewnątrz lokalnego Signal).
             Signal signal = strategy.on_market_data(stock, price, 0);
             if (!signal.valid) continue;
             oms_side   = signal.side;
@@ -521,8 +496,8 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             fill_price = signal.price;
 
             if (use_router) {
-                // ::side_str disambiguates the global function from the local
-                // `const char* side_str` declared earlier in the loop.
+                // ::side_str disambiguates global function od lokalnego
+                // `const char* side_str` zadeklarowanego wyżej w pętli.
                 RouteDecision route = router.route_order(::side_str(signal.side), shares);
                 if (route.valid) fill_price = route.price;
             }
@@ -547,7 +522,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
     }
 
-    // Final drain — settle any orders still in-flight at end of message stream
+    // Final drain — rozlicz zlecenia jeszcze in-flight na końcu strumienia.
     for (const auto& pf : pending_fills) {
         oms.fill_order(pf.order_id, pf.shares, pf.price);
         stats.orders_filled++;
@@ -558,8 +533,8 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     stats.oms_ms = std::chrono::duration<double, std::milli>(oms_end - oms_start).count();
     stats.total_ms = stats.gen_ms + stats.parse_ms + stats.oms_ms;
 
-    // Calculate total P&L by checking positions for all traded stocks
-    // realized_pnl is stored as fixed-point int64 (× PRICE_SCALE) in OMS
+    // Łączny P&L — przeglądamy pozycje wszystkich symboli.
+    // realized_pnl jest fixed-point int64 (× PRICE_SCALE) w OMS.
     stats.total_pnl = 0.0;
     for (int i = 0; i < n_active; ++i) {
         const Position* pos = oms.get_position(active_stocks[i].symbol);
@@ -572,23 +547,20 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
 }
 
 
-// ============================================================
-// run_pipeline_threaded — generator on producer thread, parser on
-// consumer thread, hand-off via lockfree::SPSCQueue.
+// run_pipeline_threaded — generator na wątku producenta, parser na wątku
+// konsumenta, hand-off przez lockfree::SPSCQueue.
 //
-// This is the simplest realistic use of one of our lock-free primitives:
-// the feed-handler and the parser run on different cores, the queue
-// is the only thing connecting them. No mutex, no allocation on the hot
-// path, and the parser thread doesn't even need to know what protocol
-// the producer is generating — it just drains raw bytes.
-// ============================================================
+// To najprostsze realistyczne użycie naszego prymitywu lock-free: feed-handler
+// i parser działają na różnych rdzeniach, queue to jedyna rzecz która je łączy.
+// Zero mutexa, zero alokacji na hot path, parser thread nawet nie musi
+// wiedzieć jaki protokół generuje producent — po prostu drainuje bajty.
 
 inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
                                             uint64_t seed = 42) {
     PipelineStats stats = {};
 
-    // SIZE = 1024: each GeneratedMessage is ~68 bytes, total ~70 KB —
-    // small enough to allocate on the heap once per call.
+    // SIZE = 1024: każda GeneratedMessage to ~68 bajtów, łącznie ~70 KB —
+    // wystarczy małe i alokowane raz na call (unique_ptr → heap, alignas zachowany).
     auto queue = std::make_unique<lockfree::SPSCQueue<GeneratedMessage, 1024>>();
     std::atomic<bool> producer_done{false};
 
@@ -598,7 +570,7 @@ inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
         MarketDataGenerator gen(seed);
         for (int i = 0; i < num_messages; ++i) {
             GeneratedMessage msg = gen.generate_random_message();
-            while (!queue->push(msg)) { /* spin if consumer falls behind */ }
+            while (!queue->push(msg)) { /* busy-spin gdy konsument zostaje w tyle */ }
         }
         producer_done.store(true, std::memory_order_release);
     });
@@ -633,11 +605,7 @@ inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
 }
 
 
-// ============================================================
-// print_pipeline_stats — display simulation results
-// Wyświetl wyniki symulacji
-// ============================================================
-
+// print_pipeline_stats — wyświetla wyniki symulacji.
 inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool use_router) {
     printf("\n=== HFT Market Data Simulator (C++) ===\n");
     printf("Pipeline: ITCH Generator -> Parser");

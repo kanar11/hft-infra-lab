@@ -24,6 +24,7 @@ SRCS := \
 	strategy/strategy_demo.cpp \
 	strategy/mm_demo.cpp \
 	network/fix_server_demo.cpp \
+	feed/feed_demo.cpp \
 	fix-protocol/fix_demo.cpp \
 	ouch-protocol/ouch_demo.cpp \
 	dpdk-bypass/dpdk_demo.cpp \

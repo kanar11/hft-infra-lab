@@ -1,35 +1,34 @@
 /*
- * Sequencer<T, SIZE> — single-producer LMAX Disruptor-style ring.
+ * Sequencer<T, SIZE> — ring w stylu LMAX Disruptor, single-producer.
  *
- * Unlike a queue, the Sequencer exposes the slots directly: producer claims
- * a monotonic sequence number, writes into the underlying slot in place,
- * then publishes by storing to the cursor. Consumers read slots zero-copy
- * in published order. No data is ever copied through the queue — the speed
- * advantage of LMAX Disruptor over a queue.
+ * W przeciwieństwie do kolejki, Sequencer udostępnia sloty bezpośrednio:
+ * producent klaimuje monotoniczny numer sekwencyjny, zapisuje *in-place*
+ * w slocie, dopiero potem publikuje przez store na cursor. Konsumenci
+ * czytają sloty zero-copy w kolejności publikacji. Nic nie jest nigdy
+ * kopiowane "przez kolejkę" — to jest właśnie przewaga Disruptora nad
+ * tradycyjnym queue (struct po 200 bajtów copy → store w slocie).
  *
- * Single producer + multiple consumers (the most common LMAX flavour).
- * A multi-producer Sequencer would need a separate "published" bitmask
- * because fetch_add can't tell which claimed slots have completed writing.
+ * Jeden producent + wielu konsumentów (najczęstszy wariant LMAX).
+ * Multi-producer Sequencer wymagałby osobnej "published" bitmaski, bo
+ * fetch_add nie wie który zaklaimowany slot zakończył już write.
  *
- * API
- * ---
- *   producer:  seq = try_claim();   if seq < 0 → ring full
- *              slot(seq) = data;
- *              publish(seq);
+ * API:
+ *   producent:  seq = try_claim();   if seq < 0 → ring pełny
+ *               slot(seq) = data;
+ *               publish(seq);
  *
- *   consumer:  hi = available();    // latest published seq
- *              for (i = my_next; i <= hi; ++i) use(read(i));
- *              mark_consumed(hi);   // free slots for next wrap
+ *   konsument:  hi = available();    // ostatni opublikowany seq
+ *               for (i = my_next; i <= hi; ++i) use(read(i));
+ *               mark_consumed(hi);   // zwalnia sloty na kolejny wrap
  *
- * With multiple consumers, an external aggregator publishes the min of all
- * their sequences to mark_consumed (the producer can then wrap safely).
+ * Przy wielu konsumentach zewnętrzny aggregator publikuje min(all seqs)
+ * do mark_consumed — wtedy producent może bezpiecznie zawinąć.
  *
- * Memory ordering
- * ---------------
- *   cursor_.store(seq, release)  — producer publishes after writing slot
- *   cursor_.load(acquire)        — consumer pairs with the release
- *   gating_.store(seq, release)  — consumer signals "done with seq" (frees wrap)
- *   gating_.load(acquire)        — producer checks before wrap
+ * Memory ordering:
+ *   cursor_.store(release)  — producent publikuje po zapisaniu slotu
+ *   cursor_.load(acquire)   — konsument paruje z release
+ *   gating_.store(release)  — konsument sygnalizuje "skończone z seq"
+ *   gating_.load(acquire)   — producent czyta przed wrapem
  */
 #pragma once
 
@@ -45,13 +44,13 @@ class Sequencer {
     static_assert(SIZE > 0,                       "SIZE must be positive");
     static_assert((SIZE & (SIZE - 1)) == 0,       "SIZE must be a power of two");
 
-    T buffer_[SIZE]{};  // value-init satisfies cppcheck uninitMemberVar
-    alignas(64) std::atomic<std::int64_t> cursor_{-1};  // last published
-    alignas(64) std::atomic<std::int64_t> gating_{-1};  // slowest consumer
+    T buffer_[SIZE]{};  // value-init — satysfakcjonuje cppcheck uninitMemberVar
+    alignas(64) std::atomic<std::int64_t> cursor_{-1};  // ostatni opublikowany
+    alignas(64) std::atomic<std::int64_t> gating_{-1};  // najwolniejszy konsument
 
     static constexpr std::int64_t MASK = static_cast<std::int64_t>(SIZE - 1);
 
-    std::int64_t next_seq_ = 0;  // producer-only — no atomic needed
+    std::int64_t next_seq_ = 0;  // tylko producent — atomic zbędny
 
 public:
     Sequencer()                            = default;
@@ -60,8 +59,7 @@ public:
     Sequencer(Sequencer&&)                 = delete;
     Sequencer& operator=(Sequencer&&)      = delete;
 
-    // --- producer side (one thread only) ---
-
+    // strona producenta (tylko jeden wątek)
     std::int64_t try_claim() noexcept {
         const std::int64_t seq      = next_seq_;
         const std::int64_t wrap_min = seq - static_cast<std::int64_t>(SIZE);
@@ -77,8 +75,7 @@ public:
         cursor_.store(seq, std::memory_order_release);
     }
 
-    // --- consumer side ---
-
+    // strona konsumenta
     std::int64_t available() const noexcept {
         return cursor_.load(std::memory_order_acquire);
     }

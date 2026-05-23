@@ -24,7 +24,7 @@ jobs:
                    --inline-suppr \
                    common/ config/ oms/ risk/ router/ logger/ strategy/ \
                    fix-protocol/ ouch-protocol/ lockfree/ \
-                   multicast/ simulator/ tests/ replay/ network/ \
+                   multicast/ simulator/ tests/ replay/ network/ feed/ \
                    orderbook/ itch-parser/ memory-latency/ \
                    benchmarks/ dpdk-bypass/ monitoring/
 
@@ -96,6 +96,9 @@ jobs:
 
       - name: Run epoll TCP FIX server (self-test, ~1s)
         run: timeout 10 ./network/fix_server_demo
+
+      - name: Run WebSocket feed demo (self-contained mock server + client)
+        run: timeout 10 ./feed/feed_demo
 
       - name: Run Integration tests
         run: ./tests/test_all

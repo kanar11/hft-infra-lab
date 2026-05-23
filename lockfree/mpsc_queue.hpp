@@ -1,30 +1,32 @@
 /*
- * MPSCQueue<T, SIZE> — multiple-producer, single-consumer bounded queue.
+ * MPSCQueue<T, SIZE> — kolejka ograniczona N producentów / 1 konsument.
  *
- * Vyukov-style slot protocol. Each cell carries its own sequence number;
- * producers race for slots via CAS on head_, the single consumer advances
- * tail_ with a plain relaxed store.
+ * Protokół slotu w stylu Vyukova. Każda komórka (Cell) ma własny numer
+ * sekwencyjny; producenci ścigają się o sloty przez CAS na head_, jedyny
+ * konsument przesuwa tail_ zwykłym relaxed-store.
  *
- * Use case: many trading threads → one logger / journal / audit pipeline.
+ * Use case: wiele wątków tradingowych → jeden logger / journal / audit.
  *
- * Sequence-number protocol
- * ------------------------
- * Each Cell starts with seq == its index. seq encodes both ownership and
- * round number:
+ * Protokół seq:
+ *   Każda Cell startuje z seq == swój indeks. seq koduje jednocześnie
+ *   właściciela i numer "okrążenia" ring buffera:
  *
- *   producer (claim pos):
- *     cell.seq == pos       → free this round → CAS head_ to claim
- *     cell.seq <  pos       → full (consumer hasn't drained previous wrap)
- *     cell.seq >  pos       → another producer raced; reload head, retry
- *     After write: cell.seq.store(pos + 1, release)  ← publishes data
+ *   producent (claim pos):
+ *     cell.seq == pos       → wolny w tym okrążeniu → CAS head_
+ *     cell.seq <  pos       → pełna (konsument nie wybrał poprzedniego wrapu)
+ *     cell.seq >  pos       → wyścig z innym producentem; reload head, retry
+ *     po zapisie: cell.seq.store(pos+1, release)   ← publikuje dane
  *
- *   consumer (drain at tail):
- *     cell.seq == pos + 1   → ready → copy data → advance tail
- *     cell.seq <  pos + 1   → empty
- *     After read: cell.seq.store(pos + SIZE, release)  ← frees slot for next wrap
+ *   konsument (drain at tail):
+ *     cell.seq == pos+1     → gotowe → kopiuj dane → advance tail
+ *     cell.seq <  pos+1     → pusty
+ *     po odczycie: cell.seq.store(pos+SIZE, release)  ← zwalnia slot na kolejny wrap
  *
- * Capacity == SIZE (sequence numbers eliminate the empty/full ambiguity that
- * costs SPSCQueue one slot).
+ * Capacity == SIZE — numery sekwencyjne eliminują niejednoznaczność
+ * empty/full która w SPSCQueue kosztowała 1 slot.
+ *
+ * Dlaczego CAS_weak? Na ARM/POWER CAS_strong kosztuje dodatkowy retry-loop
+ * w mikrokodzie; CAS_weak może spurious-fail ale i tak retrujemy.
  */
 #pragma once
 
@@ -45,9 +47,9 @@ class MPSCQueue {
         T                        data;
     };
 
-    Cell buffer_[SIZE]{};  // value-init; ctor body then writes correct seq per slot
-    alignas(64) std::atomic<std::size_t> head_{0};  // producers CAS here
-    alignas(64) std::atomic<std::size_t> tail_{0};  // single consumer
+    Cell buffer_[SIZE]{};  // value-init; konstruktor zaraz nadpisuje seq na poprawne
+    alignas(64) std::atomic<std::size_t> head_{0};  // producenci CAS-ują tu
+    alignas(64) std::atomic<std::size_t> tail_{0};  // jeden konsument
 
     static constexpr std::size_t MASK = SIZE - 1;
 

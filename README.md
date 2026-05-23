@@ -44,6 +44,7 @@ flowchart LR
     SynthFeed[Synthetic ITCH<br/>MarketDataGenerator]
     LobsterFeed[Real LOBSTER CSV<br/>replay/lobster_demo]
     TCPFeed[TCP FIX over epoll<br/>network/fix_server_demo]
+    WSFeed[WebSocket live feed<br/>feed/feed_demo]
     Parser[itch-parser / fix-protocol]
     Strategy[strategy<br/>MeanReversion · MarketMaker]
     Router[router<br/>SmartOrderRouter]
@@ -55,6 +56,7 @@ flowchart LR
     SynthFeed   --> Parser
     LobsterFeed --> Parser
     TCPFeed     --> Parser
+    WSFeed      --> Parser
     Parser --> Strategy --> Router --> Risk --> OMS --> Logger --> Audit
     OMS -. positions / P&L .-> Risk
 ```
@@ -98,6 +100,7 @@ Format details and download links: [`replay/README.md`](replay/README.md).
 | replay/ | Real Nasdaq order replay from LOBSTER CSVs through the same OMS pipeline | C++ |
 | logger/ | Trade Logger — 3 variants: hand-rolled SPSC ring, lockfree::SPSCQueue-backed, mmap-backed | C++ |
 | network/ | Epoll-based async TCP server + self-test FIX ingestion demo | C++ |
+| feed/ | Minimal RFC 6455 WebSocket client + self-contained mock server (Binance-style JSON trades) | C++ |
 | bindings/ | pybind11 Python extension exposing OMS, RiskManager, FlatOrderBook | C++/Python |
 | tests/ | Integration test suite — cross-module pipeline validation (200+ assertions) | C++ |
 | docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |

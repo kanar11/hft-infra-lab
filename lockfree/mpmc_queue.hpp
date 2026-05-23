@@ -1,18 +1,17 @@
 /*
- * MPMCQueue<T, SIZE> — multiple-producer, multiple-consumer bounded queue.
+ * MPMCQueue<T, SIZE> — kolejka N producentów / N konsumentów.
  *
- * Same per-cell sequence-number protocol as MPSCQueue, but the consumer
- * side also CAS-claims slots on tail_ — any number of consumers may pop
- * concurrently.
+ * Ten sam protokół seq na komórkę co MPSCQueue, ale strona konsumenta
+ * też CAS-uje sloty na tail_ — dowolna liczba konsumentów może pop'ować
+ * jednocześnie.
  *
- * Use case: work pools, fan-out task dispatch, anywhere both ends scale
- * across cores.
+ * Use case: work pool, fan-out tasków, wszędzie gdzie obie strony skalują
+ * się na wiele rdzeni.
  *
- * Performance note
- * ----------------
- * CAS contention rises with thread count. For 1×1, prefer SPSCQueue (no CAS).
- * For N×1, prefer MPSCQueue (CAS only on head). Reach for MPMCQueue only
- * when both sides genuinely need to scale.
+ * Uwaga wydajnościowa:
+ *   Kontencja CAS rośnie z liczbą wątków. Dla 1×1 weź SPSCQueue (zero CAS).
+ *   Dla N×1 → MPSCQueue (CAS tylko na head). MPMCQueue tylko gdy faktycznie
+ *   obie strony skalują — inaczej płacisz CAS bez powodu.
  */
 #pragma once
 
@@ -33,9 +32,9 @@ class MPMCQueue {
         T                        data;
     };
 
-    Cell buffer_[SIZE]{};  // value-init; ctor body then writes correct seq per slot
-    alignas(64) std::atomic<std::size_t> head_{0};  // producers CAS
-    alignas(64) std::atomic<std::size_t> tail_{0};  // consumers CAS
+    Cell buffer_[SIZE]{};  // value-init; konstruktor nadpisuje seq na poprawne
+    alignas(64) std::atomic<std::size_t> head_{0};  // producenci CAS
+    alignas(64) std::atomic<std::size_t> tail_{0};  // konsumenci CAS
 
     static constexpr std::size_t MASK = SIZE - 1;
 

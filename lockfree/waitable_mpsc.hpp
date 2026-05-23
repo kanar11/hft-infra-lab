@@ -1,20 +1,20 @@
 /*
- * WaitableMPSCQueue<T, SIZE> — MPSCQueue with a blocking pop_wait(timeout).
+ * WaitableMPSCQueue<T, SIZE> — MPSCQueue z blokującym pop_wait(timeout).
  *
- * Wraps lockfree::MPSCQueue and adds an optional condition variable so the
- * consumer can sleep when the queue is empty instead of busy-spinning.
+ * Wrapper na lockfree::MPSCQueue + opcjonalny condition variable żeby
+ * konsument mógł spać gdy kolejka pusta, zamiast busy-spinować.
  *
- * Fast path stays lock-free: push() does push to the underlying MPSCQueue,
- * then a single atomic load on has_waiter_ — if no consumer is parked, it
- * skips the notify entirely (no syscall, no mutex). Only the slow path
- * (consumer about to sleep) takes the mutex.
+ * Fast path pozostaje lock-free: push() robi push do MPSCQueue, potem
+ * jeden atomic-load na has_waiter_ — jeśli nikt nie czeka, pomijamy
+ * notify (zero syscalli, zero mutexa). Tylko slow path (konsument który
+ * zasypia) bierze mutex.
  *
- * Use case: audit/journal flush threads — trading threads push at hot-path
- * speed, the flush thread sleeps when nothing is happening and wakes
- * within microseconds when an event lands.
+ * Use case: wątki flush'ujące audit/journal — wątki tradingowe push'ują
+ * na hot-path speed, flush thread śpi gdy nic się nie dzieje i budzi się
+ * w mikrosekundach gdy spadnie event.
  *
- * If you don't need blocking semantics, prefer MPSCQueue directly — the
- * notify-load in push() is cheap but not free.
+ * Jeśli nie potrzebujesz blokującej semantyki, użyj MPSCQueue bezpośrednio
+ * — notify-load w push() jest tani ale nie za darmo (1 cache miss).
  */
 #pragma once
 
@@ -56,7 +56,7 @@ public:
 
     template <typename Rep, typename Period>
     bool pop_wait(T& out, std::chrono::duration<Rep, Period> timeout) {
-        if (q_.pop(out)) return true;  // fast path
+        if (q_.pop(out)) return true;  // fast path — nie idziemy spać
 
         std::unique_lock<std::mutex> lk(mtx_);
         has_waiter_.store(true, std::memory_order_release);

@@ -1,39 +1,34 @@
 /*
- * MarketMaker — symmetric two-sided quoter with inventory skew.
+ * MarketMaker — symetryczny dwustronny quoter z inventory skew.
  *
- * The mean-reversion strategy in mean_reversion.hpp is *reactive* — it
- * waits for prices to deviate from a moving average and submits a single
- * order. A market maker is *proactive*: it continuously quotes both
- * sides of the book and earns the spread × volume that crosses its
- * quotes, while managing the resulting inventory.
+ * Mean reversion (mean_reversion.hpp) jest REAKTYWNY — czeka aż cena
+ * odbiegnie od średniej i wystawia 1 zlecenie. Market maker jest PROAKTYWNY:
+ * kwotuje cały czas obie strony book'a, zarabia spread × wolumen który
+ * przecina jego kwotowania i jednocześnie zarządza powstałym inventory.
  *
- * Per-tick algorithm
- * ------------------
+ * Algorytm per tick:
  *   mid  = (best_bid + best_ask) / 2
- *   skew = -position * risk_aversion_ticks      [in ticks]
+ *   skew = -position * risk_aversion_ticks         [w tickach]
  *
- *     long inventory  → negative skew → quotes shift DOWN
- *       (encourages crosses on the maker's ASK, discourages BIDs that
- *        would push the position further long)
- *     short inventory → positive skew → quotes shift UP
+ *     long inventory  → ujemny skew → kwotowania w DÓŁ
+ *       (zachęca egzekucje na ASK makera, zniechęca BID-y które
+ *        rozszerzyłyby long jeszcze bardziej)
+ *     short inventory → dodatni skew → kwotowania w GÓRĘ
  *
  *   target_bid = mid - half_spread + skew
  *   target_ask = mid + half_spread + skew
  *
- * Inventory limits
- * ----------------
- * If position >=  max_inventory, suppress the BID side (don't grow long).
- * If position <= -max_inventory, suppress the ASK side (don't grow short).
+ * Limity inventory:
+ *   position >=  max_inventory → BID wyłączony (nie rośniemy w long)
+ *   position <= -max_inventory → ASK wyłączony (nie rośniemy w short)
  *
- * P&L model
- * ---------
- * cash_ accumulates signed ticks × shares of every fill. mark-to-market
- * P&L = (cash_ + position * mid) / 100  dollars.
+ * Model P&L:
+ *   cash_ kumuluje signed ticks × shares każdego fila. Mark-to-market
+ *   P&L = (cash_ + position * mid) / 100 dolarów.
  *
- * This class is integration-agnostic — it exposes pure quote() / apply_fill()
- * functions. The caller (mm_demo or a future OMS-integrated runner) is
- * responsible for actually submitting/cancelling orders via OMS and feeding
- * fills back in.
+ * Klasa integration-agnostic — udostępnia czyste quote() / apply_fill().
+ * Wywołujący (mm_demo albo przyszły OMS-runner) jest odpowiedzialny za
+ * faktyczne submit/cancel zleceń przez OMS i wpinanie fillsów z powrotem.
  */
 #pragma once
 
@@ -47,14 +42,14 @@ namespace mm {
 
 struct MMConfig {
     int32_t quote_size          = 10;     // shares per side
-    int32_t half_spread_ticks   = 2;      // distance from mid (1 tick = $0.01)
-    int32_t max_inventory       = 1000;   // hard cap on net position
-    double  risk_aversion_ticks = 0.05;   // skew (ticks) per share of net inventory
+    int32_t half_spread_ticks   = 2;      // odległość od mid (1 tick = $0.01)
+    int32_t max_inventory       = 1000;   // hard cap na net position
+    double  risk_aversion_ticks = 0.05;   // skew (ticki) na share net inventory
 };
 
 
 struct Quote {
-    int32_t bid_price;   // 0 = side suppressed (e.g. at max inventory)
+    int32_t bid_price;   // 0 = strona wyłączona (np. przy max_inventory)
     int32_t ask_price;
     int32_t bid_size;
     int32_t ask_size;
@@ -66,7 +61,7 @@ class MarketMaker {
     char     symbol_[9];
 
     int32_t  position_     = 0;
-    int64_t  cash_ticks_   = 0;   // signed cumulative cash flow, in ticks*shares
+    int64_t  cash_ticks_   = 0;   // signed cumulative cash flow w ticks*shares
     int32_t  last_bid_     = 0;
     int32_t  last_ask_     = 0;
 
@@ -85,8 +80,8 @@ public:
     MarketMaker(MarketMaker&&)                 = delete;
     MarketMaker& operator=(MarketMaker&&)      = delete;
 
-    // quote: compute target quotes for this tick given the prevailing
-    // best bid / best ask in the market. Both in ticks.
+    // quote: oblicz docelowe kwotowania na ten tick przy danym best_bid/best_ask
+    // rynku. Oba w tickach (1 tick = $0.01).
     Quote quote(int32_t best_bid, int32_t best_ask) noexcept {
         Quote q{0, 0, 0, 0};
         if (best_bid <= 0 || best_ask <= 0 || best_ask <= best_bid) return q;
@@ -98,7 +93,7 @@ public:
         const int32_t bid_target = mid - cfg_.half_spread_ticks + skew;
         const int32_t ask_target = mid + cfg_.half_spread_ticks + skew;
 
-        // Bid suppressed when at long limit; ask suppressed when at short limit.
+        // BID wyłączony gdy przy long-limicie; ASK wyłączony gdy przy short-limicie.
         if (position_ < cfg_.max_inventory) {
             q.bid_price = bid_target;
             q.bid_size  = cfg_.quote_size;
@@ -108,7 +103,7 @@ public:
             q.ask_size  = cfg_.quote_size;
         }
 
-        // Track quote churn: any change to either side counts as cancel+replace.
+        // Quote churn: każda zmiana którejkolwiek strony liczy się jako cancel+replace.
         if (q.bid_price != last_bid_ || q.ask_price != last_ask_) {
             if (last_bid_ != 0 || last_ask_ != 0) ++quotes_cancelled_;
             ++quotes_placed_;
@@ -118,9 +113,9 @@ public:
         return q;
     }
 
-    // apply_fill: caller tells us one of our quotes got hit.
-    //   side == BUY  → maker bought  (inventory ↑, cash ↓)
-    //   side == SELL → maker sold    (inventory ↓, cash ↑)
+    // apply_fill: wywołujący mówi nam że jedno z naszych kwotowań zostało egzekutowane.
+    //   side == BUY  → maker kupił   (inventory ↑, cash ↓)
+    //   side == SELL → maker sprzedał (inventory ↓, cash ↑)
     void apply_fill(Side side, int32_t qty, int32_t price_ticks) noexcept {
         if (qty <= 0) return;
         ++fills_received_;
@@ -133,7 +128,7 @@ public:
         }
     }
 
-    // pnl: mark-to-market in dollars at the given mid price.
+    // pnl: mark-to-market w dolarach przy danym mid (w tickach).
     double pnl(int32_t mid_ticks) const noexcept {
         const int64_t inv_value_ticks = static_cast<int64_t>(position_) * mid_ticks;
         return static_cast<double>(cash_ticks_ + inv_value_ticks) / 100.0;
