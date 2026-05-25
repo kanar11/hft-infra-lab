@@ -74,6 +74,16 @@ The synthetic simulator stresses *throughput* on LCG-generated events; for an ap
 
 Format details and download links: [`replay/README.md`](replay/README.md).
 
+## Live WebSocket feed
+
+Czwarte źródło danych — minimalny klient **RFC 6455 WebSocket** + self-contained mock server w jednym binarce (Binance-style JSON trade stream). Pokazuje strukturę protokołu (HTTP upgrade, frame header, opcode, length encoding) bez zależności od libwebsockets / Boost.Beast.
+
+```bash
+./feed/feed_demo   # spawn mock server + WsClient w jednym procesie (50 trade'ów)
+```
+
+Szczegóły protokołu, opcody, podłączenie do prawdziwych giełd: [`feed/README.md`](feed/README.md).
+
 ## Modules 
 
 | Module | Description | Language |
