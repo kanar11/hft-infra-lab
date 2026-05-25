@@ -1,13 +1,28 @@
-// orderbook_flat: smoke test + head-to-head benchmark against the
-// std::map variant in orderbook.cpp.
-//
-// 1M random orders generated deterministically with an LCG, prices in
-// a 200-tick band (10000..10200 = $100.00..$102.00) so both books
-// hit the matching path frequently. Reports ns/op and the speedup
-// FlatOrderBook achieves over the std::map baseline.
-
+/*
+ * orderbook_flat — sanity test + head-to-head benchmark FlatOrderBook
+ *                   vs baseline std::map.
+ *
+ * Co testujemy:
+ *   1. sanity   — drobne scenariusze (best_bid/ask, matching, cancel/modify
+ *                 z ID, niezmienniki book'a). Wykonywane zawsze.
+ *   2. uniform  — N losowych zleceń, ceny równomiernie 10000..10199 ticków.
+ *                 Realistyczne dla testowania matching engine pod obciążeniem.
+ *   3. realistic — N losowych zleceń z rozkładem skupionym wokół mid'a:
+ *                 60% ±10 ticków (przy rynku), 30% ±50, 9% ±100, 1% long tail.
+ *                 Bliżej tego co widać w realnym order flow.
+ *
+ * Każdy bench ma DWA przebiegi:
+ *   a) throughput — zegar tylko raz przed/po pętli → ns/op średnie
+ *   b) latency    — zegar per op → histogram p50/p95/p99/p99.9
+ *
+ * Uruchomienie:
+ *   ./orderbook/orderbook_flat                # default: 1M ops
+ *   ./orderbook/orderbook_flat 100000         # 100k ops (CI sanity bench)
+ *   ./orderbook/orderbook_flat 5000000        # 5M ops (poważny benchmark)
+ */
 #include "orderbook_flat.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -15,8 +30,8 @@
 #include <vector>
 
 
-// --- std::map reference, copied from benchmark_orderbook.cpp ---------------
-
+// std::map reference (kopia z benchmark_orderbook.cpp) — żeby porównanie
+// było apples-to-apples z FlatOrderBook na tym samym strumieniu zleceń.
 namespace ref {
 class MapOrderBook {
     std::map<std::int32_t, std::int32_t, std::greater<std::int32_t>> bids;
@@ -52,29 +67,64 @@ private:
 }  // namespace ref
 
 
-// --- Deterministic order stream --------------------------------------------
-
+// Deterministyczny strumień zleceń — LCG zamiast std::mt19937 (szybszy,
+// nie zaśmieca latency histogramu zbędnymi alokacjami).
 struct Op { std::int32_t price; std::int32_t qty; bool is_buy; };
 
-static std::vector<Op> make_ops(int n) {
+struct LCG {
+    std::uint32_t state;
+    explicit LCG(std::uint32_t seed = 0xC0FFEEu) : state(seed) {}
+    std::uint32_t next() noexcept { state = state * 1664525u + 1013904223u; return state; }
+};
+
+
+// Uniform: ceny równomiernie 10000..10199 (200-tick band).
+static std::vector<Op> make_ops_uniform(int n) {
     std::vector<Op> ops;
     ops.reserve(static_cast<std::size_t>(n));
-    std::uint32_t rng = 0xC0FFEEu;
-    auto roll = [&]() { rng = rng * 1664525u + 1013904223u; return rng; };
+    LCG rng(0xC0FFEEu);
     for (int i = 0; i < n; ++i) {
-        const std::int32_t price = 10000 + static_cast<std::int32_t>(roll() % 200);  // $100.00..$101.99
-        const std::int32_t qty   = 1 + static_cast<std::int32_t>(roll() % 100);
-        const bool is_buy        = (roll() & 1u) != 0;
+        const std::int32_t price = 10000 + static_cast<std::int32_t>(rng.next() % 200);
+        const std::int32_t qty   = 1 + static_cast<std::int32_t>(rng.next() % 100);
+        const bool is_buy        = (rng.next() & 1u) != 0;
         ops.push_back({price, qty, is_buy});
     }
     return ops;
 }
 
 
-// --- Benchmark drivers -----------------------------------------------------
+// Realistic: większość zleceń koło mid'a, długi ogon.
+//   mid = 10100, distributiona piecewise:
+//     bucket 0 (60%): mid ± 10  ticków       → "przy rynku"
+//     bucket 1 (30%): mid ± 50  ticków       → "mid-spread"
+//     bucket 2 (9%):  mid ± 100 ticków       → "far quotes"
+//     bucket 3 (1%):  10000..10199 uniform   → "outlier / long tail"
+static std::vector<Op> make_ops_realistic(int n) {
+    constexpr std::int32_t MID = 10100;
+    std::vector<Op> ops;
+    ops.reserve(static_cast<std::size_t>(n));
+    LCG rng(0xBADCAFEu);
+    for (int i = 0; i < n; ++i) {
+        const std::uint32_t bucket_roll = rng.next() % 100u;
+        std::int32_t offset;
+        if      (bucket_roll < 60u) offset = static_cast<std::int32_t>(rng.next() % 21u) - 10;
+        else if (bucket_roll < 90u) offset = static_cast<std::int32_t>(rng.next() % 101u) - 50;
+        else if (bucket_roll < 99u) offset = static_cast<std::int32_t>(rng.next() % 201u) - 100;
+        else                        offset = static_cast<std::int32_t>(rng.next() % 200u) - 100;
+        std::int32_t price = MID + offset;
+        if (price < 10000) price = 10000;
+        if (price > 10199) price = 10199;
+        const std::int32_t qty   = 1 + static_cast<std::int32_t>(rng.next() % 100);
+        const bool is_buy        = (rng.next() & 1u) != 0;
+        ops.push_back({price, qty, is_buy});
+    }
+    return ops;
+}
 
+
+// Throughput pass — jeden zegar przed/po, jedna liczba ns/op.
 template <typename Book>
-static int64_t run(Book& book, const std::vector<Op>& ops) {
+static std::int64_t run_throughput(Book& book, const std::vector<Op>& ops) noexcept {
     const auto t0 = std::chrono::high_resolution_clock::now();
     for (const Op& o : ops) {
         if (o.is_buy) book.add_buy(o.price, o.qty);
@@ -85,10 +135,64 @@ static int64_t run(Book& book, const std::vector<Op>& ops) {
 }
 
 
-// --- Sanity test (small) ---------------------------------------------------
+struct LatencyStats {
+    double mean_ns;
+    double p50_ns;
+    double p95_ns;
+    double p99_ns;
+    double p99_9_ns;
+    double max_ns;
+};
 
+
+// Latency pass — zegar per op, sort, percentyle. Sampluje co N-tą operację
+// żeby koszt clock'a nie zdominował pomiarów sub-100ns. Próbka 100k ops
+// daje statystycznie istotne percentyle dla każdego rozkładu.
+template <typename Book>
+static LatencyStats run_latency(Book& book, const std::vector<Op>& ops) {
+    // Sampluj max 100k operacji, równomiernie rozłożonych.
+    const int sample_size = std::min(100000, static_cast<int>(ops.size()));
+    const int stride      = std::max(1, static_cast<int>(ops.size()) / sample_size);
+
+    std::vector<std::int64_t> samples;
+    samples.reserve(static_cast<std::size_t>(sample_size));
+
+    for (std::size_t i = 0; i < ops.size(); ++i) {
+        const Op& o = ops[i];
+        if (static_cast<int>(i) % stride == 0) {
+            const auto t0 = std::chrono::high_resolution_clock::now();
+            if (o.is_buy) book.add_buy(o.price, o.qty);
+            else          book.add_sell(o.price, o.qty);
+            const auto t1 = std::chrono::high_resolution_clock::now();
+            samples.push_back(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        } else {
+            if (o.is_buy) book.add_buy(o.price, o.qty);
+            else          book.add_sell(o.price, o.qty);
+        }
+    }
+
+    std::sort(samples.begin(), samples.end());
+    const auto pct = [&](double p) -> double {
+        if (samples.empty()) return 0.0;
+        const std::size_t idx = std::min(samples.size() - 1,
+            static_cast<std::size_t>(p * samples.size()));
+        return static_cast<double>(samples[idx]);
+    };
+
+    std::int64_t sum = 0;
+    for (const auto v : samples) sum += v;
+    const double mean = samples.empty() ? 0.0
+        : static_cast<double>(sum) / static_cast<double>(samples.size());
+
+    return {mean, pct(0.50), pct(0.95), pct(0.99), pct(0.999),
+            samples.empty() ? 0.0 : static_cast<double>(samples.back())};
+}
+
+
+// Sanity test (mały) — szybki check że add/match/cancel/modify działają.
+// Zachowany w identycznej formie co poprzednio — to regression test.
 static int sanity() {
-    // LEVELS=16384 fits the 10000..10200 test band with headroom.
     orderbook::FlatOrderBook<16384> b;
     b.add_buy(10050, 10);
     b.add_buy(10030,  5);
@@ -98,41 +202,81 @@ static int sanity() {
     if (b.best_ask() != 10080) return 2;
     if (b.trades()   != 0)     return 3;
 
-    // Aggressive buy crosses: 15 buy @ 10080 vs 12 ask @ 10080 → 1 trade, 3 buy left
-    b.add_buy(10080, 15);
+    b.add_buy(10080, 15);  // krzyżuje: 15 buy @ 10080 vs 12 ask @ 10080 → 1 trade, 3 buy left
     if (b.trades() != 1)             return 4;
     if (b.bid_qty_at(10080) != 3)    return 5;
     if (b.ask_qty_at(10080) != 0)    return 6;
     if (b.best_ask() != 10100)       return 7;
     if (b.best_bid() != 10080)       return 8;
 
-    // --- ID-tracked submit / cancel / modify ---
+    // ID-tracked submit / cancel / modify
     orderbook::FlatOrderBook<16384> c;
-    if (!c.submit_with_id(/*id=*/101, 10050, 10, /*buy=*/true))  return 10;
-    if (!c.submit_with_id(/*id=*/102, 10100,  8, /*buy=*/false)) return 11;
-    if (c.best_bid() != 10050 || c.best_ask() != 10100)          return 12;
-    if (c.tracked_orders() != 2)                                  return 13;
+    if (!c.submit_with_id(101, 10050, 10, /*buy=*/true))            return 10;
+    if (!c.submit_with_id(102, 10100,  8, /*buy=*/false))           return 11;
+    if (c.best_bid() != 10050 || c.best_ask() != 10100)             return 12;
+    if (c.tracked_orders() != 2)                                    return 13;
 
-    // Cancel the bid by ID — best_bid should retreat to NO_BID
-    if (!c.cancel(101))                                           return 14;
-    if (c.bid_qty_at(10050) != 0)                                 return 15;
-    if (c.best_bid() != orderbook::FlatOrderBook<16384>::NO_BID) return 16;
-    if (c.tracked_orders() != 1)                                  return 17;
+    if (!c.cancel(101))                                             return 14;
+    if (c.bid_qty_at(10050) != 0)                                   return 15;
+    if (c.best_bid() != orderbook::FlatOrderBook<16384>::NO_BID)    return 16;
+    if (c.tracked_orders() != 1)                                    return 17;
 
-    // Cancel an unknown ID — no-op, false
-    if (c.cancel(999))                                            return 18;
+    if (c.cancel(999))                                              return 18;  // unknown ID → no-op
 
-    // Modify the ask: move from 10100 to 10090, double the qty
-    if (!c.modify(/*id=*/102, 10090, 16))                         return 19;
-    if (c.ask_qty_at(10100) != 0)                                 return 20;
-    if (c.ask_qty_at(10090) != 16)                                return 21;
-    if (c.best_ask() != 10090)                                    return 22;
-
+    if (!c.modify(102, 10090, 16))                                  return 19;
+    if (c.ask_qty_at(10100) != 0)                                   return 20;
+    if (c.ask_qty_at(10090) != 16)                                  return 21;
+    if (c.best_ask() != 10090)                                      return 22;
     return 0;
 }
 
 
-// --- Main ------------------------------------------------------------------
+static void print_scenario(const char* name, int n,
+                            const LatencyStats& flat_lat, std::int64_t flat_thru_ns,
+                            std::uint64_t flat_trades,
+                            const LatencyStats& map_lat,  std::int64_t map_thru_ns,
+                            std::uint64_t map_trades) {
+    const double flat_thru = static_cast<double>(flat_thru_ns) / n;
+    const double map_thru  = static_cast<double>(map_thru_ns)  / n;
+    const double speedup   = static_cast<double>(map_thru_ns) /
+                             static_cast<double>(flat_thru_ns);
+
+    std::printf("\n=== Scenario: %s  (n=%d ops) ===\n", name, n);
+    std::printf("                       FlatOrderBook    std::map (ref)\n");
+    std::printf("  Throughput (ns/op)   %12.1f    %12.1f    speedup %.2fx\n",
+                flat_thru, map_thru, speedup);
+    std::printf("  Latency  p50         %12.0f    %12.0f\n",  flat_lat.p50_ns,   map_lat.p50_ns);
+    std::printf("  Latency  p95         %12.0f    %12.0f\n",  flat_lat.p95_ns,   map_lat.p95_ns);
+    std::printf("  Latency  p99         %12.0f    %12.0f\n",  flat_lat.p99_ns,   map_lat.p99_ns);
+    std::printf("  Latency  p99.9       %12.0f    %12.0f\n",  flat_lat.p99_9_ns, map_lat.p99_9_ns);
+    std::printf("  Latency  max         %12.0f    %12.0f\n",  flat_lat.max_ns,   map_lat.max_ns);
+    std::printf("  Latency  mean        %12.1f    %12.1f\n",  flat_lat.mean_ns,  map_lat.mean_ns);
+    std::printf("  Trades               %12lu    %12lu\n",
+                (unsigned long)flat_trades, (unsigned long)map_trades);
+}
+
+
+// Bench dla jednego scenariusza: 4 przebiegi (2 booki × throughput + latency),
+// każdy na świeżym booku żeby cache był wygrzany identycznie.
+static void run_scenario(const char* name, int n, const std::vector<Op>& ops) {
+    orderbook::FlatOrderBook<65536> flat_thru_book;
+    const std::int64_t flat_thru_ns = run_throughput(flat_thru_book, ops);
+    const std::uint64_t flat_trades = flat_thru_book.trades();
+
+    orderbook::FlatOrderBook<65536> flat_lat_book;
+    const LatencyStats flat_lat = run_latency(flat_lat_book, ops);
+
+    ref::MapOrderBook map_thru_book;
+    const std::int64_t map_thru_ns = run_throughput(map_thru_book, ops);
+    const std::uint64_t map_trades = map_thru_book.trades();
+
+    ref::MapOrderBook map_lat_book;
+    const LatencyStats map_lat = run_latency(map_lat_book, ops);
+
+    print_scenario(name, n, flat_lat, flat_thru_ns, flat_trades,
+                            map_lat,  map_thru_ns,  map_trades);
+}
+
 
 int main(int argc, char* argv[]) {
     int n = (argc > 1) ? std::atoi(argv[1]) : 1'000'000;
@@ -144,25 +288,11 @@ int main(int argc, char* argv[]) {
     }
     std::printf("sanity: OK\n");
 
-    const auto ops = make_ops(n);
+    const auto ops_uniform   = make_ops_uniform(n);
+    const auto ops_realistic = make_ops_realistic(n);
 
-    // Warm caches once on each book before timing.
-    orderbook::FlatOrderBook<65536> flat;
-    const int64_t flat_ns = run(flat, ops);
+    run_scenario("UNIFORM    (price ~ U[10000, 10199])",    n, ops_uniform);
+    run_scenario("REALISTIC  (60%/30%/9%/1% bucketed)",     n, ops_realistic);
 
-    ref::MapOrderBook map_book;
-    const int64_t map_ns = run(map_book, ops);
-
-    const double flat_per_op = static_cast<double>(flat_ns) / n;
-    const double map_per_op  = static_cast<double>(map_ns)  / n;
-    const double speedup     = static_cast<double>(map_ns) / static_cast<double>(flat_ns);
-
-    std::printf("\n=== FlatOrderBook vs std::map ===\n");
-    std::printf("  ops:               %d (random, price 10000..10199)\n", n);
-    std::printf("  FlatOrderBook:     %.1f ns/op   trades=%lu\n",
-                flat_per_op, (unsigned long)flat.trades());
-    std::printf("  std::map (ref):    %.1f ns/op   trades=%lu\n",
-                map_per_op, (unsigned long)map_book.trades());
-    std::printf("  speedup:           %.2fx\n", speedup);
     return 0;
 }
