@@ -1,10 +1,12 @@
 # System Architecture / Architektura systemu
 
 > **Scope note.** This diagram covers the *core* hot-path pipeline. The lab
-> also ships replay (`replay/lobster_demo` — real LOBSTER CSVs), networking
-> (`network/fix_server_demo` — epoll TCP), bindings (`bindings/pyhft` —
-> pybind11), three logger variants, multiple orderbook implementations, and
-> a market-maker strategy. See the root `README.md` Modules table.
+> also ships four alternative data sources — synthetic LCG (`simulator/`),
+> real LOBSTER CSV (`replay/lobster_demo`), epoll TCP FIX
+> (`network/fix_server_demo`), and an RFC 6455 WebSocket client + mock server
+> (`feed/feed_demo`). Plus pybind11 bindings (`bindings/pyhft`), three logger
+> variants, multiple orderbook implementations, and a market-maker strategy.
+> See the root `README.md` Modules table.
 
 ## Data Flow Pipeline / Przepływ danych
 
