@@ -24,6 +24,7 @@ SRCS := \
 	logger/logger_demo.cpp \
 	strategy/strategy_demo.cpp \
 	strategy/mm_demo.cpp \
+	strategy/exec_demo.cpp \
 	network/fix_server_demo.cpp \
 	feed/feed_demo.cpp \
 	fix-protocol/fix_demo.cpp \

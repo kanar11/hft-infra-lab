@@ -73,6 +73,9 @@ jobs:
       - name: Run Market Maker simulation (10k ticks)
         run: ./strategy/mm_demo 10000
 
+      - name: Run Execution Algos demo (TWAP vs VWAP)
+        run: ./strategy/exec_demo
+
       - name: Run FIX Protocol tests
         run: ./fix-protocol/fix_demo 0
 
