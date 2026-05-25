@@ -12,11 +12,33 @@ of tickers — drop in any of those files and `lobster_demo` will replay
 them through the same OMS, Risk, Logger, and Strategy that the synthetic
 simulator uses.
 
-### Sample file shipped with the repo
+### Sample files shipped with the repo
 
-`sample_aapl.csv` — 20 hand-crafted events mimicking the real LOBSTER
-column format. Lets CI exercise the parser + pipeline without depending
-on an external download.
+- **`sample_aapl.csv`** — 20 hand-crafted events. Smoke-test rozmiar, CI
+  smiga w <1ms.
+- **`generated_aapl_day.csv`** — 5000 syntetycznych eventów (~210 KB,
+  bundled w repo). Reprezentuje ~50 sekund handlu z realistycznymi
+  rozkładami (Poisson inter-arrival, ~50%/20%/15%/14%/1% mix submit/
+  cancel/delete/execute/halt, dyskretne rozmiary z preferencją round-lotów).
+  CI używa tego pliku jako "longer pipeline test" — przepuszczamy 5k
+  zdarzeń przez OMS + Logger żeby zobaczyć że nic się nie wykłada na
+  większej skali.
+
+### Generowanie własnych fixture'ów
+
+Jeśli chcesz inny rozmiar / inny symbol / inny seed:
+
+```bash
+python3 replay/gen_fixture.py                    # default: 10000 eventów, AAPL
+python3 replay/gen_fixture.py -n 50000           # 50k eventów
+python3 replay/gen_fixture.py -n 100000 -s MSFT  # 100k MSFT
+python3 replay/gen_fixture.py -o my_day.csv      # custom output
+```
+
+Output jest **deterministyczny przy stałym seed** (default=42), więc
+można go używać do regression testów bez obawy że plik się zmieni.
+
+Szczegóły rozkładów: zobacz docstring w `replay/gen_fixture.py`.
 
 ### Run the real thing
 

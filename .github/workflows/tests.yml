@@ -91,8 +91,11 @@ jobs:
       - name: Run Market Simulator tests
         run: ./simulator/sim_demo 0
 
-      - name: Run LOBSTER replay (bundled sample)
+      - name: Run LOBSTER replay (bundled 20-event sample)
         run: ./replay/lobster_demo replay/sample_aapl.csv
+
+      - name: Run LOBSTER replay (5k generated fixture, full pipeline)
+        run: ./replay/lobster_demo replay/generated_aapl_day.csv
 
       - name: Run epoll TCP FIX server (self-test, ~1s)
         run: timeout 10 ./network/fix_server_demo
