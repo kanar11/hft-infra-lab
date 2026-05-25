@@ -103,6 +103,9 @@ jobs:
       - name: Run WebSocket feed demo (self-contained mock server + client)
         run: timeout 10 ./feed/feed_demo
 
+      - name: Run lockfree correctness stress (all 6 primitives, no sanitizers)
+        run: ./lockfree/lockfree_stress
+
       - name: Run Integration tests
         run: ./tests/test_all
 
@@ -151,6 +154,13 @@ jobs:
               -o lockfree/spsc_queue lockfree/spsc_queue.cpp
       - name: Run TSAN-instrumented SPSC stress
         run: TSAN_OPTIONS=halt_on_error=1 ./lockfree/spsc_queue
+      - name: Build full lockfree stress suite with TSAN (MPSC/MPMC/Waitable/Sequencer/VarlenRing)
+        run: |
+          g++ -O1 -g -fsanitize=thread -fno-omit-frame-pointer \
+              -std=c++17 -Wall -Wextra -pthread \
+              -o lockfree/lockfree_stress lockfree/lockfree_stress.cpp
+      - name: Run TSAN-instrumented lockfree stress suite
+        run: TSAN_OPTIONS=halt_on_error=1 ./lockfree/lockfree_stress
 
   python-bindings:
     # Build the pyhft pybind11 extension and run its demo end-to-end.

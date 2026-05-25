@@ -15,6 +15,7 @@ orderbook/orderbook_flat
 orderbook/benchmark_orderbook
 orderbook/latency_histogram
 lockfree/spsc_queue
+lockfree/lockfree_stress
 memory-latency/cache_latency
 itch-parser/benchmark_itch
 benchmarks/latency_benchmark

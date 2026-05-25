@@ -13,6 +13,7 @@ SRCS := \
 	orderbook/latency_histogram.cpp \
 	replay/lobster_demo.cpp \
 	lockfree/spsc_queue.cpp \
+	lockfree/lockfree_stress.cpp \
 	memory-latency/cache_latency.cpp \
 	itch-parser/benchmark_itch.cpp \
 	benchmarks/latency_benchmark.cpp \
