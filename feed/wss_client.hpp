@@ -101,7 +101,7 @@ public:
 
         // HTTP upgrade nad TLS — identycznie jak w ws_client.hpp.
         char ws_key[25] = {};
-        WsClient::gen_sec_websocket_key(ws_key);
+        detail::gen_sec_websocket_key(ws_key);
 
         char req[512];
         const int n = std::snprintf(req, sizeof(req),
@@ -239,7 +239,7 @@ private:
             hdr_len = 10;
         }
         std::uint8_t mask_key[4];
-        WsClient::random_bytes(mask_key, 4);
+        detail::random_bytes(mask_key, 4);
         std::memcpy(hdr + hdr_len, mask_key, 4);
         hdr_len += 4;
 

@@ -66,6 +66,58 @@ enum class WsOpcode : std::uint8_t {
 };
 
 
+// detail — utilities współdzielone przez WsClient i WssClient.
+// Free functions (nie static class members) żeby były dostępne z wss_client.hpp
+// bez exponowania na publiczne API klasy.
+namespace detail {
+
+// random_bytes: kernel CSPRNG (/dev/urandom) + fallback do rand().
+// RFC nie wymaga kryptograficznej siły dla mask_key, ale urandom jest
+// dostępny na każdej Linux/BSD/macOS bez deps więc czemu nie.
+inline void random_bytes(std::uint8_t* out, std::size_t n) noexcept {
+    const int fd = ::open("/dev/urandom", O_RDONLY);
+    if (fd >= 0) {
+        std::size_t got = 0;
+        while (got < n) {
+            const ssize_t r = ::read(fd, out + got, n - got);
+            if (r <= 0) break;
+            got += static_cast<std::size_t>(r);
+        }
+        ::close(fd);
+        if (got == n) return;
+    }
+    for (std::size_t i = 0; i < n; ++i)
+        out[i] = static_cast<std::uint8_t>(std::rand() & 0xFF);
+}
+
+// gen_sec_websocket_key: 16 losowych bajtów → 24-char base64 (RFC 6455 §4.1).
+inline void gen_sec_websocket_key(char out[25]) noexcept {
+    std::uint8_t raw[16];
+    random_bytes(raw, 16);
+    static constexpr char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int j = 0;
+    for (int i = 0; i < 15; i += 3) {
+        const std::uint32_t v = (static_cast<std::uint32_t>(raw[i]) << 16)
+                               | (static_cast<std::uint32_t>(raw[i + 1]) << 8)
+                               |  static_cast<std::uint32_t>(raw[i + 2]);
+        out[j++] = alphabet[(v >> 18) & 0x3F];
+        out[j++] = alphabet[(v >> 12) & 0x3F];
+        out[j++] = alphabet[(v >>  6) & 0x3F];
+        out[j++] = alphabet[ v        & 0x3F];
+    }
+    // 16th byte → 2 znaki danych + 2 '=' padding (16 = 5*3 + 1).
+    const std::uint32_t v = static_cast<std::uint32_t>(raw[15]) << 16;
+    out[j++] = alphabet[(v >> 18) & 0x3F];
+    out[j++] = alphabet[(v >> 12) & 0x3F];
+    out[j++] = '=';
+    out[j++] = '=';
+    out[j] = '\0';
+}
+
+}  // namespace detail
+
+
 class WsClient {
     int fd_ = -1;
 
@@ -103,7 +155,7 @@ public:
         // jako próbę replay attack'u). Generujemy losowe 16 bajtów z urandom
         // i kodujemy base64.
         char ws_key[25] = {};  // 24 chars + null
-        gen_sec_websocket_key(ws_key);
+        detail::gen_sec_websocket_key(ws_key);
 
         char req[512];
         const int n = std::snprintf(req, sizeof(req),
@@ -241,7 +293,7 @@ private:
 
         // Wygeneruj 4-bajtowy mask_key i wstaw bezpośrednio za length.
         std::uint8_t mask_key[4];
-        random_bytes(mask_key, 4);
+        detail::random_bytes(mask_key, 4);
         std::memcpy(hdr + hdr_len, mask_key, 4);
         hdr_len += 4;
 
@@ -268,53 +320,6 @@ private:
         return true;
     }
 
-    // random_bytes: czyta n losowych bajtów z /dev/urandom. To kernel CSPRNG
-    // — kryptograficznie silny, dostępny na każdej Linux/BSD/macOS bez deps.
-    // Fallback do rand() przy errorach (lepiej coś niż nic, mask_key i tak
-    // nie musi być cryptographically secure dla samego protokołu WS).
-    static void random_bytes(std::uint8_t* out, std::size_t n) noexcept {
-        const int fd = ::open("/dev/urandom", O_RDONLY);
-        if (fd >= 0) {
-            std::size_t got = 0;
-            while (got < n) {
-                const ssize_t r = ::read(fd, out + got, n - got);
-                if (r <= 0) break;
-                got += static_cast<std::size_t>(r);
-            }
-            ::close(fd);
-            if (got == n) return;
-        }
-        // Fallback — rand() nieidealny ale wystarczający dla mask_key.
-        for (std::size_t i = 0; i < n; ++i)
-            out[i] = static_cast<std::uint8_t>(std::rand() & 0xFF);
-    }
-
-    // gen_sec_websocket_key: 16 losowych bajtów → base64 (24 chars w out[24]).
-    // RFC 6455 §4.1: klient generuje unikalny "nonce" per connection.
-    static void gen_sec_websocket_key(char out[25]) noexcept {
-        std::uint8_t raw[16];
-        random_bytes(raw, 16);
-        static constexpr char alphabet[] =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        // 16B → 24 chars (3-byte chunks → 4 chars, ostatni dopełniony '=').
-        int j = 0;
-        for (int i = 0; i < 15; i += 3) {
-            const std::uint32_t v = (static_cast<std::uint32_t>(raw[i]) << 16)
-                                   | (static_cast<std::uint32_t>(raw[i + 1]) << 8)
-                                   |  static_cast<std::uint32_t>(raw[i + 2]);
-            out[j++] = alphabet[(v >> 18) & 0x3F];
-            out[j++] = alphabet[(v >> 12) & 0x3F];
-            out[j++] = alphabet[(v >>  6) & 0x3F];
-            out[j++] = alphabet[ v        & 0x3F];
-        }
-        // 16th byte → 2 chars + 2 '=' padding (16 = 5*3 + 1).
-        const std::uint32_t v = static_cast<std::uint32_t>(raw[15]) << 16;
-        out[j++] = alphabet[(v >> 18) & 0x3F];
-        out[j++] = alphabet[(v >> 12) & 0x3F];
-        out[j++] = '=';
-        out[j++] = '=';
-        out[j] = '\0';
-    }
 };
 
 }  // namespace feed
