@@ -29,6 +29,7 @@ strategy/mm_demo
 strategy/exec_demo
 network/fix_server_demo
 feed/feed_demo
+feed/wss_demo
 fix-protocol/fix_demo
 ouch-protocol/ouch_demo
 dpdk-bypass/dpdk_demo

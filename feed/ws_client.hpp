@@ -1,18 +1,24 @@
 /*
- * WsClient — minimalny klient WebSocket (RFC 6455).
+ * WsClient — minimalny klient WebSocket (RFC 6455), plain ws://.
  *
- * Czysto edukacyjna implementacja:
- *   - tylko plain ws://  (production wss:// wymaga TLS / OpenSSL)
- *   - brak maskingu po stronie klienta (większość produkcyjnych serwerów
- *     wymusza masking; ten klient pracuje z mock_ws_server poniżej)
- *   - tylko text frames + auto-odpowiedź na ping (pong) + obsługa close
- *   - brak fragmentacji (FIN zawsze 1)
+ * Funkcjonalność RFC-compliant:
+ *   - HTTP/1.1 upgrade handshake z losowym Sec-WebSocket-Key (16B z /dev/urandom)
+ *   - masking client→server frames (4-byte mask key per ramka, XOR payloadu)
+ *   - parsing wszystkich opcodów (TEXT/BINARY/CLOSE/PING/PONG/CONTINUATION)
+ *   - payload length 7/16/64 bit
+ *   - auto-PONG na PING, clean CLOSE handshake
  *
- * Po co własna impl skoro istnieje libwebsocketspp / Boost.Beast?
+ * Czego NIE ma (poza scope laba):
+ *   - TLS (wss://) — osobny WssClient w feed/wss_client.hpp, wymaga OpenSSL
+ *   - fragmentacja (FIN=0) — produkcyjne giełdy wysyłają zawsze FIN=1
+ *   - permessage-deflate compression — opcjonalne w RFC
+ *   - weryfikacja Sec-WebSocket-Accept odpowiedzi serwera (i tak nie chronimy
+ *     przed MITM bez TLS, więc bezsensu)
+ *
+ * Po co własna impl skoro jest Boost.Beast / libwebsockets?
  * Bo to **lab edukacyjny** — pokazuje strukturę protokołu (HTTP upgrade,
- * frame header, opcode, length encoding). Production HFT i tak nie używa
- * WebSocket'ów do market data (zbyt wolne), za to crypto exchange'y tak —
- * więc warto wiedzieć jak to działa.
+ * frame header, opcode, length encoding) w ~270 liniach. Boost.Beast ma
+ * dziesiątki tysięcy linii i dependency chain na 200 MB headers.
  *
  * Format ramki (RFC 6455 §5.2):
  *
@@ -32,12 +38,15 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string>
@@ -89,18 +98,23 @@ public:
             return false;
         }
 
-        // HTTP upgrade. Sec-WebSocket-Key powinien być losowy 16B base64;
-        // dla demo wystarczy stała wartość — i tak nie weryfikujemy odpowiedzi.
+        // HTTP upgrade. Sec-WebSocket-Key musi być świeży na każde połączenie
+        // (RFC wymaga unikalności — produkcyjne giełdy odrzucą stałą wartość
+        // jako próbę replay attack'u). Generujemy losowe 16 bajtów z urandom
+        // i kodujemy base64.
+        char ws_key[25] = {};  // 24 chars + null
+        gen_sec_websocket_key(ws_key);
+
         char req[512];
         const int n = std::snprintf(req, sizeof(req),
             "GET %s HTTP/1.1\r\n"
             "Host: %s:%d\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
-            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            "Sec-WebSocket-Key: %s\r\n"
             "Sec-WebSocket-Version: 13\r\n"
             "\r\n",
-            path, host, port);
+            path, host, port, ws_key);
         if (::send(fd_, req, static_cast<std::size_t>(n), MSG_NOSIGNAL) != n) {
             close();
             return false;
@@ -178,7 +192,7 @@ public:
         }
     }
 
-    // send_text: wyślij text frame. Bez maskingu (mock_ws_server akceptuje).
+    // send_text: wyślij text frame z maską (RFC 6455 wymóg dla client→server).
     bool send_text(const char* msg, std::size_t len) noexcept {
         return send_frame(WsOpcode::TEXT, msg, len);
     }
@@ -202,27 +216,104 @@ private:
         return true;
     }
 
+    // send_frame: wysyła ramkę WS z maską (RFC 6455 §5.3 — klient MUSI maskować
+    // wszystkie ramki wysyłane do serwera). Mask key to 4 losowe bajty z urandom,
+    // XOR'owane z payloadem przed wysłaniem. Mock_ws_server akceptuje zarówno
+    // masked jak i unmasked (po prostu nie czyta naszych ramek), więc demo
+    // dalej działa; ale prawdziwy Binance/Coinbase odrzuci unmasked frame.
     bool send_frame(WsOpcode opcode, const void* payload, std::size_t len) noexcept {
-        std::uint8_t hdr[10];
+        std::uint8_t hdr[14];  // 2 base + 8 ext_len + 4 mask = max 14
         std::size_t  hdr_len = 2;
         hdr[0] = 0x80 | static_cast<std::uint8_t>(opcode);  // FIN=1 + opcode
         if (len < 126) {
-            hdr[1] = static_cast<std::uint8_t>(len);
+            hdr[1] = 0x80 | static_cast<std::uint8_t>(len);  // 0x80 = mask bit
         } else if (len <= 0xFFFF) {
-            hdr[1] = 126;
+            hdr[1] = 0x80 | 126;
             hdr[2] = static_cast<std::uint8_t>((len >> 8) & 0xFF);
             hdr[3] = static_cast<std::uint8_t>(len & 0xFF);
             hdr_len = 4;
         } else {
-            hdr[1] = 127;
+            hdr[1] = 0x80 | 127;
             for (int i = 0; i < 8; ++i)
                 hdr[2 + i] = static_cast<std::uint8_t>((len >> (8 * (7 - i))) & 0xFF);
             hdr_len = 10;
         }
-        if (::send(fd_, hdr, hdr_len, MSG_NOSIGNAL) != static_cast<ssize_t>(hdr_len)) return false;
-        if (len > 0 && ::send(fd_, payload, len, MSG_NOSIGNAL) != static_cast<ssize_t>(len))
+
+        // Wygeneruj 4-bajtowy mask_key i wstaw bezpośrednio za length.
+        std::uint8_t mask_key[4];
+        random_bytes(mask_key, 4);
+        std::memcpy(hdr + hdr_len, mask_key, 4);
+        hdr_len += 4;
+
+        if (::send(fd_, hdr, hdr_len, MSG_NOSIGNAL) != static_cast<ssize_t>(hdr_len))
             return false;
+
+        if (len > 0) {
+            // XOR payloadu z mask_key (cykliczny mod 4). Wysyłamy chunk'ami
+            // żeby nie alokować całego buforu na heap.
+            constexpr std::size_t CHUNK = 1024;
+            std::uint8_t buf[CHUNK];
+            const auto* src = static_cast<const std::uint8_t*>(payload);
+            std::size_t sent = 0;
+            while (sent < len) {
+                const std::size_t n = std::min(len - sent, CHUNK);
+                for (std::size_t i = 0; i < n; ++i) {
+                    buf[i] = src[sent + i] ^ mask_key[(sent + i) & 3];
+                }
+                if (::send(fd_, buf, n, MSG_NOSIGNAL) != static_cast<ssize_t>(n))
+                    return false;
+                sent += n;
+            }
+        }
         return true;
+    }
+
+    // random_bytes: czyta n losowych bajtów z /dev/urandom. To kernel CSPRNG
+    // — kryptograficznie silny, dostępny na każdej Linux/BSD/macOS bez deps.
+    // Fallback do rand() przy errorach (lepiej coś niż nic, mask_key i tak
+    // nie musi być cryptographically secure dla samego protokołu WS).
+    static void random_bytes(std::uint8_t* out, std::size_t n) noexcept {
+        const int fd = ::open("/dev/urandom", O_RDONLY);
+        if (fd >= 0) {
+            std::size_t got = 0;
+            while (got < n) {
+                const ssize_t r = ::read(fd, out + got, n - got);
+                if (r <= 0) break;
+                got += static_cast<std::size_t>(r);
+            }
+            ::close(fd);
+            if (got == n) return;
+        }
+        // Fallback — rand() nieidealny ale wystarczający dla mask_key.
+        for (std::size_t i = 0; i < n; ++i)
+            out[i] = static_cast<std::uint8_t>(std::rand() & 0xFF);
+    }
+
+    // gen_sec_websocket_key: 16 losowych bajtów → base64 (24 chars w out[24]).
+    // RFC 6455 §4.1: klient generuje unikalny "nonce" per connection.
+    static void gen_sec_websocket_key(char out[25]) noexcept {
+        std::uint8_t raw[16];
+        random_bytes(raw, 16);
+        static constexpr char alphabet[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        // 16B → 24 chars (3-byte chunks → 4 chars, ostatni dopełniony '=').
+        int j = 0;
+        for (int i = 0; i < 15; i += 3) {
+            const std::uint32_t v = (static_cast<std::uint32_t>(raw[i]) << 16)
+                                   | (static_cast<std::uint32_t>(raw[i + 1]) << 8)
+                                   |  static_cast<std::uint32_t>(raw[i + 2]);
+            out[j++] = alphabet[(v >> 18) & 0x3F];
+            out[j++] = alphabet[(v >> 12) & 0x3F];
+            out[j++] = alphabet[(v >>  6) & 0x3F];
+            out[j++] = alphabet[ v        & 0x3F];
+        }
+        // 16th byte → 2 chars + 2 '=' padding (16 = 5*3 + 1).
+        const std::uint32_t v = static_cast<std::uint32_t>(raw[15]) << 16;
+        out[j++] = alphabet[(v >> 18) & 0x3F];
+        out[j++] = alphabet[(v >> 12) & 0x3F];
+        out[j++] = '=';
+        out[j++] = '=';
+        out[j] = '\0';
     }
 };
 

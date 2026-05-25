@@ -130,7 +130,16 @@ simulate: build
 	./simulator/sim_demo 10000 --router
 	./simulator/sim_demo 10000 --strategy --router
 
+# wss_demo — opcjonalny target wymagający OpenSSL (libssl-dev / openssl-devel).
+# Nie jest w SRCS żeby domyślny build nie wymagał OpenSSL'a w CI.
+# Użycie: make wss        — buduje feed/wss_demo
+#         ./feed/wss_demo stream.binance.com 9443 /ws/btcusdt@trade
+.PHONY: wss
+wss: feed/wss_demo
+feed/wss_demo: feed/wss_demo.cpp feed/wss_client.hpp feed/ws_client.hpp
+	$(CXX) $(CXXFLAGS) -DHFT_USE_OPENSSL -o $@ $< -lssl -lcrypto
+
 clean:
-	rm -f $(BINS)
+	rm -f $(BINS) feed/wss_demo
 	rm -rf $(BUILDDIR)
 	find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true

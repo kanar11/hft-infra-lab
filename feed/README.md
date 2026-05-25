@@ -92,11 +92,143 @@ W realnym projekcie crypto-HFT podmieniłbym `WsClient` na:
 - **libwebsockets** — jeśli chcesz event-loop friendly + extensions
 - **uWebSockets** — jeśli liczy się każda nanosekunda (najszybsza lib WS w benchmarkach)
 
-## Połączenie do prawdziwej giełdy
+## Co jest TERAZ w `WsClient` (`ws_client.hpp`)
 
-Klient działa z każdym serwerem ws:// który nie wymaga maskingu od klienta.
-Dla prawdziwego Binance (`stream.binance.com:9443` — wss://!) potrzebny
-byłby TLS handshake przed upgrade'm i masking ramek client→server.
-Wystarczy zamienić `connect()` na wariant SSL_*, dodać masking w
-`send_frame()` (random 4-byte key + XOR payloadu) — oba zmieszczą się
-w ~50 dodatkowych liniach.
+Po ostatniej iteracji klient jest **RFC 6455 compliant** w zakresie tego co
+naprawdę potrzeba żeby pogadać z produkcyjnym serwerem WS:
+
+| Feature                          | Status | Szczegóły                                        |
+|----------------------------------|--------|--------------------------------------------------|
+| Plain `ws://` (no TLS)           | ✅     | TCP connect + HTTP upgrade                       |
+| HTTP/1.1 upgrade handshake       | ✅     | bez weryfikacji Sec-WebSocket-Accept (lab)       |
+| Sec-WebSocket-Key losowy         | ✅     | 16B z `/dev/urandom`, base64                     |
+| Masking client→server (RFC §5.3) | ✅     | losowy 4-byte mask key per ramka, XOR payloadu   |
+| Parsing FIN / opcode / mask bit  | ✅     | wszystkie 6 opcodów                              |
+| Payload length 7/16/64 bit       | ✅     | inline / 126 / 127                               |
+| Ping → auto-pong                 | ✅     | echo payloadu                                    |
+| Clean close (opcode 0x8)         | ✅     | echo CLOSE i return 0                            |
+| Fragmentacja (FIN=0)             | ❌     | demo zakłada zawsze FIN=1 (Binance też tak robi) |
+| WSS (TLS / `wss://`)             | ⚠️     | osobna klasa `WssClient` — zobacz niżej          |
+| Compression (permessage-deflate) | ❌     | poza scope                                       |
+
+To wystarczy żeby gadać z każdą publiczną crypto giełdą która używa **`ws://`**.
+Większość produkcyjnych giełd wymusza jednak `wss://` (TLS) — patrz dalej.
+
+## Podłączenie do prawdziwej giełdy (Binance, Coinbase, Kraken)
+
+Crypto giełdy publikują streamy WS **przez TLS** (`wss://`). Do tego dorzucamy
+`feed/wss_client.hpp` (WsClient nad OpenSSL) i `feed/wss_demo.cpp` — przykładowy
+klient łączący się z `stream.binance.com:9443`.
+
+### Krok 1 — zainstaluj OpenSSL development headers
+
+```bash
+# Ubuntu / Debian
+sudo apt install libssl-dev ca-certificates
+
+# RHEL / Fedora / Rocky Linux
+sudo dnf install openssl-devel ca-certificates
+
+# macOS (Homebrew)
+brew install openssl@3
+```
+
+`ca-certificates` daje systemowy trust store — bez tego TLS nie zweryfikuje
+certyfikatu Binance i odrzuci połączenie.
+
+### Krok 2 — zbuduj `wss_demo`
+
+```bash
+make wss                                  # target z Makefile
+# albo bezpośrednio:
+g++ -O2 -std=c++17 -DHFT_USE_OPENSSL -Wall -Wextra -pthread \
+    -o feed/wss_demo feed/wss_demo.cpp -lssl -lcrypto
+```
+
+Flaga `-DHFT_USE_OPENSSL` jest wymagana — bez niej `wss_client.hpp` rzuca
+`#error "wss_client.hpp wymaga -DHFT_USE_OPENSSL"`.
+
+### Krok 3 — uruchom
+
+```bash
+# default: 20 trade'ów BTC/USDT z Binance
+./feed/wss_demo
+
+# inny endpoint
+./feed/wss_demo stream.binance.com 9443 /ws/ethusdt@trade
+
+# więcej trade'ów
+./feed/wss_demo stream.binance.com 9443 /ws/btcusdt@trade 100
+```
+
+Spodziewany output:
+
+```
+=== wss_demo — Binance WebSocket live trades ===
+Endpoint: wss://stream.binance.com:9443/ws/btcusdt@trade
+Limit:    20 trade events
+
+[connected] TCP + TLS + upgrade: 187.4 ms
+
+  [  1]  price=68234.50    qty=0.00123
+  [  2]  price=68234.51    qty=0.04812
+  ...
+```
+
+### Krok 4 (opcjonalnie) — podpięcie do strategii w labie
+
+`WssClient` ma identyczne API co `WsClient` (`connect`, `recv_text`, `send_text`,
+`close`). Możesz go traktować jak drop-in replacement w każdym kodzie który
+używa `feed::WsClient`. Przykład: zamiast generatora syntetycznego w
+`simulator/market_sim.hpp`, karm strategię prawdziwymi tradesami BTC:
+
+```cpp
+#include "feed/wss_client.hpp"
+#include "strategy/mean_reversion.hpp"
+
+feed::WssClient cli;
+cli.connect("stream.binance.com", 9443, "/ws/btcusdt@trade");
+
+MeanReversionStrategy strat(window=20, threshold_pct=0.05);
+
+char buf[2048];
+while (true) {
+    int n = cli.recv_text(buf, sizeof(buf) - 1);
+    if (n <= 0) break;
+    buf[n] = '\0';
+
+    // wyciągnij price z JSON (patrz wss_demo.cpp jak to robi)
+    double price = parse_price(buf);
+    Signal sig = strat.on_market_data("BTCUSDT", price);
+    if (sig.valid) {
+        // BUY albo SELL — wyślij do OMS, Risk Manager, etc.
+    }
+}
+```
+
+### Co weryfikujemy w TLS (bezpieczeństwo)
+
+- **Cert chain** — przez systemowy trust store (`SSL_CTX_set_default_verify_paths`)
+- **Hostname** — SAN albo CN w certyfikacie musi pasować do host'a (`SSL_set1_host`)
+- **SNI** — wysyłamy hostname w handshake (`SSL_set_tlsext_host_name`),
+  inaczej Cloudflare zwróciłby domyślny cert i hostname check by failnął
+- **TLS 1.2+** — wymuszone (`SSL_CTX_set_min_proto_version`); TLS 1.0/1.1 są deprecated
+
+Bez tych weryfikacji MITM byłby trywialny.
+
+### Limity tej implementacji (jeśli planujesz produkcję)
+
+- **Brak permessage-deflate compression** — Binance wspiera ale opcjonalnie.
+  Bez tego dostajesz pełne JSON-y zamiast skompresowanych ~30% mniejszych.
+- **Brak ping/pong heartbeats od klienta** — Binance wymaga że klient *odpowiada*
+  na PING (już to robimy), ale dla bardzo długich połączeń też klient powinien
+  *wysyłać* PING. Trywialne do dorobienia (`send_frame(PING, ...)`) ale nie
+  zaimplementowane.
+- **Brak reconnect z exponential backoff** — przy disconnect po prostu return -1.
+  Twój kod powinien to obsłużyć w pętli.
+- **Brak rate-limiting respect** — Binance ma 5 wiadomości/sek limit na
+  subskrypcje. Demo nie wysyła nic poza handshake'iem więc OK, ale przy
+  multi-stream subscription pamiętaj o tym.
+
+To wszystko mieści się w max 200 dodatkowych liniach jeśli kiedyś chcesz
+zrobić "production WsClient".
