@@ -94,8 +94,42 @@ void test_fee_tiebreaker() {
     router.update_quote("V1", 150.0, 150.10, 500, 500);
     router.update_quote("V2", 150.0, 150.10, 500, 500);  // same ask
     auto d = router.route_order("BUY", 100, RoutingStrategy::BEST_PRICE);
-    // V2 has lower fee (rebate) — should win tiebreaker
+    // Same ask, V2 ma rebate (niższa cena efektywna) — wygrywa.
     ASSERT(std::strcmp(d.venue, "V2") == 0, "test_fee_tiebreaker");
+}
+
+// Kluczowy test realizmu: venue z NAJTAŃSZYM quote przegrywa przez wysoką
+// opłatę. Raw best price wybrałby CHEAP_RAW (150.00), ale cena efektywna
+// (z opłatą) faworyzuje GOOD_NET. Tak działa prawdziwy SOR.
+void test_effective_price_flips_decision() {
+    SmartOrderRouter router;
+    router.add_venue(Venue("CHEAP_RAW", 100,  0.05));   // taniej, ale gruba opłata
+    router.add_venue(Venue("GOOD_NET",  100, -0.01));   // drożej, ale rebate
+    router.update_quote("CHEAP_RAW", 149.90, 150.00, 500, 500);  // ask 150.00, eff 150.05
+    router.update_quote("GOOD_NET",  149.93, 150.03, 500, 500);  // ask 150.03, eff 150.02
+    auto d = router.route_order("BUY", 100, RoutingStrategy::BEST_PRICE);
+    ASSERT(std::strcmp(d.venue, "GOOD_NET") == 0, "test_effective_price_flips_buy");
+    ASSERT(d.effective_price < 150.03, "test_effective_price_value");  // 150.02 all-in
+}
+
+// Nowe pola RouteDecision: total_fee = fee_per_share × quantity.
+void test_route_reports_fee() {
+    auto router = make_test_router();
+    auto d = router.route_order("BUY", 100, RoutingStrategy::BEST_PRICE);  // → NASDAQ, fee -0.002
+    ASSERT(d.valid, "test_fee_report_valid");
+    ASSERT(d.num_venues == 1, "test_fee_report_single_venue");
+    // NASDAQ rebate -0.002 × 100 = -0.20 (dostajemy rebate).
+    ASSERT(d.total_fee < 0.0, "test_fee_report_rebate_negative");
+}
+
+// SPLIT rozbija na >1 venue gdy jedno nie ma dość płynności.
+void test_split_reports_multiple_venues() {
+    auto router = make_test_router();
+    // 600 akcji: NASDAQ ma 300, BATS 200, NYSE 500 — musi rozbić.
+    auto d = router.route_order("BUY", 600, RoutingStrategy::SPLIT);
+    ASSERT(d.valid, "test_split_multi_valid");
+    ASSERT(d.num_venues >= 2, "test_split_multi_venues");
+    ASSERT(d.quantity == 600, "test_split_multi_qty");
 }
 
 void test_routing_speed() {
@@ -167,6 +201,9 @@ int main(int argc, char* argv[]) {
     test_no_venues();
     test_inactive_venue();
     test_fee_tiebreaker();
+    test_effective_price_flips_decision();
+    test_route_reports_fee();
+    test_split_reports_multiple_venues();
     test_routing_speed();
     test_stats_tracking();
 

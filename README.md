@@ -103,7 +103,7 @@ Szczegóły protokołu, opcody, podłączenie do prawdziwych giełd: [`feed/READ
 | oms/ | Order Management System with risk checks, P&L, pending exposure (11.6M orders/sec) | C++ |
 | monitoring/ | Real-time infra monitor — /proc parser, alerts (8.6M parse/sec) | C++ |
 | strategy/ | Three strategy families: reactive (mean reversion) + proactive (market maker) + execution algos (TWAP, VWAP w/ U-shape volume profile) | C++ |
-| router/ | Smart Order Router — venue selection by price, latency, split (9.7M routes/sec) | C++ |
+| router/ | Smart Order Router — venue selection by effective price (quote ± maker/taker fee), latency, split (9.7M routes/sec) | C++ |
 | risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits, pending exposure (7.9M checks/sec) | C++ |
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
 | simulator/ | End-to-end pipeline (ITCH→Parser→Strategy→Router→OMS→P&L), sync + threaded variants | C++ |

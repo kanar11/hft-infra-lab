@@ -1,38 +1,43 @@
 /*
- * Smart Order Router (SOR) — C++ Implementation
- * Inteligentny Router Zleceń (SOR) — implementacja C++
+ * SmartOrderRouter (SOR) — wybiera na którą giełdę wysłać zlecenie.
  *
- * Routes orders to the best exchange venue based on price, latency, and fees.
- * Routuje zlecenia na najlepszą giełdę na podstawie ceny, opóźnienia i opłat.
+ * Ta sama akcja handluje się równolegle na wielu giełdach (NYSE, NASDAQ,
+ * BATS, IEX, ARCA...). Każda ma inną cenę, inną opłatę i inną latencję.
+ * SOR decyduje gdzie posłać zlecenie żeby zrealizować "best execution".
  *
- * Three routing strategies / Trzy strategie routingu:
- *   BEST_PRICE:      lowest ask (buy) or highest bid (sell)
- *   LOWEST_LATENCY:  fastest venue round-trip
- *   SPLIT:           distribute across venues by available liquidity
+ * Trzy strategie:
+ *   BEST_PRICE      — najlepsza cena EFEKTYWNA (all-in, z opłatą/rebate)
+ *   LOWEST_LATENCY  — najszybsze venue round-trip
+ *   SPLIT           — rozbij duże zlecenie między venue wg dostępnej płynności
  *
- * Pipeline: Strategy → Risk → **Router** → OMS → Exchange
+ * Cena efektywna (all-in) — kluczowy realizm:
+ *   Prawdziwy SOR NIE optymalizuje surowej ceny quote, tylko cenę PO opłatach.
+ *   Venue z asks $223.48 i opłatą $0.005/akcja daje all-in $223.485 — gorzej
+ *   niż $223.49 z rebate -$0.002 (all-in $223.488)... a właściwie lepiej, ale
+ *   przy większych opłatach kolejność się odwraca. Maker/taker model: dodatnia
+ *   opłata = bierzesz płynność (taker), ujemna = dajesz płynność (maker rebate).
  *
- * Performance / Wydajność:
- *   Python: ~200K routes/sec
- *   C++:    ~15-30M routes/sec
+ *     BUY:  all_in = ask + fee   (płacisz; rebate ujemny → płacisz mniej)
+ *     SELL: all_in = bid - fee   (dostajesz; rebate ujemny → dostajesz więcej)
+ *
+ *   BEST_PRICE dla BUY minimalizuje all_in, dla SELL maksymalizuje all_in.
+ *
+ * Pipeline: Strategy → Risk → ROUTER → OMS → Exchange.
+ *
+ * Wydajność (lab): ~9.7M routes/sec, p50=70ns, p99=150ns.
  */
-
 #pragma once
 
-#include <cstdint>
-#include <cstring>
-#include <string>
-#include <vector>
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 
-// Max venues we support (fixed array, no heap allocation for venue list)
-// Maks. liczba venue które obsługujemy (stała tablica, bez alokacji na stercie)
+
+// Maks. liczba venue (stała tablica, zero heap na hot path).
 static constexpr int MAX_VENUES = 16;
 
-
-// === Enums ===
 
 enum class RoutingStrategy : uint8_t {
     BEST_PRICE      = 0,
@@ -41,12 +46,11 @@ enum class RoutingStrategy : uint8_t {
 };
 
 
-// === Venue — a trading exchange ===
-
+// Venue — pojedyncza giełda z jej top-of-book quote, opłatą i latencją.
 struct Venue {
     char    name[16];
     int64_t latency_ns;
-    double  fee_per_share;      // negative = rebate
+    double  fee_per_share;      // dodatnia = taker fee, ujemna = maker rebate
     double  best_bid;
     double  best_ask;
     int32_t bid_size;
@@ -68,39 +72,47 @@ struct Venue {
 };
 
 
-// === RouteDecision — what the router returns ===
-
+// RouteDecision — co router zwraca. Oprócz venue/price/qty wystawia teraz
+// cenę efektywną i łączną opłatę, żeby wywołujący widział PRAWDZIWY koszt
+// (a nie tylko quote). num_venues > 1 dla SPLIT.
 struct RouteDecision {
-    char    venue[16];
-    double  price;
-    int32_t quantity;
-    int64_t latency_ns;
-    bool    valid;              // false = no route found (like Python's None)
+    char    venue[16];          // dla SPLIT: venue z największą alokacją
+    double  price;              // średnia cena egzekucji (sam quote, bez opłat)
+    double  effective_price;    // all-in per share (quote ± opłata)
+    double  total_fee;          // łączna opłata za całe zlecenie (może być ujemna = rebate)
+    int32_t quantity;           // ile akcji faktycznie zaroutowano
+    int32_t num_venues;         // ile venue użyto (SPLIT)
+    int64_t latency_ns;         // czas decyzji routera (nie venue round-trip!)
+    bool    valid;              // false = brak trasy (jak None w Pythonie)
 
     RouteDecision() noexcept
-        : price(0), quantity(0), latency_ns(0), valid(false) {
+        : price(0), effective_price(0), total_fee(0), quantity(0),
+          num_venues(0), latency_ns(0), valid(false) {
         venue[0] = '\0';
     }
 };
 
 
-// === SmartOrderRouter ===
-
 class SmartOrderRouter {
-    Venue venues_[MAX_VENUES];
-    int   venue_count_;
+    Venue           venues_[MAX_VENUES];
+    int             venue_count_;
     RoutingStrategy default_strategy_;
-    int32_t split_threshold_;
+    int32_t         split_threshold_;
 
-    // Stats
     uint64_t total_routes_;
     uint64_t total_rejected_;
     uint64_t total_latency_ns_;
 
     static int64_t now_ns() noexcept {
-        auto now = std::chrono::high_resolution_clock::now();
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
-            now.time_since_epoch()).count();
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+    }
+
+    // Cena efektywna (all-in) — quote skorygowany o opłatę/rebate.
+    // BUY niższa = lepsza, SELL wyższa = lepsza.
+    static double effective_price(const Venue& v, bool is_buy) noexcept {
+        return is_buy ? v.best_ask + v.fee_per_share
+                      : v.best_bid - v.fee_per_share;
     }
 
 public:
@@ -113,14 +125,11 @@ public:
           total_rejected_(0),
           total_latency_ns_(0) {}
 
-    // add_venue: register a trading venue
     void add_venue(const Venue& v) noexcept {
-        if (venue_count_ < MAX_VENUES) {
-            venues_[venue_count_++] = v;
-        }
+        if (venue_count_ < MAX_VENUES) venues_[venue_count_++] = v;
     }
 
-    // update_quote: update bid/ask for a venue (called on every market data tick)
+    // update_quote: aktualizuj top-of-book venue (na każdy market data tick).
     void update_quote(const char* venue_name, double bid, double ask,
                       int32_t bid_size, int32_t ask_size) noexcept {
         for (int i = 0; i < venue_count_; ++i) {
@@ -134,155 +143,128 @@ public:
         }
     }
 
-    // route_order: select best venue for this order
+    // route_order: wybierz venue dla zlecenia. side[0]=='B' → buy.
     RouteDecision route_order(const char* side, int32_t quantity,
                                RoutingStrategy strat) noexcept {
-        int64_t t0 = now_ns();
-        bool is_buy = (side[0] == 'B');
+        const int64_t t0     = now_ns();
+        const bool    is_buy = (side[0] == 'B');
 
-        // Collect active candidates with liquidity
-        // Zbierz aktywnych kandydatów z płynnością
+        // Zbierz aktywnych kandydatów z faktyczną płynnością po naszej stronie.
         Venue* candidates[MAX_VENUES];
-        int num_candidates = 0;
-
+        int    num_candidates = 0;
         for (int i = 0; i < venue_count_; ++i) {
             if (!venues_[i].is_active) continue;
-            if (is_buy && venues_[i].best_ask > 0 && venues_[i].ask_size > 0) {
-                candidates[num_candidates++] = &venues_[i];
-            } else if (!is_buy && venues_[i].best_bid > 0 && venues_[i].bid_size > 0) {
-                candidates[num_candidates++] = &venues_[i];
-            }
+            const bool has_liq = is_buy
+                ? (venues_[i].best_ask > 0 && venues_[i].ask_size > 0)
+                : (venues_[i].best_bid > 0 && venues_[i].bid_size > 0);
+            if (has_liq) candidates[num_candidates++] = &venues_[i];
         }
+        if (num_candidates == 0) { ++total_rejected_; return RouteDecision(); }
 
-        if (num_candidates == 0) {
-            total_rejected_++;
-            return RouteDecision();
-        }
-
-        // Select venue based on strategy
-        Venue* best = nullptr;
-
-        if (strat == RoutingStrategy::BEST_PRICE) {
-            best = candidates[0];
-            for (int i = 1; i < num_candidates; ++i) {
-                if (is_buy) {
-                    // Lower ask is better for buying
-                    if (candidates[i]->best_ask < best->best_ask ||
-                        (candidates[i]->best_ask == best->best_ask &&
-                         candidates[i]->fee_per_share < best->fee_per_share)) {
-                        best = candidates[i];
-                    }
-                } else {
-                    // Higher bid is better for selling
-                    if (candidates[i]->best_bid > best->best_bid ||
-                        (candidates[i]->best_bid == best->best_bid &&
-                         candidates[i]->fee_per_share < best->fee_per_share)) {
-                        best = candidates[i];
-                    }
-                }
-            }
-        } else if (strat == RoutingStrategy::LOWEST_LATENCY) {
-            best = candidates[0];
-            for (int i = 1; i < num_candidates; ++i) {
-                if (candidates[i]->latency_ns < best->latency_ns) {
-                    best = candidates[i];
-                }
-            }
-        } else if (strat == RoutingStrategy::SPLIT && quantity >= split_threshold_) {
-            // Split across venues by available liquidity
-            // Podziel na venue według dostępnej płynności
+        if (strat == RoutingStrategy::SPLIT && quantity >= split_threshold_) {
             return split_order(candidates, num_candidates, is_buy, quantity, t0);
+        }
+
+        // Single-venue strategie: BEST_PRICE (cena efektywna) lub LOWEST_LATENCY.
+        Venue* best = candidates[0];
+        if (strat == RoutingStrategy::LOWEST_LATENCY) {
+            for (int i = 1; i < num_candidates; ++i)
+                if (candidates[i]->latency_ns < best->latency_ns) best = candidates[i];
         } else {
-            // Fallback to best price
-            best = candidates[0];
+            // BEST_PRICE (i fallback dla SPLIT poniżej progu) — cena efektywna.
+            double best_eff = effective_price(*best, is_buy);
             for (int i = 1; i < num_candidates; ++i) {
-                if (is_buy) {
-                    if (candidates[i]->best_ask < best->best_ask) best = candidates[i];
-                } else {
-                    if (candidates[i]->best_bid > best->best_bid) best = candidates[i];
-                }
+                const double eff    = effective_price(*candidates[i], is_buy);
+                const bool   better = is_buy ? (eff < best_eff) : (eff > best_eff);
+                if (better) { best = candidates[i]; best_eff = eff; }
             }
         }
 
-        RouteDecision decision;
-        decision.valid = true;
-        std::strncpy(decision.venue, best->name, 15);
-        decision.venue[15] = '\0';
-        decision.price = is_buy ? best->best_ask : best->best_bid;
-        decision.quantity = quantity;
-        decision.latency_ns = now_ns() - t0;
+        RouteDecision d;
+        d.valid           = true;
+        std::strncpy(d.venue, best->name, 15);
+        d.venue[15]       = '\0';
+        d.price           = is_buy ? best->best_ask : best->best_bid;
+        d.effective_price = effective_price(*best, is_buy);
+        d.total_fee       = best->fee_per_share * quantity;
+        d.quantity        = quantity;
+        d.num_venues      = 1;
+        d.latency_ns      = now_ns() - t0;
 
-        total_routes_++;
-        total_latency_ns_ += decision.latency_ns;
-        return decision;
+        ++total_routes_;
+        total_latency_ns_ += d.latency_ns;
+        return d;
     }
 
-    // Overload: use default strategy
+    // Overload: użyj domyślnej strategii.
     RouteDecision route_order(const char* side, int32_t quantity) noexcept {
         return route_order(side, quantity, default_strategy_);
     }
 
-    // Accessors
-    uint64_t get_total_routes() const noexcept { return total_routes_; }
+    uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
 
     void print_stats() const {
         printf("\n=== Router Statistics ===\n");
         printf("  Total routes: %lu\n", (unsigned long)total_routes_);
         printf("  Rejected: %lu\n", (unsigned long)total_rejected_);
-        double avg = total_routes_ > 0
+        const double avg = total_routes_ > 0
             ? static_cast<double>(total_latency_ns_) / total_routes_ : 0.0;
         printf("  Avg routing latency: %.0f ns\n", avg);
     }
 
 private:
+    // split_order: rozbij duże zlecenie. Sortuje venue po cenie EFEKTYWNEJ
+    // (nie surowej!) i wypełnia od najtańszego, aż wyczerpiemy zlecenie lub
+    // płynność. Raportuje średnią cenę, łączną opłatę i liczbę użytych venue.
     RouteDecision split_order(Venue** candidates, int num, bool is_buy,
                                int32_t quantity, int64_t t0) noexcept {
-        // Sort candidates by price (simple selection sort — small N)
+        // Selection sort po cenie efektywnej (małe N → O(N²) bez znaczenia).
         for (int i = 0; i < num - 1; ++i) {
             for (int j = i + 1; j < num; ++j) {
-                bool swap = false;
-                if (is_buy) {
-                    swap = candidates[j]->best_ask < candidates[i]->best_ask;
-                } else {
-                    swap = candidates[j]->best_bid > candidates[i]->best_bid;
-                }
+                const double a = effective_price(*candidates[i], is_buy);
+                const double b = effective_price(*candidates[j], is_buy);
+                const bool   swap = is_buy ? (b < a) : (b > a);  // najlepsze najpierw
                 if (swap) std::swap(candidates[i], candidates[j]);
             }
         }
 
-        // Allocate shares across venues
-        int32_t remaining = quantity;
-        int32_t filled = 0;
-        double price_sum = 0.0;
-        const char* primary_venue = candidates[0]->name;
+        int32_t remaining   = quantity;
+        int32_t filled      = 0;
+        int32_t venues_used = 0;
+        double  price_sum   = 0.0;   // Σ quote × alloc (do średniej ceny)
+        double  fee_sum     = 0.0;   // Σ fee × alloc   (łączna opłata)
 
         for (int i = 0; i < num && remaining > 0; ++i) {
-            int32_t available = is_buy ? candidates[i]->ask_size : candidates[i]->bid_size;
-            int32_t alloc = std::min(remaining, available);
-            if (alloc > 0) {
-                double px = is_buy ? candidates[i]->best_ask : candidates[i]->best_bid;
-                price_sum += px * alloc;
-                filled += alloc;
-                remaining -= alloc;
-            }
+            const int32_t available = is_buy ? candidates[i]->ask_size
+                                             : candidates[i]->bid_size;
+            const int32_t alloc = std::min(remaining, available);
+            if (alloc <= 0) continue;
+            const double px = is_buy ? candidates[i]->best_ask : candidates[i]->best_bid;
+            price_sum += px * alloc;
+            fee_sum   += candidates[i]->fee_per_share * alloc;
+            filled    += alloc;
+            remaining -= alloc;
+            ++venues_used;
         }
 
-        if (filled == 0) {
-            total_rejected_++;
-            return RouteDecision();
-        }
+        if (filled == 0) { ++total_rejected_; return RouteDecision(); }
 
-        RouteDecision decision;
-        decision.valid = true;
-        std::strncpy(decision.venue, primary_venue, 15);
-        decision.venue[15] = '\0';
-        decision.price = price_sum / filled;
-        decision.quantity = filled;
-        decision.latency_ns = now_ns() - t0;
+        RouteDecision d;
+        d.valid           = true;
+        std::strncpy(d.venue, candidates[0]->name, 15);  // venue z najlepszą ceną = primary
+        d.venue[15]       = '\0';
+        d.price           = price_sum / filled;
+        // all-in średnia: dla BUY koszt rośnie o fee, dla SELL maleje.
+        d.effective_price = is_buy ? (price_sum + fee_sum) / filled
+                                   : (price_sum - fee_sum) / filled;
+        d.total_fee       = fee_sum;
+        d.quantity        = filled;
+        d.num_venues      = venues_used;
+        d.latency_ns      = now_ns() - t0;
 
-        total_routes_++;
-        total_latency_ns_ += decision.latency_ns;
-        return decision;
+        ++total_routes_;
+        total_latency_ns_ += d.latency_ns;
+        return d;
     }
 };
