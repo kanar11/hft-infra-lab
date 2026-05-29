@@ -39,6 +39,36 @@ zwraca `OK` / `GAP` / `DUPLICATE` i utrzymuje statystyki: `gaps`, `lost`,
 `duplicates`, `loss_rate()`. `MulticastReceiver` woła go automatycznie przy
 każdym `receive()`; dostęp przez `sequence_tracker()`.
 
+## MoldUDP64 framing (standard branżowy / NASDAQ)
+
+Prawdziwe giełdy nie wysyłają jednej wiadomości na datagram — używają
+**MoldUDP64**, standardu NASDAQ (TotalView-ITCH, BX, PSX i wiele globalnych
+giełd). Jeden UDP datagram niesie nagłówek + **wiele** wiadomości:
+
+```
+[0..9]   Session         10B ASCII (identyfikator sesji)
+[10..17] Sequence Number uint64 BE — numer PIERWSZEJ wiadomości w pakiecie
+[18..19] Message Count   uint16 BE — ile wiadomości
+potem MessageCount bloków: [length uint16 BE][message data]
+```
+
+Pakiety specjalne: `Message Count == 0` → heartbeat (utrzymuje sesję, wykrywa
+luki gdy feed idle), `0xFFFF` → end of session. Batchowanie amortyzuje narzut
+UDP/IP (28 B nagłówków/pakiet) przy zachowaniu sekwencji per-wiadomość.
+
+```cpp
+// Nadawca: spakuj 3 wiadomości w jeden datagram MoldUDP64.
+uint8_t pkt[1500];
+size_t n = multicast::mold_serialize_packet(pkt, sizeof(pkt), "SESSION001", 100, msgs, 3);
+
+// Odbiorca: parsuj, śledź sekwencję na poziomie pakietu, dostań każdą wiadomość.
+multicast::MoldUDP64Header h;
+multicast::SequenceTracker trk;
+int count = multicast::mold_parse_packet(pkt, n, h, &trk,
+    [](const MarketDataMessage& m) { /* obsłuż wiadomość */ });
+// trk.observe_packet() automatycznie wykrywa lukę gdy zgubimy CAŁY datagram.
+```
+
 ```cpp
 multicast::MulticastReceiver rx;
 rx.init("239.1.1.1", 5001);
@@ -56,8 +86,8 @@ printf("loss rate: %.4f%% (%llu lost)\n", s.loss_rate() * 100, (unsigned long lo
 ## Files / Pliki
 | File | Description / Opis |
 |------|---|
-| `multicast.hpp` | C++ header-only — binary serialization, UDP sender/receiver, SequenceTracker (gap detection), LatencyStats |
-| `multicast_demo.cpp` | unit tests (roundtrip, endian, UDP loopback, sequence gap/duplicate detection) + throughput benchmark |
+| `multicast.hpp` | C++ header-only — binary serialization, UDP sender/receiver, SequenceTracker (gap detection), MoldUDP64 framing, LatencyStats |
+| `multicast_demo.cpp` | unit tests (roundtrip, endian, UDP loopback, sequence gap/duplicate, MoldUDP64 packets) + throughput benchmark |
 
 ## Run / Uruchomienie
 ```bash

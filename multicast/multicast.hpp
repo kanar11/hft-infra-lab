@@ -243,6 +243,43 @@ struct SequenceTracker {
         return Status::DUPLICATE;
     }
 
+    // observe_packet: wariant MoldUDP64. Pakiet niesie sequence PIERWSZEJ
+    // wiadomości i ile ich jest (count). Następny oczekiwany = seq + count.
+    // Heartbeat (count=0) ma seq == next-expected → wykrywa lukę nawet gdy
+    // feed jest idle (żadnych danych, ale numer się zgadza lub nie).
+    Status observe_packet(uint64_t packet_seq, uint16_t count) noexcept {
+        if (!initialized) {
+            initialized  = true;
+            expected_seq = packet_seq + count;
+            received    += count;
+            return Status::OK;
+        }
+        if (packet_seq == expected_seq) {
+            expected_seq += count;
+            received     += count;
+            return Status::OK;
+        }
+        if (packet_seq > expected_seq) {
+            ++gaps;
+            lost        += (packet_seq - expected_seq);
+            expected_seq = packet_seq + count;
+            received    += count;
+            return Status::GAP;
+        }
+        // packet_seq < expected_seq — pakiet zaczyna się przed oczekiwanym.
+        const uint64_t packet_end = packet_seq + count;  // exclusive
+        if (packet_end <= expected_seq) {
+            ++duplicates;
+            return Status::DUPLICATE;          // w całości już widziany
+        }
+        // Częściowy overlap — część wiadomości jest nowa (rzadkie, ale realne
+        // przy A/B line arbitration gdy linie się minimalnie rozjeżdżają).
+        received    += (packet_end - expected_seq);
+        expected_seq = packet_end;
+        ++duplicates;
+        return Status::DUPLICATE;
+    }
+
     // loss_rate: ułamek zgubionych pakietów względem wszystkich które
     // POWINNY dotrzeć (received + lost). 0.0 = zero strat.
     double loss_rate() const noexcept {
@@ -252,6 +289,110 @@ struct SequenceTracker {
 
     void reset() noexcept { *this = SequenceTracker{}; }
 };
+
+
+// MoldUDP64 — przemysłowy standard transportu market data over UDP (NASDAQ).
+//
+// Pojedynczy UDP datagram (downstream packet) niesie WIELE wiadomości:
+//   [0..9]   Session         10 bajtów ASCII (identyfikator sesji handlowej)
+//   [10..17] Sequence Number uint64 BE — numer PIERWSZEJ wiadomości w pakiecie
+//   [18..19] Message Count   uint16 BE — ile wiadomości w pakiecie
+//   potem MessageCount bloków, każdy:
+//     [+0..1] Message Length uint16 BE
+//     [+2..]  Message Data   <length> bajtów
+//
+// Pakiety specjalne (po Message Count):
+//   0       → heartbeat (utrzymuje sesję, pozwala wykryć lukę gdy feed idle)
+//   0xFFFF  → end of session
+//
+// Numery wiadomości w pakiecie są kolejne: seq, seq+1, ..., seq+count-1.
+// Następny oczekiwany = seq + count. To pozwala odbiorcy wykryć lukę nawet
+// gdy zgubił CAŁY datagram (next_expected nie zgadza się z kolejnym seq).
+//
+// Tak działa NASDAQ TotalView-ITCH, BX, PSX i wiele globalnych giełd —
+// batchowanie wielu wiadomości w jeden datagram amortyzuje narzut UDP/IP
+// (28 bajtów nagłówków na pakiet) przy zachowaniu sekwencji per-wiadomość.
+
+static constexpr size_t   MOLD_HEADER_SIZE    = 20;
+static constexpr size_t   MOLD_SESSION_LEN    = 10;
+static constexpr uint16_t MOLD_HEARTBEAT      = 0;
+static constexpr uint16_t MOLD_END_OF_SESSION = 0xFFFF;
+
+struct MoldUDP64Header {
+    char     session[MOLD_SESSION_LEN];
+    uint64_t sequence;
+    uint16_t message_count;
+};
+
+// mold_write_header: zapisz 20-bajtowy nagłówek MoldUDP64.
+inline size_t mold_write_header(uint8_t* buf, const char* session,
+                                 uint64_t seq, uint16_t count) noexcept {
+    std::memset(buf, ' ', MOLD_SESSION_LEN);
+    const void* end = std::memchr(session, '\0', MOLD_SESSION_LEN);
+    const size_t slen = end
+        ? static_cast<size_t>(static_cast<const char*>(end) - session)
+        : MOLD_SESSION_LEN;
+    std::memcpy(buf, session, slen);
+    mc_endian::write_u64_be(buf + 10, seq);
+    mc_endian::write_u16_be(buf + 18, count);
+    return MOLD_HEADER_SIZE;
+}
+
+// mold_read_header: odczytaj nagłówek. Zwraca false gdy bufor za krótki.
+inline bool mold_read_header(const uint8_t* buf, size_t len, MoldUDP64Header& h) noexcept {
+    if (len < MOLD_HEADER_SIZE) return false;
+    std::memcpy(h.session, buf, MOLD_SESSION_LEN);
+    h.sequence      = mc_endian::read_u64_be(buf + 10);
+    h.message_count = mc_endian::read_u16_be(buf + 18);
+    return true;
+}
+
+// mold_serialize_packet: zbuduj kompletny pakiet MoldUDP64 z `count` wiadomości
+// (count=0 → heartbeat). Zwraca rozmiar pakietu lub 0 gdy bufor za mały.
+inline size_t mold_serialize_packet(uint8_t* buf, size_t cap,
+                                     const char* session, uint64_t first_seq,
+                                     const MarketDataMessage* msgs, uint16_t count) noexcept {
+    const size_t needed = MOLD_HEADER_SIZE
+                        + static_cast<size_t>(count) * (2 + MC_MSG_SIZE);
+    if (cap < needed) return 0;
+    size_t off = mold_write_header(buf, session, first_seq, count);
+    for (uint16_t i = 0; i < count; ++i) {
+        mc_endian::write_u16_be(buf + off, static_cast<uint16_t>(MC_MSG_SIZE));
+        off += 2;
+        serialize(msgs[i], buf + off);
+        off += MC_MSG_SIZE;
+    }
+    return off;
+}
+
+// mold_parse_packet: parsuje pakiet MoldUDP64. Aktualizuje tracker na poziomie
+// pakietu (jeśli != nullptr) i woła on_msg() dla każdej wiadomości danych.
+// Zwraca message_count (>=0) lub -1 na błąd formatu. End-of-session i heartbeat
+// zwracają 0 (brak wiadomości danych).
+template <typename OnMessage>
+inline int mold_parse_packet(const uint8_t* buf, size_t len, MoldUDP64Header& h,
+                             SequenceTracker* tracker, OnMessage&& on_msg) noexcept {
+    if (!mold_read_header(buf, len, h)) return -1;
+
+    // End-of-session i heartbeat nie niosą wiadomości danych → count efektywny 0
+    // dla trackera (EoS-seq i heartbeat-seq oba == next-expected).
+    const bool is_control = (h.message_count == MOLD_HEARTBEAT ||
+                             h.message_count == MOLD_END_OF_SESSION);
+    if (tracker) tracker->observe_packet(h.sequence, is_control ? 0 : h.message_count);
+    if (is_control) return 0;
+
+    size_t off = MOLD_HEADER_SIZE;
+    for (uint16_t i = 0; i < h.message_count; ++i) {
+        if (off + 2 > len) return -1;
+        const uint16_t mlen = mc_endian::read_u16_be(buf + off);
+        off += 2;
+        if (off + mlen > len) return -1;
+        MarketDataMessage m{};
+        if (mlen >= MC_MSG_SIZE && deserialize(buf + off, mlen, m)) on_msg(m);
+        off += mlen;
+    }
+    return static_cast<int>(h.message_count);
+}
 
 
 // MulticastSender — nakładka na gniazdo UDP multicast (nadajnik).

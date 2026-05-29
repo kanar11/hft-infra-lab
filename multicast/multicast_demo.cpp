@@ -209,6 +209,69 @@ void test_seqtrack_loss_rate() {
     ASSERT(std::fabs(t.loss_rate() - expected) < 1e-9, "seqtrack_loss_rate");
 }
 
+// MoldUDP64 framing — przemysłowy standard (NASDAQ). Wiele wiadomości/pakiet.
+
+void test_mold_roundtrip_packet() {
+    MarketDataMessage msgs[3];
+    msgs[0] = multicast::make_message(100, "AAPL", 1500000, 100, 'B', MsgType::ADD);
+    msgs[1] = multicast::make_message(101, "MSFT", 4100000,  50, 'S', MsgType::TRADE);
+    msgs[2] = multicast::make_message(102, "NVDA", 9000000,  25, 'B', MsgType::ADD);
+
+    uint8_t buf[512];
+    size_t n = multicast::mold_serialize_packet(buf, sizeof(buf), "SESSION001", 100, msgs, 3);
+    ASSERT(n == multicast::MOLD_HEADER_SIZE + 3 * (2 + MC_MSG_SIZE), "mold_packet_size");
+
+    multicast::MoldUDP64Header h{};
+    multicast::SequenceTracker trk;
+    int delivered = 0;
+    uint64_t first_seq = 0;
+    int rc = multicast::mold_parse_packet(buf, n, h, &trk,
+        [&](const MarketDataMessage& m) {
+            if (delivered == 0) first_seq = m.sequence;
+            ++delivered;
+        });
+    ASSERT(rc == 3, "mold_parse_count");
+    ASSERT(h.sequence == 100, "mold_header_seq");
+    ASSERT(std::memcmp(h.session, "SESSION001", 10) == 0, "mold_session");
+    ASSERT(delivered == 3, "mold_messages_delivered");
+    ASSERT(first_seq == 100, "mold_first_msg_seq");
+    ASSERT(trk.expected_seq == 103, "mold_tracker_advanced");
+    ASSERT(trk.gaps == 0, "mold_no_gaps");
+}
+
+void test_mold_heartbeat() {
+    uint8_t buf[64];
+    size_t n = multicast::mold_serialize_packet(buf, sizeof(buf), "SESSION001", 50, nullptr, 0);
+    ASSERT(n == multicast::MOLD_HEADER_SIZE, "mold_heartbeat_size");
+
+    multicast::MoldUDP64Header h{};
+    multicast::SequenceTracker trk;
+    int rc = multicast::mold_parse_packet(buf, n, h, &trk,
+                                          [](const MarketDataMessage&){});
+    ASSERT(rc == 0, "mold_heartbeat_no_messages");
+    ASSERT(h.message_count == 0, "mold_heartbeat_count");
+}
+
+void test_mold_packet_gap() {
+    // Gap detection na poziomie pakietu: zgubiony cały datagram (msgs 4..9).
+    multicast::SequenceTracker trk;
+    trk.observe_packet(1, 3);    // msgs 1,2,3 → expected 4
+    trk.observe_packet(10, 2);   // luka 4..9 (6 zgubionych), msgs 10,11 → expected 12
+    ASSERT(trk.gaps == 1, "mold_gap_count");
+    ASSERT(trk.lost == 6, "mold_gap_lost_6");
+    ASSERT(trk.expected_seq == 12, "mold_gap_expected");
+}
+
+void test_mold_duplicate_packet() {
+    // Retransmisja / A-B line: ten sam pakiet dwa razy → drugi to duplikat.
+    multicast::SequenceTracker trk;
+    trk.observe_packet(1, 3);    // expected 4
+    auto st = trk.observe_packet(1, 3);  // pełny duplikat (1..3 < 4)
+    ASSERT(st == multicast::SequenceTracker::Status::DUPLICATE, "mold_dup_status");
+    ASSERT(trk.duplicates == 1, "mold_dup_count");
+    ASSERT(trk.expected_seq == 4, "mold_dup_expected_unchanged");
+}
+
 void test_latency_stats() {
     multicast::LatencyStats stats;
     stats.record(100);
@@ -409,6 +472,10 @@ int main(int argc, char* argv[]) {
     test_seqtrack_gap();
     test_seqtrack_duplicate();
     test_seqtrack_loss_rate();
+    test_mold_roundtrip_packet();
+    test_mold_heartbeat();
+    test_mold_packet_gap();
+    test_mold_duplicate_packet();
     test_latency_stats();
     test_latency_stats_empty();
     test_udp_loopback();
