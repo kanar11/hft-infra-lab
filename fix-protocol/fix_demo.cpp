@@ -112,6 +112,62 @@ void test_multiple_messages() {
     ASSERT(std::strcmp(sell.get_side(), "SELL") == 0, "test_multi_sell_side");
 }
 
+// Walidacja sesji FIX — CheckSum (tag 10) + BodyLength (tag 9) + SOH delimiter.
+
+void test_checksum_valid() {
+    char msg[256];
+    int n = FIXMessage::build_message(msg, sizeof(msg),
+        "35=D\x01" "55=AAPL\x01" "54=1\x01" "44=150.25\x01" "38=100\x01");
+    ASSERT(n > 0, "build_message_ok");
+
+    FIXMessage m;
+    m.parse(msg);
+    ASSERT(m.checksum_valid(),      "checksum_valid_on_built_msg");
+    ASSERT(m.body_length_valid(),   "bodylen_valid_on_built_msg");
+    ASSERT(m.has_required_header(), "required_header_present");
+    ASSERT(m.is_valid(),            "built_msg_is_valid");
+    // Pola parsują się też przy delimiterze SOH (nie tylko '|').
+    ASSERT(std::strcmp(m.get_symbol(), "AAPL") == 0, "soh_symbol_parsed");
+    ASSERT(m.get_quantity() == 100,                  "soh_qty_parsed");
+}
+
+void test_checksum_detects_corruption() {
+    char msg[256];
+    int n = FIXMessage::build_message(msg, sizeof(msg),
+        "35=D\x01" "55=AAPL\x01" "38=100\x01");
+    ASSERT(n > 0, "build_for_corruption");
+
+    // Uszkodź body (100 → 900) BEZ przeliczenia checksumu → mismatch.
+    char* p = std::strstr(msg, "38=100");
+    if (p) p[3] = '9';
+
+    FIXMessage m;
+    m.parse(msg);
+    ASSERT(!m.checksum_valid(), "checksum_detects_corruption");
+    ASSERT(!m.is_valid(),       "corrupted_msg_invalid");
+}
+
+void test_pipe_message_not_full_session() {
+    // Human-readable '|' bez tagów 9/10 — pola parsują się, ale to nie jest
+    // kompletna wiadomość sesji (brak wymaganego nagłówka).
+    FIXMessage m;
+    m.parse("8=FIX.4.2|35=D|55=AAPL|54=1|44=150.25|38=100");
+    ASSERT(!m.has_required_header(), "pipe_msg_no_required_header");
+    ASSERT(!m.is_valid(),            "pipe_msg_not_valid_session");
+    ASSERT(std::strcmp(m.get_symbol(), "AAPL") == 0, "pipe_msg_fields_still_parse");
+}
+
+void test_bodylength_validation() {
+    char msg[256];
+    FIXMessage::build_message(msg, sizeof(msg),
+        "35=0\x01" "49=SENDER\x01" "56=TARGET\x01");  // heartbeat
+    FIXMessage m;
+    m.parse(msg);
+    ASSERT(m.body_length_valid(),         "bodylen_valid_heartbeat");
+    ASSERT(m.computed_body_length() > 0,  "bodylen_positive");
+    ASSERT(std::strcmp(m.get_msg_type(), "0") == 0, "heartbeat_type");
+}
+
 void test_parse_speed() {
     FIXMessage msg;
     auto start = std::chrono::high_resolution_clock::now();
@@ -184,6 +240,10 @@ int main(int argc, char* argv[]) {
     test_field_count();
     test_generic_field_lookup();
     test_multiple_messages();
+    test_checksum_valid();
+    test_checksum_detects_corruption();
+    test_pipe_message_not_full_session();
+    test_bodylength_validation();
     test_parse_speed();
 
     printf("\n%d/%d tests passed", tests_passed, tests_total);

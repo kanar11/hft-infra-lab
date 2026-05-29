@@ -93,7 +93,7 @@ Szczegóły protokołu, opcody, podłączenie do prawdziwych giełd: [`feed/READ
 | network-latency/ | Network latency and jitter measurement | Bash |
 | multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | C++ |
 | orderbook/ | Matching engine: 3 variants — std::map basic, std::map + cancel/modify, flat-array O(1) | C++ |
-| fix-protocol/ | FIX 4.2 message parser (5.5M msg/sec) | C++ |
+| fix-protocol/ | FIX 4.2 parser + session validation (CheckSum tag 10, BodyLength tag 9, SOH delimiter) + message builder (5.5M msg/sec) | C++ |
 | itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types, 60M msg/sec) | C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | C++ |
 | dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | C++ |

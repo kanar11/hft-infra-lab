@@ -1,32 +1,34 @@
 /*
- * FIX 4.2 Protocol Parser — C++ Implementation
- * Parser protokołu FIX 4.2 — implementacja C++
+ * FIXMessage — parser protokołu FIX 4.2 z walidacją sesji.
  *
- * Parses Financial Information eXchange (FIX) 4.2 messages used for
- * electronic trading communication between brokers and exchanges.
- * Analizuje wiadomości FIX 4.2 używane do elektronicznej komunikacji
- * handlowej pomiędzy brokerami i giełdami.
+ * FIX (Financial Information eXchange) to standard komunikacji handlowej
+ * broker↔giełda. Wiadomość to pary tag=value rozdzielone delimiterem:
  *
- * FIX messages are pipe-delimited key=value pairs:
- *   "8=FIX.4.2|35=D|55=AAPL|54=1|44=150.25|38=100"
- * Like /etc/passwd fields separated by ':' — each field has a meaning.
- * Jak pola /etc/passwd rozdzielone ':' — każde pole ma znaczenie.
+ *   8=FIX.4.2 | 9=65 | 35=D | 49=TRADER1 | 56=EXCH | 55=AAPL | ... | 10=123
  *
- * Key FIX tags / Kluczowe tagi FIX:
- *   8  = BeginString (protocol version / wersja protokołu)
- *   35 = MsgType: D=NewOrder, G=Modify, F=Cancel, 8=Execution
- *   49 = SenderCompID (who sent it / kto wysłał)
- *   56 = TargetCompID (who receives / kto odbiera)
- *   55 = Symbol (stock ticker / symbol akcji)
- *   54 = Side: 1=Buy, 2=Sell
- *   44 = Price
- *   38 = OrderQty (quantity / ilość)
+ * WAŻNE — prawdziwy wire FIX używa delimitera SOH (ASCII 0x01), nie '|'.
+ * Pionowa kreska to konwencja human-readable (do logów/testów). Parser
+ * auto-wykrywa: jeśli w wiadomości jest SOH → używa SOH, inaczej '|'.
  *
- * Performance / Wydajność:
- *   Python: ~400K msg/sec (~2300ns/msg)
- *   C++:    ~20-40M msg/sec
+ * Kluczowe tagi:
+ *   8  = BeginString  (wersja protokołu, ZAWSZE pierwszy)
+ *   9  = BodyLength   (liczba bajtów body, ZAWSZE drugi)
+ *   35 = MsgType      (D=NewOrder, G=Modify, F=Cancel, 8=Execution, 0=Heartbeat)
+ *   34 = MsgSeqNum    (numer sekwencyjny sesji)
+ *   49 = SenderCompID / 56 = TargetCompID
+ *   55 = Symbol, 54 = Side (1=Buy 2=Sell), 44 = Price, 38 = OrderQty
+ *   10 = CheckSum     (ZAWSZE ostatni, suma modulo-256, 3 cyfry)
+ *
+ * Walidacja na poziomie standardu (czego brakowało wcześniej):
+ *   - CheckSum (tag 10): suma WSZYSTKICH bajtów aż do delimitera przed "10="
+ *     modulo 256. Każdy zgodny silnik FIX MUSI to sprawdzać — wykrywa
+ *     uszkodzenie transmisji. checksum_valid().
+ *   - BodyLength (tag 9): liczba bajtów od pola PO tagu 9 do (włącznie)
+ *     delimitera przed "10=". body_length_valid().
+ *   - Obecność wymaganych pól nagłówka (8, 9, 35, 10). has_required_header().
+ *
+ * Wydajność (lab): ~5.5M msg/sec, p50=150ns, p99=250ns.
  */
-
 #pragma once
 
 #include <cstdint>
@@ -35,34 +37,34 @@
 #include <cstdlib>
 #include <chrono>
 
-// Max FIX tags we store per message (most messages have <20 tags)
-// Like a fixed-size hash table — avoids heap allocation
-// Maks. tagów FIX na wiadomość (większość ma <20 tagów)
-static constexpr int MAX_FIX_TAGS = 32;
 
-// Max value length per tag
-static constexpr int MAX_FIX_VALUE = 32;
+// Maks. tagów na wiadomość (większość ma <20). Stała tablica = zero heap.
+static constexpr int MAX_FIX_TAGS  = 32;
+static constexpr int MAX_FIX_VALUE = 32;   // maks. długość wartości per tag
 
 
-// === FIXField — one tag=value pair ===
-
+// FIXField — jedna para tag=value.
 struct FIXField {
-    int  tag;                       // FIX tag number (e.g., 35, 55, 44)
-    char value[MAX_FIX_VALUE];      // tag value as string
+    int  tag;
+    char value[MAX_FIX_VALUE];
 
     FIXField() noexcept : tag(0) { value[0] = '\0'; }
 };
 
 
-// === FIXMessage — parsed FIX message ===
-
 class FIXMessage {
     FIXField fields_[MAX_FIX_TAGS];
     int      field_count_;
 
-    // find_field: linear scan for a tag — O(N) but N is small (≤32)
-    // Like 'grep "^tag=" message' — scan each field looking for matching tag
-    // Jak 'grep "^tag=" message' — skanuj każde pole szukając pasującego tagu
+    // Stan walidacji (ustawiany w parse()).
+    bool     cksum_present_   = false;
+    bool     cksum_valid_     = false;
+    bool     bodylen_present_ = false;
+    bool     bodylen_valid_   = false;
+    int      computed_cksum_  = -1;
+    int      computed_bodylen_ = -1;
+
+    // find_field: liniowy skan po tagu — O(N), ale N≤32 (1 linia cache).
     const FIXField* find_field(int tag) const noexcept {
         for (int i = 0; i < field_count_; ++i) {
             if (fields_[i].tag == tag) return &fields_[i];
@@ -71,114 +73,127 @@ class FIXMessage {
     }
 
     static int64_t now_ns() noexcept {
-        auto now = std::chrono::high_resolution_clock::now();
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
-            now.time_since_epoch()).count();
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
     }
 
 public:
+    static constexpr char SOH = '\x01';   // standardowy delimiter wire FIX
+
     FIXMessage() noexcept : field_count_(0) {}
 
-    // parse: split pipe-delimited message into tag=value pairs
-    // Like 'IFS="|" read -ra fields <<< "$msg"' in bash, then split each by '='
-    // Jak 'IFS="|" read -ra fields <<< "$msg"' w bashu, potem podziel każde przez '='
-    // Returns parse time in nanoseconds / Zwraca czas parsowania w nanosekundach
+    // compute_checksum: suma modulo-256 bajtów [0, len). Algorytm CheckSum (tag 10).
+    static uint8_t compute_checksum(const char* data, int len) noexcept {
+        unsigned sum = 0;
+        for (int i = 0; i < len; ++i)
+            sum += static_cast<unsigned char>(data[i]);
+        return static_cast<uint8_t>(sum & 0xFF);
+    }
+
+    // parse: rozbij wiadomość na pary tag=value + zwaliduj CheckSum/BodyLength.
+    // Auto-wykrywa delimiter (SOH albo '|'). Zwraca czas parsowania (ns).
     int64_t parse(const char* raw_msg) noexcept {
-        int64_t t0 = now_ns();
-        field_count_ = 0;
+        const int64_t t0 = now_ns();
+        field_count_      = 0;
+        cksum_present_    = false;
+        cksum_valid_      = false;
+        bodylen_present_  = false;
+        bodylen_valid_    = false;
+        computed_cksum_   = -1;
+        computed_bodylen_ = -1;
 
-        if (!raw_msg || raw_msg[0] == '\0') {
-            return now_ns() - t0;
-        }
+        if (!raw_msg || raw_msg[0] == '\0') return now_ns() - t0;
 
-        // Work on a copy (we modify it with strtok-like scanning).
-        // memchr bounds the search at sizeof(buf) so an untrusted message
-        // without a null terminator can't make us read past 1024 bytes.
-        // Pracuj na kopii. memchr ogranicza scan do 1024 bajtów dla bezpieczeństwa.
+        // Kopia robocza. memchr ogranicza scan do 1024 B — niezaufana wiadomość
+        // bez null-terminatora nie zmusi nas do czytania poza buforem.
         char buf[1024];
         const void* nul = std::memchr(raw_msg, '\0', sizeof(buf));
-        int len = nul
+        const int len = nul
                 ? static_cast<int>(static_cast<const char*>(nul) - raw_msg)
                 : static_cast<int>(sizeof(buf)) - 1;
-        std::memcpy(buf, raw_msg, len);
+        std::memcpy(buf, raw_msg, static_cast<size_t>(len));
         buf[len] = '\0';
 
-        // Split by '|' delimiter — like awk -F'|'
-        // Podziel po '|' — jak awk -F'|'
+        // Delimiter: SOH gdy obecny (prawdziwy wire FIX), inaczej '|' (human-readable).
+        const char delim_char =
+            std::memchr(raw_msg, SOH, static_cast<size_t>(len)) ? SOH : '|';
+
+        // Offsety potrzebne do walidacji (względem buf == względem raw_msg).
+        int  cksum_off = -1;     // gdzie zaczyna się "10="
+        int  body_off  = -1;     // gdzie zaczyna się pole PO tagu 9
+        bool pending_body = false;
+
         char* pos = buf;
         while (*pos && field_count_ < MAX_FIX_TAGS) {
-            // Find next '|' or end of string
-            char* delim = pos;
-            while (*delim && *delim != '|') delim++;
+            const int field_off = static_cast<int>(pos - buf);
+            if (pending_body) { body_off = field_off; pending_body = false; }
 
-            // Find '=' within this segment
+            // Znajdź następny delimiter lub koniec.
+            char* delim = pos;
+            while (*delim && *delim != delim_char) ++delim;
+
+            // Znajdź '=' w tym segmencie.
             char* eq = pos;
-            while (eq < delim && *eq != '=') eq++;
+            while (eq < delim && *eq != '=') ++eq;
 
             if (eq < delim && eq > pos) {
-                // Null-terminate tag part
                 *eq = '\0';
-
-                // Parse tag number (atoi skips leading whitespace)
-                int tag = std::atoi(pos);
+                const int tag = std::atoi(pos);
                 if (tag > 0) {
                     FIXField& f = fields_[field_count_];
                     f.tag = tag;
-
-                    // Copy value (everything after '=')
                     const char* val_start = eq + 1;
-                    int val_len = (int)(delim - val_start);
+                    int val_len = static_cast<int>(delim - val_start);
                     if (val_len >= MAX_FIX_VALUE) val_len = MAX_FIX_VALUE - 1;
-                    if (val_len > 0) {
-                        std::memcpy(f.value, val_start, val_len);
-                    }
+                    if (val_len > 0) std::memcpy(f.value, val_start, static_cast<size_t>(val_len));
                     f.value[val_len] = '\0';
-                    field_count_++;
+                    ++field_count_;
+
+                    if (tag == 9)  pending_body = true;       // body zaczyna się od następnego pola
+                    if (tag == 10) cksum_off    = field_off;  // checksum liczona do tego miejsca
                 }
             }
 
-            // Move past delimiter
-            if (*delim == '|') delim++;
+            if (*delim == delim_char) ++delim;
             pos = delim;
         }
 
+        validate(raw_msg, cksum_off, body_off);
         return now_ns() - t0;
     }
 
-    // === Accessors for common FIX tags ===
-
-    // get_msg_type: tag 35 — D=NewOrder, G=Modify, F=Cancel, 8=Execution
+    // get_msg_type: tag 35 — D=NewOrder, G=Modify, F=Cancel, 8=Execution.
     const char* get_msg_type() const noexcept {
         const FIXField* f = find_field(35);
         return f ? f->value : "UNKNOWN";
     }
 
-    // get_symbol: tag 55 — stock ticker (e.g., "AAPL")
+    // get_symbol: tag 55 — ticker.
     const char* get_symbol() const noexcept {
         const FIXField* f = find_field(55);
         return f ? f->value : "UNKNOWN";
     }
 
-    // get_side: tag 54 — 1=BUY, 2=SELL
+    // get_side: tag 54 — 1=BUY, 2=SELL.
     const char* get_side() const noexcept {
         const FIXField* f = find_field(54);
         if (!f) return "UNKNOWN";
         return (f->value[0] == '1') ? "BUY" : "SELL";
     }
 
-    // get_price: tag 44 — order price
+    // get_price: tag 44.
     double get_price() const noexcept {
         const FIXField* f = find_field(44);
         return f ? std::atof(f->value) : 0.0;
     }
 
-    // get_quantity: tag 38 — order quantity
+    // get_quantity: tag 38.
     int32_t get_quantity() const noexcept {
         const FIXField* f = find_field(38);
         return f ? std::atoi(f->value) : 0;
     }
 
-    // get_field: generic tag lookup (returns nullptr if not found)
+    // get_field: generyczny lookup po tagu (nullptr gdy brak).
     const char* get_field(int tag) const noexcept {
         const FIXField* f = find_field(tag);
         return f ? f->value : nullptr;
@@ -186,17 +201,82 @@ public:
 
     int field_count() const noexcept { return field_count_; }
 
-    // print: display parsed message (for debugging)
-    void print() const {
-        const char* msg_type = get_msg_type();
-        const char* type_name = "UNKNOWN";
-        if (msg_type[0] == 'D') type_name = "NEW ORDER";
-        else if (msg_type[0] == 'G') type_name = "MODIFY";
-        else if (msg_type[0] == 'F') type_name = "CANCEL";
-        else if (msg_type[0] == '8') type_name = "EXECUTION";
-        else if (msg_type[0] == '0') type_name = "HEARTBEAT";
+    // Walidacja sesji FIX.
+    bool checksum_present()    const noexcept { return cksum_present_; }
+    bool checksum_valid()      const noexcept { return cksum_valid_; }
+    bool body_length_present() const noexcept { return bodylen_present_; }
+    bool body_length_valid()   const noexcept { return bodylen_valid_; }
+    int  computed_checksum()   const noexcept { return computed_cksum_; }
+    int  computed_body_length() const noexcept { return computed_bodylen_; }
 
-        printf("%s | %s %d %s @ %.2f\n",
-               type_name, get_side(), get_quantity(), get_symbol(), get_price());
+    // has_required_header: minimalny zgodny nagłówek FIX — 8, 9, 35, 10.
+    bool has_required_header() const noexcept {
+        return find_field(8) && find_field(9) && find_field(35) && find_field(10);
+    }
+
+    // is_valid: kompletna, dobrze uformowana wiadomość sesji FIX.
+    bool is_valid() const noexcept {
+        return has_required_header() && cksum_valid_ && bodylen_valid_;
+    }
+
+    // build_message: zbuduj POPRAWNĄ wiadomość FIX z body (pola od 35= dalej,
+    // każde zakończone delimiterem). Dokleja 8=BeginString, 9=BodyLength i
+    // 10=CheckSum z policzoną sumą. Zwraca długość lub 0 gdy bufor za mały.
+    //
+    // Przykład: body = "35=D\x0155=AAPL\x0154=1\x01" → pełna wiadomość z 8/9/10.
+    static int build_message(char* out, int cap, const char* body,
+                             const char* begin_string = "FIX.4.2",
+                             char delim = SOH) noexcept {
+        const int blen = static_cast<int>(std::strlen(body));
+        char head[64];
+        const int hlen = std::snprintf(head, sizeof(head), "8=%s%c9=%d%c",
+                                       begin_string, delim, blen, delim);
+        if (hlen < 0 || hlen + blen + 16 > cap) return 0;
+
+        int off = 0;
+        std::memcpy(out + off, head, static_cast<size_t>(hlen)); off += hlen;
+        std::memcpy(out + off, body, static_cast<size_t>(blen)); off += blen;
+
+        // CheckSum liczona po wszystkich bajtach do tej pory (włącznie z
+        // delimiterem kończącym body — czyli bajtem przed "10=").
+        const uint8_t ck = compute_checksum(out, off);
+        const int clen = std::snprintf(out + off, static_cast<size_t>(cap - off),
+                                       "10=%03u%c", static_cast<unsigned>(ck), delim);
+        if (clen < 0) return 0;
+        off += clen;
+        return off;
+    }
+
+    // print: wyświetl wiadomość (debug).
+    void print() const {
+        const char* mt = get_msg_type();
+        const char* name = "UNKNOWN";
+        if      (mt[0] == 'D') name = "NEW ORDER";
+        else if (mt[0] == 'G') name = "MODIFY";
+        else if (mt[0] == 'F') name = "CANCEL";
+        else if (mt[0] == '8') name = "EXECUTION";
+        else if (mt[0] == '0') name = "HEARTBEAT";
+        printf("%s | %s %d %s @ %.2f  [%s]\n",
+               name, get_side(), get_quantity(), get_symbol(), get_price(),
+               is_valid() ? "valid" : "unvalidated");
+    }
+
+private:
+    // validate: policz CheckSum i BodyLength z offsetów zebranych w parse()
+    // i porównaj z wartościami w wiadomości. Liczone na ORYGINALNYCH bajtach
+    // (raw_msg), bo buf ma '\0' wstawione w miejsce '='.
+    void validate(const char* raw_msg, int cksum_off, int body_off) noexcept {
+        const FIXField* f10 = find_field(10);
+        if (f10 && cksum_off >= 0) {
+            cksum_present_  = true;
+            computed_cksum_ = compute_checksum(raw_msg, cksum_off);
+            cksum_valid_    = (std::atoi(f10->value) == computed_cksum_);
+        }
+        const FIXField* f9 = find_field(9);
+        if (f9 && body_off >= 0 && cksum_off >= body_off) {
+            bodylen_present_  = true;
+            computed_bodylen_ = cksum_off - body_off;
+            bodylen_valid_    = (std::atoi(f9->value) == computed_bodylen_);
+        }
     }
 };
