@@ -163,6 +163,52 @@ void test_large_quantity() {
     ASSERT(decoded.quantity == UINT32_MAX, "max_quantity_roundtrip");
 }
 
+// Sequence tracking — wykrywanie packet loss. Czysta logika, bez gniazd.
+
+void test_seqtrack_in_order() {
+    multicast::SequenceTracker t;
+    for (uint64_t s = 100; s < 110; ++s) {
+        ASSERT(t.observe(s) == multicast::SequenceTracker::Status::OK, "seqtrack_in_order_ok");
+    }
+    ASSERT(t.received == 10, "seqtrack_in_order_received");
+    ASSERT(t.gaps == 0, "seqtrack_in_order_no_gaps");
+    ASSERT(t.lost == 0, "seqtrack_in_order_no_loss");
+    ASSERT(t.loss_rate() == 0.0, "seqtrack_in_order_zero_loss_rate");
+}
+
+void test_seqtrack_gap() {
+    multicast::SequenceTracker t;
+    t.observe(1);                      // OK, expected=2
+    t.observe(2);                      // OK, expected=3
+    auto st = t.observe(7);            // luka: zgubione 3,4,5,6 (4 pakiety)
+    ASSERT(st == multicast::SequenceTracker::Status::GAP, "seqtrack_gap_status");
+    ASSERT(t.gaps == 1, "seqtrack_gap_count");
+    ASSERT(t.lost == 4, "seqtrack_gap_lost_4");
+    // Po luce wracamy do kolejności: 8,9 OK.
+    ASSERT(t.observe(8) == multicast::SequenceTracker::Status::OK, "seqtrack_gap_resync");
+    ASSERT(t.lost == 4, "seqtrack_gap_lost_stable");
+}
+
+void test_seqtrack_duplicate() {
+    multicast::SequenceTracker t;
+    t.observe(1);
+    t.observe(2);
+    t.observe(3);                      // expected=4
+    auto st = t.observe(2);            // spóźniony/duplikat (2 < 4)
+    ASSERT(st == multicast::SequenceTracker::Status::DUPLICATE, "seqtrack_dup_status");
+    ASSERT(t.duplicates == 1, "seqtrack_dup_count");
+    ASSERT(t.received == 3, "seqtrack_dup_received_unchanged");
+}
+
+void test_seqtrack_loss_rate() {
+    multicast::SequenceTracker t;
+    t.observe(0);                      // received=1
+    t.observe(10);                     // luka: lost=9, received=2
+    // loss_rate = lost / (received + lost) = 9 / (2 + 9) = 9/11.
+    const double expected = 9.0 / 11.0;
+    ASSERT(std::fabs(t.loss_rate() - expected) < 1e-9, "seqtrack_loss_rate");
+}
+
 void test_latency_stats() {
     multicast::LatencyStats stats;
     stats.record(100);
@@ -359,6 +405,10 @@ int main(int argc, char* argv[]) {
     test_symbol_exact_8();
     test_large_sequence();
     test_large_quantity();
+    test_seqtrack_in_order();
+    test_seqtrack_gap();
+    test_seqtrack_duplicate();
+    test_seqtrack_loss_rate();
     test_latency_stats();
     test_latency_stats_empty();
     test_udp_loopback();

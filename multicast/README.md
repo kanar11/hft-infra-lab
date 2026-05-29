@@ -24,11 +24,40 @@ UDP multicast sender and receiver for simulating exchange market data feeds.
 | 37 | msg_type | char | A=Add, D=Delete, T=Trade, U=Update, Q=Quote, S=System |
 | 38-39 | padding | - | Zeroed / Wyzerowane |
 
+## Sequence gap detection / Wykrywanie luk sekwencji
+
+UDP **gubi pakiety** (jest unreliable) — przychodzą nie w kolejności, bywają
+zdublowane. Prawdziwa giełda numeruje każdą wiadomość monotonicznym `sequence`
+żeby odbiorca wykrył lukę i zrobił recovery:
+
+- **gap-fill request** do serwera retransmisji (np. NASDAQ MoldUDP64), albo
+- **A/B line arbitration** — odbiór dwóch identycznych feedów (linia A i B),
+  bierzesz pakiet który dotarł pierwszy, braki uzupełniasz z drugiej linii.
+
+`SequenceTracker` (w `multicast.hpp`) wykrywa to wszystko — `observe(seq)`
+zwraca `OK` / `GAP` / `DUPLICATE` i utrzymuje statystyki: `gaps`, `lost`,
+`duplicates`, `loss_rate()`. `MulticastReceiver` woła go automatycznie przy
+każdym `receive()`; dostęp przez `sequence_tracker()`.
+
+```cpp
+multicast::MulticastReceiver rx;
+rx.init("239.1.1.1", 5001);
+multicast::MarketDataMessage msg;
+multicast::SequenceTracker::Status st;
+while (rx.receive(msg, &st)) {
+    if (st == multicast::SequenceTracker::Status::GAP) {
+        // zgubiliśmy pakiet(y) — trigger recovery / przełącz na linię B
+    }
+}
+const auto& s = rx.sequence_tracker();
+printf("loss rate: %.4f%% (%llu lost)\n", s.loss_rate() * 100, (unsigned long long)s.lost);
+```
+
 ## Files / Pliki
 | File | Description / Opis |
 |------|---|
-| `multicast.hpp` | C++ header-only — binary serialization, UDP sender/receiver, LatencyStats |
-| `multicast_demo.cpp` | 38 unit tests (roundtrip, endian, UDP loopback) + throughput benchmark |
+| `multicast.hpp` | C++ header-only — binary serialization, UDP sender/receiver, SequenceTracker (gap detection), LatencyStats |
+| `multicast_demo.cpp` | unit tests (roundtrip, endian, UDP loopback, sequence gap/duplicate detection) + throughput benchmark |
 
 ## Run / Uruchomienie
 ```bash
