@@ -115,16 +115,23 @@ public:
             path, host, port, ws_key);
         if (SSL_write(ssl_, req, n) != n) { close(); return false; }
 
-        // Odczytaj odpowiedź aż do CRLFCRLF.
+        // Odczytaj odpowiedź bajt-po-bajcie aż do CRLF CRLF. Tak samo jak w
+        // ws_client.hpp: łapczywy SSL_read wciągnąłby ramki WS wysłane tuż za
+        // handshake'iem do bufora i je zgubił → desync recv_text(). Czytanie
+        // pojedynczo zatrzymuje nas dokładnie na granicy nagłówków.
         char resp[2048];
         int got = 0;
         while (got < static_cast<int>(sizeof(resp)) - 1) {
-            const int r = SSL_read(ssl_, resp + got, sizeof(resp) - 1 - got);
+            char c;
+            const int r = SSL_read(ssl_, &c, 1);
             if (r <= 0) { close(); return false; }
-            got += r;
-            resp[got] = '\0';
-            if (std::strstr(resp, "\r\n\r\n")) break;
+            resp[got++] = c;
+            if (got >= 4 && resp[got - 4] == '\r' && resp[got - 3] == '\n' &&
+                            resp[got - 2] == '\r' && resp[got - 1] == '\n') {
+                break;
+            }
         }
+        resp[got] = '\0';
         if (std::strncmp(resp, "HTTP/1.1 101", 12) != 0) {
             std::fprintf(stderr, "wss: server odpowiedział nie-101: %.*s\n", 64, resp);
             close();

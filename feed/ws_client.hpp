@@ -173,15 +173,28 @@ public:
         }
 
         // Czekaj na "HTTP/1.1 101 Switching Protocols" + nagłówki + pusty wiersz.
+        //
+        // KRYTYCZNE: czytamy bajt-po-bajcie aż do CRLF CRLF. TCP to strumień —
+        // serwer wysyła odpowiedź 101 i ZARAZ potem może blastować ramki WS,
+        // które trafiają do tego samego segmentu/recv-bufora. Gdybyśmy czytali
+        // łapczywie (recv dużymi kawałkami), wciągnęlibyśmy część ramek WS do
+        // bufora handshake'u i je ZGUBILI — recv_text() startowałby w środku
+        // ramki → desync. Bajt-po-bajcie gwarantuje że zatrzymamy się dokładnie
+        // na \r\n\r\n i ani bajtu dalej. Koszt (≈150 syscalli) jest nieistotny
+        // bo handshake jest raz na połączenie.
         char resp[1024];
         std::size_t got = 0;
         while (got < sizeof(resp) - 1) {
-            ssize_t r = ::recv(fd_, resp + got, sizeof(resp) - 1 - got, 0);
+            std::uint8_t c;
+            ssize_t r = ::recv(fd_, &c, 1, 0);
             if (r <= 0) { close(); return false; }
-            got += static_cast<std::size_t>(r);
-            resp[got] = '\0';
-            if (std::strstr(resp, "\r\n\r\n")) break;  // nagłówki zakończone
+            resp[got++] = static_cast<char>(c);
+            if (got >= 4 && resp[got - 4] == '\r' && resp[got - 3] == '\n' &&
+                            resp[got - 2] == '\r' && resp[got - 1] == '\n') {
+                break;  // koniec nagłówków — reszta strumienia to ramki WS
+            }
         }
+        resp[got] = '\0';
         if (std::strncmp(resp, "HTTP/1.1 101", 12) != 0) {
             close();
             return false;
