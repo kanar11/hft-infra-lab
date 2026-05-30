@@ -203,15 +203,30 @@ public:
 
     // fill_order: raport wykonania z giełdy. Aktualizuje filled_qty + status
     // w Order, przepływa qty z pending do net w Position, przelicza avg_price
-    // (BUY) lub realized_pnl (SELL).
-    void fill_order(uint64_t order_id, uint32_t fill_qty, double fill_price_f) noexcept {
+    // (BUY) lub realized_pnl (SELL). Zwraca rzeczywiście zaaplikowane qty
+    // (0 gdy zlecenie nieznane / już wypełnione / fill_qty=0); może być MNIEJSZE
+    // niż żądane gdy próba over-fill (clamp do remaining + warn).
+    uint32_t fill_order(uint64_t order_id, uint32_t fill_qty, double fill_price_f) noexcept {
+        if (fill_qty == 0) return 0;
         auto it = orders_.find(order_id);
         if (it == orders_.end()) {
             printf("[OMS] WARNING: fill for unknown order_id=%lu\n", (unsigned long)order_id);
-            return;
+            return 0;
         }
         Order& order = it->second;
         const int64_t fill_price = to_fixed(fill_price_f);
+
+        // Over-fill protection — venue ack > pozostałe qty = bug po stronie
+        // giełdy / drugi raz ten sam fill / strategy bug. Clamp do remaining,
+        // wpisz tylko valid część, loguj jako anomalię (audit + regression).
+        const uint32_t remaining = (order.filled_qty < order.quantity)
+            ? (order.quantity - order.filled_qty) : 0;
+        if (fill_qty > remaining) {
+            printf("[OMS] WARNING: over-fill on order_id=%lu (req=%u, remaining=%u) — clamping\n",
+                   (unsigned long)order_id, fill_qty, remaining);
+            fill_qty = remaining;
+            if (fill_qty == 0) return 0;  // już całkowicie wypełnione
+        }
 
         order.filled_qty += fill_qty;
         order.status      = (order.filled_qty >= order.quantity)
@@ -251,6 +266,7 @@ public:
             pos.net_qty -= static_cast<int32_t>(fill_qty);
         }
         recompute_avg_price(pos);
+        return fill_qty;  // ile faktycznie zaaplikowano (po clampie)
     }
 
     // cancel_order: zwalnia niezrealizowaną resztę z pending. Tylko dla

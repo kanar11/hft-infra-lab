@@ -151,10 +151,14 @@ public:
         return ::msync(region_, used, MS_SYNC) == 0;
     }
 
-    // close: msync + munmap + close fd. Idempotent.
+    // close: msync + fsync + munmap + close fd. Idempotent.
+    // msync pushuje brudne strony do kernela, fsync wymusza ich zapis na dysk
+    // (page cache → physical). Bez fsync power-loss zabija ostatnie sekundy
+    // audit trail'a — niedopuszczalne dla compliance (SEC/MiFID II).
     void close() noexcept {
         if (!open_) return;
         flush_sync();
+        ::fsync(fd_);
         ::munmap(region_, region_bytes_);
         ::close(fd_);
         region_ = nullptr;

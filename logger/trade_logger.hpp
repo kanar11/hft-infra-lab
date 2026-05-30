@@ -41,6 +41,7 @@
 #include <memory>
 #include <vector>
 #include <unordered_set>
+#include <unistd.h>     // ::fsync (durability po power-loss)
 #include <string>
 
 #include "../common/time_utils.hpp"
@@ -182,6 +183,10 @@ class TradeLogger {
         int t = drain_to_file(flush_tail_.load(std::memory_order_relaxed), h);
         flush_tail_.store(t, std::memory_order_relaxed);
         std::fflush(flush_file_);
+        // fsync — gwarancja durability po power-loss. Compliance (SEC/MiFID II
+        // audit trail) wymaga że ostatnia minuta zleceń przeżyje crash maszyny.
+        // Bez tego dane siedzą w page cache kernela i znikają przy odcięciu zasilania.
+        if (flush_file_) std::fsync(::fileno(flush_file_));
     }
 
 public:
@@ -226,13 +231,16 @@ public:
 
     // stop_async_flush: sygnalizuj flush thread'owi zakończenie, poczekaj
     // na join, zamknij plik. Blokuje dopóki wszystkie pending eventy
-    // nie zostaną zapisane. Wywoływane przez destructor.
+    // nie zostaną zapisane (i fsynced — patrz flush_loop).
     void stop_async_flush() noexcept {
         if (flush_thread_.joinable()) {
             flush_running_.store(false, std::memory_order_relaxed);
             flush_thread_.join();
         }
         if (flush_file_) {
+            // Dodatkowy fsync gdy ktoś close() bez async flush'a (legacy/sync mode).
+            std::fflush(flush_file_);
+            std::fsync(::fileno(flush_file_));
             std::fclose(flush_file_);
             flush_file_ = nullptr;
         }

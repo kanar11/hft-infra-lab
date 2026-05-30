@@ -14,6 +14,7 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <cstdio>    // std::remove (persistence test)
 
 static RiskLimits risk_limits_from_config(const HFTConfig& cfg) {
     RiskLimits l;
@@ -137,6 +138,30 @@ void test_kill_switch_deactivate() {
     ASSERT(r.action == RiskAction::ALLOW, "test_kill_switch_deactivate");
 }
 
+// Persistencja kill switcha — restart procesu nie może obejść trip'a.
+void test_kill_switch_persistence() {
+    const char* path = "/tmp/hft_risk_persist_test.txt";
+    std::remove(path);
+
+    // Sesja 1: trigger kill, persist, "crash" (out of scope).
+    {
+        RiskManager rm;
+        rm.set_persist_path(path);
+        rm.activate_kill_switch();
+    }
+    // Sesja 2: nowy proces, load — kill switch nadal active.
+    {
+        RiskManager rm;
+        rm.set_persist_path(path);
+        bool loaded = rm.load_persisted_state();
+        ASSERT(loaded, "persist_load_returns_true");
+        ASSERT(rm.is_kill_switch_active(), "persist_kill_switch_survives_restart");
+        auto r = rm.check_order("AAPL", Side::BUY, 10.0, 1);
+        ASSERT(r.action == RiskAction::REJECT, "persist_blocks_orders_after_restart");
+    }
+    std::remove(path);
+}
+
 void test_drawdown_limit() {
     RiskLimits limits;
     limits.max_drawdown_pct = 5.0;
@@ -228,6 +253,7 @@ int main(int argc, char* argv[]) {
     test_circuit_breaker();
     test_kill_switch_manual();
     test_kill_switch_deactivate();
+    test_kill_switch_persistence();
     test_drawdown_limit();
     test_reset_daily();
     test_check_speed();

@@ -70,7 +70,10 @@
 #include <unordered_map>
 #include <deque>
 #include <cstdio>
+#include <cstdlib>     // std::remove
 #include <cmath>
+#include <string>      // persist_path_
+#include <unistd.h>    // ::fsync, ::fileno
 
 #include "../common/types.hpp"
 #include "../common/symbol_key.hpp"
@@ -254,9 +257,10 @@ class RiskManager {
     double peak_pnl_;
 
     // --------------------------------------------------------------------
-    // Stan: kill switch
+    // Stan: kill switch + opcjonalna persistencja
     // --------------------------------------------------------------------
-    bool kill_switch_active_;
+    bool        kill_switch_active_;
+    std::string persist_path_;     // pusty = persistencja wyłączona
 
     // --------------------------------------------------------------------
     // Stan: rate limit
@@ -433,11 +437,55 @@ public:
 
 
     // ====================================================================
-    // Kill switch — manualne sterowanie
+    // Kill switch — manualne sterowanie + persistencja
     // ====================================================================
-    void activate_kill_switch()    noexcept { kill_switch_active_ = true;  }
-    void deactivate_kill_switch()  noexcept { kill_switch_active_ = false; }
+    //
+    // Po trip'ie (manualnym ALBO automatycznym przez update_pnl) zapisujemy
+    // stan na dysk. Restart procesu w trakcie dnia handlowego musi WIDZIEĆ
+    // że limit już dziś przekroczony — inaczej trader właśnie obszedł halt
+    // resetując proces. load_persisted_state() przy startupie wczytuje.
+    //
+    // Format pliku (text dla audytu): "active=1\nlast_pnl=-12345.67\n"
+    // Po manualnym deactivate trzeba dodatkowo wywołać clear_persisted_state().
+    void activate_kill_switch() noexcept {
+        kill_switch_active_ = true;
+        persist_state();
+    }
+    void deactivate_kill_switch() noexcept {
+        kill_switch_active_ = false;
+        persist_state();   // persistuj też "wyłączony" żeby restart widział aktualny stan
+    }
     bool is_kill_switch_active() const noexcept { return kill_switch_active_; }
+
+    // set_persist_path: opcjonalny plik do persistencji stanu kill switcha.
+    // Wywołaj raz po konstrukcji. Bez tego persistencja jest no-op (zachowanie
+    // wstecz kompatybilne).
+    void set_persist_path(const char* path) noexcept {
+        if (path && *path) persist_path_ = path;
+        else                persist_path_.clear();
+    }
+
+    // load_persisted_state: wczytaj stan zapisany w persist_path_. Wywołaj
+    // PO konstrukcji + set_persist_path, PRZED przyjmowaniem zleceń. Zwraca
+    // true gdy plik wczytany (active+pnl zaktualizowane), false gdy brak.
+    bool load_persisted_state() noexcept {
+        if (persist_path_.empty()) return false;
+        FILE* f = std::fopen(persist_path_.c_str(), "r");
+        if (!f) return false;
+        int    active = 0;
+        double pnl    = 0.0;
+        const int n = std::fscanf(f, "active=%d\nlast_pnl=%lf\n", &active, &pnl);
+        std::fclose(f);
+        if (n < 1) return false;
+        kill_switch_active_ = (active != 0);
+        if (n >= 2) daily_pnl_ = pnl;  // przywróć też P&L żeby drawdown nie wystartował od zera
+        return true;
+    }
+
+    // clear_persisted_state: usuń plik (np. po reset_daily na nowy dzień).
+    void clear_persisted_state() noexcept {
+        if (!persist_path_.empty()) std::remove(persist_path_.c_str());
+    }
 
 
     // ====================================================================
@@ -463,6 +511,7 @@ public:
         kill_switch_active_ = false;
         total_abs_exposure_ = 0;
         for (const auto& kv : positions_) total_abs_exposure_ += std::abs(kv.second);
+        clear_persisted_state();   // nowy dzień = czyste konto, plik nieaktualny
     }
 
 
@@ -543,6 +592,7 @@ private:
         // 5. Circuit breaker — przekroczona dzienna strata
         if (daily_pnl_ < -static_cast<double>(limits_.max_daily_loss)) {
             kill_switch_active_ = true;
+            persist_state();   // restart procesu nie może obejść trip'a
             return "Circuit breaker: daily loss limit";
         }
         // 6. Drawdown — % spadek od peak_pnl_ przekroczył próg
@@ -550,10 +600,27 @@ private:
             const double drawdown_pct = (peak_pnl_ - daily_pnl_) / peak_pnl_ * 100.0;
             if (drawdown_pct > limits_.max_drawdown_pct) {
                 kill_switch_active_ = true;
+                persist_state();
                 return "Drawdown limit exceeded";
             }
         }
         return nullptr;
+    }
+
+    // persist_state: atomowo zapisz active+daily_pnl do persist_path_.
+    // Atomic write = tmpfile + rename (rename na tym samym fs jest atomowy).
+    // Bez tego pad procesu w trakcie write zostawiłby uszkodzony plik.
+    void persist_state() noexcept {
+        if (persist_path_.empty()) return;
+        std::string tmp = persist_path_ + ".tmp";
+        FILE* f = std::fopen(tmp.c_str(), "w");
+        if (!f) return;
+        std::fprintf(f, "active=%d\nlast_pnl=%.6f\n",
+                     kill_switch_active_ ? 1 : 0, daily_pnl_);
+        std::fflush(f);
+        std::fsync(::fileno(f));    // durable do fizycznego dysku
+        std::fclose(f);
+        std::rename(tmp.c_str(), persist_path_.c_str());
     }
 
 

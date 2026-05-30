@@ -70,6 +70,22 @@ void test_fill_order() {
     ASSERT(filled->filled_qty == 100, "test_fill_qty");
 }
 
+// Over-fill protection: venue ack > pozostałe qty → clamp do remaining,
+// zwracane "ile faktycznie zaaplikowano" mniejsze niż żądane.
+void test_overfill_clamped() {
+    OMS oms;
+    auto* order = oms.submit_order("AAPL", Side::BUY, 150.00, 100);
+    uint64_t id = order->order_id;
+    oms.fill_order(id, 60, 150.00);  // partial 60/100
+    uint32_t applied = oms.fill_order(id, 200, 150.00);  // próba over-fill — clamp do 40
+    ASSERT(applied == 40,                        "overfill_clamped_to_remaining");
+    auto* o = oms.get_order(id);
+    ASSERT(o->filled_qty == 100,                 "overfill_total_eq_quantity");
+    ASSERT(o->status == OrderStatus::FILLED,     "overfill_status_filled");
+    uint32_t after = oms.fill_order(id, 50, 150.00);  // już wypełnione → 0
+    ASSERT(after == 0,                           "overfill_post_filled_zero");
+}
+
 void test_partial_fill() {
     OMS oms;
     auto* order = oms.submit_order("AAPL", Side::BUY, 150.00, 100);
@@ -198,6 +214,7 @@ int main(int argc, char* argv[]) {
     test_risk_check_value();
     test_risk_check_position();
     test_fill_order();
+    test_overfill_clamped();
     test_partial_fill();
     test_cancel_order();
     test_position_tracking();
