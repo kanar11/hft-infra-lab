@@ -1,27 +1,18 @@
 /*
- * DPDK Kernel Bypass Simulator — C++ Implementation
- * Symulator omijania jądra DPDK — implementacja C++
+ * KernelBypassSimulator — symulator DPDK (kernel bypass).
  *
- * Simulates kernel bypass concepts: poll-mode driver vs interrupt-driven I/O.
- * In real HFT, DPDK bypasses the Linux kernel network stack entirely —
- * packets go directly from NIC to userspace via DMA (Direct Memory Access).
- * Symuluje koncepcje omijania jądra: sterownik trybu sondowania vs I/O z przerwaniami.
- * W prawdziwym HFT, DPDK omija cały stos sieciowy Linuxa — pakiety idą
- * bezpośrednio z karty sieciowej do przestrzeni użytkownika przez DMA.
+ * W prawdziwym HFT DPDK omija cały stos sieciowy Linuksa — pakiety idą
+ * bezpośrednio z karty sieciowej do przestrzeni użytkownika przez DMA
+ * (Direct Memory Access). Symulator nie używa karty sieciowej; mierzy tylko
+ * RÓŻNICĘ narzutów dwóch modeli za pomocą pakietów w pamięci.
  *
- * Why this matters / Dlaczego to ważne:
- *   Interrupt mode: NIC → kernel IRQ → context switch → copy → userspace
- *   Poll mode:      NIC → DMA → userspace ring buffer (zero copy!)
+ * Dlaczego to ma znaczenie:
+ *   Interrupt mode: NIC → IRQ jądra → context switch → kopia → userspace
+ *                   (~10-50 µs per pakiet — context switche są drogie)
+ *   Poll mode:      NIC → DMA → ring buffer w userspace (zero copy!)
+ *                   (~1-5 µs per pakiet — busy-wait, brak context switcha)
  *
- *   Interrupt: ~10-50μs per packet (context switches are expensive)
- *   Poll mode: ~1-5μs per packet (busy-wait, no context switch)
- *
- * This simulator measures the overhead difference using simulated packets
- * in memory — no actual network required.
- * Ten symulator mierzy różnicę narzutów używając symulowanych pakietów
- * w pamięci — nie wymaga rzeczywistej sieci.
- *
- * Pipeline: NIC → **DPDK** → ITCH Parser → Strategy → OMS
+ * Pipeline: NIC → DPDK → ITCH Parser → Strategy → OMS.
  */
 
 #pragma once
@@ -35,19 +26,15 @@
 #include <algorithm>
 #include <vector>
 
-// Simulated packet size (typical market data message)
-// Rozmiar symulowanego pakietu (typowa wiadomość danych rynkowych)
+// Rozmiar symulowanego pakietu (typowa wiadomość danych rynkowych).
 static constexpr int PACKET_SIZE = 64;
 
-// Ring buffer size for poll-mode (power of 2 for fast modulo)
-// Rozmiar bufora pierścieniowego dla trybu sondowania (potęga 2 dla szybkiego modulo)
+// Rozmiar ring bufora dla poll-mode (potęga 2 dla szybkiego modulo).
 static constexpr int RING_SIZE = 4096;
 static constexpr int RING_MASK = RING_SIZE - 1;
 
 
-// === Simulated packet ===
-// Like an Ethernet frame but simplified — timestamp + payload
-// Jak ramka Ethernet ale uproszczona — znacznik czasu + ładunek
+// Symulowany pakiet — jak ramka Ethernet ale uproszczona: timestamp + payload.
 
 struct alignas(64) SimPacket {
     int64_t  send_ts_ns;            // sender timestamp / znacznik czasu nadawcy
@@ -60,7 +47,7 @@ struct alignas(64) SimPacket {
 };
 
 
-// === Ring buffer — shared between producer and consumer ===
+// Ring buffer — współdzielony między producent a konsument.
 // Like DPDK's rte_ring — lock-free SPSC (single producer, single consumer)
 // Jak rte_ring z DPDK — bezblokadowy SPSC (jeden producent, jeden konsument)
 
@@ -88,7 +75,7 @@ struct alignas(64) PacketRing {
 };
 
 
-// === Benchmark results ===
+// Wyniki benchmarku.
 
 struct BypassStats {
     int64_t  total_packets;
@@ -113,7 +100,7 @@ struct BypassStats {
 };
 
 
-// === KernelBypassSimulator ===
+// KernelBypassSimulator — runner obu trybów + pomiar róznicy latencji.
 
 class KernelBypassSimulator {
 

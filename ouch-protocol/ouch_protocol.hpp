@@ -1,32 +1,25 @@
 /*
- * NASDAQ OUCH 4.2 Order Entry Protocol — C++ Implementation
- * Protokół wprowadzania zleceń NASDAQ OUCH 4.2 — implementacja C++
+ * OUCHMessage — NASDAQ OUCH 4.2 order entry protocol (encoder/decoder).
  *
- * Encodes and decodes OUCH messages for order entry and exchange responses.
- * Koduje i dekoduje wiadomości OUCH do wprowadzania zleceń i odpowiedzi giełdy.
+ * OUCH to binarny protokół — surowe bajty przez TCP. Na produkcji opakowane
+ * w SoupBinTCP (patrz soupbin.hpp dla framingu, sequence, login/heartbeat).
  *
- * OUCH is a binary protocol — like sending raw bytes over a socket (sendto()).
- * OUCH to protokół binarny — jak wysyłanie surowych bajtów przez socket (sendto()).
- *
- * Message types / Typy wiadomości:
+ * Typy wiadomości:
  *   Client → Exchange:
- *     O = Enter Order  (33 bytes)  — submit new order / złóż nowe zlecenie
- *     X = Cancel Order (19 bytes)  — cancel existing / anuluj istniejące
- *     U = Replace Order (37 bytes) — modify price/qty / zmień cenę/ilość
+ *     O = Enter Order   (33 B)  — nowe zlecenie
+ *     X = Cancel Order  (19 B)  — anuluj istniejące
+ *     U = Replace Order (37 B)  — zmień cenę/ilość
  *
  *   Exchange → Client:
- *     A = Accepted  (41 bytes) — order accepted / zlecenie przyjęte
- *     C = Cancelled (20 bytes) — order cancelled / zlecenie anulowane
- *     E = Executed  (31 bytes) — order filled / zlecenie zrealizowane
+ *     A = Accepted  (41 B)  — zlecenie przyjęte
+ *     C = Cancelled (20 B)  — zlecenie anulowane
+ *     E = Executed  (31 B)  — zlecenie zrealizowane
  *
- * Price encoding: fixed-point × 10000 ($150.25 → 1502500)
- * Kodowanie ceny: stałoprzecinkowe × 10000 ($150.25 → 1502500)
+ * Kodowanie ceny: fixed-point × 10000 ($150.25 → 1502500).
  *
- * Pipeline: Strategy → Router → Risk → OMS → **OUCH** → Exchange
+ * Pipeline: Strategy → Router → Risk → OMS → OUCH → Exchange.
  *
- * Performance / Wydajność:
- *   Python: ~1.7M msg/sec (encoding)
- *   C++:    ~30-50M msg/sec
+ * Wydajność (lab): ~19.9M msg/sec encoding, p50=30ns, p99=40ns.
  */
 
 #pragma once
@@ -36,9 +29,7 @@
 #include <cstdio>
 #include <chrono>
 
-// === Helper: big-endian encoding (network byte order) ===
-// OUCH uses network byte order (big-endian) — like htonl() in socket programming
-// OUCH używa kolejności bajtów sieciowej (big-endian) — jak htonl() w programowaniu gniazd
+// Helpery big-endian (network byte order). OUCH używa BE — jak htonl() w gniazdach.
 
 inline void write_u32_be(uint8_t* dst, uint32_t val) noexcept {
     dst[0] = (val >> 24) & 0xFF;
@@ -78,7 +69,7 @@ inline void write_padded(uint8_t* dst, const char* src, int len) noexcept {
 }
 
 
-// === OUCHResponse — parsed exchange response ===
+// OUCHResponse — sparsowana odpowiedź giełdy.
 
 struct OUCHResponse {
     char    type[12];       // "ACCEPTED", "CANCELLED", "EXECUTED", "ERROR", "UNKNOWN"
@@ -104,7 +95,7 @@ struct OUCHResponse {
 };
 
 
-// === OUCHMessage — encoder/decoder ===
+// OUCHMessage — encoder klienta + decoder odpowiedzi giełdy.
 
 class OUCHMessage {
     static int64_t now_ns() noexcept {

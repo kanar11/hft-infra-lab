@@ -1,25 +1,20 @@
 /*
- * Real-Time HFT Infrastructure Monitor — C++ Implementation
- * Monitor infrastruktury HFT w czasie rzeczywistym — implementacja C++
+ * InfraMonitor — monitor infrastruktury HFT w czasie rzeczywistym.
  *
- * Reads system metrics directly from /proc filesystem:
- * Czyta metryki systemowe bezpośrednio z systemu plików /proc:
- *
+ * Czyta metryki systemowe bezpośrednio z /proc (zero subprocess, zero deps):
  *   /proc/stat        → CPU usage, context switches
- *   /proc/meminfo     → memory usage, hugepages
+ *   /proc/meminfo     → pamięć, hugepages
  *   /proc/interrupts  → per-CPU interrupt counts
- *   /proc/net/dev     → network throughput
+ *   /proc/net/dev     → przepustowość sieci
  *
- * In real HFT, monitoring latency spikes and CPU isolation violations
- * is critical — a single context switch on the trading CPU can add
- * 1-10μs of jitter to your order path.
  * W prawdziwym HFT monitorowanie skoków opóźnień i naruszeń izolacji CPU
- * jest krytyczne — jedno przełączenie kontekstu na CPU handlowym może dodać
- * 1-10μs jittera do ścieżki zlecenia.
+ * jest krytyczne — jedno context-switch na trading-CPU dorzuca 1-10 µs
+ * jitter'a do ścieżki zlecenia.
  *
- * Performance / Wydajność:
- *   Python: ~500 snapshots/sec (reading /proc)
- *   C++:    ~50K+ snapshots/sec (direct /proc parsing)
+ * Wydajność (lab): ~50K+ snapshots/sec (direct /proc parsing).
+ *
+ * Alert cooldown: check_alerts() ma per-metric cooldown (default 5 min)
+ * żeby nie spamować — to standard PagerDuty/Splunk.
  */
 
 #pragma once
@@ -36,7 +31,7 @@ static constexpr int MAX_CPUS = 128;
 static constexpr int MAX_IFACES = 4;
 
 
-// === Metric Structs ===
+// Struktury metryk.
 
 struct CpuStats {
     int64_t idle;
@@ -89,7 +84,7 @@ struct AlertThresholds {
 };
 
 
-// === Parser functions — parse /proc file contents from a string buffer ===
+// Funkcje parsujące — bierą zawartość pliku /proc z buforu (testowalne).
 // These can be unit-tested with mock data (no actual /proc needed)
 // Mogą być testowane jednostkowo z danymi testowymi (bez prawdziwego /proc)
 
@@ -214,7 +209,7 @@ inline NetworkStats parse_net_dev(const char* content) noexcept {
 } // namespace proc_parser
 
 
-// === InfraMonitor — the main monitor class ===
+// InfraMonitor — główna klasa monitora.
 
 class InfraMonitor {
     AlertThresholds thresholds_;
