@@ -138,6 +138,34 @@ void test_alert_thresholds() {
     ASSERT(n == 0, "test_alert_not_triggered");
 }
 
+void test_alert_cooldown_deduplicates() {
+    // Standard branżowy: nie spamuj alertami dla tej samej metryki.
+    AlertThresholds th;
+    th.mem_percent = 80.0;
+    InfraMonitor mon(th);
+    MemoryStats mem;
+    mem.total_kb = 4000000;
+    mem.available_kb = 400000;
+    mem.used_percent = 90.0;
+    mem.hugepages_total = 0;
+    mem.hugepages_free = 0;
+    char alerts[4][128];
+
+    int n1 = mon.check_alerts(mem, alerts, 4);
+    ASSERT(n1 == 1, "cooldown_first_alert_fires");
+
+    int n2 = mon.check_alerts(mem, alerts, 4);
+    ASSERT(n2 == 0, "cooldown_second_within_window_suppressed");
+
+    int n3 = mon.check_alerts(mem, alerts, 4);
+    ASSERT(n3 == 0, "cooldown_third_still_suppressed");
+
+    // Wyłącz cooldown → znowu możemy strzelić.
+    mon.set_alert_cooldown_ms(0);
+    int n4 = mon.check_alerts(mem, alerts, 4);
+    ASSERT(n4 == 1, "cooldown_zero_means_no_dedup");
+}
+
 void test_live_proc_read() {
     // Test reading actual /proc files (if available)
     // Testuj czytanie prawdziwych plików /proc (jeśli dostępne)
@@ -275,6 +303,7 @@ int main(int argc, char* argv[]) {
     test_parse_net_dev_skips_loopback();
     test_parse_empty_content();
     test_alert_thresholds();
+    test_alert_cooldown_deduplicates();
     test_live_proc_read();
     test_parse_speed();
 

@@ -120,7 +120,10 @@ PYBIND11_MODULE(pyhft, m) {
         .def("get_position",       &RiskManager::get_position)
         .def("get_pending",        &RiskManager::get_pending)
         .def("get_daily_pnl",      &RiskManager::get_daily_pnl)
-        .def("is_kill_switch_active", &RiskManager::is_kill_switch_active);
+        .def("is_kill_switch_active",   &RiskManager::is_kill_switch_active)
+        .def("activate_kill_switch",    &RiskManager::activate_kill_switch)
+        .def("deactivate_kill_switch",  &RiskManager::deactivate_kill_switch)
+        .def("reset_daily",             &RiskManager::reset_daily);
 
     // ----- FlatOrderBook<16384> -----
     py::class_<FlatBook>(m, "FlatOrderBook")

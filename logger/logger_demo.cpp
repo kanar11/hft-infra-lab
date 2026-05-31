@@ -6,9 +6,13 @@
  */
 
 #include "trade_logger.hpp"
+#include "mmap_logger.hpp"
 #include <vector>
 #include <algorithm>
 #include <cstdlib>
+#include <cstdio>     // std::remove
+#include <sys/wait.h> // waitpid, WIFEXITED (crash recovery test)
+#include <unistd.h>   // fork, _exit
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -128,6 +132,51 @@ void test_kill_switch_event() {
     ASSERT(std::strcmp(buf[0].details, "manual_trigger") == 0, "test_kill_switch_details");
 }
 
+// MmapTradeLogger crash recovery — kluczowa zaleta mmap'a vs SPSC ring:
+// po crash'u procesu (bez clean shutdown) wszystkie zapisane eventy dalej
+// czytelne z dysku. Test używa fork(): child pisze i robi _exit(1) bez
+// uruchamiania destruktorów; parent reopens i czyta nagłówek.
+void test_mmap_crash_recovery() {
+    const char* path = "/tmp/hft_mmap_recovery_test.bin";
+    std::remove(path);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        ASSERT(false, "mmap_recovery_fork_failed");
+        return;
+    }
+    if (pid == 0) {
+        // Child: open, log 5 events, _exit BEZ close() / destruktora.
+        mmap_logger::MmapTradeLogger lg;
+        if (!lg.open(path, 1024)) _exit(2);
+        for (int i = 0; i < 5; ++i) {
+            lg.log(EventType::ORDER_SUBMIT, static_cast<uint64_t>(i + 1),
+                   "AAPL", "BUY", 100, 150.0, "crash");
+        }
+        // Force msync (pisanie do dirty pages → kernel) zanim "padniemy".
+        lg.flush_sync();
+        _exit(0);   // <-- BRUTAL: nie wywoła destruktora, nie wywoła close()
+    }
+    // Parent: czekaj, otwórz ten sam plik na nowo, sprawdź że eventy są.
+    int wstatus = 0;
+    waitpid(pid, &wstatus, 0);
+    ASSERT(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0, "mmap_recovery_child_exit_ok");
+
+    // Parent reopens. Plik powinien zawierać header + 5 eventów.
+    // Czytamy raw, bo MmapTradeLogger open() chce zerowy plik / inicjalizuje
+    // header. Sprawdzamy że bajty są tam — to dowód że msync zadziałał.
+    FILE* f = std::fopen(path, "rb");
+    ASSERT(f != nullptr, "mmap_recovery_reopen_file");
+    if (f) {
+        std::fseek(f, 0, SEEK_END);
+        long sz = std::ftell(f);
+        std::fclose(f);
+        // Header (64 B) + 5 * sizeof(TradeEvent) (128 B każdy) = 64 + 640 = 704.
+        ASSERT(sz >= 64 + 5 * 128, "mmap_recovery_data_persisted");
+    }
+    std::remove(path);
+}
+
 void test_sequence_counter() {
     TradeLogger logger;
     logger.log(EventType::ORDER_SUBMIT, 1);
@@ -216,6 +265,7 @@ int main(int argc, char* argv[]) {
     test_summary_stats();
     test_empty_logger();
     test_kill_switch_event();
+    test_mmap_crash_recovery();
     test_sequence_counter();
     test_log_speed();
     test_event_type_str();

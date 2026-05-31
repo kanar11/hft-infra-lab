@@ -64,7 +64,48 @@ struct ReplayStats {
 };
 
 
+// Inline testy malformed CSV — sprawdzają że reader bezpiecznie pomija
+// uszkodzone wiersze i kontynuuje. Wywoływane na początku main().
+static int run_malformed_tests() {
+    const char* path = "/tmp/hft_lobster_test.csv";
+    FILE* f = std::fopen(path, "w");
+    if (!f) { std::fprintf(stderr, "TEST SKIP: cannot write %s\n", path); return 0; }
+    // 3 dobre wiersze, między nimi: pusty, za mało pól, niedopuszczalne znaki, komentarz.
+    std::fprintf(f, "34200.1,1,11885113,100,2238100,1\n");
+    std::fprintf(f, "\n");                                       // pusty
+    std::fprintf(f, "# comment\n");                              // komentarz
+    std::fprintf(f, "34200.2,1,11885114,200\n");                 // za mało pól
+    std::fprintf(f, "garbage,not,a,csv,row\n");                  // nieparsowalne
+    std::fprintf(f, "34200.3,4,11885113,50,2238100,1\n");
+    std::fprintf(f, "34200.4,3,11885114,200,2238500,-1\n");
+    std::fclose(f);
+
+    lobster::LobsterReader r(path);
+    if (!r.is_open()) { std::fprintf(stderr, "TEST FAIL: cannot reopen %s\n", path); return 1; }
+    lobster::LobsterMessage m{};
+    int good = 0;
+    while (r.next(m)) ++good;
+    std::remove(path);
+
+    int rc = 0;
+    if (good != 3) {
+        std::fprintf(stderr, "TEST FAIL malformed: expected 3 good rows, got %d\n", good);
+        rc = 1;
+    }
+    if (r.rows_bad() < 2) {  // co najmniej "za mało pól" + "garbage"
+        std::fprintf(stderr, "TEST FAIL malformed: rows_bad()=%lu < 2\n",
+                     static_cast<unsigned long>(r.rows_bad()));
+        rc = 1;
+    }
+    if (rc == 0) std::printf("[ok] lobster malformed CSV test: 3 valid, %lu bad\n",
+                              static_cast<unsigned long>(r.rows_bad()));
+    return rc;
+}
+
+
 int main(int argc, char* argv[]) {
+    if (int rc = run_malformed_tests(); rc != 0) return rc;
+
     const char* path = (argc > 1) ? argv[1] : "replay/sample_aapl.csv";
     char sym[16];
     extract_ticker(path, sym, sizeof(sym));

@@ -194,6 +194,8 @@ jobs:
         run: python3 bindings/setup.py build_ext --inplace
       - name: Run pyhft demo
         run: python3 bindings/demo.py
+      - name: Run pyhft unit tests (error paths, edge cases)
+        run: python3 bindings/test_pyhft.py
 
   clang-tidy:
     # Complementary to cppcheck — catches bugprone-* and performance-* patterns

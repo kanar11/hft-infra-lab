@@ -223,6 +223,10 @@ class InfraMonitor {
     // read. If we add per-sample context-switch and elapsed-time deltas,
     // re-introduce them as locals or as fields written-and-read.
 
+    // Alert dedup / cooldown — patrz check_alerts().
+    int64_t  last_alert_mem_ms_  = 0;
+    int64_t  alert_cooldown_ms_  = 300000;   // 5 minut (standard PagerDuty/Splunk)
+
     static int64_t now_ns() noexcept {
         auto now = std::chrono::high_resolution_clock::now();
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -288,15 +292,28 @@ public:
         return proc_parser::parse_net_dev(buf);
     }
 
-    // check_alerts: compare metrics against thresholds
-    int check_alerts(const MemoryStats& mem, char alerts[][128], int max_alerts) const noexcept {
+    // check_alerts: compare metrics against thresholds + cooldown dedup.
+    //
+    // Bez cooldown'u: jeśli mem >80% przez minutę dostajesz 60 spamu identycznych.
+    // Standard branżowy: max 1 alert per metric per cooldown_ms (default 300s).
+    // Ostatni czas wystrzelenia per-metryka trzymamy w mutable polach
+    // last_alert_*_ms_; tick wewnętrzny przez std::chrono::steady_clock.
+    int check_alerts(const MemoryStats& mem, char alerts[][128], int max_alerts) noexcept {
         int count = 0;
-        if (mem.used_percent > thresholds_.mem_percent && count < max_alerts) {
+        const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (mem.used_percent > thresholds_.mem_percent && count < max_alerts &&
+            now_ms - last_alert_mem_ms_ >= alert_cooldown_ms_) {
             std::snprintf(alerts[count++], 127, "ALERT: Memory %.1f%% > %.1f%%",
                          mem.used_percent, thresholds_.mem_percent);
+            last_alert_mem_ms_ = now_ms;
         }
         return count;
     }
+
+    // Konfiguracja cooldown'u — domyślnie 5 minut, jak typowy PagerDuty/Splunk.
+    void set_alert_cooldown_ms(int64_t cd_ms) noexcept { alert_cooldown_ms_ = cd_ms; }
+    int64_t alert_cooldown_ms() const noexcept { return alert_cooldown_ms_; }
 
     // print_snapshot: collect and display all metrics
     void print_snapshot() {
