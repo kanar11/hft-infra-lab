@@ -69,6 +69,11 @@ class MarketMaker {
     std::uint64_t quotes_cancelled_ = 0;
     std::uint64_t fills_received_   = 0;
 
+    // Adverse selection tracking — patrz mark_post_fill_move().
+    Side          last_fill_side_       = Side::BUY;
+    int32_t       last_fill_price_ticks_ = 0;  // 0 = nie ma "pending" fill'u
+    int64_t       adverse_total_ticks_   = 0;  // signed cumulative
+
 public:
     MarketMaker(const MMConfig& cfg, const char* symbol) noexcept : cfg_(cfg) {
         std::strncpy(symbol_, symbol, 8);
@@ -116,9 +121,15 @@ public:
     // apply_fill: wywołujący mówi nam że jedno z naszych kwotowań zostało egzekutowane.
     //   side == BUY  → maker kupił   (inventory ↑, cash ↓)
     //   side == SELL → maker sprzedał (inventory ↓, cash ↑)
+    //
+    // Po egzekucji wywołujący POWINIEN później wywołać mark_post_fill_move()
+    // gdy następny mid jest znany — dzięki temu śledzimy adverse selection
+    // (informed traderzy biją MM tuż przed ruchem ceny w ich stronę).
     void apply_fill(Side side, int32_t qty, int32_t price_ticks) noexcept {
         if (qty <= 0) return;
         ++fills_received_;
+        last_fill_side_       = side;
+        last_fill_price_ticks_ = price_ticks;
         if (side == Side::BUY) {
             position_   += qty;
             cash_ticks_ -= static_cast<int64_t>(qty) * price_ticks;
@@ -127,6 +138,33 @@ public:
             cash_ticks_ += static_cast<int64_t>(qty) * price_ticks;
         }
     }
+
+    // mark_post_fill_move: model **adverse selection**. W realu kiedy MM
+    // dostaje fill, większość counterparties to *informed traders* (mają
+    // lepszą info niż MM) → cena CZĘŚCIEJ rusza dalej w ich stronę zaraz po
+    // egzekucji. Klasyczny problem MM "kiedy mnie biją to częściej źle dla
+    // mnie".
+    //
+    // Wywołujący przekazuje aktualny mid po fillu. Liczymy "adverse move":
+    //   - jeśli MM kupił (BUY) a cena spadła → adverse (mid < fill_price)
+    //   - jeśli MM sprzedał (SELL) a cena wzrosła → adverse (mid > fill_price)
+    // adverse_total_ticks_ kumuluje signed adverse ticks per fill.
+    void mark_post_fill_move(int32_t new_mid_ticks) noexcept {
+        if (last_fill_price_ticks_ <= 0) return;   // brak ostatniego fill'a
+        const int32_t delta = new_mid_ticks - last_fill_price_ticks_;
+        const int32_t adverse = (last_fill_side_ == Side::BUY) ? -delta : delta;
+        adverse_total_ticks_ += adverse;
+        last_fill_price_ticks_ = 0;   // konsumed
+    }
+
+    // avg_adverse_ticks_per_fill: średnia liczba ticków "ruchu przeciwko"
+    // po fillu. Dodatnia liczba = informed flow nas bije, ujemna = lucky
+    // (counterparties tracili na nas).
+    double avg_adverse_ticks_per_fill() const noexcept {
+        return fills_received_ > 0
+            ? static_cast<double>(adverse_total_ticks_) / fills_received_ : 0.0;
+    }
+    int64_t adverse_total_ticks() const noexcept { return adverse_total_ticks_; }
 
     // pnl: mark-to-market w dolarach przy danym mid (w tickach).
     double pnl(int32_t mid_ticks) const noexcept {

@@ -30,6 +30,7 @@
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../ouch-protocol/ouch_protocol.hpp"
+#include "../common/fill_simulator.hpp"
 #include "../lockfree/spsc_queue.hpp"
 #include "../lockfree/mpsc_queue.hpp"
 #include "../lockfree/mpmc_queue.hpp"
@@ -554,6 +555,52 @@ void test_ouch() {
     ASSERT(strcmp(parsed.token, "TOK001") == 0, "ouch_accepted_token");
 
     printf("  OUCH: %d assertions\n", 8);
+}
+
+
+void test_fill_simulator() {
+    SECTION("FillSimulator");
+    // Default config — partial 20%, slippage mean 1 tick, reject 2%.
+    common::FillSimulator sim({}, /*seed*/42);
+
+    // 1000 prób → niezerowy reject rate, partial rate i slippage.
+    int rejected = 0, partial = 0, exact = 0;
+    int64_t total_slippage = 0;
+    for (int i = 0; i < 1000; ++i) {
+        auto r = sim.simulate(Side::BUY, 100, 22381, /*displayed*/500,
+                              common::Urgency::MARKETABLE);
+        if (r.rejected)                 ++rejected;
+        else if (r.fill_qty < 100)      ++partial;
+        else                             ++exact;
+        total_slippage += r.slippage_ticks;
+    }
+    ASSERT(rejected > 5  && rejected < 80, "fillsim_reject_in_range");   // ~20 ± noise
+    ASSERT(partial  > 100,                  "fillsim_partials_happen");
+    ASSERT(exact    > 400,                  "fillsim_mostly_full_fills");
+    ASSERT(total_slippage > 0,              "fillsim_slippage_nonzero");
+
+    // Determinizm — ten sam seed → ta sama sekwencja.
+    common::FillSimulator s1({}, 7);
+    common::FillSimulator s2({}, 7);
+    auto a = s1.simulate(Side::BUY, 100, 10000, 1000);
+    auto b = s2.simulate(Side::BUY, 100, 10000, 1000);
+    ASSERT(a.fill_qty         == b.fill_qty &&
+           a.fill_price_ticks == b.fill_price_ticks &&
+           a.rejected         == b.rejected,         "fillsim_deterministic_seed");
+
+    // Aggressive urgency → większy slippage od passive (statystycznie).
+    common::FillSimulator agg({}, 11);
+    common::FillSimulator pas({}, 11);
+    int64_t agg_slip = 0, pas_slip = 0;
+    for (int i = 0; i < 200; ++i) {
+        auto ra = agg.simulate(Side::BUY, 100, 10000, 1000, common::Urgency::AGGRESSIVE);
+        auto rp = pas.simulate(Side::BUY, 100, 10000, 1000, common::Urgency::PASSIVE);
+        if (!ra.rejected) agg_slip += ra.slippage_ticks;
+        if (!rp.rejected) pas_slip += rp.slippage_ticks;
+    }
+    ASSERT(agg_slip > pas_slip, "fillsim_urgency_aggressive_more_slippage");
+
+    printf("  FillSimulator: %d assertions\n", 6);
 }
 
 
@@ -1420,6 +1467,7 @@ int main() {
     test_market_maker();
     test_fix();
     test_ouch();
+    test_fill_simulator();
     test_spsc_queue();
     test_mpsc_queue();
     test_mpmc_queue();

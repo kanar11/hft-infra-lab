@@ -132,6 +132,24 @@ void test_split_reports_multiple_venues() {
     ASSERT(d.quantity == 600, "test_split_multi_qty");
 }
 
+// LOWEST_LATENCY z p99 — venue z lepszym mean ale gorszym ogonem przegrywa.
+// W produkcji to standard: p99 (ogon) decyduje o jakości egzekucji w stresie.
+void test_lowest_latency_uses_p99_when_set() {
+    SmartOrderRouter router;
+    Venue fast_mean_slow_tail("FAST_MEAN", 50, 0.001);   // mean 50ns
+    fast_mean_slow_tail.latency_p99_ns = 2000;            // p99 = 2µs (zły ogon)
+    Venue stable("STABLE", 100, 0.001);                   // mean 100ns
+    stable.latency_p99_ns = 200;                          // p99 = 200ns (mały jitter)
+    router.add_venue(fast_mean_slow_tail);
+    router.add_venue(stable);
+    router.update_quote("FAST_MEAN", 100.0, 100.10, 500, 500);
+    router.update_quote("STABLE",    100.0, 100.10, 500, 500);
+    auto d = router.route_order("BUY", 100, RoutingStrategy::LOWEST_LATENCY);
+    ASSERT(d.valid, "p99_lat_valid");
+    // STABLE wygrywa (p99=200 < 2000), mimo gorszego mean.
+    ASSERT(std::strcmp(d.venue, "STABLE") == 0, "p99_selects_better_tail_not_better_mean");
+}
+
 void test_routing_speed() {
     auto router = make_test_router();
     auto start = std::chrono::high_resolution_clock::now();
@@ -204,6 +222,7 @@ int main(int argc, char* argv[]) {
     test_effective_price_flips_decision();
     test_route_reports_fee();
     test_split_reports_multiple_venues();
+    test_lowest_latency_uses_p99_when_set();
     test_routing_speed();
     test_stats_tracking();
 

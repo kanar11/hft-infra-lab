@@ -47,10 +47,16 @@ enum class RoutingStrategy : uint8_t {
 
 
 // Venue — pojedyncza giełda z jej top-of-book quote, opłatą i latencją.
+//
+// latency_ns (mean): średnia latencja round-trip. Jeśli latency_p99_ns > 0
+// (opt-in), LOWEST_LATENCY wybiera po nim zamiast po mean — to realne
+// zachowanie production SOR'ów, bo ogon ma długi (p99/p50 zwykle 5-10×)
+// i decyduje o jakości egzekucji ważniejszej niż average case.
 struct Venue {
     char    name[16];
-    int64_t latency_ns;
-    double  fee_per_share;      // dodatnia = taker fee, ujemna = maker rebate
+    int64_t latency_ns;          // średnia (mean lub p50)
+    int64_t latency_p99_ns;      // p99 — 0 = nie ustawione, wtedy LOWEST_LATENCY bierze mean
+    double  fee_per_share;       // dodatnia = taker fee, ujemna = maker rebate
     double  best_bid;
     double  best_ask;
     int32_t bid_size;
@@ -58,16 +64,23 @@ struct Venue {
     bool    is_active;
 
     Venue() noexcept
-        : latency_ns(0), fee_per_share(0), best_bid(0), best_ask(0),
-          bid_size(0), ask_size(0), is_active(true) {
+        : latency_ns(0), latency_p99_ns(0), fee_per_share(0),
+          best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true) {
         name[0] = '\0';
     }
 
     Venue(const char* n, int64_t lat, double fee) noexcept
-        : latency_ns(lat), fee_per_share(fee), best_bid(0), best_ask(0),
-          bid_size(0), ask_size(0), is_active(true) {
+        : latency_ns(lat), latency_p99_ns(0), fee_per_share(fee),
+          best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true) {
         std::strncpy(name, n, 15);
         name[15] = '\0';
+    }
+
+    // selection_latency_ns: która latencja używana przez LOWEST_LATENCY.
+    // p99 gdy ustawione (>0), inaczej mean. To jest STANDARD branżowy —
+    // decyzje pod hot path bierze się po ogonie rozkładu, nie po średniej.
+    int64_t selection_latency_ns() const noexcept {
+        return latency_p99_ns > 0 ? latency_p99_ns : latency_ns;
     }
 };
 
@@ -168,8 +181,13 @@ public:
         // Single-venue strategie: BEST_PRICE (cena efektywna) lub LOWEST_LATENCY.
         Venue* best = candidates[0];
         if (strat == RoutingStrategy::LOWEST_LATENCY) {
-            for (int i = 1; i < num_candidates; ++i)
-                if (candidates[i]->latency_ns < best->latency_ns) best = candidates[i];
+            // Wybieramy po selection_latency (p99 gdy ustawione, inaczej mean).
+            // Production SOR'y patrzą na ogon rozkładu, nie na średnią — p99
+            // decyduje o jakości egzekucji w warunkach stress'u/burst'u.
+            for (int i = 1; i < num_candidates; ++i) {
+                if (candidates[i]->selection_latency_ns() < best->selection_latency_ns())
+                    best = candidates[i];
+            }
         } else {
             // BEST_PRICE (i fallback dla SPLIT poniżej progu) — cena efektywna.
             double best_eff = effective_price(*best, is_buy);
