@@ -272,7 +272,34 @@ void test_mold_duplicate_packet() {
     ASSERT(trk.expected_seq == 4, "mold_dup_expected_unchanged");
 }
 
-void test_latency_stats() {
+// A/B line arbitration — redundancja feedów (standard branżowy).
+
+void test_arbitration_dedup() {
+    // Linia A i B wysyłają te same pakiety; arbiter bierze pierwszy raz, drop dup.
+    multicast::ArbitratedReceiver arb;
+    using L = multicast::ArbitratedReceiver::Line;
+    using R = multicast::ArbitratedReceiver::Result;
+    ASSERT(arb.observe(L::A, 1, 3) == R::FRESH,     "arb_a_first_fresh");
+    ASSERT(arb.observe(L::B, 1, 3) == R::DUPLICATE, "arb_b_same_dup");
+    ASSERT(arb.observe(L::A, 4, 2) == R::FRESH,     "arb_a_next_fresh");
+    ASSERT(arb.observe(L::B, 4, 2) == R::DUPLICATE, "arb_b_dup_again");
+    ASSERT(arb.fresh_from_a() == 2, "arb_2_from_a");
+    ASSERT(arb.deduped() == 2,      "arb_2_deduped");
+}
+
+void test_arbitration_failover() {
+    // Linia A gubi pakiet 4-6, linia B go dostarcza — arbiter wybiera FRESH z B.
+    multicast::ArbitratedReceiver arb;
+    using L = multicast::ArbitratedReceiver::Line;
+    using R = multicast::ArbitratedReceiver::Result;
+    arb.observe(L::A, 1, 3);   // OK z A
+    arb.observe(L::B, 1, 3);   // dup
+    // A nie dostarcza 4-6 — przychodzi tylko z B
+    ASSERT(arb.observe(L::B, 4, 3) == R::FRESH, "arb_b_failover_fresh");
+    ASSERT(arb.fresh_from_b() >= 1, "arb_failover_credit_b");
+    ASSERT(arb.failover_ratio() > 0.0, "arb_failover_ratio_positive");
+}
+
     multicast::LatencyStats stats;
     stats.record(100);
     stats.record(200);
@@ -476,6 +503,8 @@ int main(int argc, char* argv[]) {
     test_mold_heartbeat();
     test_mold_packet_gap();
     test_mold_duplicate_packet();
+    test_arbitration_dedup();
+    test_arbitration_failover();
     test_latency_stats();
     test_latency_stats_empty();
     test_udp_loopback();

@@ -532,6 +532,69 @@ public:
 };
 
 
+// ArbitratedReceiver — A/B line arbitration (standard branżowy redundancji feedów).
+//
+// Prawdziwa giełda publikuje DWA identyczne strumienie (linia A i linia B,
+// zwykle na różnych grupach multicast / VLAN'ach / NIC'ach). Odbiorca słucha
+// obu i bierze pakiet który dotarł PIERWSZY; duplikaty z drugiej linii są
+// odrzucane. Jeśli jedna linia zgubi pakiet, druga go (zwykle) dostarczy.
+// To eliminuje pojedyncze punkty awarii i daje 99.9999% completeness bez
+// retransmisji.
+//
+// Algorytm tutaj uproszczony do logiki — nie ownuje gniazd ani threadów.
+// Caller pollu'je dwa receivery (poll/epoll na obu fd) i wywołuje
+// observe(seq, count) z każdego pakietu który dostarczył. Tracker mówi czy
+// pakiet jest FRESH (pierwszy raz widziany — przekazujemy dalej) czy
+// DUPLICATE (już widzieliśmy z drugiej linii — drop).
+//
+// To ten sam algorytm co observe_packet w SequenceTracker, ale wystawiony
+// jako osobna klasa-wrapper żeby pokazać intent. Wewnętrznie używa pojedynczego
+// SequenceTrackera: pierwsze przyjście wygrywa, drugie jest "<= expected" → dup.
+class ArbitratedReceiver {
+    SequenceTracker tracker_;
+    uint64_t        from_a_ = 0;   // ile pakietów przyszło najpierw z linii A
+    uint64_t        from_b_ = 0;   // ile najpierw z linii B
+    uint64_t        deduped_ = 0;  // ile odrzuconych jako duplikaty drugiej linii
+
+public:
+    enum class Line { A, B };
+    enum class Result { FRESH, DUPLICATE, GAP };
+
+    // observe: rozważ pakiet z linii A albo B (seq = sequence pierwszej
+    // wiadomości w pakiecie, count = liczba wiadomości; dla MoldUDP64).
+    // Zwraca FRESH gdy to pierwszy raz widzimy ten zakres (przekaż dalej),
+    // DUPLICATE gdy druga linia już dostarczyła (odrzuć), GAP gdy zostało
+    // wykryte zgubienie pakietu (przekaż dalej + można odpalić recovery).
+    Result observe(Line line, uint64_t packet_seq, uint16_t count) noexcept {
+        const auto st = tracker_.observe_packet(packet_seq, count);
+        switch (st) {
+        case SequenceTracker::Status::OK:
+            if (line == Line::A) ++from_a_; else ++from_b_;
+            return Result::FRESH;
+        case SequenceTracker::Status::DUPLICATE:
+            ++deduped_;
+            return Result::DUPLICATE;
+        case SequenceTracker::Status::GAP:
+            if (line == Line::A) ++from_a_; else ++from_b_;
+            return Result::GAP;
+        }
+        return Result::DUPLICATE;
+    }
+
+    const SequenceTracker& tracker()  const noexcept { return tracker_; }
+    uint64_t fresh_from_a() const noexcept { return from_a_; }
+    uint64_t fresh_from_b() const noexcept { return from_b_; }
+    uint64_t deduped()      const noexcept { return deduped_; }
+
+    // failover_ratio: ile % FRESH pakietów przyszło tylko dzięki linii B
+    // (gdy A się zgubiła). >0 oznacza że linia B faktycznie ratuje sytuację.
+    double failover_ratio() const noexcept {
+        const uint64_t total = from_a_ + from_b_;
+        return total > 0 ? static_cast<double>(from_b_) / static_cast<double>(total) : 0.0;
+    }
+};
+
+
 // Statystyki opóźnień.
 struct LatencyStats {
     uint64_t count     = 0;
