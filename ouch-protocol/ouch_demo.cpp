@@ -6,6 +6,7 @@
  */
 
 #include "ouch_protocol.hpp"
+#include "soupbin.hpp"
 #include <vector>
 #include <algorithm>
 #include <cstdlib>
@@ -154,6 +155,67 @@ void test_roundtrip_encode_decode() {
     ASSERT(std::fabs(resp.price - 380.50) < 0.01, "test_roundtrip_price");
 }
 
+// SoupBinTCP framing — industry-standard transport TCP dla OUCH.
+
+void test_soupbin_roundtrip_data() {
+    // Zbuduj OUCH Enter Order, opakuj w SoupBin 'U' (client→server), sparsuj.
+    uint8_t ouch[64];
+    int olen = OUCHMessage::enter_order(ouch, "ORD001", 'B', 100, "AAPL", 150.25);
+    ASSERT(olen > 0, "soupbin_ouch_encoded");
+
+    uint8_t pkt[128];
+    std::size_t plen = soupbin::pack_data(pkt, sizeof(pkt), ouch,
+                                           static_cast<std::size_t>(olen),
+                                           /*client_side=*/true);
+    ASSERT(plen == soupbin::HEADER_SIZE + static_cast<std::size_t>(olen),
+           "soupbin_packet_size");
+    ASSERT(pkt[2] == 'U', "soupbin_unsequenced_data_type");
+
+    std::size_t consumed = 0;
+    auto p = soupbin::parse_packet(pkt, plen, &consumed);
+    ASSERT(p.valid,                                              "soupbin_parse_valid");
+    ASSERT(p.type == soupbin::PacketType::UNSEQUENCED_DATA,      "soupbin_parsed_type");
+    ASSERT(p.payload_len == static_cast<std::size_t>(olen),      "soupbin_payload_len");
+    ASSERT(consumed == plen,                                     "soupbin_consumed_all");
+}
+
+void test_soupbin_heartbeat() {
+    uint8_t pkt[8];
+    std::size_t n = soupbin::pack_heartbeat(pkt, /*client_side=*/false);  // server 'H'
+    ASSERT(n == soupbin::HEADER_SIZE, "soupbin_hb_size_3");
+    ASSERT(pkt[2] == 'H',             "soupbin_hb_server_type");
+
+    auto p = soupbin::parse_packet(pkt, n);
+    ASSERT(p.valid,                                          "soupbin_hb_valid");
+    ASSERT(p.type == soupbin::PacketType::SERVER_HEARTBEAT,  "soupbin_hb_parsed");
+    ASSERT(p.payload_len == 0,                                "soupbin_hb_no_payload");
+}
+
+void test_soupbin_login_request() {
+    uint8_t pkt[256];
+    std::size_t n = soupbin::pack_login_request(pkt, sizeof(pkt),
+                                                  "USER01", "secret",
+                                                  /*session*/"", /*seq*/"0");
+    ASSERT(n > soupbin::HEADER_SIZE, "soupbin_login_built");
+    ASSERT(pkt[2] == 'L',            "soupbin_login_type");
+    auto p = soupbin::parse_packet(pkt, n);
+    ASSERT(p.valid,                                       "soupbin_login_parse");
+    ASSERT(p.type == soupbin::PacketType::LOGIN_REQUEST,  "soupbin_login_parsed_type");
+    // Payload = user(6) + pass(10) + session(10) + seq(20) = 46 bytes
+    ASSERT(p.payload_len == 46,                            "soupbin_login_payload_46");
+}
+
+void test_soupbin_partial_buffer() {
+    // TCP może dostarczyć część pakietu — parse_packet powinno powiedzieć invalid
+    // żeby caller poczekał na resztę.
+    uint8_t pkt[8];
+    std::size_t n = soupbin::pack_heartbeat(pkt, true);
+    auto p_partial = soupbin::parse_packet(pkt, n - 1);   // o bajt za mało
+    ASSERT(!p_partial.valid, "soupbin_partial_invalid");
+    auto p_full = soupbin::parse_packet(pkt, n);
+    ASSERT(p_full.valid,     "soupbin_full_valid");
+}
+
 void test_encoding_speed() {
     uint8_t buf[64];
     auto start = std::chrono::high_resolution_clock::now();
@@ -225,6 +287,10 @@ int main(int argc, char* argv[]) {
     test_parse_unknown();
     test_price_precision();
     test_roundtrip_encode_decode();
+    test_soupbin_roundtrip_data();
+    test_soupbin_heartbeat();
+    test_soupbin_login_request();
+    test_soupbin_partial_buffer();
     test_encoding_speed();
 
     printf("\n%d/%d tests passed", tests_passed, tests_total);
