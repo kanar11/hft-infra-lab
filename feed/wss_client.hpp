@@ -189,6 +189,12 @@ public:
         return send_frame(WsOpcode::TEXT, msg, len);
     }
 
+    // send_ping: PING z klienta — wywołuj co 30s żeby Binance/Coinbase
+    // nie zamknęło idle wss:// po 3 min.
+    bool send_ping(const void* payload = nullptr, std::size_t len = 0) noexcept {
+        return send_frame(WsOpcode::PING, payload, len);
+    }
+
     bool is_open() const noexcept { return ssl_ != nullptr && fd_ >= 0; }
 
     void close() noexcept {

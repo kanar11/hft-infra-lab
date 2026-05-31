@@ -6,6 +6,7 @@
  */
 
 #include "fix_parser.hpp"
+#include "fix_session.hpp"
 #include <vector>
 #include <algorithm>
 #include <cstdlib>
@@ -168,6 +169,65 @@ void test_bodylength_validation() {
     ASSERT(std::strcmp(m.get_msg_type(), "0") == 0, "heartbeat_type");
 }
 
+// FIX session layer — sequence tracking, heartbeats, state machine.
+
+void test_session_outbound_seq_monotonic() {
+    fix::FIXSession s;
+    uint32_t a = s.next_outbound_seq();
+    uint32_t b = s.next_outbound_seq();
+    uint32_t c = s.next_outbound_seq();
+    ASSERT(a == 1 && b == 2 && c == 3, "session_out_seq_starts_at_1_and_monotonic");
+}
+
+void test_session_inbound_gap() {
+    fix::FIXSession s;
+    auto g1 = s.observe_inbound(1, /*now*/0);
+    ASSERT(!g1.valid, "session_in_seq_1_no_gap");
+    auto g2 = s.observe_inbound(5, /*now*/100);   // skok 1→5
+    ASSERT(g2.valid,                 "session_gap_detected");
+    ASSERT(g2.expected == 2,         "session_gap_expected");
+    ASSERT(g2.received == 5,         "session_gap_received");
+    ASSERT(s.gaps_detected() == 1,   "session_gap_counter");
+    auto g3 = s.observe_inbound(3, /*now*/200);   // duplikat / late
+    ASSERT(!g3.valid,                "session_dup_no_new_gap");
+}
+
+void test_session_logon_to_logged_in() {
+    fix::FIXSession s;
+    ASSERT(s.state() == fix::SessionState::DISCONNECTED, "session_initial_disconnected");
+    s.mark_logon_sent(0);
+    ASSERT(s.state() == fix::SessionState::LOGON_SENT,   "session_after_logon_sent");
+    s.mark_logon_received(/*hb*/30, /*now*/100);
+    ASSERT(s.state() == fix::SessionState::LOGGED_IN,    "session_logged_in");
+    ASSERT(s.heartbeat_interval_sec() == 30,             "session_hb_interval_set");
+}
+
+void test_session_heartbeat_timer() {
+    fix::FIXSession s;
+    s.mark_logon_sent(0);
+    s.mark_logon_received(30, /*now*/0);
+    // Krótko po Logon — żadnej akcji.
+    ASSERT(s.tick(1000) == fix::FIXSession::Action::NONE, "session_tick_quiet");
+    // 35 sek po Logon, my byliśmy cicho — wyślij heartbeat.
+    auto a = s.tick(35'000);
+    ASSERT(a == fix::FIXSession::Action::SEND_HEARTBEAT, "session_tick_send_hb");
+    ASSERT(s.heartbeats_sent() == 1,                      "session_hb_counter");
+}
+
+void test_session_test_request_then_disconnect() {
+    fix::FIXSession s;
+    s.mark_logon_sent(0);
+    s.mark_logon_received(30, /*now*/0);
+    s.mark_outbound(/*now*/0);   // żebyśmy nie odpalili SEND_HEARTBEAT po naszej stronie
+    // 70 sek bez wiadomości od counterparty (> 2×30) — TestRequest.
+    auto a = s.tick(70'000);
+    ASSERT(a == fix::FIXSession::Action::SEND_TEST_REQUEST, "session_test_request");
+    // Druga ciza po test_request → disconnect.
+    s.mark_outbound(70'000);
+    auto b = s.tick(140'000);
+    ASSERT(b == fix::FIXSession::Action::DISCONNECT, "session_disconnect_after_no_response");
+}
+
 void test_parse_speed() {
     FIXMessage msg;
     auto start = std::chrono::high_resolution_clock::now();
@@ -244,6 +304,11 @@ int main(int argc, char* argv[]) {
     test_checksum_detects_corruption();
     test_pipe_message_not_full_session();
     test_bodylength_validation();
+    test_session_outbound_seq_monotonic();
+    test_session_inbound_gap();
+    test_session_logon_to_logged_in();
+    test_session_heartbeat_timer();
+    test_session_test_request_then_disconnect();
     test_parse_speed();
 
     printf("\n%d/%d tests passed", tests_passed, tests_total);

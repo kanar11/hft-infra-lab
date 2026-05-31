@@ -262,6 +262,17 @@ public:
         return send_frame(WsOpcode::TEXT, msg, len);
     }
 
+    // send_ping: wyślij ramkę PING (client → server). Payload opcjonalny;
+    // standard używa kilku bajtów timestamp/cookie żeby zweryfikować że PONG
+    // pasuje do PING'a. Pusty payload też legalny.
+    //
+    // Po co? Binance/Coinbase ZAMYKA idle wss:// po ~3 min bez warningu —
+    // bez okresowego PING/PONG strategia "ucisza się" niezauważalnie.
+    // Wywołuj z timera co 30s (lub krócej niż server timeout).
+    bool send_ping(const void* payload = nullptr, std::size_t len = 0) noexcept {
+        return send_frame(WsOpcode::PING, payload, len);
+    }
+
     bool is_open() const noexcept { return fd_ >= 0; }
 
     void close() noexcept {
