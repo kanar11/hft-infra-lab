@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>   // std::llabs (POSIX/C-style; nie w <cmath>)
 
 #include "types.hpp"   // Side enum
 
