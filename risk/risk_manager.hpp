@@ -618,7 +618,7 @@ private:
         std::fprintf(f, "active=%d\nlast_pnl=%.6f\n",
                      kill_switch_active_ ? 1 : 0, daily_pnl_);
         std::fflush(f);
-        std::fsync(::fileno(f));    // durable do fizycznego dysku
+        ::fsync(::fileno(f));       // durable do fizycznego dysku (POSIX, nie std::)
         std::fclose(f);
         std::rename(tmp.c_str(), persist_path_.c_str());
     }

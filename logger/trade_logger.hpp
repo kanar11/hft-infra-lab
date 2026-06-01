@@ -186,7 +186,7 @@ class TradeLogger {
         // fsync — gwarancja durability po power-loss. Compliance (SEC/MiFID II
         // audit trail) wymaga że ostatnia minuta zleceń przeżyje crash maszyny.
         // Bez tego dane siedzą w page cache kernela i znikają przy odcięciu zasilania.
-        if (flush_file_) std::fsync(::fileno(flush_file_));
+        if (flush_file_) ::fsync(::fileno(flush_file_));
     }
 
 public:
@@ -240,7 +240,7 @@ public:
         if (flush_file_) {
             // Dodatkowy fsync gdy ktoś close() bez async flush'a (legacy/sync mode).
             std::fflush(flush_file_);
-            std::fsync(::fileno(flush_file_));
+            ::fsync(::fileno(flush_file_));
             std::fclose(flush_file_);
             flush_file_ = nullptr;
         }
