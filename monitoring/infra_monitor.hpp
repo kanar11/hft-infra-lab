@@ -297,8 +297,12 @@ public:
         int count = 0;
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        if (mem.used_percent > thresholds_.mem_percent && count < max_alerts &&
-            now_ms - last_alert_mem_ms_ >= alert_cooldown_ms_) {
+        // last_alert_mem_ms_ == 0 → nigdy jeszcze nie odpaliliśmy → strzelaj.
+        // (Nie można porównać przez sam delta, bo steady_clock to time-since-boot;
+        // świeży CI runner może mieć uptime krótszy niż cooldown → false negative.)
+        const bool cooldown_ok = (last_alert_mem_ms_ == 0)
+                              || (now_ms - last_alert_mem_ms_ >= alert_cooldown_ms_);
+        if (mem.used_percent > thresholds_.mem_percent && count < max_alerts && cooldown_ok) {
             std::snprintf(alerts[count++], 127, "ALERT: Memory %.1f%% > %.1f%%",
                          mem.used_percent, thresholds_.mem_percent);
             last_alert_mem_ms_ = now_ms;
