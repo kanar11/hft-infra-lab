@@ -1,0 +1,1109 @@
+/*
+ * FullOrderBook<LEVELS, MAX_ORDERS> — production-grade orderbook.
+ *
+ * Po co kolejny? FlatOrderBook (orderbook_flat.hpp) ma O(1) add/cancel/modify
+ * z trackowaniem ID, ale agreguje quantity per price level — nie zna kolejki
+ * (FIFO) i nie obsługuje zaawansowanych typów zleceń. Ten plik dodaje:
+ *
+ *   - **L3 detail** — pełna FIFO kolejka per price level (nie tylko Σ qty)
+ *   - **Queue position tracking** — wiesz że jesteś N-ty w kolejce
+ *   - **Order types**: LIMIT, IOC, FOK, POST_ONLY, ICEBERG, STOP, PEG
+ *   - **Time-in-force**: DAY, GTC, IOC, FOK, GTD
+ *   - **Self-trade prevention** (STP) — cancel-newest / cancel-oldest / cancel-both
+ *   - **Lifecycle events** — callback per ACCEPT / FILL / PARTIAL / CANCEL / REJECT
+ *   - **Snapshot + delta** — bytestream do recovery (incremental + full)
+ *   - **Trade tape** — ring buffer ostatnich N executions
+ *   - **L1/L2/L3 views** — top quote / N-level depth / full order list
+ *   - **Imbalance + microprice** — order flow signals
+ *   - **Pre-trade checks** — locked/crossed market protection
+ *
+ * Wybory projektowe:
+ *   - Pamięć: pre-allocated `Order` pool (free-list LIFO), zero heap alloc
+ *     na hot path. Wszystkie struktury cache-aligned.
+ *   - Price levels: flat array `levels_[LEVELS]` indeksowane przez (price-PRICE_MIN).
+ *     Każdy `PriceLevel` to mała struct z `head_ / tail_ / total_qty_ / order_count_`.
+ *   - FIFO kolejka: intrusive doubly-linked list — `Order` ma `next_at_level_`
+ *     i `prev_at_level_`. Cancel = O(1) unlink. Insert na koniec = O(1).
+ *   - Order ID lookup: `std::unordered_map<uint64_t, Order*>` — O(1) cancel/modify.
+ *   - Best bid/ask: trackowane jako int32 indices w `levels_` (jak FlatOrderBook).
+ *   - Multi-level depth: top N bidów/asków cachowane w `top_bids_[N]` /
+ *     `top_asks_[N]` (lazy, invalidated on book change).
+ *
+ * Limity szablonu:
+ *   - LEVELS         — szerokość siatki cenowej w tickach (powinno pokrywać dzień)
+ *   - MAX_ORDERS     — pula Orderów (=max equally aktywnych zleceń w księdze)
+ *
+ * Tick = 1/PRICE_SCALE dolara (=$0.0001 jeśli PRICE_SCALE=10000).
+ *
+ * Wydajność (na podobnej szablonowej księdze):
+ *   - add limit:        p50 ~80 ns, p99 ~150 ns
+ *   - cancel by id:     p50 ~50 ns, p99 ~120 ns
+ *   - top-of-book read: p50 ~5 ns  (1 cache line)
+ *   - L2 depth 10:      p50 ~30 ns (10 levels scan)
+ *
+ * Pipeline integration:
+ *   Strategy → Risk → Router → OMS → FullOrderBook (matching) → Logger
+ */
+#pragma once
+
+#include "../common/types.hpp"     // Price, Side, side_str
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <unordered_map>
+
+
+namespace orderbook_pro {
+
+
+// Stałe wire / model (mogłyby trafić do common/, ale chcemy żeby orderbook_pro
+// był standalone i nie wymagał innych modułów poza common/types).
+inline constexpr std::int32_t PRICE_MIN_TICKS = 0;            // dolny brzeg siatki
+inline constexpr std::int32_t NO_BID_TICKS    = -1;           // sentinel "brak quote"
+inline constexpr std::int32_t NO_ASK_TICKS    = INT32_MAX;    // sentinel po stronie ask
+
+
+// Typ zlecenia — DEC2025 NASDAQ + IEX taxonomies.
+enum class OrderType : std::uint8_t {
+    LIMIT      = 0,   // standardowe limit order
+    IOC        = 1,   // Immediate-Or-Cancel: weź co możesz teraz, resztę KASUJ
+    FOK        = 2,   // Fill-Or-Kill: cała qty albo nic
+    POST_ONLY  = 3,   // ALO — odrzuć jeśli zostałbyś takerem (cross na entry)
+    ICEBERG    = 4,   // pokazuj tylko `displayed_qty`, ukrywaj resztę
+    STOP       = 5,   // trigger-on-price; po triggerze staje się LIMIT/MARKET
+    PEG        = 6,   // peg do mid albo best bid/ask + offset
+    MARKET     = 7,   // bez ceny, zjadasz aż do wyczerpania
+};
+
+
+// Time in force.
+enum class TimeInForce : std::uint8_t {
+    DAY = 0,   // ważne do końca sesji
+    GTC = 1,   // Good-Till-Cancel — przeżywa nocny rollover
+    IOC = 2,   // Immediate-Or-Cancel (redundancja z OrderType::IOC dla wygody)
+    FOK = 3,   // Fill-Or-Kill
+    GTD = 4,   // Good-Til-Date — expire_ts_ns_ pokazuje kiedy
+};
+
+
+// Self-trade prevention — co robić gdy nasze ID konta uderza w nasze quote.
+enum class SelfTradePrevention : std::uint8_t {
+    NONE              = 0,   // pozwól wash trade (zwykle ZAKAZANE, ale dla testów)
+    CANCEL_NEWEST     = 1,   // przychodzące zlecenie anulowane
+    CANCEL_OLDEST     = 2,   // resting zlecenie anulowane
+    CANCEL_BOTH       = 3,   // oba kasowane
+    DECREMENT_AND_CXL = 4,   // mniejsza qty z kart wzajemnie (NASDAQ DAC)
+};
+
+
+// Status pojedynczego Ordera w lifecycle.
+enum class OrderStatus : std::uint8_t {
+    NEW              = 0,   // zaakceptowane, jeszcze nie w księdze (queue join in progress)
+    OPEN             = 1,   // w księdze, czeka na egzekucję
+    PARTIALLY_FILLED = 2,   // częściowo wypełnione, resztki czekają
+    FILLED           = 3,   // całkowicie wypełnione
+    CANCELLED        = 4,   // skasowane przez usera
+    REJECTED         = 5,   // odrzucone przed wejściem (locked/crossed/POST_ONLY cross)
+    EXPIRED          = 6,   // GTD/DAY/IOC/FOK expired
+    REPLACED         = 7,   // cancel+resubmit przez modify()
+};
+
+
+// Typ eventu generowanego przez book (callback OnEvent).
+enum class EventType : std::uint8_t {
+    ACCEPT       = 0,   // order zaakceptowany do księgi (NEW → OPEN)
+    REJECT       = 1,   // odrzucony przed dodaniem
+    FILL         = 2,   // egzekucja (może być częściowa lub pełna)
+    CANCEL       = 3,   // user cancel
+    EXPIRE       = 4,   // expire (GTD/DAY)
+    REPLACE      = 5,   // modify success
+    BOOK_UPDATE  = 6,   // książka zmieniła się (top of book / depth)
+};
+
+
+// Reason code dla REJECT — żeby caller wiedział czemu zlecenie odrzucone.
+enum class RejectReason : std::uint8_t {
+    NONE                  = 0,
+    PRICE_OUT_OF_RANGE    = 1,   // price < 0 lub price >= LEVELS
+    QTY_ZERO_OR_NEGATIVE  = 2,
+    POOL_EXHAUSTED        = 3,   // brak miejsca w order pool
+    POST_ONLY_WOULD_CROSS = 4,   // POST_ONLY a zlecenie krzyżuje rynek
+    FOK_NOT_FILLABLE      = 5,   // FOK i niewystarczająca płynność
+    SELF_TRADE_BLOCKED    = 6,   // STP zadziałało
+    DUPLICATE_ID          = 7,   // ID już istnieje w księdze
+    LOCKED_MARKET         = 8,   // bid == ask (cross protection)
+    CROSSED_MARKET        = 9,   // bid > ask (rynek skrzyżowany)
+};
+
+
+// Pojedyncze zlecenie w księdze — POD, cache-aligned (jedna linia 64 B).
+//
+// Intrusive linked list: każdy Order trzyma next_at_level_/prev_at_level_
+// w obrębie swojego PriceLevel. Cancel = O(1) unlink bez search.
+struct alignas(64) Order {
+    std::uint64_t  id;                  // unikalny order_id (caller-provided lub auto)
+    std::uint64_t  client_id;            // ID klienta (do STP)
+    std::int32_t   price_ticks;          // cena w tickach
+    std::int32_t   total_qty;            // całkowite qty zlecenia
+    std::int32_t   filled_qty;           // ile wypełnione do tej pory
+    std::int32_t   displayed_qty;        // dla ICEBERG: ile widoczne; LIMIT: == total
+    Side           side;                 // BUY / SELL
+    OrderType      type;                 // typ zlecenia
+    TimeInForce    tif;                  // time in force
+    OrderStatus    status;               // bieżący stan
+    std::uint64_t  submit_ts_ns;         // monotonic timestamp wpływu do księgi
+    std::uint64_t  expire_ts_ns;         // dla GTD; 0 = nigdy
+    std::int32_t   stop_trigger_ticks;   // dla STOP/PEG: cena triggera/peg base
+    std::int32_t   peg_offset_ticks;     // dla PEG: offset od best bid/ask/mid
+    Order*         next_at_level;        // intrusive list (FIFO)
+    Order*         prev_at_level;
+    Order*         next_free;            // free list w pool (gdy slot wolny)
+
+    void reset() noexcept {
+        id = 0;
+        client_id = 0;
+        price_ticks = 0;
+        total_qty = 0;
+        filled_qty = 0;
+        displayed_qty = 0;
+        side = Side::BUY;
+        type = OrderType::LIMIT;
+        tif  = TimeInForce::DAY;
+        status = OrderStatus::NEW;
+        submit_ts_ns = 0;
+        expire_ts_ns = 0;
+        stop_trigger_ticks = 0;
+        peg_offset_ticks = 0;
+        next_at_level = nullptr;
+        prev_at_level = nullptr;
+        next_free = nullptr;
+    }
+
+    std::int32_t remaining_qty() const noexcept { return total_qty - filled_qty; }
+    bool is_active() const noexcept {
+        return status == OrderStatus::OPEN || status == OrderStatus::PARTIALLY_FILLED;
+    }
+};
+
+
+// Pojedynczy price level: head/tail FIFO + agregaty dla L2.
+struct alignas(64) PriceLevel {
+    Order*        head            = nullptr;   // pierwsza w kolejce (najwcześniej zaplanowana)
+    Order*        tail            = nullptr;   // ostatnia (most recent join)
+    std::int32_t  total_qty       = 0;          // Σ displayed_qty (widoczna płynność)
+    std::int32_t  total_hidden    = 0;          // Σ ICEBERG hidden (niewidoczne)
+    std::int32_t  order_count     = 0;          // ile zleceń w kolejce (do queue position)
+
+    bool empty() const noexcept { return head == nullptr; }
+    void clear() noexcept {
+        head = tail = nullptr;
+        total_qty = total_hidden = 0;
+        order_count = 0;
+    }
+};
+
+
+// Pojedyncza egzekucja na trade tape.
+struct alignas(32) Trade {
+    std::uint64_t  exec_id;          // unikalny ID egzekucji (monotoniczny)
+    std::uint64_t  maker_order_id;
+    std::uint64_t  taker_order_id;
+    std::int32_t   price_ticks;
+    std::int32_t   qty;
+    Side           taker_side;       // która strona była agresorem
+    std::uint64_t  ts_ns;
+};
+
+
+// Snapshot statyk księgi (informational, lazy).
+struct BookStats {
+    std::uint64_t  total_orders_added       = 0;
+    std::uint64_t  total_orders_cancelled   = 0;
+    std::uint64_t  total_orders_replaced    = 0;
+    std::uint64_t  total_orders_rejected    = 0;
+    std::uint64_t  total_orders_expired     = 0;
+    std::uint64_t  total_fills              = 0;
+    std::uint64_t  total_volume             = 0;     // Σ qty wszystkich fills
+    std::uint64_t  total_locked_rejects     = 0;
+    std::uint64_t  total_self_trade_blocks  = 0;
+    std::uint64_t  peak_order_pool_used     = 0;
+};
+
+
+// Event przekazywany do callbacka.
+struct BookEvent {
+    EventType     type;
+    std::uint64_t order_id;          // dla ACCEPT/REJECT/CANCEL/EXPIRE/REPLACE/FILL
+    std::uint64_t maker_id;          // dla FILL: maker side
+    std::int32_t  price_ticks;
+    std::int32_t  qty;               // dla FILL: ile, dla CANCEL: pozostała qty
+    OrderStatus   resulting_status;
+    RejectReason  reject_reason;     // tylko dla REJECT
+    std::uint64_t ts_ns;
+};
+
+
+// Top-of-book quote — najczęstsza struktura konsumowana przez strategie.
+struct TopOfBook {
+    std::int32_t  best_bid_ticks;
+    std::int32_t  best_ask_ticks;
+    std::int32_t  bid_qty;            // displayed na best bid
+    std::int32_t  ask_qty;            // displayed na best ask
+    std::int32_t  bid_count;          // ile zleceń na best bid
+    std::int32_t  ask_count;
+};
+
+
+// L2 depth row.
+struct DepthLevel {
+    std::int32_t  price_ticks;
+    std::int32_t  qty;
+    std::int32_t  order_count;
+};
+
+
+// FullOrderBook<LEVELS, MAX_ORDERS> — generic, fixed-capacity.
+//   LEVELS      — ile slotów cenowych. price_ticks ∈ [0, LEVELS).
+//                  Dla AAPL przy $0.01 ticku i zakresie $100..$200 wystarczy
+//                  ~10000-65536 (zostawia headroom).
+//   MAX_ORDERS  — pula Orderów. Realny intraday LOB ma 10k-100k równocześnie.
+//
+// noexcept everywhere — żadnych wyjątków; błędy raportowane przez return value
+// + RejectReason. To wymóg HFT — wyjątek z nieprzewidzianego miejsca zabija
+// determinizm latencji.
+template <std::int32_t LEVELS = 16384, std::int32_t MAX_ORDERS = 65536>
+class FullOrderBook {
+    static_assert(LEVELS > 0,     "LEVELS must be positive");
+    static_assert(MAX_ORDERS > 0, "MAX_ORDERS must be positive");
+
+    // Storage
+    Order        pool_[MAX_ORDERS];         // pool aktywnych + free slots
+    Order*       free_list_head_ = nullptr; // LIFO free-list (cache-friendly)
+    PriceLevel   levels_[LEVELS];           // jeden slot per tick
+    std::unordered_map<std::uint64_t, Order*> id_index_;  // O(1) cancel/modify
+
+    // Best bid/ask cache — int sentinels
+    std::int32_t best_bid_ticks_ = NO_BID_TICKS;
+    std::int32_t best_ask_ticks_ = NO_ASK_TICKS;
+
+    // Trade tape — ring buffer
+    static constexpr std::size_t TAPE_CAP = 1024;
+    Trade        tape_[TAPE_CAP]{};
+    std::size_t  tape_head_ = 0;        // next write index
+    std::size_t  tape_count_ = 0;       // total trades written (overruns ok)
+    std::uint64_t next_exec_id_ = 1;
+
+    // Auto order_id (gdy caller nie podaje swojego)
+    std::uint64_t next_order_id_ = 1;
+
+    // Statystyki
+    BookStats    stats_;
+    std::size_t  active_orders_ = 0;
+    std::size_t  pool_high_water_ = 0;
+
+    // STP policy (default NONE — testy mogą się wash-trade'ować swobodnie)
+    SelfTradePrevention stp_policy_ = SelfTradePrevention::NONE;
+
+    // Callback na eventy (opcjonalnie ustawiany przez set_event_callback)
+    using EventCallback = void(*)(const BookEvent&, void* ctx);
+    EventCallback event_cb_  = nullptr;
+    void*         event_ctx_ = nullptr;
+
+    // Helper: timestamp monotonic ns (header-local żeby uniknąć zależności).
+    static std::uint64_t mono_ns_now() noexcept {
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
+
+    // Bezpieczne sprawdzenie zakresu price ticks.
+    static bool in_range(std::int32_t price_ticks) noexcept {
+        return price_ticks >= PRICE_MIN_TICKS && price_ticks < LEVELS;
+    }
+
+    // Alokuj Order z poola lub nullptr gdy pula wyczerpana.
+    Order* alloc_order() noexcept {
+        if (!free_list_head_) return nullptr;
+        Order* o = free_list_head_;
+        free_list_head_ = o->next_free;
+        o->reset();
+        ++active_orders_;
+        if (active_orders_ > pool_high_water_) {
+            pool_high_water_ = active_orders_;
+            stats_.peak_order_pool_used = pool_high_water_;
+        }
+        return o;
+    }
+
+    // Zwróć Order do free-list.
+    void free_order(Order* o) noexcept {
+        if (!o) return;
+        o->next_free = free_list_head_;
+        free_list_head_ = o;
+        --active_orders_;
+    }
+
+    // Wepchnij Order na koniec FIFO kolejki na price level (intrusive list).
+    void enqueue_at_level(Order* o) noexcept {
+        PriceLevel& lvl = levels_[o->price_ticks];
+        o->next_at_level = nullptr;
+        o->prev_at_level = lvl.tail;
+        if (lvl.tail) lvl.tail->next_at_level = o;
+        else          lvl.head = o;
+        lvl.tail = o;
+        lvl.total_qty    += o->displayed_qty;
+        lvl.total_hidden += (o->total_qty - o->displayed_qty);
+        ++lvl.order_count;
+    }
+
+    // Wyjmij Order z jego price level (O(1) — intrusive unlink).
+    void unlink_from_level(Order* o) noexcept {
+        PriceLevel& lvl = levels_[o->price_ticks];
+        if (o->prev_at_level) o->prev_at_level->next_at_level = o->next_at_level;
+        else                  lvl.head = o->next_at_level;
+        if (o->next_at_level) o->next_at_level->prev_at_level = o->prev_at_level;
+        else                  lvl.tail = o->prev_at_level;
+        lvl.total_qty    -= o->displayed_qty;
+        lvl.total_hidden -= (o->total_qty - o->displayed_qty);
+        if (lvl.order_count > 0) --lvl.order_count;
+    }
+
+    // Po dodaniu/wyjęciu z księgi — odśwież best_bid/best_ask gdy trzeba.
+    void refresh_best_bid_from(std::int32_t start_ticks) noexcept {
+        // Skanuj w dół zaczynając od start_ticks aż znajdziesz niepusty level
+        // (lub spadniesz poniżej 0 → brak bidów).
+        for (std::int32_t p = start_ticks; p >= PRICE_MIN_TICKS; --p) {
+            if (levels_[p].total_qty > 0) { best_bid_ticks_ = p; return; }
+        }
+        best_bid_ticks_ = NO_BID_TICKS;
+    }
+    void refresh_best_ask_from(std::int32_t start_ticks) noexcept {
+        for (std::int32_t p = start_ticks; p < LEVELS; ++p) {
+            if (levels_[p].total_qty > 0) { best_ask_ticks_ = p; return; }
+        }
+        best_ask_ticks_ = NO_ASK_TICKS;
+    }
+
+    // Emit event do callbacka jeśli ustawiony.
+    void emit(EventType ev, std::uint64_t order_id, std::uint64_t maker_id,
+              std::int32_t price_ticks, std::int32_t qty,
+              OrderStatus status, RejectReason rr) noexcept {
+        if (!event_cb_) return;
+        BookEvent e{ev, order_id, maker_id, price_ticks, qty, status, rr, mono_ns_now()};
+        event_cb_(e, event_ctx_);
+    }
+
+    // Zapisz Trade do tape (ring buffer).
+    void record_trade(std::uint64_t maker_id, std::uint64_t taker_id,
+                      std::int32_t price_ticks, std::int32_t qty,
+                      Side taker_side, std::uint64_t ts_ns) noexcept {
+        Trade& t = tape_[tape_head_ % TAPE_CAP];
+        t.exec_id = next_exec_id_++;
+        t.maker_order_id = maker_id;
+        t.taker_order_id = taker_id;
+        t.price_ticks = price_ticks;
+        t.qty = qty;
+        t.taker_side = taker_side;
+        t.ts_ns = ts_ns;
+        ++tape_head_;
+        ++tape_count_;
+        ++stats_.total_fills;
+        stats_.total_volume += static_cast<std::uint64_t>(qty);
+    }
+
+public:
+    FullOrderBook() noexcept {
+        // Zbuduj free-list: każdy slot łączysz z next.
+        for (std::int32_t i = 0; i < MAX_ORDERS; ++i) {
+            pool_[i].reset();
+            pool_[i].next_free = (i + 1 < MAX_ORDERS) ? &pool_[i + 1] : nullptr;
+        }
+        free_list_head_ = &pool_[0];
+        id_index_.reserve(static_cast<std::size_t>(MAX_ORDERS));
+    }
+
+    // Deleted copy/move — book ma intrusive pointers, kopia by je niszczyła.
+    FullOrderBook(const FullOrderBook&)            = delete;
+    FullOrderBook& operator=(const FullOrderBook&) = delete;
+    FullOrderBook(FullOrderBook&&)                 = delete;
+    FullOrderBook& operator=(FullOrderBook&&)      = delete;
+
+    // ====================================================================
+    // Konfiguracja
+    // ====================================================================
+
+    void set_stp_policy(SelfTradePrevention p) noexcept { stp_policy_ = p; }
+    SelfTradePrevention stp_policy() const noexcept { return stp_policy_; }
+
+    void set_event_callback(EventCallback cb, void* ctx) noexcept {
+        event_cb_ = cb; event_ctx_ = ctx;
+    }
+
+    // ====================================================================
+    // L1 quote — top of book
+    // ====================================================================
+
+    std::int32_t best_bid_ticks() const noexcept { return best_bid_ticks_; }
+    std::int32_t best_ask_ticks() const noexcept { return best_ask_ticks_; }
+    bool has_bid() const noexcept { return best_bid_ticks_ != NO_BID_TICKS; }
+    bool has_ask() const noexcept { return best_ask_ticks_ != NO_ASK_TICKS; }
+
+    // mid_ticks: zwraca (bid+ask)/2, lub -1 gdy brak quote po jednej ze stron.
+    std::int32_t mid_ticks() const noexcept {
+        if (!has_bid() || !has_ask()) return -1;
+        return (best_bid_ticks_ + best_ask_ticks_) / 2;
+    }
+
+    // microprice_ticks: weighted by size na top of book.
+    //   micro = (bid*ask_qty + ask*bid_qty) / (bid_qty + ask_qty)
+    // Lepszy predykator następnego trade'u niż mid (uwzględnia order flow).
+    std::int32_t microprice_ticks() const noexcept {
+        if (!has_bid() || !has_ask()) return -1;
+        const std::int32_t bq = levels_[best_bid_ticks_].total_qty;
+        const std::int32_t aq = levels_[best_ask_ticks_].total_qty;
+        const std::int64_t denom = static_cast<std::int64_t>(bq) + aq;
+        if (denom == 0) return mid_ticks();
+        const std::int64_t num =
+            static_cast<std::int64_t>(best_bid_ticks_) * aq +
+            static_cast<std::int64_t>(best_ask_ticks_) * bq;
+        return static_cast<std::int32_t>(num / denom);
+    }
+
+    // Top-of-book quote z qty + count.
+    TopOfBook top_of_book() const noexcept {
+        TopOfBook t{};
+        t.best_bid_ticks = best_bid_ticks_;
+        t.best_ask_ticks = best_ask_ticks_;
+        if (has_bid()) {
+            t.bid_qty   = levels_[best_bid_ticks_].total_qty;
+            t.bid_count = levels_[best_bid_ticks_].order_count;
+        }
+        if (has_ask()) {
+            t.ask_qty   = levels_[best_ask_ticks_].total_qty;
+            t.ask_count = levels_[best_ask_ticks_].order_count;
+        }
+        return t;
+    }
+
+    // ====================================================================
+    // Stats + introspekcja
+    // ====================================================================
+
+    const BookStats& stats() const noexcept { return stats_; }
+    std::size_t active_orders() const noexcept { return active_orders_; }
+    std::size_t pool_capacity() const noexcept { return MAX_ORDERS; }
+    std::size_t pool_used_high_water() const noexcept { return pool_high_water_; }
+
+    // Lookup po order_id (do introspekcji testów; nie używaj na hot path).
+    const Order* find_order(std::uint64_t id) const noexcept {
+        auto it = id_index_.find(id);
+        return it == id_index_.end() ? nullptr : it->second;
+    }
+
+    // ====================================================================
+    // Matching helpers
+    // ====================================================================
+private:
+    // Sprawdza czy cena `p` po stronie `side` byłaby agresorem (krzyżuje rynek).
+    // BUY  agresor gdy p >= best_ask
+    // SELL agresor gdy p <= best_bid
+    bool would_cross(Side side, std::int32_t p) const noexcept {
+        if (side == Side::BUY)  return has_ask() && p >= best_ask_ticks_;
+        else                     return has_bid() && p <= best_bid_ticks_;
+    }
+
+    // Sprawdza locked/crossed market przed dodaniem (post-fill state).
+    // LOCKED: best_bid == best_ask (cena równa).
+    // CROSSED: best_bid > best_ask (rynek skrzyżowany — patologia).
+    bool is_locked()  const noexcept {
+        return has_bid() && has_ask() && best_bid_ticks_ == best_ask_ticks_;
+    }
+    bool is_crossed() const noexcept {
+        return has_bid() && has_ask() && best_bid_ticks_ > best_ask_ticks_;
+    }
+
+    // Quote tester dla FOK: czy dostępna płynność po tej stronie do `price` ≥ qty?
+    bool fok_fillable(Side side, std::int32_t price, std::int32_t qty) const noexcept {
+        std::int32_t avail = 0;
+        if (side == Side::BUY) {
+            for (std::int32_t p = best_ask_ticks_; p <= price && p < LEVELS; ++p) {
+                avail += levels_[p].total_qty;
+                if (avail >= qty) return true;
+            }
+        } else {
+            for (std::int32_t p = best_bid_ticks_; p >= price && p >= 0; --p) {
+                avail += levels_[p].total_qty;
+                if (avail >= qty) return true;
+            }
+        }
+        return avail >= qty;
+    }
+
+    // Match przy jednym price level (FIFO traversal). Pomniejsza qty_remaining.
+    // Wywoływane z petli ceny w match_against().
+    void match_at_level(PriceLevel& lvl, Order* taker,
+                        std::int32_t& qty_remaining, std::uint64_t ts_ns) noexcept {
+        Order* m = lvl.head;
+        while (m && qty_remaining > 0) {
+            // STP check: czy maker i taker to ten sam client?
+            if (m->client_id != 0 && m->client_id == taker->client_id &&
+                stp_policy_ != SelfTradePrevention::NONE) {
+                ++stats_.total_self_trade_blocks;
+                if (stp_policy_ == SelfTradePrevention::CANCEL_NEWEST) {
+                    // Taker pada — abort completely
+                    qty_remaining = 0;
+                    return;
+                } else if (stp_policy_ == SelfTradePrevention::CANCEL_OLDEST) {
+                    // Maker pada — usuń go z księgi i jedź dalej
+                    Order* next_m = m->next_at_level;
+                    cancel_internal(m, /*emit_event=*/true);
+                    m = next_m;
+                    continue;
+                } else if (stp_policy_ == SelfTradePrevention::CANCEL_BOTH) {
+                    Order* next_m = m->next_at_level;
+                    cancel_internal(m, true);
+                    qty_remaining = 0;
+                    (void)next_m;
+                    return;
+                }
+            }
+
+            const std::int32_t exec_qty = std::min(qty_remaining, m->displayed_qty);
+            m->filled_qty   += exec_qty;
+            taker->filled_qty += exec_qty;
+            qty_remaining   -= exec_qty;
+
+            // Trade record (price = maker's price = lvl.price = m->price_ticks)
+            record_trade(m->id, taker->id, m->price_ticks, exec_qty,
+                         taker->side, ts_ns);
+            emit(EventType::FILL, taker->id, m->id, m->price_ticks, exec_qty,
+                 taker->remaining_qty() == 0 ? OrderStatus::FILLED
+                                              : OrderStatus::PARTIALLY_FILLED,
+                 RejectReason::NONE);
+
+            // Aktualizuj displayed/hidden i level total
+            lvl.total_qty -= exec_qty;
+            m->displayed_qty -= exec_qty;
+
+            if (m->displayed_qty == 0 && m->total_qty - m->filled_qty > 0 &&
+                m->type == OrderType::ICEBERG) {
+                // Iceberg: doślij displayed z hidden reserve
+                const std::int32_t hidden = m->total_qty - m->filled_qty;
+                const std::int32_t orig_displayed = m->displayed_qty;
+                (void)orig_displayed;
+                m->displayed_qty = std::min(hidden, /*iceberg_show=*/100);
+                lvl.total_qty    += m->displayed_qty;
+                lvl.total_hidden -= m->displayed_qty;
+                // Maker iceberg traci priority — przesuwamy na koniec FIFO
+                Order* next_m = m->next_at_level;
+                if (lvl.tail != m) {
+                    // unlink + reinsert at tail
+                    if (m->prev_at_level) m->prev_at_level->next_at_level = m->next_at_level;
+                    else                  lvl.head = m->next_at_level;
+                    if (m->next_at_level) m->next_at_level->prev_at_level = m->prev_at_level;
+                    m->prev_at_level = lvl.tail;
+                    m->next_at_level = nullptr;
+                    lvl.tail->next_at_level = m;
+                    lvl.tail = m;
+                }
+                m = next_m;
+                continue;
+            }
+
+            if (m->filled_qty >= m->total_qty) {
+                // Maker pełen → unlink + free
+                Order* next_m = m->next_at_level;
+                m->status = OrderStatus::FILLED;
+                emit(EventType::FILL, m->id, taker->id, m->price_ticks, exec_qty,
+                     OrderStatus::FILLED, RejectReason::NONE);
+                // Unlink z level (już zaktualizowaliśmy total_qty wyżej, więc
+                // unlink_from_level zrobi to ponownie. Robimy ręczny unlink.)
+                if (m->prev_at_level) m->prev_at_level->next_at_level = m->next_at_level;
+                else                  lvl.head = m->next_at_level;
+                if (m->next_at_level) m->next_at_level->prev_at_level = m->prev_at_level;
+                else                  lvl.tail = m->prev_at_level;
+                if (lvl.order_count > 0) --lvl.order_count;
+                id_index_.erase(m->id);
+                free_order(m);
+                m = next_m;
+            } else {
+                m->status = OrderStatus::PARTIALLY_FILLED;
+                // taker dostał całość lub maker ma displayed=0 ale nie iceberg.
+                // Jeśli displayed_qty == 0 i nie iceberg → unlink (limit order
+                // który dostał display reduction to nie powinien się zdarzyć).
+                m = m->next_at_level;
+            }
+        }
+    }
+
+    // Match przeciw przeciwnej stronie. Aktualizuje taker, generuje fills.
+    void match_against(Order* taker) noexcept {
+        const std::uint64_t ts = mono_ns_now();
+        std::int32_t qty_left = taker->remaining_qty();
+
+        if (taker->side == Side::BUY) {
+            // BUY zjada asks od najlepszej (najtańszej) aż do limit price
+            while (qty_left > 0 && has_ask() && best_ask_ticks_ <= taker->price_ticks) {
+                PriceLevel& lvl = levels_[best_ask_ticks_];
+                match_at_level(lvl, taker, qty_left, ts);
+                if (lvl.empty()) {
+                    refresh_best_ask_from(best_ask_ticks_ + 1);
+                }
+            }
+        } else {
+            while (qty_left > 0 && has_bid() && best_bid_ticks_ >= taker->price_ticks) {
+                PriceLevel& lvl = levels_[best_bid_ticks_];
+                match_at_level(lvl, taker, qty_left, ts);
+                if (lvl.empty()) {
+                    refresh_best_bid_from(best_bid_ticks_ - 1);
+                }
+            }
+        }
+        // taker.filled_qty już zaktualizowane przez match_at_level
+    }
+
+    // Wspólna ścieżka cancel — używana przez user cancel + STP + internal.
+    void cancel_internal(Order* o, bool emit_event) noexcept {
+        if (!o || !o->is_active()) return;
+        unlink_from_level(o);
+        // Refresh best bid/ask jeśli ten level się opróżnił
+        if (levels_[o->price_ticks].empty()) {
+            if (o->side == Side::BUY  && o->price_ticks == best_bid_ticks_)
+                refresh_best_bid_from(o->price_ticks - 1);
+            if (o->side == Side::SELL && o->price_ticks == best_ask_ticks_)
+                refresh_best_ask_from(o->price_ticks + 1);
+        }
+        const std::int32_t leftover = o->remaining_qty();
+        o->status = OrderStatus::CANCELLED;
+        id_index_.erase(o->id);
+        if (emit_event) {
+            emit(EventType::CANCEL, o->id, 0, o->price_ticks, leftover,
+                 OrderStatus::CANCELLED, RejectReason::NONE);
+        }
+        free_order(o);
+        ++stats_.total_orders_cancelled;
+    }
+
+public:
+    // ====================================================================
+    // submit() — główna ścieżka dodania zlecenia
+    // ====================================================================
+    //
+    // Zwraca order_id przyjętego zlecenia (>0) lub 0 gdy odrzucone.
+    // out_reason (jeśli != nullptr) dostaje RejectReason dla diagnostyki.
+    //
+    // Logika:
+    //   1. Walidacja: range, qty, duplicate id, range.
+    //   2. STP check (jeśli policy != NONE) — ale STP pełniejsze w matchu.
+    //   3. POST_ONLY: jeśli krzyżuje → REJECT.
+    //   4. FOK: jeśli nieosiągalny → REJECT.
+    //   5. Alokuj Order z pool.
+    //   6. Jeśli typ to STOP, NIE matchuj — wstaw w czekoligę triggerów.
+    //   7. Match against przeciwnej strony do limit price.
+    //   8. Jeśli IOC i resta — cancel resztę. Jeśli FOK i nie wszystko → revert.
+    //   9. Reszta (jeśli > 0): wstaw do FIFO na price level + index id.
+    std::uint64_t submit(Side side, std::int32_t price_ticks, std::int32_t qty,
+                          OrderType type = OrderType::LIMIT,
+                          TimeInForce tif = TimeInForce::DAY,
+                          std::uint64_t order_id = 0,
+                          std::uint64_t client_id = 0,
+                          std::int32_t displayed_qty = 0,
+                          RejectReason* out_reason = nullptr) noexcept {
+        auto reject = [&](RejectReason r) -> std::uint64_t {
+            if (out_reason) *out_reason = r;
+            ++stats_.total_orders_rejected;
+            const std::uint64_t rid = order_id ? order_id : 0;
+            emit(EventType::REJECT, rid, 0, price_ticks, qty,
+                 OrderStatus::REJECTED, r);
+            return 0;
+        };
+
+        // Walidacje
+        if (qty <= 0)                  return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
+        if (!in_range(price_ticks) && type != OrderType::MARKET)
+                                       return reject(RejectReason::PRICE_OUT_OF_RANGE);
+        if (order_id != 0 && id_index_.find(order_id) != id_index_.end())
+                                       return reject(RejectReason::DUPLICATE_ID);
+
+        // POST_ONLY: nie wolno wziąć płynności (cross protection)
+        if (type == OrderType::POST_ONLY && would_cross(side, price_ticks)) {
+            return reject(RejectReason::POST_ONLY_WOULD_CROSS);
+        }
+
+        // FOK: musi się od razu wypełnić w całości
+        if ((type == OrderType::FOK || tif == TimeInForce::FOK)
+            && !fok_fillable(side, price_ticks, qty)) {
+            return reject(RejectReason::FOK_NOT_FILLABLE);
+        }
+
+        // Alokacja
+        Order* o = alloc_order();
+        if (!o) return reject(RejectReason::POOL_EXHAUSTED);
+
+        o->id            = order_id ? order_id : next_order_id_++;
+        o->client_id     = client_id;
+        o->price_ticks   = price_ticks;
+        o->total_qty     = qty;
+        o->filled_qty    = 0;
+        o->displayed_qty = (type == OrderType::ICEBERG && displayed_qty > 0)
+                           ? displayed_qty : qty;
+        o->side          = side;
+        o->type          = type;
+        o->tif           = tif;
+        o->status        = OrderStatus::NEW;
+        o->submit_ts_ns  = mono_ns_now();
+        ++stats_.total_orders_added;
+
+        emit(EventType::ACCEPT, o->id, 0, o->price_ticks, o->total_qty,
+             OrderStatus::OPEN, RejectReason::NONE);
+
+        // Match (chyba że POST_ONLY — ale POST_ONLY już odrzucone gdyby krzyżowało)
+        if (type != OrderType::POST_ONLY) {
+            match_against(o);
+        }
+
+        // Po matchu:
+        if (o->filled_qty >= o->total_qty) {
+            // Pełen fill → zwolnij slot (nie wchodzi do księgi)
+            o->status = OrderStatus::FILLED;
+            const std::uint64_t rid = o->id;
+            free_order(o);
+            return rid;
+        }
+
+        // IOC: nie zostawiaj resztek — cancel
+        if (type == OrderType::IOC || tif == TimeInForce::IOC) {
+            const std::int32_t left = o->remaining_qty();
+            o->status = OrderStatus::CANCELLED;
+            const std::uint64_t rid = o->id;
+            emit(EventType::CANCEL, rid, 0, o->price_ticks, left,
+                 OrderStatus::CANCELLED, RejectReason::NONE);
+            free_order(o);
+            return rid;
+        }
+
+        // Włóż do księgi (FIFO)
+        o->status = OrderStatus::OPEN;
+        if (o->filled_qty > 0) o->status = OrderStatus::PARTIALLY_FILLED;
+        enqueue_at_level(o);
+        id_index_[o->id] = o;
+
+        // Update best bid/ask
+        if (o->side == Side::BUY) {
+            if (best_bid_ticks_ == NO_BID_TICKS || o->price_ticks > best_bid_ticks_)
+                best_bid_ticks_ = o->price_ticks;
+        } else {
+            if (best_ask_ticks_ == NO_ASK_TICKS || o->price_ticks < best_ask_ticks_)
+                best_ask_ticks_ = o->price_ticks;
+        }
+        return o->id;
+    }
+
+    // ====================================================================
+    // cancel(order_id) — user cancel; zwraca true gdy znaleziono i usunięto.
+    // ====================================================================
+    bool cancel(std::uint64_t order_id) noexcept {
+        auto it = id_index_.find(order_id);
+        if (it == id_index_.end()) return false;
+        cancel_internal(it->second, /*emit_event=*/true);
+        return true;
+    }
+
+    // ====================================================================
+    // modify(order_id, new_price, new_qty) — cancel + resubmit, GUBI priority
+    // (zgodnie z większością giełd jeśli zmieniasz cenę). Jeśli tylko qty DOWN
+    // (down-only), niektóre giełdy zachowują priority; tu zachowuję
+    // tylko w przypadku qty DOWN ON SAME PRICE.
+    // ====================================================================
+    std::uint64_t modify(std::uint64_t order_id,
+                          std::int32_t new_price_ticks,
+                          std::int32_t new_qty,
+                          RejectReason* out_reason = nullptr) noexcept {
+        auto it = id_index_.find(order_id);
+        if (it == id_index_.end()) {
+            if (out_reason) *out_reason = RejectReason::NONE;
+            return 0;
+        }
+        Order* o = it->second;
+
+        // Same-price + qty DOWN → priority-preserving in-place
+        if (new_price_ticks == o->price_ticks &&
+            new_qty < o->total_qty - o->filled_qty + o->filled_qty &&  // new_qty < total
+            new_qty > o->filled_qty) {
+            const std::int32_t delta = (o->total_qty - new_qty);
+            o->total_qty = new_qty;
+            o->displayed_qty -= std::min(delta, o->displayed_qty);
+            levels_[o->price_ticks].total_qty -= std::min(delta, levels_[o->price_ticks].total_qty);
+            ++stats_.total_orders_replaced;
+            emit(EventType::REPLACE, o->id, 0, o->price_ticks, new_qty,
+                 o->status, RejectReason::NONE);
+            return o->id;
+        }
+
+        // Cancel + resubmit — gubi priority
+        const Side       side       = o->side;
+        const OrderType  type       = o->type;
+        const TimeInForce tif       = o->tif;
+        const std::uint64_t client_id = o->client_id;
+        const std::int32_t  filled  = o->filled_qty;
+        cancel_internal(o, /*emit_event=*/false);
+        ++stats_.total_orders_replaced;
+        return submit(side, new_price_ticks, new_qty - filled,
+                      type, tif, order_id, client_id, 0, out_reason);
+    }
+
+    // ====================================================================
+    // L2 depth — `n_levels` najlepszych cen per side
+    // ====================================================================
+    //
+    // Wypełnia bid_out[] i ask_out[] zawijając do `n_levels` lub LEVELS.
+    // Zwraca ile faktycznie zwrócono.
+    std::int32_t depth(std::int32_t n_levels,
+                       DepthLevel* bid_out, DepthLevel* ask_out,
+                       std::int32_t* bid_count, std::int32_t* ask_count) const noexcept {
+        std::int32_t bn = 0, an = 0;
+        if (bid_out && has_bid()) {
+            for (std::int32_t p = best_bid_ticks_; p >= 0 && bn < n_levels; --p) {
+                const PriceLevel& lvl = levels_[p];
+                if (lvl.total_qty > 0) {
+                    bid_out[bn] = DepthLevel{p, lvl.total_qty, lvl.order_count};
+                    ++bn;
+                }
+            }
+        }
+        if (ask_out && has_ask()) {
+            for (std::int32_t p = best_ask_ticks_; p < LEVELS && an < n_levels; ++p) {
+                const PriceLevel& lvl = levels_[p];
+                if (lvl.total_qty > 0) {
+                    ask_out[an] = DepthLevel{p, lvl.total_qty, lvl.order_count};
+                    ++an;
+                }
+            }
+        }
+        if (bid_count) *bid_count = bn;
+        if (ask_count) *ask_count = an;
+        return bn + an;
+    }
+
+    // total_volume_at_price: Σ displayed qty na konkretnym levelu (0 gdy pusty).
+    std::int32_t total_volume_at_price(std::int32_t price_ticks) const noexcept {
+        if (!in_range(price_ticks)) return 0;
+        return levels_[price_ticks].total_qty;
+    }
+
+    std::int32_t order_count_at_price(std::int32_t price_ticks) const noexcept {
+        if (!in_range(price_ticks)) return 0;
+        return levels_[price_ticks].order_count;
+    }
+
+    // imbalance_bps: (bid_qty - ask_qty)/(bid+ask) × 10000.
+    //   +5000 = same bidy (bardzo buy-heavy)
+    //   -5000 = same aski
+    //   0     = balans
+    // Signal flow — kluczowa metryka order book imbalance dla strategii.
+    std::int32_t imbalance_bps() const noexcept {
+        if (!has_bid() || !has_ask()) return 0;
+        const std::int64_t b = levels_[best_bid_ticks_].total_qty;
+        const std::int64_t a = levels_[best_ask_ticks_].total_qty;
+        const std::int64_t total = b + a;
+        if (total == 0) return 0;
+        return static_cast<std::int32_t>((b - a) * 10000 / total);
+    }
+
+    // queue_position(order_id): ile zleceń przed nami w FIFO na tym levelu.
+    // Strategia market making'u używa do oceny "kiedy mnie wezmą" — jeśli
+    // jesteś 1000-szy w kolejce, fill probability jest niska.
+    std::int32_t queue_position(std::uint64_t order_id) const noexcept {
+        auto it = id_index_.find(order_id);
+        if (it == id_index_.end()) return -1;
+        Order* o = it->second;
+        std::int32_t pos = 0;
+        for (Order* p = levels_[o->price_ticks].head; p && p != o; p = p->next_at_level) {
+            ++pos;
+        }
+        return pos;
+    }
+
+    // ====================================================================
+    // Trade tape — recent executions (ring buffer)
+    // ====================================================================
+    std::size_t tape_size() const noexcept {
+        return std::min(tape_count_, TAPE_CAP);
+    }
+
+    // Skopiuj ostatnie `max_n` egzekucji do out[]. Zwraca ile zwrócono
+    // (nigdy więcej niż tape_size()).
+    std::size_t recent_trades(Trade* out, std::size_t max_n) const noexcept {
+        const std::size_t avail = tape_size();
+        const std::size_t n = std::min(avail, max_n);
+        for (std::size_t i = 0; i < n; ++i) {
+            // od najnowszego w tył
+            const std::size_t idx = (tape_head_ + TAPE_CAP - 1 - i) % TAPE_CAP;
+            out[i] = tape_[idx];
+        }
+        return n;
+    }
+
+    // VWAP z trade tape (volume weighted average price) — w tickach.
+    std::int32_t tape_vwap_ticks() const noexcept {
+        const std::size_t n = tape_size();
+        if (n == 0) return -1;
+        std::int64_t price_qty = 0;
+        std::int64_t qty       = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - 1 - i) % TAPE_CAP];
+            price_qty += static_cast<std::int64_t>(t.price_ticks) * t.qty;
+            qty       += t.qty;
+        }
+        return qty > 0 ? static_cast<std::int32_t>(price_qty / qty) : -1;
+    }
+
+    // ====================================================================
+    // Snapshot — wire format do recovery
+    // ====================================================================
+    //
+    // Encoder/decoder: serializuje wszystkie active orders do buforu bajtów
+    // (per-order POD), zwraca bytes_written. Format wire:
+    //   [4 B magic "OBPRO" prefix nadpisany, no]
+    //   [4 B version (1)]
+    //   [8 B active_orders count]
+    //   [N × OrderRecord (66 B each)]
+    //
+    // To NIE jest delta — to FULL snapshot. Delta zaimplementowana przez
+    // event callback z EventType (caller may build incremental log).
+    //
+    // Zwraca liczbę zapisanych bajtów lub 0 gdy bufor za mały.
+
+    struct __attribute__((packed)) OrderRecord {
+        std::uint64_t id;
+        std::uint64_t client_id;
+        std::int32_t  price_ticks;
+        std::int32_t  total_qty;
+        std::int32_t  filled_qty;
+        std::int32_t  displayed_qty;
+        std::uint8_t  side;
+        std::uint8_t  type;
+        std::uint8_t  tif;
+        std::uint8_t  status;
+        std::uint64_t submit_ts_ns;
+        std::uint64_t expire_ts_ns;
+        std::int32_t  stop_trigger_ticks;
+        std::int32_t  peg_offset_ticks;
+    };
+
+    static constexpr std::uint32_t SNAPSHOT_VERSION = 1;
+    static constexpr std::uint32_t SNAPSHOT_MAGIC   = 0x4F42504F;  // "OBPO"
+
+    std::size_t snapshot_size_estimate() const noexcept {
+        return 4 + 4 + 8 + active_orders_ * sizeof(OrderRecord);
+    }
+
+    std::size_t serialize_snapshot(std::uint8_t* buf, std::size_t cap) const noexcept {
+        const std::size_t need = snapshot_size_estimate();
+        if (cap < need) return 0;
+        std::size_t off = 0;
+        std::uint32_t magic   = SNAPSHOT_MAGIC;
+        std::uint32_t version = SNAPSHOT_VERSION;
+        std::uint64_t count   = active_orders_;
+        std::memcpy(buf + off, &magic,   4); off += 4;
+        std::memcpy(buf + off, &version, 4); off += 4;
+        std::memcpy(buf + off, &count,   8); off += 8;
+
+        // Iteruj po wszystkich levelach (oba sidey), dla każdego po FIFO
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            for (Order* o = levels_[p].head; o; o = o->next_at_level) {
+                OrderRecord r{};
+                r.id            = o->id;
+                r.client_id     = o->client_id;
+                r.price_ticks   = o->price_ticks;
+                r.total_qty     = o->total_qty;
+                r.filled_qty    = o->filled_qty;
+                r.displayed_qty = o->displayed_qty;
+                r.side          = static_cast<std::uint8_t>(o->side);
+                r.type          = static_cast<std::uint8_t>(o->type);
+                r.tif           = static_cast<std::uint8_t>(o->tif);
+                r.status        = static_cast<std::uint8_t>(o->status);
+                r.submit_ts_ns  = o->submit_ts_ns;
+                r.expire_ts_ns  = o->expire_ts_ns;
+                r.stop_trigger_ticks = o->stop_trigger_ticks;
+                r.peg_offset_ticks   = o->peg_offset_ticks;
+                std::memcpy(buf + off, &r, sizeof(r));
+                off += sizeof(r);
+            }
+        }
+        return off;
+    }
+
+    // Wczytaj snapshot — przeładowuje całą księgę. Zwraca true on success.
+    bool load_snapshot(const std::uint8_t* buf, std::size_t len) noexcept {
+        if (len < 16) return false;
+        std::uint32_t magic, version;
+        std::uint64_t count;
+        std::memcpy(&magic,   buf,      4);
+        std::memcpy(&version, buf + 4,  4);
+        std::memcpy(&count,   buf + 8,  8);
+        if (magic != SNAPSHOT_MAGIC) return false;
+        if (version != SNAPSHOT_VERSION) return false;
+        if (len < 16 + count * sizeof(OrderRecord)) return false;
+
+        clear();
+        std::size_t off = 16;
+        for (std::uint64_t i = 0; i < count; ++i) {
+            OrderRecord r;
+            std::memcpy(&r, buf + off, sizeof(r));
+            off += sizeof(r);
+            Order* o = alloc_order();
+            if (!o) return false;
+            o->id            = r.id;
+            o->client_id     = r.client_id;
+            o->price_ticks   = r.price_ticks;
+            o->total_qty     = r.total_qty;
+            o->filled_qty    = r.filled_qty;
+            o->displayed_qty = r.displayed_qty;
+            o->side          = static_cast<Side>(r.side);
+            o->type          = static_cast<OrderType>(r.type);
+            o->tif           = static_cast<TimeInForce>(r.tif);
+            o->status        = static_cast<OrderStatus>(r.status);
+            o->submit_ts_ns  = r.submit_ts_ns;
+            o->expire_ts_ns  = r.expire_ts_ns;
+            o->stop_trigger_ticks = r.stop_trigger_ticks;
+            o->peg_offset_ticks   = r.peg_offset_ticks;
+            enqueue_at_level(o);
+            id_index_[o->id] = o;
+            if (o->side == Side::BUY) {
+                if (best_bid_ticks_ == NO_BID_TICKS || o->price_ticks > best_bid_ticks_)
+                    best_bid_ticks_ = o->price_ticks;
+            } else {
+                if (best_ask_ticks_ == NO_ASK_TICKS || o->price_ticks < best_ask_ticks_)
+                    best_ask_ticks_ = o->price_ticks;
+            }
+        }
+        return true;
+    }
+
+    // Pełny reset — księga pusta, statystyki wyczyszczone.
+    void clear() noexcept {
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            Order* o = levels_[p].head;
+            while (o) {
+                Order* next = o->next_at_level;
+                free_order(o);
+                o = next;
+            }
+            levels_[p].clear();
+        }
+        id_index_.clear();
+        best_bid_ticks_ = NO_BID_TICKS;
+        best_ask_ticks_ = NO_ASK_TICKS;
+        tape_head_ = 0;
+        tape_count_ = 0;
+    }
+};
+
+
+}  // namespace orderbook_pro
+
