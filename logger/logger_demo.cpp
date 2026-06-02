@@ -148,7 +148,7 @@ void test_mmap_crash_recovery() {
     if (pid == 0) {
         // Child: open, log 5 events, _exit BEZ close() / destruktora.
         mmap_logger::MmapTradeLogger lg;
-        if (!lg.open(path, 1024)) _exit(2);
+        if (!lg.open_file(path, 1024)) _exit(2);
         for (int i = 0; i < 5; ++i) {
             lg.log(EventType::ORDER_SUBMIT, static_cast<uint64_t>(i + 1),
                    "AAPL", "BUY", 100, 150.0, "crash");
