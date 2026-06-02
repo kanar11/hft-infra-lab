@@ -172,7 +172,9 @@ void test_mmap_crash_recovery() {
         long sz = std::ftell(f);
         std::fclose(f);
         // Header (64 B) + 5 * sizeof(TradeEvent) (128 B każdy) = 64 + 640 = 704.
-        ASSERT(sz >= 64 + 5 * 128, "mmap_recovery_data_persisted");
+        // Header (64 B) + 5 × TradeEvent (128 B) = 704. Wpisany jako long
+        // żeby uniknąć bugprone-implicit-widening-of-multiplication (int*int).
+        ASSERT(sz >= 64L + 5L * 128L, "mmap_recovery_data_persisted");
     }
     std::remove(path);
 }
