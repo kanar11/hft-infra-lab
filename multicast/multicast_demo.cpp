@@ -300,6 +300,7 @@ void test_arbitration_failover() {
     ASSERT(arb.failover_ratio() > 0.0, "arb_failover_ratio_positive");
 }
 
+void test_latency_stats() {
     multicast::LatencyStats stats;
     stats.record(100);
     stats.record(200);
