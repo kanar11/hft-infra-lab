@@ -132,6 +132,8 @@ void test_kill_switch_event() {
     ASSERT(std::strcmp(buf[0].details, "manual_trigger") == 0, "test_kill_switch_details");
 }
 
+// NOLINTBEGIN — clang-tidy lubi grymasić na fork/WIFEXITED/POSIX makra,
+// ale to standardowe wzorce z POSIX C. NOLINT obejmuje tylko ten test.
 // MmapTradeLogger crash recovery — kluczowa zaleta mmap'a vs SPSC ring:
 // po crash'u procesu (bez clean shutdown) wszystkie zapisane eventy dalej
 // czytelne z dysku. Test używa fork(): child pisze i robi _exit(1) bez
@@ -178,6 +180,7 @@ void test_mmap_crash_recovery() {
     }
     std::remove(path);
 }
+// NOLINTEND
 
 void test_sequence_counter() {
     TradeLogger logger;
