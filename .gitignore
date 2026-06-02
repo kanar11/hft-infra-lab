@@ -12,6 +12,7 @@ bindings/build/
 orderbook/orderbook
 orderbook/orderbook_v2
 orderbook/orderbook_flat
+orderbook/orderbook_pro_demo
 orderbook/benchmark_orderbook
 orderbook/latency_histogram
 lockfree/spsc_queue

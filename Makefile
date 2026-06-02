@@ -9,6 +9,7 @@ SRCS := \
 	orderbook/orderbook.cpp \
 	orderbook/orderbook_v2.cpp \
 	orderbook/orderbook_flat.cpp \
+	orderbook/orderbook_pro_demo.cpp \
 	orderbook/benchmark_orderbook.cpp \
 	orderbook/latency_histogram.cpp \
 	replay/lobster_demo.cpp \

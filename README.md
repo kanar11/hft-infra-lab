@@ -9,6 +9,7 @@ Complete low-latency infrastructure lab for HFT systems — kernel tuning, netwo
 ## Performance Highlights(Red Hat EL10, VirtualBox 2-core VM)
 - Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
 - Order book — flat-array variant (`orderbook/orderbook_flat.hpp`): **O(1) add/match, zero heap alloc** — see `./orderbook/orderbook_flat 1000000` for live head-to-head vs the std::map baseline
+- **FullOrderBook L3** (`orderbook/orderbook_pro.hpp`): production-grade L3 matching engine — FIFO queue per price level, 8 order types (LIMIT/IOC/FOK/POST_ONLY/ICEBERG/STOP/PEG/MARKET), self-trade prevention, snapshot+delta recovery, microprice + imbalance + VWAP, queue position tracking. `./orderbook/orderbook_pro_demo 100000`
 - ITCH parser (C++): **60M msg/sec** (16ns/msg, p50=40ns, p99=50ns)
 - Market Simulator E2E (C++): **573K msg/sec** (full pipeline: ITCH gen→parse→OMS→P&L)
 - OMS (C++): **11.6M orders/sec** (submit+fill, p50=60ns, p99=121ns, fixed-point prices)
@@ -92,7 +93,7 @@ Szczegóły protokołu, opcody, podłączenie do prawdziwych giełd: [`feed/READ
 | linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
 | network-latency/ | Network latency and jitter measurement | Bash |
 | multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | C++ |
-| orderbook/ | Matching engine: 3 variants — std::map basic, std::map + cancel/modify, flat-array O(1) | C++ |
+| orderbook/ | Matching engine: 4 variants — std::map basic, std::map + cancel/modify, flat-array O(1), **FullOrderBook L3** (FIFO + LIMIT/IOC/FOK/POST_ONLY/ICEBERG/STOP/PEG/MARKET, STP, snapshot/delta recovery, L1/L2/L3 views + microprice + imbalance + VWAP, trade tape) | C++ |
 | fix-protocol/ | FIX 4.2 parser + session validation (CheckSum tag 10, BodyLength tag 9, SOH delimiter) + message builder (5.5M msg/sec) | C++ |
 | itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types, 60M msg/sec) | C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | C++ |

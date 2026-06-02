@@ -58,7 +58,8 @@ jobs:
         run: |
           ./orderbook/orderbook
           ./orderbook/orderbook_v2
-          ./orderbook/orderbook_flat 100000   # sanity + small bench
+          ./orderbook/orderbook_flat 100000     # sanity + small bench
+          ./orderbook/orderbook_pro_demo 50000  # FullOrderBook tests + benchmark
 
       - name: Run OMS tests
         run: ./oms/oms_demo 0
