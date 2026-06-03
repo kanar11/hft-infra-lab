@@ -318,6 +318,171 @@ void test_reject_qty_zero() {
 }
 
 
+// ──────────────────────────────────────────────
+// STOP order triggers
+// ──────────────────────────────────────────────
+
+void test_stop_buy_trigger() {
+    Book b;
+    // Resting sell @ 10100 (płynność dla triggered STOP)
+    b.submit(Side::SELL, 10100, 200);
+    // STOP BUY: trigger@10050, limit=10100
+    auto stop_id = b.submit_stop(Side::BUY, /*trigger=*/10050,
+                                   /*limit=*/10100, 100);
+    ASSERT(stop_id > 0,                              "stop_buy_accepted");
+    ASSERT(b.stop_orders_count() == 1,               "stop_count_1");
+    ASSERT(b.stats().total_fills == 0,               "stop_pre_trigger_no_fills");
+
+    // Symuluj trade @ 10050 — triggeruje STOP
+    b.submit(Side::SELL, 10050, 50);
+    b.submit(Side::BUY,  10050, 50);   // fill → last_trade=10050
+    ASSERT(b.last_trade_ticks() == 10050, "stop_last_trade_recorded");
+
+    b.check_stop_triggers();
+    ASSERT(b.stop_orders_count() == 0,                "stop_consumed");
+    ASSERT(b.stats().total_stop_triggers == 1,        "stop_trigger_count");
+    // STOP stał się LIMIT 10100, wykonał vs resting sell
+    ASSERT(b.stats().total_volume >= 100,             "stop_executed_qty");
+}
+
+// ──────────────────────────────────────────────
+// PEG orders
+// ──────────────────────────────────────────────
+
+void test_peg_initial_and_reprice() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10100, 100);
+    // PEG buy @ best_bid - 1 (passive)
+    auto peg = b.submit_peg(Side::BUY, /*offset=*/-1, 50);
+    ASSERT(peg > 0,                                "peg_accepted");
+    ASSERT(b.peg_orders_count() == 1,              "peg_count_1");
+    const auto* po = b.find_order(peg);
+    ASSERT(po && po->price_ticks == 9999,           "peg_initial_price");
+
+    // Top of book się zmienia — bid podnosi się do 10001
+    b.submit(Side::BUY, 10001, 200);
+    ASSERT(b.best_bid_ticks() == 10001,             "best_bid_moved_up");
+    b.reprice_pegs();
+    const auto* po2 = b.find_order(peg);
+    ASSERT(po2 && po2->price_ticks == 10000,         "peg_repriced_to_10000");
+    ASSERT(b.stats().total_peg_reprices == 1,        "peg_reprice_counter");
+}
+
+// ──────────────────────────────────────────────
+// Mass cancel
+// ──────────────────────────────────────────────
+
+void test_mass_cancel_by_client() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100, OrderType::LIMIT, TimeInForce::DAY, 0, /*cid=*/42);
+    b.submit(Side::BUY, 9999,  200, OrderType::LIMIT, TimeInForce::DAY, 0, /*cid=*/42);
+    b.submit(Side::SELL,10100, 150, OrderType::LIMIT, TimeInForce::DAY, 0, /*cid=*/42);
+    b.submit(Side::BUY, 10000, 100, OrderType::LIMIT, TimeInForce::DAY, 0, /*cid=*/99);
+
+    auto cancelled = b.mass_cancel(42);
+    ASSERT(cancelled == 3,                          "mass_cancel_3_for_42");
+    ASSERT(b.stats().total_mass_cancels == 3,       "mass_cancel_stat");
+    // client 99 ocalał
+    ASSERT(b.best_bid_ticks() == 10000,             "mass_cancel_other_intact");
+}
+
+// ──────────────────────────────────────────────
+// GTD expiry
+// ──────────────────────────────────────────────
+
+void test_gtd_expiry_sweep() {
+    Book b;
+    // Submit GTD (tu via plain submit + manualny expire_ts; expire_gtd zerknie)
+    auto id1 = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT, TimeInForce::GTD);
+    auto id2 = b.submit(Side::BUY, 9999,  100, OrderType::LIMIT, TimeInForce::GTD);
+    (void)id2;
+    // Ręcznie ustaw expire_ts_ns w jednym (test path — w realu robi to caller
+    // poprzez bardziej rozbudowane submit które przyjmuje expire_ts).
+    auto* o1 = const_cast<Order*>(b.find_order(id1));
+    if (o1) o1->expire_ts_ns = 1000;  // bardzo dawne ts
+
+    auto expired = b.expire_gtd(/*now_ns=*/5000);
+    ASSERT(expired == 1,                            "gtd_1_expired");
+    ASSERT(b.stats().total_orders_expired == 1,     "gtd_expired_stat");
+}
+
+// ──────────────────────────────────────────────
+// Walk-the-book preview
+// ──────────────────────────────────────────────
+
+void test_walk_the_book() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::SELL, 10110, 50);
+    b.submit(Side::SELL, 10120, 100);
+
+    // BUY 100 @ limit 10115 → consume 50 @ 10100 + 50 @ 10110 = 100 filled
+    auto r = b.walk_the_book(Side::BUY, 100, 10115);
+    ASSERT(r.fillable_qty == 100,                       "walk_filled_qty");
+    // avg = (10100*50 + 10110*50)/100 = 10105
+    ASSERT(r.avg_price_ticks == 10105,                   "walk_avg_price");
+    ASSERT(r.levels_touched == 2,                        "walk_levels_2");
+    ASSERT(r.worst_price_ticks == 10110,                 "walk_worst_price");
+    // Sprawdź że to PREVIEW — book nietknięty
+    ASSERT(b.total_volume_at_price(10100) == 50,         "walk_no_modify_book");
+}
+
+// ──────────────────────────────────────────────
+// OFI (Order Flow Imbalance)
+// ──────────────────────────────────────────────
+
+void test_ofi_signal() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10100, 100);
+    b.sample_ofi();  // baseline
+
+    // Buy pressure: dodatkowa qty na BID
+    b.submit(Side::BUY, 10000, 200);
+    auto delta = b.sample_ofi();
+    ASSERT(delta > 0,                          "ofi_buy_pressure_positive");
+    ASSERT(b.cumulative_ofi() > 0,             "ofi_cumulative_positive");
+}
+
+// ──────────────────────────────────────────────
+// Volume profile
+// ──────────────────────────────────────────────
+
+void test_volume_profile() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  200);
+    b.submit(Side::BUY, 9995,  300);
+    b.submit(Side::SELL,10100, 50);
+
+    DepthLevel prof[10];
+    auto n = b.volume_profile(9990, 10100, prof, 10);
+    ASSERT(n == 4,                              "vol_profile_4_levels");
+    // Sortowane rosnąco: 9995, 9999, 10000, 10100
+    ASSERT(prof[0].price_ticks == 9995 && prof[0].qty == 300, "vol_p0");
+    ASSERT(prof[1].price_ticks == 9999 && prof[1].qty == 200, "vol_p1");
+    ASSERT(prof[2].price_ticks == 10000 && prof[2].qty == 100, "vol_p2");
+    ASSERT(prof[3].price_ticks == 10100 && prof[3].qty == 50,  "vol_p3");
+}
+
+// ──────────────────────────────────────────────
+// Fee accounting
+// ──────────────────────────────────────────────
+
+void test_fee_accounting() {
+    Book b;
+    b.set_fee_bps(/*taker_bps=*/30, /*maker_bps=*/-10);  // taker pays 30, maker -10 rebate
+    b.submit(Side::SELL, 10100, 100);  // maker
+    b.submit(Side::BUY,  10100, 100);  // taker
+
+    // notional_ticks = 10100 * 100 = 1010000
+    // taker_basis = 1010000 * 30 = 30300000
+    // maker_basis = 1010000 * (-10) = -10100000
+    ASSERT(b.total_taker_fees_basis() == 30300000, "fee_taker_basis");
+    ASSERT(b.total_maker_fees_basis() == -10100000, "fee_maker_rebate");
+}
+
 void test_reject_duplicate_id() {
     Book b;
     auto id = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
@@ -419,6 +584,14 @@ int main(int argc, char* argv[]) {
     test_snapshot_roundtrip();
     test_reject_qty_zero();
     test_reject_duplicate_id();
+    test_stop_buy_trigger();
+    test_peg_initial_and_reprice();
+    test_mass_cancel_by_client();
+    test_gtd_expiry_sweep();
+    test_walk_the_book();
+    test_ofi_signal();
+    test_volume_profile();
+    test_fee_accounting();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
