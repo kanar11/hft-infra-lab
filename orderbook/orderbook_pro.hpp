@@ -1537,13 +1537,10 @@ public:
         const std::int32_t hi = std::max(best_bid_ticks_, best_ask_ticks_);
 
         for (std::int32_t p = lo; p <= hi; ++p) {
-            // cum_bid(p) = sum of bid total_qty na poziomach >= p
+            // cum_bid(p) = Σ BID qty na poziomach ≥ p.
+            // Walk po head listach z side filter (levels_ trzymają mix bid+ask
+            // przy auction queue gdy obie strony przecinają sobie poziomy).
             std::int32_t cum_bid = 0;
-            for (std::int32_t bp = hi; bp >= p; --bp) cum_bid += levels_[bp].total_qty;
-            // (cum_bid includes asks at those levels too. Filtruj: musimy
-            // zliczać tylko po stronie. Niestety levels_ trzymają mix bid/ask.)
-            // Bardziej eleganckie: walk po head listach z side check.
-            cum_bid = 0;
             for (std::int32_t bp = hi; bp >= p; --bp) {
                 for (Order* o = levels_[bp].head; o; o = o->next_at_level) {
                     if (o->side == Side::BUY && o->is_active())
