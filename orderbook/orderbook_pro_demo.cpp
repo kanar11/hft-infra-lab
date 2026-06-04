@@ -308,6 +308,85 @@ void test_snapshot_roundtrip() {
 // Pre-trade reject reasons
 // ──────────────────────────────────────────────
 
+// ──────────────────────────────────────────────
+// Auction matching (opening / closing cross)
+// ──────────────────────────────────────────────
+
+void test_auction_clearing_price() {
+    Book b;
+    // Bids skłonne kupować >= 10000
+    b.submit(Side::BUY, 10010, 50);
+    b.submit(Side::BUY, 10005, 100);
+    b.submit(Side::BUY, 10000, 200);
+    // Asks skłonne sprzedawać <= 10005
+    b.submit(Side::SELL, 9995,  100);
+    b.submit(Side::SELL, 10005, 50);
+    b.submit(Side::SELL, 10010, 200);
+
+    // Continuous mode: best_bid=10010 best_ask=9995 → already crossed (queue state)
+    auto r = b.run_auction();
+    ASSERT(r.executed,                                "auction_executed");
+    ASSERT(r.clearing_price_ticks > 0,                "auction_clearing_set");
+    ASSERT(r.matched_qty > 0,                         "auction_matched_qty");
+    ASSERT(b.stats().total_auctions_executed == 1,    "auction_stat_counter");
+}
+
+// ──────────────────────────────────────────────
+// L2 delta queue
+// ──────────────────────────────────────────────
+
+void test_delta_queue_basic() {
+    Book b;
+    b.enable_delta_queue(true);
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10100, 200);
+    b.submit(Side::BUY,  9999,  50);
+
+    Book::DeltaMessage msgs[8];
+    auto n = b.pop_delta_queue(msgs, 8);
+    ASSERT(n == 3,                                "delta_queue_3_msgs");
+    ASSERT(msgs[0].type == 'A' && msgs[0].side == 'B' && msgs[0].price_ticks == 10000,
+           "delta_msg_0_add_bid");
+    ASSERT(msgs[1].type == 'A' && msgs[1].side == 'S' && msgs[1].price_ticks == 10100,
+           "delta_msg_1_add_ask");
+    ASSERT(msgs[2].type == 'A' && msgs[2].side == 'B' && msgs[2].price_ticks == 9999,
+           "delta_msg_2_add_bid_lower");
+    ASSERT(msgs[0].sequence_no < msgs[1].sequence_no &&
+           msgs[1].sequence_no < msgs[2].sequence_no,
+           "delta_seq_monotonic");
+
+    // Pop drugi raz — kolejka pusta
+    ASSERT(b.pop_delta_queue(msgs, 8) == 0, "delta_queue_drained");
+}
+
+void test_delta_wire_format() {
+    Book::DeltaMessage d{'A', 'B', 10500, 250, 42};
+    std::uint8_t buf[Book::DELTA_WIRE_SIZE];
+    auto written = Book::serialize_delta(d, buf);
+    ASSERT(written == Book::DELTA_WIRE_SIZE,        "delta_wire_size");
+
+    Book::DeltaMessage d2;
+    ASSERT(Book::deserialize_delta(buf, written, d2),    "delta_deserialize_ok");
+    ASSERT(d2.type == 'A' && d2.side == 'B',              "delta_type_side");
+    ASSERT(d2.price_ticks == 10500 && d2.new_qty == 250,  "delta_price_qty");
+    ASSERT(d2.sequence_no == 42,                          "delta_seq");
+}
+
+void test_delta_on_cancel() {
+    Book b;
+    b.enable_delta_queue(true);
+    auto id = b.submit(Side::BUY, 10000, 100);
+    DeltaMessage tmp[4];
+    b.pop_delta_queue(tmp, 4);   // wyrzuć Add
+
+    b.cancel(id);
+    DeltaMessage msgs[4];
+    auto n = b.pop_delta_queue(msgs, 4);
+    ASSERT(n == 1,                            "cancel_delta_1");
+    ASSERT(msgs[0].type == 'D',                "cancel_delta_type_D");
+    ASSERT(msgs[0].new_qty == 0,               "cancel_delta_qty_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -592,6 +671,10 @@ int main(int argc, char* argv[]) {
     test_ofi_signal();
     test_volume_profile();
     test_fee_accounting();
+    test_auction_clearing_price();
+    test_delta_queue_basic();
+    test_delta_wire_format();
+    test_delta_on_cancel();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

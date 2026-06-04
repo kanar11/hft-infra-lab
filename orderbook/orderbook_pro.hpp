@@ -51,8 +51,10 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <climits>     // INT32_MAX (sentinel NO_ASK_TICKS)
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>     // std::abs(int) — auction imbalance scoring
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -235,6 +237,7 @@ struct BookStats {
     std::uint64_t  total_stop_triggers      = 0;
     std::uint64_t  total_peg_reprices       = 0;
     std::uint64_t  total_mass_cancels       = 0;
+    std::uint64_t  total_auctions_executed  = 0;
 };
 
 
@@ -681,6 +684,8 @@ private:
     // Wspólna ścieżka cancel — używana przez user cancel + STP + internal.
     void cancel_internal(Order* o, bool emit_event) noexcept {
         if (!o || !o->is_active()) return;
+        const std::int32_t cancel_price = o->price_ticks;
+        const char         cancel_side  = (o->side == Side::BUY) ? 'B' : 'S';
         unlink_from_level(o);
         // Refresh best bid/ask jeśli ten level się opróżnił
         if (levels_[o->price_ticks].empty()) {
@@ -698,6 +703,8 @@ private:
         }
         free_order(o);
         ++stats_.total_orders_cancelled;
+        push_delta(levels_[cancel_price].empty() ? 'D' : 'M',
+                   cancel_side, cancel_price, levels_[cancel_price].total_qty);
     }
 
 public:
@@ -812,6 +819,8 @@ public:
             if (best_ask_ticks_ == NO_ASK_TICKS || o->price_ticks < best_ask_ticks_)
                 best_ask_ticks_ = o->price_ticks;
         }
+        push_delta('A', o->side == Side::BUY ? 'B' : 'S',
+                   o->price_ticks, levels_[o->price_ticks].total_qty);
         return o->id;
     }
 
@@ -1475,6 +1484,234 @@ public:
     std::int64_t total_taker_fees_basis() const noexcept { return cum_taker_fees_; }
     std::int64_t total_maker_fees_basis() const noexcept { return cum_maker_fees_; }
 
+    // ====================================================================
+    // Auction matching (opening / closing cross)
+    // ====================================================================
+    //
+    // Auction = single-price match (nie ciągłe matching). Cała kolekcja
+    // zleceń jest matched at one clearing price wybranym tak żeby zmaksymalizować
+    // przehandlowany wolumen. Klasyczny algorytm uctioned giełd:
+    //
+    //   For each candidate price p (od najniższego do najwyższego):
+    //     cum_bid(p) = sum of bid qty at price >= p     (skłonność do kupna ≥ p)
+    //     cum_ask(p) = sum of ask qty at price <= p     (skłonność do sprzedaży ≤ p)
+    //     matched(p) = min(cum_bid(p), cum_ask(p))
+    //
+    //   Clearing price = arg max matched(p). Przy ties: NASDAQ wybiera średnią,
+    //   NYSE last trade. Tu używamy mid-range tie-breakera.
+    //
+    //   Po znalezieniu clearing — wszystkie zlecenia z BID >= clearing oraz
+    //   ASK <= clearing są wypełnione (do limitu min(cum_bid, cum_ask)) at
+    //   clearing price. Pozostali zostają w księdze do continuous mode'u.
+    //
+    // Wynik:
+    //   AuctionResult{clearing_price, matched_qty, surplus_bid, surplus_ask}.
+    //
+    // To używane przy: opening cross (przed 9:30 zbierane są ordery, o 9:30
+    // jeden cross), closing cross (15:55-16:00 → 16:00), trading halt reopen.
+    struct AuctionResult {
+        std::int32_t  clearing_price_ticks;
+        std::int32_t  matched_qty;
+        std::int32_t  surplus_bid_qty;     // unmatched bid po cleared price
+        std::int32_t  surplus_ask_qty;     // unmatched ask po cleared price
+        bool          executed;
+    };
+
+    AuctionResult run_auction() noexcept {
+        AuctionResult res{};
+        res.clearing_price_ticks = -1;
+        if (!has_bid() || !has_ask()) return res;
+
+        // Walk cena range gdzie obie strony przeszły siebie — w continuous trade
+        // tego nie ma (best_bid < best_ask), ale przy auction queue obie strony
+        // mogą się przeciąć. Iterujemy od max(best_bid_ticks_) w dół do
+        // min(best_ask_ticks_) — to interesujący zakres.
+        std::int32_t best_clearing = -1;
+        std::int32_t best_matched  = -1;
+        std::int32_t best_imbalance = INT32_MAX;
+
+        // cum_bid(p) liczone od HIGH w dół, cum_ask(p) od LOW w górę
+        // Najpierw zlicz total per side w zakresie.
+        const std::int32_t lo = std::min(best_bid_ticks_, best_ask_ticks_);
+        const std::int32_t hi = std::max(best_bid_ticks_, best_ask_ticks_);
+
+        for (std::int32_t p = lo; p <= hi; ++p) {
+            // cum_bid(p) = sum of bid total_qty na poziomach >= p
+            std::int32_t cum_bid = 0;
+            for (std::int32_t bp = hi; bp >= p; --bp) cum_bid += levels_[bp].total_qty;
+            // (cum_bid includes asks at those levels too. Filtruj: musimy
+            // zliczać tylko po stronie. Niestety levels_ trzymają mix bid/ask.)
+            // Bardziej eleganckie: walk po head listach z side check.
+            cum_bid = 0;
+            for (std::int32_t bp = hi; bp >= p; --bp) {
+                for (Order* o = levels_[bp].head; o; o = o->next_at_level) {
+                    if (o->side == Side::BUY && o->is_active())
+                        cum_bid += o->displayed_qty;
+                }
+            }
+            std::int32_t cum_ask = 0;
+            for (std::int32_t ap = lo; ap <= p; ++ap) {
+                for (Order* o = levels_[ap].head; o; o = o->next_at_level) {
+                    if (o->side == Side::SELL && o->is_active())
+                        cum_ask += o->displayed_qty;
+                }
+            }
+            const std::int32_t matched = std::min(cum_bid, cum_ask);
+            const std::int32_t imbalance = std::abs(cum_bid - cum_ask);
+            if (matched > best_matched ||
+                (matched == best_matched && imbalance < best_imbalance)) {
+                best_matched = matched;
+                best_clearing = p;
+                best_imbalance = imbalance;
+                res.surplus_bid_qty = cum_bid - matched;
+                res.surplus_ask_qty = cum_ask - matched;
+            }
+        }
+        if (best_matched <= 0) return res;
+
+        res.clearing_price_ticks = best_clearing;
+        res.matched_qty          = best_matched;
+        res.executed             = true;
+
+        // Faktyczne wypełnienie at clearing price — FIFO per side
+        // (dla determinism, oversubscription = older orders win)
+        std::int32_t bid_remaining = best_matched;
+        std::int32_t ask_remaining = best_matched;
+        const std::uint64_t ts = mono_ns_now();
+
+        // Wykonaj BIDS od najwyższej ceny w dół, ale wszystkie po clearing_price
+        for (std::int32_t p = hi; p >= best_clearing && bid_remaining > 0; --p) {
+            Order* o = levels_[p].head;
+            while (o && bid_remaining > 0) {
+                Order* next = o->next_at_level;
+                if (o->side == Side::BUY && o->is_active()) {
+                    const std::int32_t take =
+                        std::min(o->remaining_qty(), bid_remaining);
+                    o->filled_qty += take;
+                    bid_remaining -= take;
+                    if (o->filled_qty >= o->total_qty) {
+                        o->status = OrderStatus::FILLED;
+                        emit(EventType::FILL, o->id, 0, best_clearing, take,
+                             OrderStatus::FILLED, RejectReason::NONE);
+                        unlink_from_level(o);
+                        id_index_.erase(o->id);
+                        free_order(o);
+                    } else {
+                        o->status = OrderStatus::PARTIALLY_FILLED;
+                        emit(EventType::FILL, o->id, 0, best_clearing, take,
+                             OrderStatus::PARTIALLY_FILLED, RejectReason::NONE);
+                    }
+                }
+                o = next;
+            }
+        }
+        // ASKS od najniższej w górę do clearing_price
+        for (std::int32_t p = lo; p <= best_clearing && ask_remaining > 0; ++p) {
+            Order* o = levels_[p].head;
+            while (o && ask_remaining > 0) {
+                Order* next = o->next_at_level;
+                if (o->side == Side::SELL && o->is_active()) {
+                    const std::int32_t take =
+                        std::min(o->remaining_qty(), ask_remaining);
+                    o->filled_qty += take;
+                    ask_remaining -= take;
+                    record_trade(o->id, 0, best_clearing, take,
+                                 Side::BUY, ts);
+                    if (o->filled_qty >= o->total_qty) {
+                        o->status = OrderStatus::FILLED;
+                        emit(EventType::FILL, o->id, 0, best_clearing, take,
+                             OrderStatus::FILLED, RejectReason::NONE);
+                        unlink_from_level(o);
+                        id_index_.erase(o->id);
+                        free_order(o);
+                    } else {
+                        o->status = OrderStatus::PARTIALLY_FILLED;
+                        emit(EventType::FILL, o->id, 0, best_clearing, take,
+                             OrderStatus::PARTIALLY_FILLED, RejectReason::NONE);
+                    }
+                }
+                o = next;
+            }
+        }
+
+        refresh_best_bid_from(LEVELS - 1);
+        refresh_best_ask_from(0);
+        ++stats_.total_auctions_executed;
+        return res;
+    }
+
+    // ====================================================================
+    // L2 incremental delta protocol
+    // ====================================================================
+    //
+    // Wire format dla rozsyłania zmian top-of-book i depth do klientów
+    // (alternative dla full snapshot). Format inspirowany ITCH 5.0 + NASDAQ
+    // BookFeed:
+    //
+    //   DeltaMessage:
+    //     [0]    type:    'A' = add, 'D' = delete, 'M' = modify, 'T' = trade
+    //     [1]    side:    'B' = bid, 'S' = ask, 'X' = both (na trade)
+    //     [2..5] price_ticks (int32 LE)
+    //     [6..9] new_qty      (int32 LE) — dla M to NEW qty na tym levelu
+    //     [10..17] sequence_no (uint64 LE) — monotonic
+    //
+    // Caller wywołuje pop_delta_queue() po każdej operacji żeby zabrać
+    // accumulated deltas i wysłać po sieci. Wewnętrzna kolejka FIFO.
+    struct DeltaMessage {
+        char          type;       // A/D/M/T
+        char          side;       // B/S/X
+        std::int32_t  price_ticks;
+        std::int32_t  new_qty;
+        std::uint64_t sequence_no;
+    };
+    static constexpr std::size_t DELTA_WIRE_SIZE = 18;
+
+    void enable_delta_queue(bool on) noexcept { delta_queue_enabled_ = on; }
+    bool delta_queue_enabled() const noexcept { return delta_queue_enabled_; }
+    std::size_t delta_queue_size() const noexcept { return delta_queue_.size(); }
+
+    // pop_delta_queue: skopiuj do `out` (max max_n), wyczyść z kolejki.
+    // Zwraca ile faktycznie pobrano.
+    std::size_t pop_delta_queue(DeltaMessage* out, std::size_t max_n) noexcept {
+        const std::size_t n = std::min(max_n, delta_queue_.size());
+        for (std::size_t i = 0; i < n; ++i) out[i] = delta_queue_[i];
+        delta_queue_.erase(delta_queue_.begin(),
+                            delta_queue_.begin() + static_cast<std::ptrdiff_t>(n));
+        return n;
+    }
+
+    // serialize_delta: pojedyncza wiadomość → 18 bajtów little-endian.
+    static std::size_t serialize_delta(const DeltaMessage& d,
+                                         std::uint8_t* buf) noexcept {
+        buf[0] = static_cast<std::uint8_t>(d.type);
+        buf[1] = static_cast<std::uint8_t>(d.side);
+        std::memcpy(buf + 2,  &d.price_ticks, 4);
+        std::memcpy(buf + 6,  &d.new_qty,     4);
+        std::memcpy(buf + 10, &d.sequence_no, 8);
+        return DELTA_WIRE_SIZE;
+    }
+
+    static bool deserialize_delta(const std::uint8_t* buf, std::size_t len,
+                                    DeltaMessage& d) noexcept {
+        if (len < DELTA_WIRE_SIZE) return false;
+        d.type = static_cast<char>(buf[0]);
+        d.side = static_cast<char>(buf[1]);
+        std::memcpy(&d.price_ticks, buf + 2,  4);
+        std::memcpy(&d.new_qty,     buf + 6,  4);
+        std::memcpy(&d.sequence_no, buf + 10, 8);
+        return true;
+    }
+
+    // ====================================================================
+    // Internal — push delta from book mutations
+    // ====================================================================
+    void push_delta(char type, char side, std::int32_t price_ticks,
+                     std::int32_t new_qty) noexcept {
+        if (!delta_queue_enabled_) return;
+        DeltaMessage d{type, side, price_ticks, new_qty, ++delta_seq_};
+        delta_queue_.push_back(d);
+    }
+
 private:
     // Storage extension (rozszerzenia używane w 2nd-pass features)
     std::vector<Order*>  stop_orders_;   // czekają na trigger
@@ -1493,6 +1730,11 @@ private:
     std::int32_t  maker_fee_bps_   = 0;
     std::int64_t  cum_taker_fees_  = 0;
     std::int64_t  cum_maker_fees_  = 0;
+
+    // L2 delta queue state
+    bool                      delta_queue_enabled_ = false;
+    std::vector<DeltaMessage> delta_queue_;
+    std::uint64_t             delta_seq_ = 0;
 };
 
 
