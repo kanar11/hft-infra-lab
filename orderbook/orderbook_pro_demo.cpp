@@ -387,6 +387,106 @@ void test_delta_on_cancel() {
     ASSERT(msgs[0].new_qty == 0,               "cancel_delta_qty_0");
 }
 
+// ──────────────────────────────────────────────
+// Spread + microstructure analytics
+// ──────────────────────────────────────────────
+
+void test_spread_analytics() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    ASSERT(b.spread_ticks() == 10,             "spread_10_ticks");
+    // mid = 10005, sprd = 10. half_spread = (10*10000/2)/10005 = ~4
+    const auto hsb = b.half_spread_bps();
+    ASSERT(hsb >= 4 && hsb <= 6,                "half_spread_bps_reasonable");
+    ASSERT(b.weighted_mid_ticks() == b.microprice_ticks(),
+           "weighted_mid_alias_for_microprice");
+}
+
+// ──────────────────────────────────────────────
+// Mass quote (atomic 2-sided MM submission)
+// ──────────────────────────────────────────────
+
+void test_mass_quote_atomic() {
+    Book b;
+    Book::Quote q[2] = {
+        {Side::BUY,  10000, 100},
+        {Side::SELL, 10010, 100},
+    };
+    std::uint64_t ids[2];
+    auto n = b.mass_quote(q, 2, /*client=*/42, ids);
+    ASSERT(n == 2,                                "mq_2_accepted");
+    ASSERT(ids[0] > 0 && ids[1] > 0,              "mq_ids_set");
+    ASSERT(b.best_bid_ticks() == 10000,           "mq_bid");
+    ASSERT(b.best_ask_ticks() == 10010,           "mq_ask");
+    ASSERT(b.stats().total_mass_quotes == 1,      "mq_stat");
+}
+
+void test_mass_quote_rejected_if_crosses() {
+    Book b;
+    b.submit(Side::SELL, 10000, 100);   // resting ask
+    Book::Quote q[2] = {
+        {Side::BUY,  10005, 100},        // crosses!
+        {Side::SELL, 10010, 100},
+    };
+    auto n = b.mass_quote(q, 2, /*client=*/42, nullptr);
+    ASSERT(n == 0,                           "mq_atomic_reject_all_or_none");
+    // Resting sell intakt — nic z mass_quote nie weszło
+    ASSERT(b.best_ask_ticks() == 10000,      "mq_book_unmodified");
+}
+
+// ──────────────────────────────────────────────
+// Liquidity snapshot
+// ──────────────────────────────────────────────
+
+void test_liquidity_snapshot() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::BUY,  9999,  200);
+    b.submit(Side::SELL, 10010, 50);
+    b.submit(Side::SELL, 10011, 150);
+
+    auto s = b.liquidity_snapshot();
+    ASSERT(s.bid_count == 2,                    "snap_bid_count");
+    ASSERT(s.ask_count == 2,                    "snap_ask_count");
+    ASSERT(s.spread_ticks == 10,                "snap_spread");
+    ASSERT(s.total_bid_volume == 300,           "snap_bid_vol");
+    ASSERT(s.total_ask_volume == 200,           "snap_ask_vol");
+}
+
+// ──────────────────────────────────────────────
+// BookCluster — multi-symbol
+// ──────────────────────────────────────────────
+
+void test_book_cluster_basic() {
+    orderbook_pro::BookCluster<8, 16384, 4096> cluster;
+    ASSERT(cluster.register_symbol("AAPL"),     "cluster_register_AAPL");
+    ASSERT(cluster.register_symbol("MSFT"),     "cluster_register_MSFT");
+    ASSERT(!cluster.register_symbol("AAPL"),    "cluster_no_duplicate");
+    ASSERT(cluster.active_symbol_count() == 2,   "cluster_2_symbols");
+
+    auto* aapl = cluster.book("AAPL");
+    auto* msft = cluster.book("MSFT");
+    ASSERT(aapl != nullptr && msft != nullptr,  "cluster_books_distinct");
+    ASSERT(aapl != msft,                         "cluster_books_independent");
+
+    aapl->submit(Side::BUY,  17500, 100);
+    aapl->submit(Side::SELL, 17510, 100);
+    msft->submit(Side::BUY,  41000, 50);
+    msft->submit(Side::SELL, 41020, 50);
+
+    // Cross-symbol aggregations
+    ASSERT(cluster.total_active_orders() == 4,  "cluster_total_orders");
+    // Avg spread: (10 + 20) / 2 = 15
+    ASSERT(cluster.avg_spread_ticks() == 15,    "cluster_avg_spread");
+}
+
+void test_book_cluster_unknown_symbol() {
+    orderbook_pro::BookCluster<4> cluster;
+    cluster.register_symbol("AAPL");
+    ASSERT(cluster.book("GOOG") == nullptr,     "cluster_unknown_nullptr");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -675,6 +775,12 @@ int main(int argc, char* argv[]) {
     test_delta_queue_basic();
     test_delta_wire_format();
     test_delta_on_cancel();
+    test_spread_analytics();
+    test_mass_quote_atomic();
+    test_mass_quote_rejected_if_crosses();
+    test_liquidity_snapshot();
+    test_book_cluster_basic();
+    test_book_cluster_unknown_symbol();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

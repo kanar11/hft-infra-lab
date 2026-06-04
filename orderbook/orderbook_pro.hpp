@@ -238,6 +238,7 @@ struct BookStats {
     std::uint64_t  total_peg_reprices       = 0;
     std::uint64_t  total_mass_cancels       = 0;
     std::uint64_t  total_auctions_executed  = 0;
+    std::uint64_t  total_mass_quotes        = 0;
 };
 
 
@@ -1735,6 +1736,241 @@ private:
     bool                      delta_queue_enabled_ = false;
     std::vector<DeltaMessage> delta_queue_;
     std::uint64_t             delta_seq_ = 0;
+
+public:
+    // ====================================================================
+    // Spread + microstructure analytics
+    // ====================================================================
+    //
+    // spread_ticks — best_ask - best_bid (>=0 in continuous mode).
+    // Zwraca -1 gdy nie ma quote po którejś stronie.
+    std::int32_t spread_ticks() const noexcept {
+        if (!has_bid() || !has_ask()) return -1;
+        return best_ask_ticks_ - best_bid_ticks_;
+    }
+
+    // half_spread_bps — relative spread w bps (mid_price reference).
+    // Standardowa miara liquidity cost. < 5 bps = tight, > 50 bps = wide.
+    std::int32_t half_spread_bps() const noexcept {
+        if (!has_bid() || !has_ask()) return -1;
+        const std::int64_t mid    = (best_bid_ticks_ + best_ask_ticks_) / 2;
+        const std::int64_t sprd   = best_ask_ticks_ - best_bid_ticks_;
+        if (mid <= 0) return -1;
+        return static_cast<std::int32_t>((sprd * 10000 / 2) / mid);
+    }
+
+    // weighted_mid_ticks — alias dla microprice (popularna nazwa w lit).
+    std::int32_t weighted_mid_ticks() const noexcept { return microprice_ticks(); }
+
+    // ====================================================================
+    // Mass quote — atomic batch submission (market maker scenario)
+    // ====================================================================
+    //
+    // MM zwykle wystawia 2-stronną kwotę (bid + ask) atomowo, żeby nie być
+    // expozowany na chwilowy ruch przy non-atomic submissions. mass_quote()
+    // atomic: ALL-OR-NONE (jeśli jeden by failed, NIC nie idzie).
+    //
+    // Caller dostarcza array `quotes[n]`. Każdy element to {side, price, qty}.
+    // Zwraca liczbę przyjętych zleceń (== n on success, 0 na pierwszy fail).
+    struct Quote {
+        Side          side;
+        std::int32_t  price_ticks;
+        std::int32_t  qty;
+    };
+    std::size_t mass_quote(const Quote* quotes, std::size_t n,
+                            std::uint64_t client_id,
+                            std::uint64_t* out_ids = nullptr) noexcept {
+        // 2-pass: faza walidacji (sprawdzimy że pula i ceny OK), faza submit.
+        if (active_orders_ + n > MAX_ORDERS) {
+            ++stats_.total_orders_rejected;
+            return 0;
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& q = quotes[i];
+            if (q.qty <= 0 || !in_range(q.price_ticks)) {
+                ++stats_.total_orders_rejected;
+                return 0;
+            }
+            // POST_ONLY semantic — quote nie może krzyżować rynku
+            if (would_cross(q.side, q.price_ticks)) {
+                ++stats_.total_orders_rejected;
+                return 0;
+            }
+        }
+        // Wszystko OK — submit each
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& q = quotes[i];
+            const std::uint64_t id = submit(q.side, q.price_ticks, q.qty,
+                                              OrderType::POST_ONLY,
+                                              TimeInForce::DAY, 0, client_id);
+            if (out_ids) out_ids[i] = id;
+        }
+        ++stats_.total_mass_quotes;
+        return n;
+    }
+
+    // ====================================================================
+    // Liquidity heatmap data — N levels per side z rozszerzonym info
+    // ====================================================================
+    //
+    // Zwraca strukturę gęstej płynności wokół top of book.
+    struct LiquiditySnapshot {
+        DepthLevel    bid_levels[10];
+        DepthLevel    ask_levels[10];
+        std::int32_t  bid_count;
+        std::int32_t  ask_count;
+        std::int32_t  spread_ticks;
+        std::int32_t  imbalance_bps;
+        std::int64_t  total_bid_volume;
+        std::int64_t  total_ask_volume;
+        std::int32_t  microprice_ticks;
+    };
+
+    LiquiditySnapshot liquidity_snapshot() const noexcept {
+        LiquiditySnapshot s{};
+        depth(10, s.bid_levels, s.ask_levels, &s.bid_count, &s.ask_count);
+        s.spread_ticks      = spread_ticks();
+        s.imbalance_bps     = imbalance_bps();
+        s.microprice_ticks  = microprice_ticks();
+        for (std::int32_t i = 0; i < s.bid_count; ++i)
+            s.total_bid_volume += s.bid_levels[i].qty;
+        for (std::int32_t i = 0; i < s.ask_count; ++i)
+            s.total_ask_volume += s.ask_levels[i].qty;
+        return s;
+    }
+};
+
+
+// ====================================================================
+// BookCluster<N_SYMBOLS, ...> — wielo-symbolowa książka
+// ====================================================================
+//
+// Wrapper na N osobnych FullOrderBook'ów z O(1) lookup po nazwie symbolu.
+// Symbole są kodowane jako 8-char ASCII pakowane do uint64 (sym_to_key
+// idea: każdy znak w 8 bitach low-byte first).
+//
+// Po co? Realne venues handlują tysiące symboli — separate book per symbol
+// daje pełną izolację (one symbol's halt nie blokuje innych) + cache locality
+// (każdy book ma własne levels[], orders[]).
+//
+// Konfiguracja: N_SYMBOLS = max liczba różnych symboli. LEVELS / MAX_ORDERS_PER_SYM
+// per-book.
+//
+// Cross-symbol features:
+//   - total_volume_across_all() — Σ wolumen wszystkich symboli
+//   - avg_spread_ticks() — średni spread w klastrze (proxy dla market quality)
+//   - busiest_symbol() — symbol z największą ilością aktywnych zleceń
+template <std::size_t N_SYMBOLS = 16,
+          std::int32_t LEVELS = 16384,
+          std::int32_t MAX_ORDERS_PER_SYM = 8192>
+class BookCluster {
+    using BookT = FullOrderBook<LEVELS, MAX_ORDERS_PER_SYM>;
+
+    BookT  books_[N_SYMBOLS];
+    char   symbols_[N_SYMBOLS][9];    // 8 chars + null
+    bool   slot_used_[N_SYMBOLS]      = {};
+    std::size_t active_count_         = 0;
+
+    // sym → uint64 packing (8 chars LSB first)
+    static std::uint64_t pack(const char* sym) noexcept {
+        std::uint64_t k = 0;
+        for (int i = 0; i < 8 && sym[i]; ++i) {
+            k |= static_cast<std::uint64_t>(static_cast<unsigned char>(sym[i])) << (i * 8);
+        }
+        return k;
+    }
+
+    // Liniowy search po slotach. N_SYMBOLS ≤ 16 — szybsze niż unordered_map
+    // (1-2 cache lines mieści się w cache L1, branch predictor radzi sobie).
+    std::int32_t find_slot(const char* sym) const noexcept {
+        const std::uint64_t key = pack(sym);
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i]) continue;
+            if (pack(symbols_[i]) == key) return static_cast<std::int32_t>(i);
+        }
+        return -1;
+    }
+
+public:
+    BookCluster() noexcept {
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) symbols_[i][0] = '\0';
+    }
+
+    BookCluster(const BookCluster&)            = delete;
+    BookCluster& operator=(const BookCluster&) = delete;
+    BookCluster(BookCluster&&)                 = delete;
+    BookCluster& operator=(BookCluster&&)      = delete;
+
+    // Zarejestruj nowy symbol. Zwraca true on success, false gdy slot
+    // wyczerpany albo symbol już istnieje.
+    bool register_symbol(const char* sym) noexcept {
+        if (find_slot(sym) >= 0) return false;  // already registered
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i]) {
+                slot_used_[i] = true;
+                std::strncpy(symbols_[i], sym, 8);
+                symbols_[i][8] = '\0';
+                ++active_count_;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    BookT* book(const char* sym) noexcept {
+        const std::int32_t slot = find_slot(sym);
+        return slot >= 0 ? &books_[slot] : nullptr;
+    }
+    const BookT* book(const char* sym) const noexcept {
+        const std::int32_t slot = find_slot(sym);
+        return slot >= 0 ? &books_[slot] : nullptr;
+    }
+
+    std::size_t active_symbol_count() const noexcept { return active_count_; }
+    std::size_t capacity_symbols()    const noexcept { return N_SYMBOLS; }
+
+    // Cross-symbol aggregations
+    std::uint64_t total_volume_across_all() const noexcept {
+        std::uint64_t total = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (slot_used_[i]) total += books_[i].stats().total_volume;
+        }
+        return total;
+    }
+
+    // avg_spread_ticks: średni spread po symbolach które mają obie strony quote.
+    // Zwraca -1 gdy żaden symbol nie ma TOB.
+    std::int32_t avg_spread_ticks() const noexcept {
+        std::int64_t sum = 0;
+        std::int32_t cnt = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i]) continue;
+            const std::int32_t s = books_[i].spread_ticks();
+            if (s >= 0) { sum += s; ++cnt; }
+        }
+        return cnt > 0 ? static_cast<std::int32_t>(sum / cnt) : -1;
+    }
+
+    // busiest_symbol: symbol z największym active_orders(). Zwraca nullptr gdy puste.
+    const char* busiest_symbol() const noexcept {
+        std::size_t best = N_SYMBOLS;
+        std::size_t best_count = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i]) continue;
+            const std::size_t c = books_[i].active_orders();
+            if (c > best_count) { best_count = c; best = i; }
+        }
+        return best < N_SYMBOLS ? symbols_[best] : nullptr;
+    }
+
+    // total_active_orders_across_all
+    std::size_t total_active_orders() const noexcept {
+        std::size_t t = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (slot_used_[i]) t += books_[i].active_orders();
+        }
+        return t;
+    }
 };
 
 
