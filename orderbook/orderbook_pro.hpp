@@ -1870,8 +1870,14 @@ class BookCluster {
 
     // sym → uint64 packing (8 chars LSB first)
     static std::uint64_t pack(const char* sym) noexcept {
+        // Najpierw zmierz długość przez memchr (cppcheck rozumie ten wzorzec
+        // i nie zgłasza arrayIndexOutOfBoundsCond na short-circuit z `sym[i]`).
         std::uint64_t k = 0;
-        for (int i = 0; i < 8 && sym[i]; ++i) {
+        const void* nul = std::memchr(sym, '\0', 8);
+        const std::size_t n = nul
+            ? static_cast<std::size_t>(static_cast<const char*>(nul) - sym)
+            : 8;
+        for (std::size_t i = 0; i < n; ++i) {
             k |= static_cast<std::uint64_t>(static_cast<unsigned char>(sym[i])) << (i * 8);
         }
         return k;

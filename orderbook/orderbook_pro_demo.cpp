@@ -376,11 +376,11 @@ void test_delta_on_cancel() {
     Book b;
     b.enable_delta_queue(true);
     auto id = b.submit(Side::BUY, 10000, 100);
-    DeltaMessage tmp[4];
+    Book::DeltaMessage tmp[4];
     b.pop_delta_queue(tmp, 4);   // wyrzuć Add
 
     b.cancel(id);
-    DeltaMessage msgs[4];
+    Book::DeltaMessage msgs[4];
     auto n = b.pop_delta_queue(msgs, 4);
     ASSERT(n == 1,                            "cancel_delta_1");
     ASSERT(msgs[0].type == 'D',                "cancel_delta_type_D");
