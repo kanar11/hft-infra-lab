@@ -558,6 +558,71 @@ void test_halt_does_not_block_cancel() {
     ASSERT(!b.has_bid(),                          "halt_cancel_removed");
 }
 
+// ──────────────────────────────────────────────
+// MIN_QTY constraint
+// ──────────────────────────────────────────────
+
+void test_min_qty_rejected_when_not_met() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);   // tylko 50 dostępne
+    // BUY 100 z min_qty=75 — fillable=50 < 75 → REJECT
+    RejectReason rr = RejectReason::NONE;
+    auto id = b.submit(Side::BUY, 10100, 100, OrderType::LIMIT,
+                        TimeInForce::DAY, 0, 0, 0, &rr, /*min_qty=*/75);
+    ASSERT(id == 0,                                "min_qty_reject");
+    ASSERT(rr == RejectReason::MIN_QTY_NOT_MET,    "min_qty_reason");
+    // SELL pozostaje
+    ASSERT(b.has_ask(),                            "min_qty_book_intact");
+}
+
+void test_min_qty_accepted_when_met() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    // BUY 100 z min_qty=50 — fillable=100 ≥ 50 → ACCEPT
+    auto id = b.submit(Side::BUY, 10100, 100, OrderType::LIMIT,
+                        TimeInForce::DAY, 0, 0, 0, nullptr, /*min_qty=*/50);
+    ASSERT(id > 0,                                  "min_qty_accept");
+    ASSERT(b.stats().total_volume == 100,           "min_qty_filled");
+}
+
+// ──────────────────────────────────────────────
+// Audit log (SEC 17a-4 compliance)
+// ──────────────────────────────────────────────
+
+void test_audit_log_records_lifecycle() {
+    Book b;
+    b.enable_audit_log(true);
+    auto id = b.submit(Side::BUY, 10000, 100);
+    b.cancel(id);
+
+    Book::AuditRecord recs[8];
+    auto n = b.pop_audit_records(recs, 8);
+    ASSERT(n == 2,                                  "audit_2_records");
+    ASSERT(recs[0].event == EventType::ACCEPT,      "audit_0_accept");
+    ASSERT(recs[1].event == EventType::CANCEL,      "audit_1_cancel");
+    ASSERT(recs[0].seq_no < recs[1].seq_no,         "audit_seq_monotonic");
+    ASSERT(recs[0].order_id == id,                  "audit_order_id");
+    ASSERT(recs[1].order_id == id,                  "audit_cancel_id");
+    // Pop ponownie — pusta
+    ASSERT(b.pop_audit_records(recs, 8) == 0,       "audit_drained");
+}
+
+void test_audit_log_records_reject() {
+    Book b;
+    b.enable_audit_log(true);
+    b.submit(Side::BUY, -1, 100);   // bad price → REJECT
+    Book::AuditRecord recs[4];
+    auto n = b.pop_audit_records(recs, 4);
+    ASSERT(n == 1,                                  "audit_reject_1");
+    ASSERT(recs[0].event == EventType::REJECT,      "audit_reject_event");
+}
+
+void test_audit_disabled_by_default() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    ASSERT(b.audit_log_size() == 0,                "audit_disabled_no_records");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -857,6 +922,11 @@ int main(int argc, char* argv[]) {
     test_halt_rejects_new_orders();
     test_resume_allows_orders();
     test_halt_does_not_block_cancel();
+    test_min_qty_rejected_when_not_met();
+    test_min_qty_accepted_when_met();
+    test_audit_log_records_lifecycle();
+    test_audit_log_records_reject();
+    test_audit_disabled_by_default();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

@@ -143,6 +143,7 @@ enum class RejectReason : std::uint8_t {
     LOCKED_MARKET         = 8,   // bid == ask (cross protection)
     CROSSED_MARKET        = 9,   // bid > ask (rynek skrzyżowany)
     HALTED                = 10,  // book halted (trading halt)
+    MIN_QTY_NOT_MET       = 11,  // matched < min_qty constraint
 };
 
 
@@ -705,6 +706,8 @@ private:
             emit(EventType::CANCEL, o->id, 0, o->price_ticks, leftover,
                  OrderStatus::CANCELLED, RejectReason::NONE);
         }
+        push_audit(EventType::CANCEL, o->id, o->side, o->price_ticks, leftover,
+                    OrderStatus::CANCELLED);
         free_order(o);
         ++stats_.total_orders_cancelled;
         push_delta(levels_[cancel_price].empty() ? 'D' : 'M',
@@ -735,13 +738,16 @@ public:
                           std::uint64_t order_id = 0,
                           std::uint64_t client_id = 0,
                           std::int32_t displayed_qty = 0,
-                          RejectReason* out_reason = nullptr) noexcept {
+                          RejectReason* out_reason = nullptr,
+                          std::int32_t min_qty = 0) noexcept {
         auto reject = [&](RejectReason r) -> std::uint64_t {
             if (out_reason) *out_reason = r;
             ++stats_.total_orders_rejected;
             const std::uint64_t rid = order_id ? order_id : 0;
             emit(EventType::REJECT, rid, 0, price_ticks, qty,
                  OrderStatus::REJECTED, r);
+            push_audit(EventType::REJECT, rid, side, price_ticks, qty,
+                       OrderStatus::REJECTED);
             return 0;
         };
 
@@ -762,6 +768,15 @@ public:
         if ((type == OrderType::FOK || tif == TimeInForce::FOK)
             && !fok_fillable(side, price_ticks, qty)) {
             return reject(RejectReason::FOK_NOT_FILLABLE);
+        }
+
+        // MIN_QTY: matched musi być ≥ min_qty albo REJECT.
+        // (Skip dla POST_ONLY/HIDDEN/auction — nie matchują continuous.)
+        if (min_qty > 0 && type != OrderType::POST_ONLY
+            && type != OrderType::HIDDEN && !in_auction_mode_) {
+            const auto preview = walk_the_book(side, qty, price_ticks);
+            if (preview.fillable_qty < min_qty)
+                return reject(RejectReason::MIN_QTY_NOT_MET);
         }
 
         // Alokacja
@@ -789,6 +804,8 @@ public:
 
         emit(EventType::ACCEPT, o->id, 0, o->price_ticks, o->total_qty,
              OrderStatus::OPEN, RejectReason::NONE);
+        push_audit(EventType::ACCEPT, o->id, o->side, o->price_ticks, o->total_qty,
+                    OrderStatus::OPEN);
 
         // Match (chyba że POST_ONLY — ale POST_ONLY już odrzucone gdyby krzyżowało,
         // ani w trybie auction — orders czekają na batch cross via run_auction).
@@ -1759,6 +1776,33 @@ private:
     bool                      halted_ = false;
     char                      halt_reason_[32]{};
 
+    // Audit log — opt-in chronological record wszystkich book mutations.
+    // Używane do replay'u, forensics, compliance review (SEC 17a-4).
+public:
+    struct AuditRecord {
+        std::uint64_t ts_ns;
+        std::uint64_t seq_no;
+        std::uint64_t order_id;
+        std::int32_t  price_ticks;
+        std::int32_t  qty;
+        EventType     event;       // ACCEPT/REJECT/FILL/CANCEL/EXPIRE/REPLACE
+        Side          side;
+        OrderStatus   result;
+    };
+private:
+    bool                      audit_enabled_ = false;
+    std::vector<AuditRecord>  audit_log_;
+    std::uint64_t             audit_seq_ = 0;
+
+    void push_audit(EventType ev, std::uint64_t order_id, Side side,
+                     std::int32_t price_ticks, std::int32_t qty,
+                     OrderStatus result) noexcept {
+        if (!audit_enabled_) return;
+        AuditRecord r{mono_ns_now(), ++audit_seq_, order_id, price_ticks, qty,
+                       ev, side, result};
+        audit_log_.push_back(r);
+    }
+
 public:
     // ====================================================================
     // Spread + microstructure analytics
@@ -1856,6 +1900,21 @@ public:
     bool in_auction_mode()    const noexcept { return in_auction_mode_; }
 
     // Halt/resume — trading halt.
+    // Audit log API.
+    void enable_audit_log(bool on) noexcept { audit_enabled_ = on; }
+    bool audit_log_enabled() const noexcept { return audit_enabled_; }
+    std::size_t audit_log_size() const noexcept { return audit_log_.size(); }
+
+    // pop_audit_records: skopiuj do `out` (max max_n), wyczyść z bufora.
+    // Zwraca ile pobranych.
+    std::size_t pop_audit_records(AuditRecord* out, std::size_t max_n) noexcept {
+        const std::size_t n = std::min(max_n, audit_log_.size());
+        for (std::size_t i = 0; i < n; ++i) out[i] = audit_log_[i];
+        audit_log_.erase(audit_log_.begin(),
+                          audit_log_.begin() + static_cast<std::ptrdiff_t>(n));
+        return n;
+    }
+
     void halt(const char* reason) noexcept {
         halted_ = true;
         std::memset(halt_reason_, 0, sizeof(halt_reason_));
