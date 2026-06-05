@@ -623,6 +623,68 @@ void test_audit_disabled_by_default() {
     ASSERT(b.audit_log_size() == 0,                "audit_disabled_no_records");
 }
 
+// ──────────────────────────────────────────────
+// LULD circuit breaker
+// ──────────────────────────────────────────────
+
+void test_luld_rejects_out_of_band() {
+    Book b;
+    b.set_luld_bands(9900, 10100, /*auto_halt=*/false);
+    RejectReason rr = RejectReason::NONE;
+    auto id = b.submit(Side::BUY, 10500, 100, OrderType::LIMIT,
+                        TimeInForce::DAY, 0, 0, 0, &rr);
+    ASSERT(id == 0,                                  "luld_reject");
+    ASSERT(rr == RejectReason::LULD_BAND_BREACH,     "luld_reason");
+    ASSERT(b.luld_breaches() == 1,                    "luld_breach_count");
+}
+
+void test_luld_accepts_within_band() {
+    Book b;
+    b.set_luld_bands(9900, 10100, false);
+    auto id = b.submit(Side::BUY, 10000, 100);
+    ASSERT(id > 0,                                    "luld_within_ok");
+}
+
+void test_luld_auto_halt() {
+    Book b;
+    b.set_luld_bands(9900, 10100, /*auto_halt=*/true);
+    b.submit(Side::BUY, 10500, 100);   // out-of-band → halt
+    ASSERT(b.is_halted(),                            "luld_auto_halted");
+    ASSERT(std::strcmp(b.halt_reason(), "LULD_BREACH") == 0,
+           "luld_halt_reason");
+    // Po halt nawet good order rejected
+    RejectReason rr = RejectReason::NONE;
+    auto id2 = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+                         TimeInForce::DAY, 0, 0, 0, &rr);
+    ASSERT(id2 == 0,                                  "luld_halted_blocks");
+    ASSERT(rr == RejectReason::HALTED,                "luld_halt_reason_post");
+}
+
+// ──────────────────────────────────────────────
+// MIFID II RTS27/28 metrics
+// ──────────────────────────────────────────────
+
+void test_mifid_effective_spread() {
+    Book b;
+    b.enable_mifid_metrics(true);
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);  // mid = 10005
+    // Aggressive BUY @ 10010 — exec @ 10010, mid=10005 → diff=5
+    b.submit(Side::BUY, 10010, 50);
+    auto m = b.get_mifid_metrics();
+    ASSERT(m.num_executions >= 1,                    "mifid_exec_count");
+    ASSERT(m.total_volume > 0,                       "mifid_volume");
+    ASSERT(m.sum_effective_spread > 0,               "mifid_eff_spread_positive");
+}
+
+void test_mifid_disabled_no_tracking() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY, 10100, 100);  // execution
+    auto m = b.get_mifid_metrics();
+    ASSERT(m.num_executions == 0,                    "mifid_disabled");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -927,6 +989,11 @@ int main(int argc, char* argv[]) {
     test_audit_log_records_lifecycle();
     test_audit_log_records_reject();
     test_audit_disabled_by_default();
+    test_luld_rejects_out_of_band();
+    test_luld_accepts_within_band();
+    test_luld_auto_halt();
+    test_mifid_effective_spread();
+    test_mifid_disabled_no_tracking();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

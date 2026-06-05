@@ -144,6 +144,7 @@ enum class RejectReason : std::uint8_t {
     CROSSED_MARKET        = 9,   // bid > ask (rynek skrzyżowany)
     HALTED                = 10,  // book halted (trading halt)
     MIN_QTY_NOT_MET       = 11,  // matched < min_qty constraint
+    LULD_BAND_BREACH      = 12,  // cena poza Limit Up / Limit Down bandami
 };
 
 
@@ -433,6 +434,22 @@ class FullOrderBook {
             static_cast<std::int64_t>(price_ticks) * qty;
         cum_taker_fees_ += notional_ticks * taker_fee_bps_;
         cum_maker_fees_ += notional_ticks * maker_fee_bps_;
+        // MIFID II RTS27/28: effective spread = 2 × |exec - mid|
+        if (mifid_enabled_) {
+            ++mifid_.num_executions;
+            mifid_.total_volume         += static_cast<std::uint64_t>(qty);
+            mifid_.total_notional_ticks += notional_ticks;
+            const std::int32_t m = mid_ticks();
+            if (m > 0) {
+                const std::int64_t diff = std::abs(static_cast<std::int64_t>(price_ticks) - m);
+                mifid_.sum_effective_spread += diff * 2 * qty;
+                // signed price impact (taker direction = sign of (price - mid))
+                const std::int64_t signed_diff =
+                    static_cast<std::int64_t>(price_ticks) - m;
+                mifid_.sum_signed_price_impact +=
+                    (taker_side == Side::BUY ? signed_diff : -signed_diff) * qty;
+            }
+        }
     }
 
 public:
@@ -758,6 +775,13 @@ public:
                                        return reject(RejectReason::PRICE_OUT_OF_RANGE);
         if (order_id != 0 && id_index_.find(order_id) != id_index_.end())
                                        return reject(RejectReason::DUPLICATE_ID);
+        // LULD check — quote poza band'em → REJECT (+opt-in auto-halt)
+        if (luld_enabled_ && (price_ticks < luld_low_ticks_ ||
+                                price_ticks > luld_high_ticks_)) {
+            ++luld_breaches_;
+            if (luld_auto_halt_) halt("LULD_BREACH");
+            return reject(RejectReason::LULD_BAND_BREACH);
+        }
 
         // POST_ONLY: nie wolno wziąć płynności (cross protection)
         if (type == OrderType::POST_ONLY && would_cross(side, price_ticks)) {
@@ -1794,6 +1818,14 @@ private:
     std::vector<AuditRecord>  audit_log_;
     std::uint64_t             audit_seq_ = 0;
 
+    // LULD (Limit Up Limit Down) — auto-halt mechanizm SEC Rule 605.
+    // Quote poza band'ami auto-rejected lub auto-haltuje book.
+    bool                      luld_enabled_ = false;
+    std::int32_t              luld_low_ticks_  = 0;
+    std::int32_t              luld_high_ticks_ = 0;
+    bool                      luld_auto_halt_  = false;   // true → breach halt'uje
+    std::uint64_t             luld_breaches_   = 0;
+
     void push_audit(EventType ev, std::uint64_t order_id, Side side,
                      std::int32_t price_ticks, std::int32_t qty,
                      OrderStatus result) noexcept {
@@ -1802,6 +1834,55 @@ private:
                        ev, side, result};
         audit_log_.push_back(r);
     }
+
+public:
+    // ====================================================================
+    // LULD (Limit Up / Limit Down) — SEC Rule 605 circuit breaker
+    // ====================================================================
+    //
+    // Quote poza band'ami → REJECT(LULD_BAND_BREACH).
+    // Jeśli auto_halt=true, breach też haltuje book (5 min standard SEC).
+    //
+    // Real-world: dla S&P 500 stocks 5% LULD band podczas regularnej sesji,
+    // 10% pierwsze 15 min. Trigger po jednej breach = pauza market data + halt.
+    void set_luld_bands(std::int32_t low_ticks, std::int32_t high_ticks,
+                         bool auto_halt = true) noexcept {
+        luld_enabled_    = true;
+        luld_low_ticks_  = low_ticks;
+        luld_high_ticks_ = high_ticks;
+        luld_auto_halt_  = auto_halt;
+    }
+    void disable_luld() noexcept { luld_enabled_ = false; }
+    bool luld_enabled() const noexcept { return luld_enabled_; }
+    std::int32_t luld_low()  const noexcept { return luld_low_ticks_; }
+    std::int32_t luld_high() const noexcept { return luld_high_ticks_; }
+    std::uint64_t luld_breaches() const noexcept { return luld_breaches_; }
+
+    // ====================================================================
+    // MIFID II RTS27/28 best-execution metrics
+    // ====================================================================
+    //
+    // Regulacyjny output dla EU venue reporting. Tracking continuous:
+    //   - effective_spread = 2 × |exec_price - mid_at_exec| (per execution)
+    //   - realized_spread  = 2 × |exec_price - mid_post_n_seconds| (proxy: trade-to-trade)
+    //   - num_executions, total_volume, total_notional
+    //
+    // Caller wywołuje get_mifid_metrics() na koniec sesji żeby wygenerować raport.
+    struct MIFIDMetrics {
+        std::uint64_t num_executions          = 0;
+        std::uint64_t total_volume            = 0;
+        std::int64_t  total_notional_ticks    = 0;
+        std::int64_t  sum_effective_spread    = 0;   // ticks × qty
+        std::int64_t  sum_signed_price_impact = 0;   // realized spread proxy
+    };
+    MIFIDMetrics get_mifid_metrics() const noexcept { return mifid_; }
+    void reset_mifid_metrics() noexcept { mifid_ = MIFIDMetrics{}; }
+    void enable_mifid_metrics(bool on) noexcept { mifid_enabled_ = on; }
+    bool mifid_metrics_enabled() const noexcept { return mifid_enabled_; }
+
+private:
+    MIFIDMetrics  mifid_{};
+    bool          mifid_enabled_ = false;
 
 public:
     // ====================================================================
