@@ -72,14 +72,16 @@ inline constexpr std::int32_t NO_ASK_TICKS    = INT32_MAX;    // sentinel po str
 
 // Typ zlecenia — DEC2025 NASDAQ + IEX taxonomies.
 enum class OrderType : std::uint8_t {
-    LIMIT      = 0,   // standardowe limit order
-    IOC        = 1,   // Immediate-Or-Cancel: weź co możesz teraz, resztę KASUJ
-    FOK        = 2,   // Fill-Or-Kill: cała qty albo nic
-    POST_ONLY  = 3,   // ALO — odrzuć jeśli zostałbyś takerem (cross na entry)
-    ICEBERG    = 4,   // pokazuj tylko `displayed_qty`, ukrywaj resztę
-    STOP       = 5,   // trigger-on-price; po triggerze staje się LIMIT/MARKET
-    PEG        = 6,   // peg do mid albo best bid/ask + offset
-    MARKET     = 7,   // bez ceny, zjadasz aż do wyczerpania
+    LIMIT       = 0,   // standardowe limit order
+    IOC         = 1,   // Immediate-Or-Cancel: weź co możesz teraz, resztę KASUJ
+    FOK         = 2,   // Fill-Or-Kill: cała qty albo nic
+    POST_ONLY   = 3,   // ALO — odrzuć jeśli zostałbyś takerem (cross na entry)
+    ICEBERG     = 4,   // pokazuj tylko `displayed_qty`, ukrywaj resztę
+    STOP        = 5,   // trigger-on-price; po triggerze staje się LIMIT/MARKET
+    PEG         = 6,   // peg do mid albo best bid/ask + offset
+    MARKET      = 7,   // bez ceny, zjadasz aż do wyczerpania
+    HIDDEN      = 8,   // NIE pokazywane w L1/L2 depth ani trade tape (dark pool semantyka)
+    AON         = 9,   // All-Or-None: fill jak FOK ale persiste w księdze (czeka)
 };
 
 
@@ -140,6 +142,7 @@ enum class RejectReason : std::uint8_t {
     DUPLICATE_ID          = 7,   // ID już istnieje w księdze
     LOCKED_MARKET         = 8,   // bid == ask (cross protection)
     CROSSED_MARKET        = 9,   // bid > ask (rynek skrzyżowany)
+    HALTED                = 10,  // book halted (trading halt)
 };
 
 
@@ -743,6 +746,7 @@ public:
         };
 
         // Walidacje
+        if (halted_)                   return reject(RejectReason::HALTED);
         if (qty <= 0)                  return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
         if (!in_range(price_ticks) && type != OrderType::MARKET)
                                        return reject(RejectReason::PRICE_OUT_OF_RANGE);
@@ -769,8 +773,13 @@ public:
         o->price_ticks   = price_ticks;
         o->total_qty     = qty;
         o->filled_qty    = 0;
-        o->displayed_qty = (type == OrderType::ICEBERG && displayed_qty > 0)
-                           ? displayed_qty : qty;
+        // HIDDEN: pełna qty w total_hidden, displayed=0 → niewidoczne w L1/L2.
+        // ICEBERG: pokazuj tylko displayed_qty arg (jeśli >0).
+        // Pozostałe: pełna widoczność.
+        o->displayed_qty = (type == OrderType::HIDDEN)             ? 0
+                          : (type == OrderType::ICEBERG && displayed_qty > 0)
+                                                                    ? displayed_qty
+                                                                    : qty;
         o->side          = side;
         o->type          = type;
         o->tif           = tif;
@@ -783,7 +792,10 @@ public:
 
         // Match (chyba że POST_ONLY — ale POST_ONLY już odrzucone gdyby krzyżowało,
         // ani w trybie auction — orders czekają na batch cross via run_auction).
-        if (type != OrderType::POST_ONLY && !in_auction_mode_) {
+        // HIDDEN orders nie matchują continuous (dark-pool semantyka) — wchodzą
+        // bezpośrednio do księgi jako pure-dark liquidity dla cross/auction.
+        if (type != OrderType::POST_ONLY && type != OrderType::HIDDEN &&
+            !in_auction_mode_) {
             match_against(o);
         }
 
@@ -813,16 +825,19 @@ public:
         enqueue_at_level(o);
         id_index_[o->id] = o;
 
-        // Update best bid/ask
-        if (o->side == Side::BUY) {
-            if (best_bid_ticks_ == NO_BID_TICKS || o->price_ticks > best_bid_ticks_)
-                best_bid_ticks_ = o->price_ticks;
-        } else {
-            if (best_ask_ticks_ == NO_ASK_TICKS || o->price_ticks < best_ask_ticks_)
-                best_ask_ticks_ = o->price_ticks;
+        // Update best bid/ask — TYLKO dla visible orders (HIDDEN nigdy nie
+        // pojawia się w L1/L2; jest tylko dla cross/auction match'u).
+        if (type != OrderType::HIDDEN) {
+            if (o->side == Side::BUY) {
+                if (best_bid_ticks_ == NO_BID_TICKS || o->price_ticks > best_bid_ticks_)
+                    best_bid_ticks_ = o->price_ticks;
+            } else {
+                if (best_ask_ticks_ == NO_ASK_TICKS || o->price_ticks < best_ask_ticks_)
+                    best_ask_ticks_ = o->price_ticks;
+            }
+            push_delta('A', o->side == Side::BUY ? 'B' : 'S',
+                       o->price_ticks, levels_[o->price_ticks].total_qty);
         }
-        push_delta('A', o->side == Side::BUY ? 'B' : 'S',
-                   o->price_ticks, levels_[o->price_ticks].total_qty);
         return o->id;
     }
 
@@ -1739,6 +1754,11 @@ private:
     // w księdze do later batch match przez run_auction).
     bool                      in_auction_mode_ = false;
 
+    // Halt state — trading halt (LULD, news pending, technical issue).
+    // Gdy halted_, każdy submit → REJECT(HALTED). Cancel zlecenia wciąż OK.
+    bool                      halted_ = false;
+    char                      halt_reason_[32]{};
+
 public:
     // ====================================================================
     // Spread + microstructure analytics
@@ -1834,6 +1854,20 @@ public:
     void enter_auction_mode() noexcept { in_auction_mode_ = true; }
     void exit_auction_mode()  noexcept { in_auction_mode_ = false; }
     bool in_auction_mode()    const noexcept { return in_auction_mode_; }
+
+    // Halt/resume — trading halt.
+    void halt(const char* reason) noexcept {
+        halted_ = true;
+        std::memset(halt_reason_, 0, sizeof(halt_reason_));
+        if (reason) {
+            const std::size_t n = std::min(sizeof(halt_reason_) - 1,
+                                             std::strlen(reason));
+            std::memcpy(halt_reason_, reason, n);
+        }
+    }
+    void resume() noexcept { halted_ = false; halt_reason_[0] = '\0'; }
+    bool is_halted() const noexcept { return halted_; }
+    const char* halt_reason() const noexcept { return halt_reason_; }
 
     LiquiditySnapshot liquidity_snapshot() const noexcept {
         LiquiditySnapshot s{};

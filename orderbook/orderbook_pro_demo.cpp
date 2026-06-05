@@ -489,6 +489,75 @@ void test_book_cluster_unknown_symbol() {
     ASSERT(cluster.book("GOOG") == nullptr,     "cluster_unknown_nullptr");
 }
 
+// ──────────────────────────────────────────────
+// HIDDEN orders — dark-pool semantics
+// ──────────────────────────────────────────────
+
+void test_hidden_not_in_l1_or_l2() {
+    Book b;
+    auto h = b.submit(Side::SELL, 10100, 500, OrderType::HIDDEN);
+    ASSERT(h > 0,                                "hidden_accepted");
+    // L1 — HIDDEN nie pojawia się w top of book
+    ASSERT(!b.has_ask(),                          "hidden_no_visible_ask");
+    auto tob = b.top_of_book();
+    ASSERT(tob.best_ask_ticks == NO_ASK_TICKS,    "hidden_tob_ask_sentinel");
+    // L2 depth — pusta strona ask
+    DepthLevel bids[5], asks[5];
+    std::int32_t bn=0, an=0;
+    b.depth(5, bids, asks, &bn, &an);
+    ASSERT(an == 0,                               "hidden_no_l2_ask");
+    // total_volume_at_price() — visible = 0 (displayed_qty = 0)
+    ASSERT(b.total_volume_at_price(10100) == 0,   "hidden_visible_zero");
+}
+
+void test_hidden_does_not_match_continuous() {
+    Book b;
+    // HIDDEN sell @ 10100, size 500
+    b.submit(Side::SELL, 10100, 500, OrderType::HIDDEN);
+    // Aggressive BUY @ 10100 size 100 — chciałby zjeść hidden, ale
+    // dark-pool nie matchuje continuous → BUY zostaje w księdze
+    auto buy = b.submit(Side::BUY, 10100, 100);
+    ASSERT(buy > 0,                               "hidden_buy_accepted");
+    ASSERT(b.stats().total_fills == 0,            "hidden_no_continuous_fill");
+    ASSERT(b.best_bid_ticks() == 10100,           "hidden_buy_resting");
+}
+
+// ──────────────────────────────────────────────
+// Halt / resume
+// ──────────────────────────────────────────────
+
+void test_halt_rejects_new_orders() {
+    Book b;
+    b.halt("LULD_BREACH");
+    ASSERT(b.is_halted(),                                "halt_state_set");
+    ASSERT(std::strcmp(b.halt_reason(), "LULD_BREACH") == 0, "halt_reason_set");
+
+    RejectReason rr = RejectReason::NONE;
+    auto id = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+                        TimeInForce::DAY, 0, 0, 0, &rr);
+    ASSERT(id == 0,                              "halt_rejects_submit");
+    ASSERT(rr == RejectReason::HALTED,            "halt_reject_reason");
+}
+
+void test_resume_allows_orders() {
+    Book b;
+    b.halt("HALT");
+    b.resume();
+    ASSERT(!b.is_halted(),                       "resume_state_clear");
+    auto id = b.submit(Side::BUY, 10000, 100);
+    ASSERT(id > 0,                                "resume_allows_submit");
+}
+
+void test_halt_does_not_block_cancel() {
+    Book b;
+    auto id = b.submit(Side::BUY, 10000, 100);
+    b.halt("EMERGENCY");
+    // Cancel zlecenia POWINNO działać nawet podczas haltu (compliance:
+    // trader musi móc się wycofać).
+    ASSERT(b.cancel(id),                          "halt_cancel_works");
+    ASSERT(!b.has_bid(),                          "halt_cancel_removed");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -783,6 +852,11 @@ int main(int argc, char* argv[]) {
     test_liquidity_snapshot();
     test_book_cluster_basic();
     test_book_cluster_unknown_symbol();
+    test_hidden_not_in_l1_or_l2();
+    test_hidden_does_not_match_continuous();
+    test_halt_rejects_new_orders();
+    test_resume_allows_orders();
+    test_halt_does_not_block_cancel();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
