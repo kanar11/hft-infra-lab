@@ -314,16 +314,17 @@ void test_snapshot_roundtrip() {
 
 void test_auction_clearing_price() {
     Book b;
-    // Bids skłonne kupować >= 10000
+    // Auction mode: submit pomija match, orders sit w księdze do batch cross.
+    b.enter_auction_mode();
     b.submit(Side::BUY, 10010, 50);
     b.submit(Side::BUY, 10005, 100);
     b.submit(Side::BUY, 10000, 200);
-    // Asks skłonne sprzedawać <= 10005
     b.submit(Side::SELL, 9995,  100);
     b.submit(Side::SELL, 10005, 50);
     b.submit(Side::SELL, 10010, 200);
+    b.exit_auction_mode();
 
-    // Continuous mode: best_bid=10010 best_ask=9995 → already crossed (queue state)
+    // Po sit-and-wait → run_auction znajdzie clearing 10005 (matched=150)
     auto r = b.run_auction();
     ASSERT(r.executed,                                "auction_executed");
     ASSERT(r.clearing_price_ticks > 0,                "auction_clearing_set");
@@ -470,10 +471,11 @@ void test_book_cluster_basic() {
     ASSERT(aapl != nullptr && msft != nullptr,  "cluster_books_distinct");
     ASSERT(aapl != msft,                         "cluster_books_independent");
 
-    aapl->submit(Side::BUY,  17500, 100);
-    aapl->submit(Side::SELL, 17510, 100);
-    msft->submit(Side::BUY,  41000, 50);
-    msft->submit(Side::SELL, 41020, 50);
+    // LEVELS=16384 — ceny muszą się mieścić < 16384
+    aapl->submit(Side::BUY,  10000, 100);
+    aapl->submit(Side::SELL, 10010, 100);
+    msft->submit(Side::BUY,  11000, 50);
+    msft->submit(Side::SELL, 11020, 50);
 
     // Cross-symbol aggregations
     ASSERT(cluster.total_active_orders() == 4,  "cluster_total_orders");

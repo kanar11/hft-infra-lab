@@ -781,8 +781,9 @@ public:
         emit(EventType::ACCEPT, o->id, 0, o->price_ticks, o->total_qty,
              OrderStatus::OPEN, RejectReason::NONE);
 
-        // Match (chyba że POST_ONLY — ale POST_ONLY już odrzucone gdyby krzyżowało)
-        if (type != OrderType::POST_ONLY) {
+        // Match (chyba że POST_ONLY — ale POST_ONLY już odrzucone gdyby krzyżowało,
+        // ani w trybie auction — orders czekają na batch cross via run_auction).
+        if (type != OrderType::POST_ONLY && !in_auction_mode_) {
             match_against(o);
         }
 
@@ -1734,6 +1735,10 @@ private:
     std::vector<DeltaMessage> delta_queue_;
     std::uint64_t             delta_seq_ = 0;
 
+    // Auction mode — gdy true, submit() pomija match_against (orders sit
+    // w księdze do later batch match przez run_auction).
+    bool                      in_auction_mode_ = false;
+
 public:
     // ====================================================================
     // Spread + microstructure analytics
@@ -1822,6 +1827,13 @@ public:
         std::int64_t  total_ask_volume;
         std::int32_t  microprice_ticks;
     };
+
+    // Auction mode — caller wywołuje przed batch submit dla cross.
+    // Po enter_auction_mode(), każdy submit pomija matching i siedzi w księdze.
+    // Po exit_auction_mode() + run_auction(), single-price cross matched FIFO.
+    void enter_auction_mode() noexcept { in_auction_mode_ = true; }
+    void exit_auction_mode()  noexcept { in_auction_mode_ = false; }
+    bool in_auction_mode()    const noexcept { return in_auction_mode_; }
 
     LiquiditySnapshot liquidity_snapshot() const noexcept {
         LiquiditySnapshot s{};
