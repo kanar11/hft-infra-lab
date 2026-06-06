@@ -428,6 +428,7 @@ class FullOrderBook {
         ++stats_.total_fills;
         stats_.total_volume += static_cast<std::uint64_t>(qty);
         last_trade_ticks_ = price_ticks;
+        update_size_distribution(qty);
         // Fee accounting (basis): notional = price * qty; fee = notional * bps / 10000
         // Trzymamy w "basis units" (price_ticks * qty * bps), divs by 10000 robi caller.
         const std::int64_t notional_ticks =
@@ -764,6 +765,7 @@ public:
             if (out_reason) *out_reason = r;
             ++stats_.total_orders_rejected;
             const std::uint64_t rid = order_id ? order_id : 0;
+            if (client_id != 0) ++client_rejections_[client_id];
             emit(EventType::REJECT, rid, 0, price_ticks, qty,
                  OrderStatus::REJECTED, r);
             push_audit(EventType::REJECT, rid, side, price_ticks, qty,
@@ -1986,6 +1988,110 @@ private:
     }
 
 public:
+    // ====================================================================
+    // Trade size distribution + TWAP + reference price drift
+    // ====================================================================
+    //
+    // Trade size distribution: classify executions w 4 segments dla detection
+    // retail (small) vs institutional flow (block):
+    //   SMALL   ≤ 100
+    //   MEDIUM  101..1000
+    //   LARGE   1001..10000
+    //   BLOCK   > 10000
+    // Per-segment counter + volume sum.
+    struct TradeSizeDistribution {
+        std::uint64_t  small_count    = 0;   // ≤100
+        std::uint64_t  medium_count   = 0;   // 101-1000
+        std::uint64_t  large_count    = 0;   // 1001-10000
+        std::uint64_t  block_count    = 0;   // >10000
+        std::uint64_t  small_volume   = 0;
+        std::uint64_t  medium_volume  = 0;
+        std::uint64_t  large_volume   = 0;
+        std::uint64_t  block_volume   = 0;
+    };
+
+    TradeSizeDistribution get_size_distribution() const noexcept {
+        return size_dist_;
+    }
+    void reset_size_distribution() noexcept { size_dist_ = TradeSizeDistribution{}; }
+
+    // TWAP — time-weighted average price z trade tape.
+    // Inaczej niż tape_vwap (volume-weighted), TWAP traktuje każdy trade
+    // jednakowo. Używany do detection wash-trading (gdy wolumeny nierówne
+    // ale TWAP =VWAP, podejrzanie).
+    std::int32_t tape_twap_ticks() const noexcept {
+        const std::size_t n = tape_size();
+        if (n == 0) return -1;
+        std::int64_t sum = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - 1 - i) % TAPE_CAP];
+            sum += t.price_ticks;
+        }
+        return static_cast<std::int32_t>(sum / static_cast<std::int64_t>(n));
+    }
+
+    // Reference price + drift detection.
+    //
+    // set_reference_price(ticks) — ustal anchor (np. previous close, opening cross,
+    // SIP NBBO mid). Potem reference_drift_bps() zwraca |mid - ref| / ref × 10000.
+    // Drift > X bps może triggerować halt review.
+    void set_reference_price(std::int32_t ref_ticks) noexcept {
+        reference_price_ticks_ = ref_ticks;
+        reference_set_ = true;
+    }
+    bool has_reference_price() const noexcept { return reference_set_; }
+    std::int32_t reference_price_ticks() const noexcept { return reference_price_ticks_; }
+
+    // reference_drift_bps: bps deviation mid od reference. Zwraca -1 gdy
+    // ref nieustalone lub brak mid.
+    std::int32_t reference_drift_bps() const noexcept {
+        if (!reference_set_) return -1;
+        const std::int32_t m = mid_ticks();
+        if (m < 0 || reference_price_ticks_ <= 0) return -1;
+        const std::int64_t diff = std::abs(static_cast<std::int64_t>(m) - reference_price_ticks_);
+        return static_cast<std::int32_t>(diff * 10000 / reference_price_ticks_);
+    }
+
+    // Order rejection rate per client.
+    double rejection_rate(std::uint64_t client_id) const noexcept {
+        const auto it = account_exposure_.find(client_id);
+        if (it == account_exposure_.end() || it->second.orders_submitted == 0)
+            return 0.0;
+        const auto rejected_it = client_rejections_.find(client_id);
+        const std::uint64_t r = (rejected_it == client_rejections_.end())
+                                ? 0 : rejected_it->second;
+        return static_cast<double>(r) /
+               static_cast<double>(it->second.orders_submitted + r);
+    }
+
+private:
+    // Trade size distribution state
+    TradeSizeDistribution  size_dist_{};
+
+    // Reference price state
+    bool          reference_set_ = false;
+    std::int32_t  reference_price_ticks_ = 0;
+
+    // Per-client rejection counter
+    std::unordered_map<std::uint64_t, std::uint64_t>  client_rejections_;
+
+    // Hook: update size distribution z record_trade()
+    void update_size_distribution(std::int32_t qty) noexcept {
+        if (qty <= 100) {
+            ++size_dist_.small_count;
+            size_dist_.small_volume += static_cast<std::uint64_t>(qty);
+        } else if (qty <= 1000) {
+            ++size_dist_.medium_count;
+            size_dist_.medium_volume += static_cast<std::uint64_t>(qty);
+        } else if (qty <= 10000) {
+            ++size_dist_.large_count;
+            size_dist_.large_volume += static_cast<std::uint64_t>(qty);
+        } else {
+            ++size_dist_.block_count;
+            size_dist_.block_volume += static_cast<std::uint64_t>(qty);
+        }
+    }
+
     // ====================================================================
     // Spread + microstructure analytics
     // ====================================================================

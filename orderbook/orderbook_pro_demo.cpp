@@ -768,6 +768,87 @@ void test_exposure_cancel_releases_open_qty() {
     ASSERT(ex_after.orders_cancelled == 1,           "exposure_cancel_count");
 }
 
+// ──────────────────────────────────────────────
+// Trade size distribution
+// ──────────────────────────────────────────────
+
+void test_trade_size_distribution_classifies() {
+    Book b;
+    // Małe: 50
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    // Średnie: 500
+    b.submit(Side::SELL, 10100, 500);
+    b.submit(Side::BUY,  10100, 500);
+    // Duże: 5000
+    b.submit(Side::SELL, 10100, 5000);
+    b.submit(Side::BUY,  10100, 5000);
+
+    auto d = b.get_size_distribution();
+    ASSERT(d.small_count >= 1,                        "size_small_counted");
+    ASSERT(d.medium_count >= 1,                       "size_medium_counted");
+    ASSERT(d.large_count >= 1,                        "size_large_counted");
+    ASSERT(d.small_volume == 50,                       "size_small_vol");
+    ASSERT(d.medium_volume == 500,                     "size_medium_vol");
+    ASSERT(d.large_volume == 5000,                     "size_large_vol");
+}
+
+// ──────────────────────────────────────────────
+// TWAP from trade tape
+// ──────────────────────────────────────────────
+
+void test_tape_twap() {
+    Book b;
+    b.submit(Side::SELL, 10000, 100);
+    b.submit(Side::BUY,  10000, 100);    // trade @ 10000
+    b.submit(Side::SELL, 10010, 200);
+    b.submit(Side::BUY,  10010, 200);    // trade @ 10010
+    // TWAP: (10000 + 10010) / 2 = 10005 (sztywno, nieważne size)
+    ASSERT(b.tape_twap_ticks() == 10005,              "twap_arithmetic_mean");
+    // VWAP weighted by qty: (10000*100 + 10010*200) / 300 = 10006
+    ASSERT(b.tape_vwap_ticks() == 10006,              "vwap_weighted_by_qty");
+}
+
+// ──────────────────────────────────────────────
+// Reference price + drift
+// ──────────────────────────────────────────────
+
+void test_reference_price_drift() {
+    Book b;
+    b.set_reference_price(10000);
+    b.submit(Side::BUY,  10050, 100);
+    b.submit(Side::SELL, 10070, 100);
+    // mid = 10060, ref = 10000 → drift = 60/10000 * 10000 = 60 bps
+    const auto drift = b.reference_drift_bps();
+    ASSERT(drift >= 55 && drift <= 65,                "ref_drift_around_60");
+}
+
+void test_reference_price_no_ref_set() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    ASSERT(!b.has_reference_price(),                  "ref_default_off");
+    ASSERT(b.reference_drift_bps() == -1,             "ref_drift_no_ref");
+}
+
+// ──────────────────────────────────────────────
+// Per-client rejection rate
+// ──────────────────────────────────────────────
+
+void test_rejection_rate() {
+    Book b;
+    // Klient 42: 1 OK + 2 reject (qty=0)
+    b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+              TimeInForce::DAY, 0, /*cid=*/42);
+    b.submit(Side::BUY, 10000, 0, OrderType::LIMIT,
+              TimeInForce::DAY, 0, /*cid=*/42);
+    b.submit(Side::BUY, 10000, -1, OrderType::LIMIT,
+              TimeInForce::DAY, 0, /*cid=*/42);
+    const double rate = b.rejection_rate(42);
+    // 2 rejections / (1 accepted + 2 rejections) = 2/3 ≈ 0.667
+    ASSERT(rate > 0.6 && rate < 0.7,                  "rejection_rate_two_thirds");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1083,6 +1164,11 @@ int main(int argc, char* argv[]) {
     test_exposure_open_buy();
     test_exposure_filled_net_qty();
     test_exposure_cancel_releases_open_qty();
+    test_trade_size_distribution_classifies();
+    test_tape_twap();
+    test_reference_price_drift();
+    test_reference_price_no_ref_set();
+    test_rejection_rate();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
