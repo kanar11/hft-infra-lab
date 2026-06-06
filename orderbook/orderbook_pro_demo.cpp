@@ -685,6 +685,89 @@ void test_mifid_disabled_no_tracking() {
     ASSERT(m.num_executions == 0,                    "mifid_disabled");
 }
 
+// ──────────────────────────────────────────────
+// Quote stuffing detection (SEC Rule 15c3-5)
+// ──────────────────────────────────────────────
+
+void test_stuffing_below_threshold_not_flagged() {
+    Book b;
+    b.set_stuffing_threshold(10);   // 10 cancels triggers flag
+    for (int i = 0; i < 5; ++i) {
+        auto id = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+                            TimeInForce::DAY, 0, /*cid=*/42);
+        b.cancel(id);
+    }
+    ASSERT(!b.is_stuffing_flagged(42),               "stuffing_under_threshold");
+    ASSERT(b.total_stuffing_flags() == 0,            "stuffing_no_flags_yet");
+}
+
+void test_stuffing_above_threshold_flagged() {
+    Book b;
+    b.set_stuffing_threshold(5);
+    for (int i = 0; i < 20; ++i) {
+        auto id = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+                            TimeInForce::DAY, 0, /*cid=*/77);
+        b.cancel(id);
+    }
+    ASSERT(b.is_stuffing_flagged(77),                "stuffing_flag_set");
+    ASSERT(b.total_stuffing_flags() >= 1,            "stuffing_total_count");
+}
+
+void test_stuffing_clear_flag() {
+    Book b;
+    b.set_stuffing_threshold(3);
+    for (int i = 0; i < 10; ++i) {
+        auto id = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+                            TimeInForce::DAY, 0, /*cid=*/99);
+        b.cancel(id);
+    }
+    ASSERT(b.is_stuffing_flagged(99),                "stuffing_flagged_99");
+    b.clear_stuffing_flag(99);
+    ASSERT(!b.is_stuffing_flagged(99),               "stuffing_flag_cleared");
+}
+
+// ──────────────────────────────────────────────
+// Per-account exposure tracking
+// ──────────────────────────────────────────────
+
+void test_exposure_open_buy() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+              TimeInForce::DAY, 0, /*cid=*/42);
+    b.submit(Side::BUY, 9999, 200, OrderType::LIMIT,
+              TimeInForce::DAY, 0, /*cid=*/42);
+    auto ex = b.get_account_exposure(42);
+    ASSERT(ex.open_buy_qty == 300,                   "exposure_buy_accumulated");
+    ASSERT(ex.open_sell_qty == 0,                    "exposure_no_sell");
+    ASSERT(ex.orders_submitted == 2,                 "exposure_submit_count");
+}
+
+void test_exposure_filled_net_qty() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100, OrderType::LIMIT,
+              TimeInForce::DAY, 0, /*cid=*/77);
+    b.submit(Side::BUY, 10100, 100, OrderType::LIMIT,
+              TimeInForce::DAY, 0, /*cid=*/42);
+    auto ex42 = b.get_account_exposure(42);
+    auto ex77 = b.get_account_exposure(77);
+    ASSERT(ex42.filled_net_qty == 100,               "exposure_42_long");
+    ASSERT(ex77.filled_net_qty == -100,              "exposure_77_short");
+    ASSERT(ex42.fills_received >= 1,                 "exposure_42_fills");
+    ASSERT(ex77.fills_received >= 1,                 "exposure_77_fills");
+}
+
+void test_exposure_cancel_releases_open_qty() {
+    Book b;
+    auto id = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+                        TimeInForce::DAY, 0, /*cid=*/42);
+    auto ex_before = b.get_account_exposure(42);
+    ASSERT(ex_before.open_buy_qty == 100,            "exposure_pre_cancel");
+    b.cancel(id);
+    auto ex_after = b.get_account_exposure(42);
+    ASSERT(ex_after.open_buy_qty == 0,               "exposure_post_cancel");
+    ASSERT(ex_after.orders_cancelled == 1,           "exposure_cancel_count");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -994,6 +1077,12 @@ int main(int argc, char* argv[]) {
     test_luld_auto_halt();
     test_mifid_effective_spread();
     test_mifid_disabled_no_tracking();
+    test_stuffing_below_threshold_not_flagged();
+    test_stuffing_above_threshold_flagged();
+    test_stuffing_clear_flag();
+    test_exposure_open_buy();
+    test_exposure_filled_net_qty();
+    test_exposure_cancel_releases_open_qty();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

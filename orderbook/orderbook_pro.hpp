@@ -613,6 +613,8 @@ private:
             m->filled_qty   += exec_qty;
             taker->filled_qty += exec_qty;
             qty_remaining   -= exec_qty;
+            exposure_on_fill(m->client_id, m->side, exec_qty);
+            exposure_on_fill(taker->client_id, taker->side, exec_qty);
 
             // Trade record (price = maker's price = lvl.price = m->price_ticks)
             record_trade(m->id, taker->id, m->price_ticks, exec_qty,
@@ -725,6 +727,7 @@ private:
         }
         push_audit(EventType::CANCEL, o->id, o->side, o->price_ticks, leftover,
                     OrderStatus::CANCELLED);
+        exposure_on_cancel(o->client_id, o->side, leftover);
         free_order(o);
         ++stats_.total_orders_cancelled;
         push_delta(levels_[cancel_price].empty() ? 'D' : 'M',
@@ -830,6 +833,7 @@ public:
              OrderStatus::OPEN, RejectReason::NONE);
         push_audit(EventType::ACCEPT, o->id, o->side, o->price_ticks, o->total_qty,
                     OrderStatus::OPEN);
+        exposure_on_submit(o->client_id, o->side, o->total_qty);
 
         // Match (chyba że POST_ONLY — ale POST_ONLY już odrzucone gdyby krzyżowało,
         // ani w trybie auction — orders czekają na batch cross via run_auction).
@@ -1883,6 +1887,103 @@ public:
 private:
     MIFIDMetrics  mifid_{};
     bool          mifid_enabled_ = false;
+
+public:
+    // ====================================================================
+    // Quote stuffing detection
+    // ====================================================================
+    //
+    // Stuffing = wysyłka tysięcy ordersów per sekunda + natychmiastowe
+    // cancele, żeby symbolu nie dało się odczytać w real time. SEC Rule
+    // 15c3-5: każdy venue musi to wykrywać i flagować.
+    //
+    // Tu trzymamy per-client_id licznik cancel'i w sliding window (last
+    // N samples). Powyżej threshold → emit STUFFING_FLAGGED event +
+    // stats.total_stuffing_flags.
+    void set_stuffing_threshold(std::uint32_t cancels_per_sec_threshold) noexcept {
+        stuffing_threshold_ = cancels_per_sec_threshold;
+    }
+    std::uint32_t stuffing_threshold() const noexcept { return stuffing_threshold_; }
+    bool is_stuffing_flagged(std::uint64_t client_id) const noexcept {
+        const auto it = stuffing_flagged_.find(client_id);
+        return it != stuffing_flagged_.end() && it->second;
+    }
+    std::uint64_t total_stuffing_flags() const noexcept { return total_stuffing_flags_; }
+
+    // Reset stuffing window per client (np. po manual review).
+    void clear_stuffing_flag(std::uint64_t client_id) noexcept {
+        stuffing_flagged_[client_id] = false;
+        cancel_counters_[client_id]  = 0;
+    }
+
+    // ====================================================================
+    // Per-account exposure tracking
+    // ====================================================================
+    //
+    // Per client_id: net qty (BUY - SELL) open + filled, plus gross qty.
+    // Risk team używa do real-time monitoring expozycji per account.
+    //
+    // Tracked w submit/cancel/fill events. Caller wywołuje
+    // get_account_exposure(client_id) — zwraca AccountExposure struct.
+    struct AccountExposure {
+        std::int64_t  open_buy_qty       = 0;     // bid orders w księdze
+        std::int64_t  open_sell_qty      = 0;     // ask orders w księdze
+        std::int64_t  filled_net_qty     = 0;     // realizowana pozycja
+        std::int64_t  filled_gross_volume = 0;    // gross qty traded
+        std::uint64_t orders_submitted    = 0;
+        std::uint64_t orders_cancelled    = 0;
+        std::uint64_t fills_received      = 0;
+    };
+    AccountExposure get_account_exposure(std::uint64_t client_id) const noexcept {
+        const auto it = account_exposure_.find(client_id);
+        return it == account_exposure_.end() ? AccountExposure{} : it->second;
+    }
+
+private:
+    std::unordered_map<std::uint64_t, AccountExposure> account_exposure_;
+
+    // Stuffing detection state
+    std::uint32_t                            stuffing_threshold_ = 0;
+    std::unordered_map<std::uint64_t, bool>  stuffing_flagged_;
+    std::unordered_map<std::uint64_t, std::uint32_t> cancel_counters_;
+    std::uint64_t                            total_stuffing_flags_ = 0;
+
+    // update_exposure helpers — wywoływane z submit/cancel/fill hooks.
+    void exposure_on_submit(std::uint64_t cid, Side side, std::int32_t qty) noexcept {
+        if (cid == 0) return;
+        AccountExposure& ex = account_exposure_[cid];
+        if (side == Side::BUY) ex.open_buy_qty  += qty;
+        else                   ex.open_sell_qty += qty;
+        ++ex.orders_submitted;
+    }
+    void exposure_on_cancel(std::uint64_t cid, Side side, std::int32_t remaining) noexcept {
+        if (cid == 0) return;
+        AccountExposure& ex = account_exposure_[cid];
+        if (side == Side::BUY) ex.open_buy_qty  -= remaining;
+        else                   ex.open_sell_qty -= remaining;
+        ++ex.orders_cancelled;
+        // Stuffing check
+        if (stuffing_threshold_ > 0) {
+            const auto cnt = ++cancel_counters_[cid];
+            if (cnt > stuffing_threshold_ && !stuffing_flagged_[cid]) {
+                stuffing_flagged_[cid] = true;
+                ++total_stuffing_flags_;
+            }
+        }
+    }
+    void exposure_on_fill(std::uint64_t cid, Side side, std::int32_t qty) noexcept {
+        if (cid == 0) return;
+        AccountExposure& ex = account_exposure_[cid];
+        if (side == Side::BUY) {
+            ex.open_buy_qty   -= qty;
+            ex.filled_net_qty += qty;
+        } else {
+            ex.open_sell_qty  -= qty;
+            ex.filled_net_qty -= qty;
+        }
+        ex.filled_gross_volume += qty;
+        ++ex.fills_received;
+    }
 
 public:
     // ====================================================================
