@@ -1095,6 +1095,79 @@ void test_ctr_after_cancel_and_fill() {
     ASSERT(ctr > 0.0,                                "ctr_positive");
 }
 
+// ──────────────────────────────────────────────
+// Market impact estimator
+// ──────────────────────────────────────────────
+
+void test_predicted_vwap_buy_single_level() {
+    Book b;
+    b.submit(Side::BUY,  9999, 100);   // ustaw mid
+    b.submit(Side::SELL, 10010, 200);
+    // Predict buy 100 → wszystko z 10010 → VWAP = 10010
+    ASSERT(b.predicted_vwap_ticks(Side::BUY, 100) == 10010, "vwap_single_lvl");
+}
+
+void test_predicted_vwap_buy_multi_level() {
+    Book b;
+    b.submit(Side::BUY,  9999, 100);
+    b.submit(Side::SELL, 10010, 50);
+    b.submit(Side::SELL, 10012, 50);
+    // 100 → 50@10010 + 50@10012 = (500500+500600)/100 = 10011
+    ASSERT(b.predicted_vwap_ticks(Side::BUY, 100) == 10011, "vwap_multi_avg");
+}
+
+void test_predicted_vwap_partial_liquidity() {
+    Book b;
+    b.submit(Side::BUY,  9999, 100);
+    b.submit(Side::SELL, 10010, 30);
+    // Buy 100 ale tylko 30 dostępne — VWAP across just those 30
+    ASSERT(b.predicted_vwap_ticks(Side::BUY, 100) == 10010, "vwap_partial");
+}
+
+void test_predicted_slippage_buy() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);   // bid
+    b.submit(Side::SELL, 10010, 100);   // ask. mid=10005
+    // Buy 100 fills @ 10010 → slippage = 10010 - 10005 = 5
+    ASSERT(b.predicted_slippage_ticks(Side::BUY, 100) == 5, "slip_buy_5");
+}
+
+void test_depth_within_offset() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 50);
+    b.submit(Side::SELL, 10012, 30);
+    b.submit(Side::SELL, 10020, 100);    // poza mid+10 zakresem
+    // mid = 10005, offset 10 → cap = 10015. 50+30 = 80.
+    ASSERT(b.depth_within_offset(Side::BUY, 10) == 80, "depth_offset_buy");
+}
+
+// ──────────────────────────────────────────────
+// Quote life + spread compression
+// ──────────────────────────────────────────────
+
+void test_quote_life_after_two_polls() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    (void)b.poll_tob_change();         // count=1, life=0
+    b.submit(Side::BUY, 10001, 50);    // bid changed
+    (void)b.poll_tob_change();         // count=2, life > 0
+    ASSERT(b.stats().total_tob_changes == 2, "tob_changes_2");
+    ASSERT(b.total_tob_life_ns() > 0,        "qlife_positive");
+}
+
+void test_spread_compression_threshold() {
+    Book b;
+    b.set_spread_compression_threshold(3);
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10005, 100);   // spread=5, nie compressed
+    (void)b.poll_tob_change();
+    b.submit(Side::SELL, 10002, 100);   // spread=2, compressed
+    (void)b.poll_tob_change();
+    ASSERT(b.spread_compression_count() == 1, "spread_compress_1");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1435,6 +1508,13 @@ int main(int argc, char* argv[]) {
     test_effective_spread_recorded_on_fill();
     test_ctr_zero_without_fills();
     test_ctr_after_cancel_and_fill();
+    test_predicted_vwap_buy_single_level();
+    test_predicted_vwap_buy_multi_level();
+    test_predicted_vwap_partial_liquidity();
+    test_predicted_slippage_buy();
+    test_depth_within_offset();
+    test_quote_life_after_two_polls();
+    test_spread_compression_threshold();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

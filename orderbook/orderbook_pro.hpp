@@ -2115,6 +2115,14 @@ private:
     std::int32_t  last_observed_bid_ticks_ = NO_BID_TICKS;
     std::int32_t  last_observed_ask_ticks_ = NO_ASK_TICKS;
 
+    // Quote-life accounting (mean TOB residency).
+    std::uint64_t last_tob_change_ts_ns_ = 0;
+    std::uint64_t total_tob_life_ns_     = 0;
+
+    // Spread-compression detection
+    std::int32_t  spread_compression_threshold_ticks_ = -1;  // -1 == off
+    std::uint64_t spread_compression_events_ = 0;
+
 public:
     // ====================================================================
     // Top-of-book change tracking
@@ -2130,11 +2138,41 @@ public:
         const bool changed = (best_bid_ticks_ != last_observed_bid_ticks_)
                           || (best_ask_ticks_ != last_observed_ask_ticks_);
         if (changed) {
+            const std::uint64_t now = mono_ns_now();
+            if (last_tob_change_ts_ns_ != 0 && now > last_tob_change_ts_ns_) {
+                total_tob_life_ns_ += (now - last_tob_change_ts_ns_);
+            }
+            last_tob_change_ts_ns_ = now;
             last_observed_bid_ticks_ = best_bid_ticks_;
             last_observed_ask_ticks_ = best_ask_ticks_;
             ++stats_.total_tob_changes;
+            // Spread compression check
+            if (spread_compression_threshold_ticks_ > 0 &&
+                has_bid() && has_ask() &&
+                (best_ask_ticks_ - best_bid_ticks_) <
+                spread_compression_threshold_ticks_) {
+                ++spread_compression_events_;
+            }
         }
         return changed;
+    }
+
+    // Quote-life — agregowany czas TOB residency w ns / liczba zmian.
+    // Aproksymacja: liczone od poll do poll. Strategia powinna pollować
+    // regularnie żeby wynik był adekwatny.
+    std::uint64_t mean_tob_life_ns() const noexcept {
+        if (stats_.total_tob_changes < 2) return 0;
+        return total_tob_life_ns_ / (stats_.total_tob_changes - 1);
+    }
+    std::uint64_t total_tob_life_ns() const noexcept { return total_tob_life_ns_; }
+
+    // Spread-compression detector — ustawia threshold (ticks) poniżej
+    // którego każda zmiana TOB jest zliczana jako "compression event".
+    void set_spread_compression_threshold(std::int32_t threshold_ticks) noexcept {
+        spread_compression_threshold_ticks_ = threshold_ticks;
+    }
+    std::uint64_t spread_compression_count() const noexcept {
+        return spread_compression_events_;
     }
 
     // current_tob_snapshot(): immutable read bez resetu state.
@@ -2165,6 +2203,71 @@ public:
         const std::int64_t total = b + a;
         if (total == 0) return 0;
         return static_cast<std::int32_t>((b - a) * 10000 / total);
+    }
+
+    // ====================================================================
+    // Market impact estimator (pre-trade analytics)
+    // ====================================================================
+    //
+    // predicted_vwap_ticks(side, qty): symuluje walk-the-book bez modyfikacji
+    // księgi. Zwraca expected VWAP (ticks) jeśli order o `qty` byłby IOC.
+    // 0 = brak liquidity. Side::BUY zjada asks, Side::SELL zjada bids.
+    std::int32_t predicted_vwap_ticks(Side side, std::int32_t qty) const noexcept {
+        if (qty <= 0) return 0;
+        std::int64_t notional_ticks = 0;
+        std::int32_t filled = 0;
+        if (side == Side::BUY) {
+            if (!has_ask()) return 0;
+            for (std::int32_t p = best_ask_ticks_; p < LEVELS && filled < qty; ++p) {
+                const std::int32_t avail = levels_[p].total_qty;
+                if (avail <= 0) continue;
+                const std::int32_t take = std::min(qty - filled, avail);
+                notional_ticks += static_cast<std::int64_t>(p) * take;
+                filled        += take;
+            }
+        } else {
+            if (!has_bid()) return 0;
+            for (std::int32_t p = best_bid_ticks_; p >= 0 && filled < qty; --p) {
+                const std::int32_t avail = levels_[p].total_qty;
+                if (avail <= 0) continue;
+                const std::int32_t take = std::min(qty - filled, avail);
+                notional_ticks += static_cast<std::int64_t>(p) * take;
+                filled        += take;
+            }
+        }
+        if (filled == 0) return 0;
+        return static_cast<std::int32_t>(notional_ticks / filled);
+    }
+
+    // slippage_ticks: predicted_vwap - mid. Signed dla BUY positive (płacę więcej),
+    // SELL negative (dostaję mniej). Wartość bezwzględna = oczekiwany koszt.
+    std::int32_t predicted_slippage_ticks(Side side, std::int32_t qty) const noexcept {
+        if (!has_bid() || !has_ask()) return 0;
+        const std::int32_t mid = (best_bid_ticks_ + best_ask_ticks_) / 2;
+        const std::int32_t vwap = predicted_vwap_ticks(side, qty);
+        if (vwap == 0) return 0;
+        return vwap - mid;
+    }
+
+    // depth_available_ticks(side, max_price_offset): suma qty dostępnej do
+    // ceny mid ± offset. Używane do szybkiego "ile mogę kupić bez przeskakiwania
+    // > N ticków od mid?".
+    std::int32_t depth_within_offset(Side side, std::int32_t max_offset) const noexcept {
+        if (!has_bid() || !has_ask()) return 0;
+        const std::int32_t mid = (best_bid_ticks_ + best_ask_ticks_) / 2;
+        std::int32_t total = 0;
+        if (side == Side::BUY) {
+            const std::int32_t cap = std::min<std::int32_t>(LEVELS - 1, mid + max_offset);
+            for (std::int32_t p = best_ask_ticks_; p <= cap; ++p) {
+                total += levels_[p].total_qty;
+            }
+        } else {
+            const std::int32_t floor_p = std::max<std::int32_t>(0, mid - max_offset);
+            for (std::int32_t p = best_bid_ticks_; p >= floor_p; --p) {
+                total += levels_[p].total_qty;
+            }
+        }
+        return total;
     }
 
     // ====================================================================
