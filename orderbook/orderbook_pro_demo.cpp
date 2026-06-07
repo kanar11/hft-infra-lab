@@ -931,6 +931,77 @@ void test_cross_arb_none_when_aligned() {
     ASSERT(cluster.count_cross_arb() == 0,             "arb_none_when_aligned");
 }
 
+// ──────────────────────────────────────────────
+// Sweep-to-fill metrics
+// ──────────────────────────────────────────────
+
+void test_sweep_single_level() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);   // 1-level sweep
+    ASSERT(b.stats().total_sweeps == 1,             "sweep_count_1");
+    ASSERT(b.stats().multi_level_sweeps == 0,        "sweep_single_no_multi");
+    ASSERT(b.avg_levels_per_sweep() == 1.0,          "sweep_avg_1");
+    ASSERT(b.multi_level_sweep_ratio() == 0.0,       "sweep_ratio_0");
+}
+
+void test_sweep_multi_level() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::SELL, 10110, 50);
+    b.submit(Side::SELL, 10120, 50);
+    b.submit(Side::BUY,  10120, 150);   // walks 3 levels
+    ASSERT(b.stats().total_sweeps == 1,             "sweep_one_event");
+    ASSERT(b.stats().multi_level_sweeps == 1,        "sweep_multi_counted");
+    ASSERT(b.stats().sum_levels_touched == 3,        "sweep_3_levels");
+    ASSERT(b.avg_levels_per_sweep() == 3.0,          "sweep_avg_3");
+    ASSERT(b.multi_level_sweep_ratio() == 1.0,       "sweep_ratio_1");
+}
+
+// ──────────────────────────────────────────────
+// Multi-level imbalance
+// ──────────────────────────────────────────────
+
+void test_imbalance_top_3_levels() {
+    Book b;
+    // 3 bid levels: 100+200+300 = 600 → bid-heavy
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  200);
+    b.submit(Side::BUY, 9998,  300);
+    // 3 ask levels: 50+50+100 = 200
+    b.submit(Side::SELL, 10010, 50);
+    b.submit(Side::SELL, 10011, 50);
+    b.submit(Side::SELL, 10012, 100);
+    // depth-3 imbalance = (600 - 200) / 800 × 10000 = 5000
+    const auto imb = b.imbalance_bps_n(3);
+    ASSERT(imb >= 4800 && imb <= 5200,              "imbalance_n3_buy_heavy_5000");
+    // depth-1 (TOB only) = (100 - 50)/150 × 10000 ≈ 3333
+    const auto imb1 = b.imbalance_bps_n(1);
+    ASSERT(imb1 >= 3000 && imb1 <= 3500,            "imbalance_n1_tob");
+}
+
+// ──────────────────────────────────────────────
+// Order age statistics
+// ──────────────────────────────────────────────
+
+void test_age_stats_record_on_cancel() {
+    Book b;
+    const std::uint64_t before = b.total_completed_lifecycles();
+    auto id = b.submit(Side::BUY, 10000, 100);
+    b.cancel(id);
+    ASSERT(b.total_completed_lifecycles() == before + 1, "age_lifecycle_inc");
+    // avg/max same units — sanity (no negative since u64)
+    ASSERT(b.avg_age_ns_at_completion() <= b.max_age_ns_observed(),
+                                                        "age_avg_le_max");
+}
+
+void test_age_stats_record_on_fill() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);   // fill removes maker
+    ASSERT(b.total_completed_lifecycles() >= 1,     "age_fill_lifecycle");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1257,6 +1328,11 @@ int main(int argc, char* argv[]) {
     test_tob_counter_increments();
     test_cross_arb_detected();
     test_cross_arb_none_when_aligned();
+    test_sweep_single_level();
+    test_sweep_multi_level();
+    test_imbalance_top_3_levels();
+    test_age_stats_record_on_cancel();
+    test_age_stats_record_on_fill();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

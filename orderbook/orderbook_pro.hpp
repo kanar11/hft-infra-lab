@@ -245,6 +245,9 @@ struct BookStats {
     std::uint64_t  total_auctions_executed  = 0;
     std::uint64_t  total_mass_quotes        = 0;
     std::uint64_t  total_tob_changes        = 0;
+    std::uint64_t  total_sweeps             = 0;          // taker fills (regardless of levels)
+    std::uint64_t  multi_level_sweeps       = 0;          // taker matched >= 2 price levels
+    std::uint64_t  sum_levels_touched       = 0;          // Σ levels traversed (per sweep)
 };
 
 
@@ -669,6 +672,7 @@ private:
                 else                  lvl.tail = m->prev_at_level;
                 if (lvl.order_count > 0) --lvl.order_count;
                 id_index_.erase(m->id);
+                record_lifecycle_age(m->submit_ts_ns);
                 free_order(m);
                 m = next_m;
             } else {
@@ -685,26 +689,37 @@ private:
     void match_against(Order* taker) noexcept {
         const std::uint64_t ts = mono_ns_now();
         std::int32_t qty_left = taker->remaining_qty();
+        const std::int32_t qty_pre = qty_left;
+        std::int32_t levels_consumed = 0;
 
         if (taker->side == Side::BUY) {
             // BUY zjada asks od najlepszej (najtańszej) aż do limit price
             while (qty_left > 0 && has_ask() && best_ask_ticks_ <= taker->price_ticks) {
+                const std::int32_t qty_before = qty_left;
                 PriceLevel& lvl = levels_[best_ask_ticks_];
                 match_at_level(lvl, taker, qty_left, ts);
+                if (qty_left < qty_before) ++levels_consumed;
                 if (lvl.empty()) {
                     refresh_best_ask_from(best_ask_ticks_ + 1);
                 }
             }
         } else {
             while (qty_left > 0 && has_bid() && best_bid_ticks_ >= taker->price_ticks) {
+                const std::int32_t qty_before = qty_left;
                 PriceLevel& lvl = levels_[best_bid_ticks_];
                 match_at_level(lvl, taker, qty_left, ts);
+                if (qty_left < qty_before) ++levels_consumed;
                 if (lvl.empty()) {
                     refresh_best_bid_from(best_bid_ticks_ - 1);
                 }
             }
         }
-        // taker.filled_qty już zaktualizowane przez match_at_level
+        // Sweep stats — track multi-level fills
+        if (qty_left < qty_pre) {
+            ++stats_.total_sweeps;
+            stats_.sum_levels_touched += static_cast<std::uint64_t>(levels_consumed);
+            if (levels_consumed >= 2) ++stats_.multi_level_sweeps;
+        }
     }
 
     // Wspólna ścieżka cancel — używana przez user cancel + STP + internal.
@@ -730,6 +745,7 @@ private:
         push_audit(EventType::CANCEL, o->id, o->side, o->price_ticks, leftover,
                     OrderStatus::CANCELLED);
         exposure_on_cancel(o->client_id, o->side, leftover);
+        record_lifecycle_age(o->submit_ts_ns);
         free_order(o);
         ++stats_.total_orders_cancelled;
         push_delta(levels_[cancel_price].empty() ? 'D' : 'M',
@@ -2108,6 +2124,85 @@ public:
         return (best_bid_ticks_ != last_observed_bid_ticks_)
             || (best_ask_ticks_ != last_observed_ask_ticks_);
     }
+
+    // ====================================================================
+    // Multi-level imbalance
+    // ====================================================================
+    //
+    // imbalance_bps_n(n_levels): agregowany imbalance po N najgłębszych
+    // poziomach per side, nie tylko TOB. Realny order flow signal — TOB
+    // imbalance łatwo manipulowany, ale depth-3 lub depth-5 trudniej.
+    std::int32_t imbalance_bps_n(std::int32_t n_levels) const noexcept {
+        if (!has_bid() || !has_ask()) return 0;
+        std::int64_t b = 0, a = 0;
+        std::int32_t bn = 0, an = 0;
+        for (std::int32_t p = best_bid_ticks_; p >= 0 && bn < n_levels; --p) {
+            const std::int32_t q = levels_[p].total_qty;
+            if (q > 0) { b += q; ++bn; }
+        }
+        for (std::int32_t p = best_ask_ticks_; p < LEVELS && an < n_levels; ++p) {
+            const std::int32_t q = levels_[p].total_qty;
+            if (q > 0) { a += q; ++an; }
+        }
+        const std::int64_t total = b + a;
+        if (total == 0) return 0;
+        return static_cast<std::int32_t>((b - a) * 10000 / total);
+    }
+
+    // ====================================================================
+    // Sweep-to-fill metrics
+    // ====================================================================
+    //
+    // avg_levels_per_sweep — średnia liczba price levels per egzekucja.
+    // Wysoka wartość = thin book / large orders (toxic flow indicator).
+    double avg_levels_per_sweep() const noexcept {
+        if (stats_.total_sweeps == 0) return 0.0;
+        return static_cast<double>(stats_.sum_levels_touched) /
+               static_cast<double>(stats_.total_sweeps);
+    }
+
+    // multi_level_sweep_ratio — proporcja sweepów które uderzyły w >=2 levels.
+    double multi_level_sweep_ratio() const noexcept {
+        if (stats_.total_sweeps == 0) return 0.0;
+        return static_cast<double>(stats_.multi_level_sweeps) /
+               static_cast<double>(stats_.total_sweeps);
+    }
+
+    // ====================================================================
+    // Order age stats — kanibalizm flow / queue residency
+    // ====================================================================
+    //
+    // Tracked w match_at_level po fill + w cancel_internal.
+    // Dla każdego completed lifecycle (fill or cancel), record age_ns
+    // = now - submit_ts_ns_. Wykorzystywane do detection toxic queue
+    // (gdy orders szybko fillowane = aggressive flow; długo czekające =
+    // resting MM).
+    std::uint64_t total_completed_lifecycles() const noexcept {
+        return age_stats_count_;
+    }
+    std::uint64_t total_age_ns() const noexcept { return age_stats_sum_ns_; }
+    std::uint64_t max_age_ns_observed() const noexcept { return age_stats_max_ns_; }
+    std::uint64_t avg_age_ns_at_completion() const noexcept {
+        return age_stats_count_ == 0 ? 0
+            : age_stats_sum_ns_ / age_stats_count_;
+    }
+
+private:
+    // Order age stats state
+    std::uint64_t  age_stats_count_  = 0;
+    std::uint64_t  age_stats_sum_ns_ = 0;
+    std::uint64_t  age_stats_max_ns_ = 0;
+
+    void record_lifecycle_age(std::uint64_t submit_ts_ns) noexcept {
+        const std::uint64_t now = mono_ns_now();
+        if (submit_ts_ns == 0 || now < submit_ts_ns) return;
+        const std::uint64_t age = now - submit_ts_ns;
+        ++age_stats_count_;
+        age_stats_sum_ns_ += age;
+        if (age > age_stats_max_ns_) age_stats_max_ns_ = age;
+    }
+
+public:
 
     // Hook: update size distribution z record_trade()
     void update_size_distribution(std::int32_t qty) noexcept {
