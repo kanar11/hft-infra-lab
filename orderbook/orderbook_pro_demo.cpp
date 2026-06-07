@@ -1520,6 +1520,39 @@ void test_cluster_aggregations() {
     ASSERT(cluster.cluster_total_volume() == 150,     "cluster_vol_150");
 }
 
+// ──────────────────────────────────────────────
+// Per-side last fill ts + iceberg refreshes + wall
+// ──────────────────────────────────────────────
+
+void test_last_buy_fill_ts_set() {
+    Book b;
+    ASSERT(b.last_buy_fill_ts_ns()  == 0,            "buy_ts_initial_0");
+    ASSERT(b.last_sell_fill_ts_ns() == 0,            "sell_ts_initial_0");
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);    // taker BUY
+    ASSERT(b.last_buy_fill_ts_ns()  > 0,             "buy_ts_after_fill");
+    ASSERT(b.last_sell_fill_ts_ns() == 0,            "sell_ts_unchanged");
+}
+
+void test_iceberg_refresh_counter() {
+    Book b;
+    auto ice = b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+                         TimeInForce::DAY, 0, 0, /*displayed=*/100);
+    (void)ice;
+    ASSERT(b.iceberg_refresh_count() == 0,           "ice_refresh_0_initial");
+    // Take 100 (displayed) — should refresh from hidden
+    b.submit(Side::BUY, 10100, 100);
+    ASSERT(b.iceberg_refresh_count() >= 1,           "ice_refresh_after_take");
+}
+
+void test_largest_resting_order_qty() {
+    Book b;
+    b.submit(Side::BUY, 10000, 50);
+    b.submit(Side::BUY, 9999,  200);     // wall
+    b.submit(Side::SELL, 10010, 80);
+    ASSERT(b.largest_resting_order_qty() == 200,    "wall_200");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1896,6 +1929,9 @@ int main(int argc, char* argv[]) {
     test_latency_arb_off_by_default();
     test_latency_arb_detected_same_side_back_to_back();
     test_cluster_aggregations();
+    test_last_buy_fill_ts_set();
+    test_iceberg_refresh_counter();
+    test_largest_resting_order_qty();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

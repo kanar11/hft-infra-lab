@@ -493,6 +493,8 @@ class FullOrderBook {
         larb_last_side_     = taker_side;
         larb_last_fill_ts_  = ts_ns;
         last_fill_ts_ns_    = ts_ns;
+        if (taker_side == Side::BUY) last_buy_fill_ts_ns_  = ts_ns;
+        else                          last_sell_fill_ts_ns_ = ts_ns;
         // Volume-at-price profile (capped na ostatnie SAMPLES poziomów wpisanych)
         if (price_ticks >= 0 && price_ticks < LEVELS) {
             volume_at_price_[static_cast<std::size_t>(price_ticks)] +=
@@ -687,6 +689,7 @@ private:
                 (void)orig_displayed;
                 m->displayed_qty = std::min(hidden, /*iceberg_show=*/100);
                 lvl.total_qty    += m->displayed_qty;
+                ++iceberg_refresh_count_;
                 lvl.total_hidden -= m->displayed_qty;
                 // Maker iceberg traci priority — przesuwamy na koniec FIFO
                 Order* next_m = m->next_at_level;
@@ -2233,6 +2236,13 @@ private:
     Side          larb_last_side_      = Side::BUY;
     std::uint64_t larb_same_side_fast_ = 0;
 
+    // Per-side last fill timestamps
+    std::uint64_t last_buy_fill_ts_ns_  = 0;
+    std::uint64_t last_sell_fill_ts_ns_ = 0;
+
+    // Iceberg refresh counter
+    std::uint64_t iceberg_refresh_count_ = 0;
+
     // Queue replenishment / consumption counters (TOB qty deltas)
     std::int32_t  last_tob_bid_qty_observed_ = -1;
     std::int32_t  last_tob_ask_qty_observed_ = -1;
@@ -2560,6 +2570,45 @@ public:
     }
     std::uint64_t latency_arb_same_side_fast_count() const noexcept {
         return larb_same_side_fast_;
+    }
+
+    // ====================================================================
+    // Per-side last fill timestamps
+    // ====================================================================
+    //
+    // Adverse selection: jeśli last_buy_fill znacznie świeższy niż last_sell,
+    // to BUY taker dominują — bid pressing. Liquidity providers użyją tych
+    // metryk do skew quote'ów.
+    std::uint64_t last_buy_fill_ts_ns()  const noexcept { return last_buy_fill_ts_ns_; }
+    std::uint64_t last_sell_fill_ts_ns() const noexcept { return last_sell_fill_ts_ns_; }
+
+    // ====================================================================
+    // Iceberg refresh counter
+    // ====================================================================
+    //
+    // Iceberg orderzy z dużym ukrytym reserve robią wiele refreshy. Wysokie
+    // = oznaka long-term institutional accumulation. Per-order tracking byłoby
+    // optymalniejsze, ale globalny licznik wystarcza dla orientacji.
+    std::uint64_t iceberg_refresh_count() const noexcept {
+        return iceberg_refresh_count_;
+    }
+
+    // ====================================================================
+    // Largest resting order — wall detector
+    // ====================================================================
+    //
+    // O(LEVELS × orders_per_level). Wykorzystywane okresowo, nie hot.
+    // Wall = dużo qty w jednym orderze — może oznaczać iceberg, hidden
+    // intent, lub bluff/manipulację (spoofing).
+    std::int32_t largest_resting_order_qty() const noexcept {
+        std::int32_t best = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            for (const Order* o = levels_[p].head; o != nullptr; o = o->next_at_level) {
+                const std::int32_t left = o->total_qty - o->filled_qty;
+                if (left > best) best = left;
+            }
+        }
+        return best;
     }
 
     // ====================================================================
