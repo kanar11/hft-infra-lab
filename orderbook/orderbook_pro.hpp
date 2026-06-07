@@ -461,6 +461,20 @@ class FullOrderBook {
                     (taker_side == Side::BUY ? signed_diff : -signed_diff) * qty;
             }
         }
+        // Order-flow accumulators (VPIN-style toxicity)
+        if (taker_side == Side::BUY) {
+            taker_buy_volume_ += static_cast<std::uint64_t>(qty);
+            ++taker_buy_count_;
+        } else {
+            taker_sell_volume_ += static_cast<std::uint64_t>(qty);
+            ++taker_sell_count_;
+        }
+        last_fill_ts_ns_ = ts_ns;
+        // Volume-at-price profile (capped na ostatnie SAMPLES poziomów wpisanych)
+        if (price_ticks >= 0 && price_ticks < LEVELS) {
+            volume_at_price_[static_cast<std::size_t>(price_ticks)] +=
+                static_cast<std::uint64_t>(qty);
+        }
     }
 
 public:
@@ -2123,6 +2137,19 @@ private:
     std::int32_t  spread_compression_threshold_ticks_ = -1;  // -1 == off
     std::uint64_t spread_compression_events_ = 0;
 
+    // Order-flow (VPIN-style toxicity, signed by taker side)
+    std::uint64_t taker_buy_volume_   = 0;
+    std::uint64_t taker_sell_volume_  = 0;
+    std::uint64_t taker_buy_count_    = 0;
+    std::uint64_t taker_sell_count_   = 0;
+    std::uint64_t last_fill_ts_ns_    = 0;
+
+    // Quote flicker (TOB change without trade) — needs last_fill_ts vs last_tob_change_ts
+    std::uint64_t quote_flicker_count_ = 0;
+
+    // Volume-at-price profile (zero-init via {})
+    std::uint64_t volume_at_price_[LEVELS]{};
+
 public:
     // ====================================================================
     // Top-of-book change tracking
@@ -2139,6 +2166,12 @@ public:
                           || (best_ask_ticks_ != last_observed_ask_ticks_);
         if (changed) {
             const std::uint64_t now = mono_ns_now();
+            // Quote-flicker: zmiana TOB pomiędzy ostatnim fillem a teraz?
+            // Jeśli od poprzedniej zmiany TOB nie było ŻADNEGO trade, to flicker.
+            if (last_tob_change_ts_ns_ != 0 &&
+                last_fill_ts_ns_ < last_tob_change_ts_ns_) {
+                ++quote_flicker_count_;
+            }
             if (last_tob_change_ts_ns_ != 0 && now > last_tob_change_ts_ns_) {
                 total_tob_life_ns_ += (now - last_tob_change_ts_ns_);
             }
@@ -2173,6 +2206,56 @@ public:
     }
     std::uint64_t spread_compression_count() const noexcept {
         return spread_compression_events_;
+    }
+
+    // ====================================================================
+    // Order flow imbalance / VPIN-style toxicity
+    // ====================================================================
+    //
+    // VPIN (Volume-Synchronized Probability of Informed Trading; Easley/
+    // de Prado/O'Hara 2012). Aproksymacja: cumulative |buy - sell| / total.
+    // Wysoka wartość = informacyjny flow (jeden side dominuje).
+    std::uint64_t taker_buy_volume() const noexcept  { return taker_buy_volume_; }
+    std::uint64_t taker_sell_volume() const noexcept { return taker_sell_volume_; }
+    std::uint64_t taker_buy_count() const noexcept   { return taker_buy_count_; }
+    std::uint64_t taker_sell_count() const noexcept  { return taker_sell_count_; }
+    std::int32_t flow_imbalance_bps() const noexcept {
+        const std::int64_t b = static_cast<std::int64_t>(taker_buy_volume_);
+        const std::int64_t s = static_cast<std::int64_t>(taker_sell_volume_);
+        const std::int64_t total = b + s;
+        if (total == 0) return 0;
+        return static_cast<std::int32_t>((b - s) * 10000 / total);
+    }
+    // VPIN ~ |buy - sell| / (buy + sell). 0..1 (returnujemy bps).
+    std::uint32_t vpin_bps() const noexcept {
+        const std::int64_t b = static_cast<std::int64_t>(taker_buy_volume_);
+        const std::int64_t s = static_cast<std::int64_t>(taker_sell_volume_);
+        const std::int64_t total = b + s;
+        if (total == 0) return 0;
+        return static_cast<std::uint32_t>(std::abs(b - s) * 10000 / total);
+    }
+
+    // Quote flicker — TOB zmienił się bez intervening trade.
+    // Wysokie = quote stuffing lub pure quoting noise.
+    std::uint64_t quote_flicker_count() const noexcept { return quote_flicker_count_; }
+
+    // Volume-at-price profile — kumulatywne exec qty per tick.
+    // Strategie używają do detection support/resistance.
+    std::uint64_t volume_at_price(std::int32_t price_ticks) const noexcept {
+        if (price_ticks < 0 || price_ticks >= LEVELS) return 0;
+        return volume_at_price_[static_cast<std::size_t>(price_ticks)];
+    }
+    // Point-of-control: tick z największą historyczną volume.
+    std::int32_t point_of_control_ticks() const noexcept {
+        std::int32_t best_tick = -1;
+        std::uint64_t best_vol  = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            if (volume_at_price_[p] > best_vol) {
+                best_vol = volume_at_price_[p];
+                best_tick = p;
+            }
+        }
+        return best_tick;
     }
 
     // current_tob_snapshot(): immutable read bez resetu state.

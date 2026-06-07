@@ -1168,6 +1168,71 @@ void test_spread_compression_threshold() {
     ASSERT(b.spread_compression_count() == 1, "spread_compress_1");
 }
 
+// ──────────────────────────────────────────────
+// Order flow imbalance / VPIN / quote flicker
+// ──────────────────────────────────────────────
+
+void test_flow_imbalance_buy_heavy() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::SELL, 10101, 100);
+    b.submit(Side::BUY,  10100, 100);   // taker BUY 100
+    b.submit(Side::BUY,  10101, 100);   // taker BUY 100
+    ASSERT(b.taker_buy_volume()  == 200, "tbv_200");
+    ASSERT(b.taker_sell_volume() == 0,   "tsv_0");
+    ASSERT(b.flow_imbalance_bps() == 10000, "flow_imb_full_buy");
+    ASSERT(b.vpin_bps() == 10000,        "vpin_full");
+}
+
+void test_vpin_balanced() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);   // taker BUY 100
+    b.submit(Side::BUY,  9900,  100);
+    b.submit(Side::SELL, 9900,  100);   // taker SELL 100
+    ASSERT(b.taker_buy_volume()  == 100,    "tbv_100");
+    ASSERT(b.taker_sell_volume() == 100,    "tsv_100");
+    ASSERT(b.vpin_bps() == 0,               "vpin_balanced_0");
+}
+
+void test_quote_flicker_no_trade() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    (void)b.poll_tob_change();              // count=1, no flicker
+    b.submit(Side::BUY, 10001, 50);         // TOB change, no trade
+    (void)b.poll_tob_change();              // count=2, flicker++
+    ASSERT(b.quote_flicker_count() == 1,    "flicker_1");
+}
+
+void test_quote_flicker_zero_when_trade_intervenes() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    (void)b.poll_tob_change();
+    // Trade happens between polls (zmienia TOB)
+    b.submit(Side::BUY, 10010, 100);        // fill consumes ask, TOB shift
+    (void)b.poll_tob_change();
+    ASSERT(b.quote_flicker_count() == 0,    "flicker_zero_w_trade");
+}
+
+void test_volume_at_price_accumulates() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 80);        // takes from first maker
+    b.submit(Side::BUY,  10100, 70);        // takes 20 + 50
+    ASSERT(b.volume_at_price(10100) == 150, "vap_accum_150");
+}
+
+void test_point_of_control() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);  b.submit(Side::BUY, 10100, 50);
+    b.submit(Side::SELL, 10200, 200); b.submit(Side::BUY, 10200, 200);
+    b.submit(Side::SELL, 10300, 30);  b.submit(Side::BUY, 10300, 30);
+    ASSERT(b.point_of_control_ticks() == 10200, "poc_at_max_vol");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1515,6 +1580,12 @@ int main(int argc, char* argv[]) {
     test_depth_within_offset();
     test_quote_life_after_two_polls();
     test_spread_compression_threshold();
+    test_flow_imbalance_buy_heavy();
+    test_vpin_balanced();
+    test_quote_flicker_no_trade();
+    test_quote_flicker_zero_when_trade_intervenes();
+    test_volume_at_price_accumulates();
+    test_point_of_control();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
