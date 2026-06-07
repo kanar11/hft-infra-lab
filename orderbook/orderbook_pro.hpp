@@ -474,6 +474,14 @@ class FullOrderBook {
             taker_sell_volume_ += static_cast<std::uint64_t>(qty);
             ++taker_sell_count_;
         }
+        // Tick-by-tick Δp distribution (clipped do [-4, +4])
+        if (prev_trade_px_for_lambda_ >= 0) {
+            const std::int32_t raw = price_ticks - static_cast<std::int32_t>(prev_trade_px_for_lambda_);
+            const std::int32_t clip = std::max<std::int32_t>(-4,
+                                       std::min<std::int32_t>(4, raw));
+            ++price_change_hist_[static_cast<std::size_t>(clip + 4)];
+            ++price_change_total_;
+        }
         // Kyle's lambda accumulator (global + per-side decomp)
         if (prev_trade_px_for_lambda_ >= 0) {
             const double dp = static_cast<double>(price_ticks - prev_trade_px_for_lambda_);
@@ -2265,6 +2273,11 @@ private:
     std::uint64_t one_sided_bid_only_ = 0;
     std::uint64_t one_sided_ask_only_ = 0;
 
+    // Tick-by-tick price change distribution (last trade-to-trade Δp)
+    // 9 bins: -4..-1, 0, +1..+4 (Δp clipped). Bin 0 = "no change", index 4.
+    std::uint64_t price_change_hist_[9]{};
+    std::uint64_t price_change_total_ = 0;
+
     // Spread histogram (32 buckets: 0..30 ticks + 31=overflow)
     static constexpr std::size_t SPREAD_HIST_BINS = 32;
     std::uint64_t spread_histogram_[SPREAD_HIST_BINS]{};
@@ -2888,6 +2901,50 @@ public:
     //
     // Wypełnia out_qty[] do max K największych remaining qty. Zwraca ile
     // znaleziono. Prostą O(N×K) selection — używać tylko okresowo na małym K.
+    // ====================================================================
+    // Tick-by-tick price change distribution (9 bins, -4..+4 clipped)
+    // ====================================================================
+    //
+    // Bin index 0=Δp≤-4, 1=-3, 2=-2, 3=-1, 4=0, 5=+1, 6=+2, 7=+3, 8=Δp≥+4.
+    // Heavy tails (bins 0 i 8) = high impact regime; bin 4 = quiet market.
+    std::uint64_t price_change_hist_bin(std::size_t i) const noexcept {
+        return i < 9 ? price_change_hist_[i] : 0;
+    }
+    std::uint64_t price_change_hist_total() const noexcept { return price_change_total_; }
+    double price_change_hist_zero_fraction() const noexcept {
+        if (price_change_total_ == 0) return 0.0;
+        return static_cast<double>(price_change_hist_[4]) /
+               static_cast<double>(price_change_total_);
+    }
+    // Tail mass: fraction trades z |Δp| >= 4.
+    double price_change_hist_tail_fraction() const noexcept {
+        if (price_change_total_ == 0) return 0.0;
+        const std::uint64_t tail = price_change_hist_[0] + price_change_hist_[8];
+        return static_cast<double>(tail) /
+               static_cast<double>(price_change_total_);
+    }
+
+    // ====================================================================
+    // HFT toxicity composite score
+    // ====================================================================
+    //
+    // Skalowane 0..10000 bps. Blend trzech sygnałów:
+    //   • VPIN: |buy-sell|/total volume
+    //   • |Kyle λ| znormalizowany przez mean_qty (proxy)
+    //   • CTR (cancel-to-trade) clamped do 100
+    // Każda komponenta równo ważona (33% × 33% × 33%).
+    std::uint32_t toxicity_composite_score_bps() const noexcept {
+        const std::uint32_t vpin = vpin_bps();   // [0..10000]
+        // |λ| normalized: rough bound by 1000 (5 ticks per 1 qty trade unit)
+        const double lambda_abs = kyle_lambda_abs();
+        std::uint32_t lambda_bps = static_cast<std::uint32_t>(
+            std::min(lambda_abs * 1000.0, 10000.0));
+        const double ctr = cancel_to_trade_ratio();
+        std::uint32_t ctr_bps = static_cast<std::uint32_t>(
+            std::min(ctr * 200.0, 10000.0));  // CTR=50 → 10000 bps
+        return (vpin + lambda_bps + ctr_bps) / 3;
+    }
+
     std::size_t top_k_resting_qty(std::int32_t* out_qty, std::size_t k) const noexcept {
         if (!out_qty || k == 0) return 0;
         for (std::size_t i = 0; i < k; ++i) out_qty[i] = 0;
@@ -3612,6 +3669,25 @@ public:
         }
         return t;
     }
+    // Volume-weighted average spread across cluster (ważone total_volume per symbol).
+    // Bardziej realistyczny niż simple avg — symbole z większym flow większy weight.
+    double volume_weighted_avg_spread_ticks() const noexcept {
+        std::int64_t weighted_spread = 0;
+        std::uint64_t total_volume = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i]) continue;
+            const std::int32_t s = books_[i].spread_ticks();
+            if (s < 0) continue;
+            const std::uint64_t v = books_[i].stats().total_volume;
+            if (v == 0) continue;
+            weighted_spread += static_cast<std::int64_t>(s) * v;
+            total_volume += v;
+        }
+        if (total_volume == 0) return 0.0;
+        return static_cast<double>(weighted_spread) /
+               static_cast<double>(total_volume);
+    }
+
     // Symbol z najwyższym book-level flow_imbalance (informational flow magnet).
     const char* most_imbalanced_symbol() const noexcept {
         std::size_t best = N_SYMBOLS;

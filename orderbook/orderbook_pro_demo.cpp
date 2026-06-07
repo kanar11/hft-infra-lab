@@ -1813,6 +1813,75 @@ void test_top_k_largest_orders() {
     ASSERT(top3[2] == 100,                    "top_k_third_100");
 }
 
+// ──────────────────────────────────────────────
+// Price change distribution + toxicity composite + cluster vw spread
+// ──────────────────────────────────────────────
+
+void test_price_change_hist_zero_bin() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);   // trade1 @10100
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);   // trade2 @10100; Δp=0 → bin 4
+    ASSERT(b.price_change_hist_bin(4) >= 1, "pc_hist_zero_bin");
+    ASSERT(b.price_change_hist_zero_fraction() > 0.0, "pc_zero_frac_pos");
+}
+
+void test_price_change_hist_up_bin() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    b.submit(Side::SELL, 10102, 50);
+    b.submit(Side::BUY,  10102, 50);   // Δp=+2 → bin 6
+    ASSERT(b.price_change_hist_bin(6) >= 1, "pc_hist_plus2_bin");
+}
+
+void test_price_change_hist_tail() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    b.submit(Side::SELL, 10200, 50);
+    b.submit(Side::BUY,  10200, 50);   // Δp=+100 → clipped to +4 → bin 8
+    ASSERT(b.price_change_hist_bin(8) >= 1, "pc_hist_tail_bin8");
+    ASSERT(b.price_change_hist_tail_fraction() > 0.0, "pc_tail_frac_pos");
+}
+
+void test_toxicity_composite_zero_quiet() {
+    Book b;
+    ASSERT(b.toxicity_composite_score_bps() == 0, "tox_zero_empty");
+}
+
+void test_toxicity_composite_after_activity() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);
+    b.submit(Side::SELL, 10200, 100);
+    b.submit(Side::BUY,  10200, 100);  // one-sided BUY flow → VPIN=10000
+    const auto score = b.toxicity_composite_score_bps();
+    ASSERT(score > 0,                                "tox_pos_after_activity");
+}
+
+void test_cluster_volume_weighted_spread() {
+    using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
+    Cluster cluster;
+    cluster.register_symbol("AAPL");
+    cluster.register_symbol("MSFT");
+    auto* a = cluster.book("AAPL");
+    auto* m = cluster.book("MSFT");
+    // AAPL: spread 2 ticks, volume 100
+    a->submit(Side::BUY,  10000, 100);
+    a->submit(Side::SELL, 10002, 100);
+    a->submit(Side::SELL, 10000, 100);   // crosses → trade. vol=100
+    // MSFT: spread 10 ticks, volume 50
+    m->submit(Side::BUY,  10000, 50);
+    m->submit(Side::SELL, 10010, 50);
+    m->submit(Side::SELL, 10000, 50);    // crosses → vol=50
+    // Spread po fillach: AAPL=2, MSFT=10. Volumes: 100, 50.
+    // Weighted avg = (2*100 + 10*50) / 150 = (200+500)/150 = 700/150 ≈ 4.67
+    const double w = cluster.volume_weighted_avg_spread_ticks();
+    ASSERT(w >= 0.0 && w <= 100.0,                   "cluster_vw_spread_bounded");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2217,6 +2286,12 @@ int main(int argc, char* argv[]) {
     test_spread_histogram_buckets();
     test_spread_histogram_median();
     test_top_k_largest_orders();
+    test_price_change_hist_zero_bin();
+    test_price_change_hist_up_bin();
+    test_price_change_hist_tail();
+    test_toxicity_composite_zero_quiet();
+    test_toxicity_composite_after_activity();
+    test_cluster_volume_weighted_spread();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
