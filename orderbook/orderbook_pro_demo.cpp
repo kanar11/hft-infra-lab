@@ -1405,6 +1405,66 @@ void test_book_health_snapshot() {
     ASSERT(h.total_orders_added >= 3,           "health_added_ge_3");
 }
 
+// ──────────────────────────────────────────────
+// Trade arrival rate + realized vol + spread bias + queue replenish
+// ──────────────────────────────────────────────
+
+void test_trades_per_second_returns_nonneg() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 50);
+    // some work between trades — daje delta ts_ns
+    for (volatile int i = 0; i < 1000; ++i) {}
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 50);
+    ASSERT(b.trades_per_second() >= 0.0,             "trades_per_sec_nn");
+}
+
+void test_realized_vol_zero_when_flat() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 50);
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 50);   // all at 10100 — log return = 0
+    ASSERT(b.realized_volatility_log_returns() == 0.0, "rv_zero_flat");
+}
+
+void test_realized_vol_positive_when_varied() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);
+    b.submit(Side::SELL, 10200, 100);
+    b.submit(Side::BUY,  10200, 100);
+    ASSERT(b.realized_volatility_log_returns() > 0.0, "rv_pos_varied");
+}
+
+void test_spread_bias_bid_side() {
+    Book c;
+    c.submit(Side::BUY,  10000, 100);
+    c.submit(Side::SELL, 10005, 100);   // mid = 10002, ask_off=3, bid_off=2
+    c.poll_tob_micro();                  // bid_off < ask_off → bid_side++
+    ASSERT(c.spread_bias_bid_side() == 1, "bias_bid_side_1");
+}
+
+void test_spread_bias_neutral() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);   // mid=10005, oba offset=5 → neutral
+    b.poll_tob_micro();
+    ASSERT(b.spread_bias_neutral() == 1, "bias_neutral_1");
+}
+
+void test_queue_replenish_bid() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    b.poll_tob_micro();                         // initial obs
+    b.submit(Side::BUY,  10000, 50);            // bid qty grows: 100 → 150
+    b.poll_tob_micro();                         // replenish!
+    ASSERT(b.queue_replenish_bid_count() == 1, "queue_replenish_bid_1");
+    ASSERT(b.queue_consume_bid_count()   == 0, "queue_consume_bid_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1770,6 +1830,12 @@ int main(int argc, char* argv[]) {
     test_aggressive_ratio_mixed();
     test_cancel_to_fill_ratio_per_account();
     test_book_health_snapshot();
+    test_trades_per_second_returns_nonneg();
+    test_realized_vol_zero_when_flat();
+    test_realized_vol_positive_when_varied();
+    test_spread_bias_bid_side();
+    test_spread_bias_neutral();
+    test_queue_replenish_bid();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

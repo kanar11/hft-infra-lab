@@ -2199,6 +2199,19 @@ private:
     std::uint64_t next_event_seq_   = 0;
     std::uint64_t last_emitted_seq_ = 0;
 
+    // Spread bias counters (mid-bid vs ask-mid)
+    std::uint64_t spread_bias_ask_side_ = 0;
+    std::uint64_t spread_bias_bid_side_ = 0;
+    std::uint64_t spread_bias_neutral_  = 0;
+
+    // Queue replenishment / consumption counters (TOB qty deltas)
+    std::int32_t  last_tob_bid_qty_observed_ = -1;
+    std::int32_t  last_tob_ask_qty_observed_ = -1;
+    std::uint64_t queue_replenish_bid_ = 0;
+    std::uint64_t queue_replenish_ask_ = 0;
+    std::uint64_t queue_consume_bid_   = 0;
+    std::uint64_t queue_consume_ask_   = 0;
+
     // Volume-at-price profile (zero-init via {})
     std::uint64_t volume_at_price_[LEVELS]{};
 
@@ -2409,6 +2422,88 @@ public:
         s.price_stddev_ticks = std::sqrt(var);
         return s;
     }
+
+    // ====================================================================
+    // Trade arrival rate
+    // ====================================================================
+    //
+    // trades_per_second(): liczone z first/last tape ts. 0 gdy <2 trades.
+    // Wysoka wartość = active flow; spike = breakout/news.
+    double trades_per_second() const noexcept {
+        const std::size_t n = std::min(tape_count_, TAPE_CAP);
+        if (n < 2) return 0.0;
+        const std::size_t first_idx = (tape_head_ + TAPE_CAP - n) % TAPE_CAP;
+        const std::size_t last_idx  = (tape_head_ + TAPE_CAP - 1) % TAPE_CAP;
+        const std::uint64_t t0 = tape_[first_idx].ts_ns;
+        const std::uint64_t t1 = tape_[last_idx].ts_ns;
+        if (t1 <= t0) return 0.0;
+        const double dt_sec = static_cast<double>(t1 - t0) / 1e9;
+        if (dt_sec <= 0.0) return 0.0;
+        return static_cast<double>(n - 1) / dt_sec;
+    }
+
+    // ====================================================================
+    // Realized volatility (sum of squared log returns)
+    // ====================================================================
+    //
+    // realized_volatility_log_returns(): Σ (log(p_i/p_{i-1}))² across tape.
+    // Aproksymacja microstructure σ²; przemnóż przez (samples_per_year/N)
+    // by uzyskać annualized vol.
+    double realized_volatility_log_returns() const noexcept {
+        const std::size_t n = std::min(tape_count_, TAPE_CAP);
+        if (n < 2) return 0.0;
+        double sum_sq = 0.0;
+        std::int32_t prev_px = -1;
+        for (std::size_t k = 0; k < n; ++k) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - n + k) % TAPE_CAP];
+            if (prev_px > 0 && t.price_ticks > 0) {
+                const double r = std::log(static_cast<double>(t.price_ticks) /
+                                          static_cast<double>(prev_px));
+                sum_sq += r * r;
+            }
+            prev_px = t.price_ticks;
+        }
+        return std::sqrt(sum_sq);
+    }
+
+    // ====================================================================
+    // Spread bias + queue replenishment (TOB micro-dynamics)
+    // ====================================================================
+    //
+    // Każdy poll_tob_micro() jest punktem obserwacyjnym dla:
+    //  • spread_bias: porównanie mid-bid vs ask-mid; gdy aksy są blisko mid,
+    //    bid trzyma; gdy bidy blisko mid, ask trzyma. Wskazówka kto presser.
+    //  • queue_replenish: gdy TOB qty wzrosło względem poprzedniego polla =
+    //    market makery dorzucają liquidity. Spadek = consumption.
+    void poll_tob_micro() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        const std::int32_t mid = (best_bid_ticks_ + best_ask_ticks_) / 2;
+        const std::int32_t ask_offset = best_ask_ticks_ - mid;
+        const std::int32_t bid_offset = mid - best_bid_ticks_;
+        if (ask_offset < bid_offset)       ++spread_bias_ask_side_;
+        else if (bid_offset < ask_offset)  ++spread_bias_bid_side_;
+        else                                ++spread_bias_neutral_;
+        // Queue replenishment
+        const std::int32_t bid_qty = levels_[best_bid_ticks_].total_qty;
+        const std::int32_t ask_qty = levels_[best_ask_ticks_].total_qty;
+        if (last_tob_bid_qty_observed_ >= 0) {
+            if (bid_qty > last_tob_bid_qty_observed_) ++queue_replenish_bid_;
+            else if (bid_qty < last_tob_bid_qty_observed_) ++queue_consume_bid_;
+        }
+        if (last_tob_ask_qty_observed_ >= 0) {
+            if (ask_qty > last_tob_ask_qty_observed_) ++queue_replenish_ask_;
+            else if (ask_qty < last_tob_ask_qty_observed_) ++queue_consume_ask_;
+        }
+        last_tob_bid_qty_observed_ = bid_qty;
+        last_tob_ask_qty_observed_ = ask_qty;
+    }
+    std::uint64_t spread_bias_ask_side()  const noexcept { return spread_bias_ask_side_; }
+    std::uint64_t spread_bias_bid_side()  const noexcept { return spread_bias_bid_side_; }
+    std::uint64_t spread_bias_neutral()   const noexcept { return spread_bias_neutral_; }
+    std::uint64_t queue_replenish_bid_count() const noexcept { return queue_replenish_bid_; }
+    std::uint64_t queue_replenish_ask_count() const noexcept { return queue_replenish_ask_; }
+    std::uint64_t queue_consume_bid_count()  const noexcept { return queue_consume_bid_; }
+    std::uint64_t queue_consume_ask_count()  const noexcept { return queue_consume_ask_; }
 
     // ====================================================================
     // for_each_order — read-only iterator po wszystkich aktywnych orderach
