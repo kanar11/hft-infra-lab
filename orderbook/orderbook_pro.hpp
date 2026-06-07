@@ -474,7 +474,25 @@ class FullOrderBook {
             taker_sell_volume_ += static_cast<std::uint64_t>(qty);
             ++taker_sell_count_;
         }
-        last_fill_ts_ns_ = ts_ns;
+        // Kyle's lambda accumulator
+        if (prev_trade_px_for_lambda_ >= 0) {
+            const double dp = static_cast<double>(price_ticks - prev_trade_px_for_lambda_);
+            const double signed_v = (taker_side == Side::BUY ? +1.0 : -1.0) *
+                                    static_cast<double>(qty);
+            cum_price_volume_product_ += dp * signed_v;
+            cum_signed_volume_sq_     += signed_v * signed_v;
+        }
+        prev_trade_px_for_lambda_ = price_ticks;
+        // Latency arbitrage: same-side aggressors within window
+        if (larb_window_ns_ > 0 && last_fill_ts_ns_ != 0 &&
+            ts_ns > last_fill_ts_ns_ &&
+            (ts_ns - last_fill_ts_ns_) <= larb_window_ns_ &&
+            taker_side == larb_last_side_) {
+            ++larb_same_side_fast_;
+        }
+        larb_last_side_     = taker_side;
+        larb_last_fill_ts_  = ts_ns;
+        last_fill_ts_ns_    = ts_ns;
         // Volume-at-price profile (capped na ostatnie SAMPLES poziomów wpisanych)
         if (price_ticks >= 0 && price_ticks < LEVELS) {
             volume_at_price_[static_cast<std::size_t>(price_ticks)] +=
@@ -2204,6 +2222,17 @@ private:
     std::uint64_t spread_bias_bid_side_ = 0;
     std::uint64_t spread_bias_neutral_  = 0;
 
+    // Kyle's lambda accumulators
+    std::int64_t  prev_trade_px_for_lambda_ = -1;
+    double        cum_price_volume_product_ = 0.0;  // Σ Δp × v
+    double        cum_signed_volume_sq_     = 0.0;  // Σ v²
+
+    // Latency arbitrage window detection
+    std::uint64_t larb_window_ns_      = 0;            // 0 = off
+    std::uint64_t larb_last_fill_ts_   = 0;
+    Side          larb_last_side_      = Side::BUY;
+    std::uint64_t larb_same_side_fast_ = 0;
+
     // Queue replenishment / consumption counters (TOB qty deltas)
     std::int32_t  last_tob_bid_qty_observed_ = -1;
     std::int32_t  last_tob_ask_qty_observed_ = -1;
@@ -2504,6 +2533,34 @@ public:
     std::uint64_t queue_replenish_ask_count() const noexcept { return queue_replenish_ask_; }
     std::uint64_t queue_consume_bid_count()  const noexcept { return queue_consume_bid_; }
     std::uint64_t queue_consume_ask_count()  const noexcept { return queue_consume_ask_; }
+
+    // ====================================================================
+    // Kyle's lambda (price impact slope)
+    // ====================================================================
+    //
+    // λ = Σ Δp × v / Σ v² (slope of regression: price change ~ signed volume).
+    // Wysokie λ = każda jednostka volume mocno rusza ceną (illiquid; toxic).
+    double kyle_lambda() const noexcept {
+        if (cum_signed_volume_sq_ <= 0.0) return 0.0;
+        return cum_price_volume_product_ / cum_signed_volume_sq_;
+    }
+    double kyle_lambda_abs() const noexcept {
+        return std::abs(kyle_lambda());
+    }
+
+    // ====================================================================
+    // Latency arbitrage window detector
+    // ====================================================================
+    //
+    // set_latency_arb_window_ns(ε): uzbrojenie alertu na same-side aggressors
+    // w odstępie ≤ ε ns. Wysokie counts = exchange-co-located HFT chasing
+    // venue updates faster niż konkurencja.
+    void set_latency_arb_window_ns(std::uint64_t window_ns) noexcept {
+        larb_window_ns_ = window_ns;
+    }
+    std::uint64_t latency_arb_same_side_fast_count() const noexcept {
+        return larb_same_side_fast_;
+    }
 
     // ====================================================================
     // for_each_order — read-only iterator po wszystkich aktywnych orderach
@@ -3114,6 +3171,40 @@ public:
             if (slot_used_[i]) t += books_[i].active_orders();
         }
         return t;
+    }
+
+    // Cluster-wide cumulative fills (Σ stats_.total_fills per symbol).
+    std::uint64_t cluster_total_fills() const noexcept {
+        std::uint64_t t = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (slot_used_[i]) t += books_[i].stats().total_fills;
+        }
+        return t;
+    }
+    std::uint64_t cluster_total_volume() const noexcept {
+        std::uint64_t t = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (slot_used_[i]) t += books_[i].stats().total_volume;
+        }
+        return t;
+    }
+    std::uint64_t cluster_total_orders_added() const noexcept {
+        std::uint64_t t = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (slot_used_[i]) t += books_[i].stats().total_orders_added;
+        }
+        return t;
+    }
+    // Symbol z najwyższym book-level flow_imbalance (informational flow magnet).
+    const char* most_imbalanced_symbol() const noexcept {
+        std::size_t best = N_SYMBOLS;
+        std::int32_t best_abs = -1;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i]) continue;
+            const std::int32_t imb = std::abs(books_[i].flow_imbalance_bps());
+            if (imb > best_abs) { best_abs = imb; best = i; }
+        }
+        return best < N_SYMBOLS ? symbols_[best] : nullptr;
     }
 
     // ====================================================================

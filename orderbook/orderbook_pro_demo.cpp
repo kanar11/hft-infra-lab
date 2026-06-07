@@ -1465,6 +1465,61 @@ void test_queue_replenish_bid() {
     ASSERT(b.queue_consume_bid_count()   == 0, "queue_consume_bid_0");
 }
 
+// ──────────────────────────────────────────────
+// Kyle's lambda + latency arb + cluster aggregations
+// ──────────────────────────────────────────────
+
+void test_kyle_lambda_zero_without_trades() {
+    Book b;
+    ASSERT(b.kyle_lambda() == 0.0,                "lambda_zero_empty");
+}
+
+void test_kyle_lambda_nonzero_after_price_move() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);   // trade 1: px=10100
+    b.submit(Side::SELL, 10200, 100);
+    b.submit(Side::BUY,  10200, 100);   // trade 2: px=10200, dp=+100, v=+100
+    // λ = (100*100) / 100² = 1.0
+    const double L = b.kyle_lambda();
+    ASSERT(L > 0.5 && L < 1.5,                    "lambda_around_1");
+}
+
+void test_latency_arb_off_by_default() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    b.submit(Side::SELL, 10101, 50);
+    b.submit(Side::BUY,  10101, 50);
+    ASSERT(b.latency_arb_same_side_fast_count() == 0, "larb_off_zero");
+}
+
+void test_latency_arb_detected_same_side_back_to_back() {
+    Book b;
+    b.set_latency_arb_window_ns(1'000'000'000ULL);  // 1 second — bardzo szeroki
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);    // BUY fill #1
+    b.submit(Side::SELL, 10101, 50);
+    b.submit(Side::BUY,  10101, 50);    // BUY fill #2 — same side, within window
+    ASSERT(b.latency_arb_same_side_fast_count() >= 1, "larb_same_side_caught");
+}
+
+void test_cluster_aggregations() {
+    using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
+    Cluster cluster;
+    cluster.register_symbol("AAPL");
+    cluster.register_symbol("MSFT");
+    auto* a = cluster.book("AAPL");
+    auto* m = cluster.book("MSFT");
+    ASSERT(a && m,                                    "cluster_books_present");
+    a->submit(Side::SELL, 10100, 100);
+    a->submit(Side::BUY,  10100, 100);   // fill
+    m->submit(Side::SELL, 10200, 50);
+    m->submit(Side::BUY,  10200, 50);    // fill
+    ASSERT(cluster.cluster_total_fills() == 2,        "cluster_fills_2");
+    ASSERT(cluster.cluster_total_volume() == 150,     "cluster_vol_150");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1836,6 +1891,11 @@ int main(int argc, char* argv[]) {
     test_spread_bias_bid_side();
     test_spread_bias_neutral();
     test_queue_replenish_bid();
+    test_kyle_lambda_zero_without_trades();
+    test_kyle_lambda_nonzero_after_price_move();
+    test_latency_arb_off_by_default();
+    test_latency_arb_detected_same_side_back_to_back();
+    test_cluster_aggregations();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
