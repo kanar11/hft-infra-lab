@@ -1296,6 +1296,47 @@ void test_for_each_order_visits_all() {
     ASSERT(qty_sum == 50,                           "iter_sum_qty_50");
 }
 
+// ──────────────────────────────────────────────
+// Event seq + hidden ratio + resting count
+// ──────────────────────────────────────────────
+
+void test_event_seq_monotonic() {
+    Book b;
+    const auto s0 = b.last_event_seq_num();
+    b.submit(Side::BUY, 10000, 100);
+    const auto s1 = b.last_event_seq_num();
+    b.submit(Side::SELL, 10010, 50);
+    const auto s2 = b.last_event_seq_num();
+    ASSERT(s1 > s0,                                  "seq_inc_1");
+    ASSERT(s2 > s1,                                  "seq_inc_2");
+}
+
+void test_hidden_ratio_zero_for_limit() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    ASSERT(b.hidden_liquidity_ratio() == 0.0,        "hidden_ratio_zero");
+}
+
+void test_hidden_ratio_with_iceberg() {
+    Book b;
+    b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+             TimeInForce::DAY, 0, 0, /*displayed=*/100);
+    // visible total_qty at 10100 = 100 (displayed); hidden = 900
+    const double r = b.hidden_liquidity_ratio();
+    // ratio = 900 / 1000 = 0.9
+    ASSERT(r > 0.85 && r < 0.95,                     "hidden_ratio_iceberg_0.9");
+}
+
+void test_resting_order_count_buy_side() {
+    Book b;
+    b.submit(Side::BUY, 10000, 10);
+    b.submit(Side::BUY, 10000, 20);
+    b.submit(Side::BUY, 9998,  30);
+    ASSERT(b.resting_order_count(Side::BUY)  == 3,   "rest_count_buy_3");
+    ASSERT(b.resting_order_count(Side::SELL) == 0,   "rest_count_sell_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1653,6 +1694,10 @@ int main(int argc, char* argv[]) {
     test_time_weighted_spread_accumulates();
     test_tape_statistics_basic();
     test_for_each_order_visits_all();
+    test_event_seq_monotonic();
+    test_hidden_ratio_zero_for_limit();
+    test_hidden_ratio_with_iceberg();
+    test_resting_order_count_buy_side();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

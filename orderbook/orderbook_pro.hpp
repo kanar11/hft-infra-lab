@@ -268,6 +268,7 @@ struct BookEvent {
     OrderStatus   resulting_status;
     RejectReason  reject_reason;     // tylko dla REJECT
     std::uint64_t ts_ns;
+    std::uint64_t seq_num = 0;       // monotonic — consumer dedup / gap detect
 };
 
 
@@ -416,8 +417,11 @@ class FullOrderBook {
     void emit(EventType ev, std::uint64_t order_id, std::uint64_t maker_id,
               std::int32_t price_ticks, std::int32_t qty,
               OrderStatus status, RejectReason rr) noexcept {
+        const std::uint64_t seq = ++next_event_seq_;
+        last_emitted_seq_ = seq;
         if (!event_cb_) return;
-        BookEvent e{ev, order_id, maker_id, price_ticks, qty, status, rr, mono_ns_now()};
+        BookEvent e{ev, order_id, maker_id, price_ticks, qty, status, rr,
+                    mono_ns_now(), seq};
         event_cb_(e, event_ctx_);
     }
 
@@ -2157,6 +2161,10 @@ private:
     std::uint64_t time_weighted_spread_ticks_x_ns_ = 0;
     std::uint64_t total_spread_dt_ns_ = 0;
 
+    // Event sequence numbers (monotonic)
+    std::uint64_t next_event_seq_   = 0;
+    std::uint64_t last_emitted_seq_ = 0;
+
     // Volume-at-price profile (zero-init via {})
     std::uint64_t volume_at_price_[LEVELS]{};
 
@@ -2374,6 +2382,44 @@ public:
     //
     // Wywołuje Visitor(const Order&) dla każdego aktywnego ordera (we wszystkich
     // levels, w FIFO order per level, najlepsze ceny pierwsze). Replay/audit.
+    // ====================================================================
+    // Event sequence numbers — monotonic, dla consumer gap detection / dedup
+    // ====================================================================
+    std::uint64_t last_event_seq_num() const noexcept { return last_emitted_seq_; }
+
+    // ====================================================================
+    // Hidden liquidity ratio (visible vs hidden capacity)
+    // ====================================================================
+    //
+    // Iceberg/HIDDEN orders mają część qty niewidoczną w L1/L2 depth.
+    // Ratio = Σ hidden / (Σ visible + Σ hidden). Wysokie = dużo dark liquidity.
+    double hidden_liquidity_ratio() const noexcept {
+        std::int64_t vis = 0, hid = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            vis += levels_[p].total_qty;
+            hid += levels_[p].total_hidden;
+        }
+        const std::int64_t total = vis + hid;
+        if (total == 0) return 0.0;
+        return static_cast<double>(hid) / static_cast<double>(total);
+    }
+
+    // Per-side resting order counts (visible only — hidden zliczone osobno).
+    // O(LEVELS) — używaj okresowo, nie w hot pathy.
+    std::int32_t resting_order_count(Side side) const noexcept {
+        std::int32_t n = 0;
+        if (side == Side::BUY) {
+            for (std::int32_t p = 0; p <= best_bid_ticks_ && p < LEVELS; ++p) {
+                n += levels_[p].order_count;
+            }
+        } else {
+            for (std::int32_t p = best_ask_ticks_; p < LEVELS; ++p) {
+                n += levels_[p].order_count;
+            }
+        }
+        return n;
+    }
+
     template <typename Visitor>
     void for_each_order(Visitor v) const noexcept {
         // Bids od best w dół
