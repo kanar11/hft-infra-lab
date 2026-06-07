@@ -1691,6 +1691,66 @@ void test_fill_band_compliance() {
     ASSERT(b.fill_band_compliance_ratio() > 0.0,     "band_compliance_pos");
 }
 
+// ──────────────────────────────────────────────
+// Per-side Kyle's lambda + spread regime + TOB skew + mid-VWAP
+// ──────────────────────────────────────────────
+
+void test_kyle_lambda_per_side_split() {
+    Book b;
+    // Buy taker drives price up: trade1 @10100, trade2 @10200 (BUY both)
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);
+    b.submit(Side::SELL, 10200, 100);
+    b.submit(Side::BUY,  10200, 100);
+    // buy-side λ accumulated; sell-side λ remains 0
+    ASSERT(b.kyle_lambda_buy_abs() > 0.0,         "lambda_buy_pos");
+    ASSERT(b.kyle_lambda_sell()    == 0.0,         "lambda_sell_zero");
+}
+
+void test_spread_regime_classifier() {
+    Book b;
+    b.set_spread_regime_thresholds(2, 6);
+    // spread=1 → tight
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10001, 100);
+    b.sample_spread_regime();
+    // spread=10 → wide. Resetuj asks
+    Book c;
+    c.set_spread_regime_thresholds(2, 6);
+    c.submit(Side::BUY,  10000, 100);
+    c.submit(Side::SELL, 10010, 100);
+    c.sample_spread_regime();
+    ASSERT(b.spread_regime_tight_count() == 1,      "regime_tight_1");
+    ASSERT(c.spread_regime_wide_count() == 1,       "regime_wide_1");
+}
+
+void test_tob_skewness_bid_heavy() {
+    Book b;
+    b.submit(Side::BUY,  10000, 200);
+    b.submit(Side::SELL, 10010, 100);
+    // skew = (200-100)/300 × 10000 ≈ 3333
+    const auto skew = b.tob_skewness_bps();
+    ASSERT(skew > 3000 && skew < 3500,              "skew_bid_3333");
+}
+
+void test_tob_skewness_balanced() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    ASSERT(b.tob_skewness_bps() == 0,               "skew_balanced_0");
+}
+
+void test_mid_minus_vwap_after_trade() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);            // VWAP = 10100
+    b.submit(Side::BUY,  10050, 50);            // adds bid → mid = (10050+? )/2 — no ask
+    b.submit(Side::SELL, 10110, 50);            // best_ask 10110, mid=(10050+10110)/2=10080
+    const auto d = b.mid_minus_tape_vwap_ticks();
+    // d should be small (within 50 ticks)
+    ASSERT(d > -200 && d < 200,                     "mid_vs_vwap_bounded");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2084,6 +2144,11 @@ int main(int argc, char* argv[]) {
     test_mid_ring_samples_after_quotes();
     test_mid_momentum_positive();
     test_fill_band_compliance();
+    test_kyle_lambda_per_side_split();
+    test_spread_regime_classifier();
+    test_tob_skewness_bid_heavy();
+    test_tob_skewness_balanced();
+    test_mid_minus_vwap_after_trade();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

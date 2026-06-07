@@ -474,13 +474,21 @@ class FullOrderBook {
             taker_sell_volume_ += static_cast<std::uint64_t>(qty);
             ++taker_sell_count_;
         }
-        // Kyle's lambda accumulator
+        // Kyle's lambda accumulator (global + per-side decomp)
         if (prev_trade_px_for_lambda_ >= 0) {
             const double dp = static_cast<double>(price_ticks - prev_trade_px_for_lambda_);
             const double signed_v = (taker_side == Side::BUY ? +1.0 : -1.0) *
                                     static_cast<double>(qty);
+            const double vsq = signed_v * signed_v;
             cum_price_volume_product_ += dp * signed_v;
-            cum_signed_volume_sq_     += signed_v * signed_v;
+            cum_signed_volume_sq_     += vsq;
+            if (taker_side == Side::BUY) {
+                cum_pv_buy_  += dp * signed_v;
+                cum_vsq_buy_ += vsq;
+            } else {
+                cum_pv_sell_  += dp * signed_v;
+                cum_vsq_sell_ += vsq;
+            }
         }
         prev_trade_px_for_lambda_ = price_ticks;
         // Latency arbitrage: same-side aggressors within window
@@ -2240,6 +2248,18 @@ private:
     std::int64_t  prev_trade_px_for_lambda_ = -1;
     double        cum_price_volume_product_ = 0.0;  // Σ Δp × v
     double        cum_signed_volume_sq_     = 0.0;  // Σ v²
+    // Per-side decomposition
+    double        cum_pv_buy_  = 0.0;
+    double        cum_pv_sell_ = 0.0;
+    double        cum_vsq_buy_ = 0.0;
+    double        cum_vsq_sell_ = 0.0;
+
+    // Spread regime thresholds + counters
+    std::int32_t  spread_regime_tight_thresh_  = 0;
+    std::int32_t  spread_regime_wide_thresh_   = 0;
+    std::uint64_t spread_regime_tight_count_   = 0;
+    std::uint64_t spread_regime_normal_count_  = 0;
+    std::uint64_t spread_regime_wide_count_    = 0;
 
     // Latency arbitrage window detection
     std::uint64_t larb_window_ns_      = 0;            // 0 = off
@@ -2731,6 +2751,74 @@ public:
         if (total == 0) return 0.0;
         return static_cast<double>(fills_within_band_) /
                static_cast<double>(total);
+    }
+
+    // ====================================================================
+    // Per-side Kyle's lambda
+    // ====================================================================
+    //
+    // Buy-side vs sell-side decomposition. Sygnalizuje asymmetric impact:
+    // buy_lambda > sell_lambda → buyers płacą drożej (asymmetric supply curve).
+    double kyle_lambda_buy() const noexcept {
+        if (cum_vsq_buy_ <= 0.0) return 0.0;
+        return cum_pv_buy_ / cum_vsq_buy_;
+    }
+    double kyle_lambda_sell() const noexcept {
+        if (cum_vsq_sell_ <= 0.0) return 0.0;
+        return cum_pv_sell_ / cum_vsq_sell_;
+    }
+    double kyle_lambda_buy_abs()  const noexcept { return std::abs(kyle_lambda_buy()); }
+    double kyle_lambda_sell_abs() const noexcept { return std::abs(kyle_lambda_sell()); }
+
+    // ====================================================================
+    // Spread regime classifier
+    // ====================================================================
+    //
+    // Thresholds dzielą czas na 3 bucketsy. Use case: classify market into
+    // calm / normal / stressed regimes (volatility & impact regimes differ).
+    void set_spread_regime_thresholds(std::int32_t tight, std::int32_t wide) noexcept {
+        spread_regime_tight_thresh_ = tight;
+        spread_regime_wide_thresh_  = wide;
+    }
+    void sample_spread_regime() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        if (spread_regime_tight_thresh_ <= 0 || spread_regime_wide_thresh_ <= 0)
+            return;
+        const std::int32_t s = best_ask_ticks_ - best_bid_ticks_;
+        if (s <= spread_regime_tight_thresh_)        ++spread_regime_tight_count_;
+        else if (s >= spread_regime_wide_thresh_)    ++spread_regime_wide_count_;
+        else                                          ++spread_regime_normal_count_;
+    }
+    std::uint64_t spread_regime_tight_count()  const noexcept { return spread_regime_tight_count_; }
+    std::uint64_t spread_regime_normal_count() const noexcept { return spread_regime_normal_count_; }
+    std::uint64_t spread_regime_wide_count()   const noexcept { return spread_regime_wide_count_; }
+
+    // ====================================================================
+    // TOB skewness — bid_qty vs ask_qty asymmetry
+    // ====================================================================
+    //
+    // Zwraca (best_bid_qty - best_ask_qty) / (sum) × 10000 bps.
+    // Pozytywny = bid_qty dominuje (passive demand).
+    std::int32_t tob_skewness_bps() const noexcept {
+        if (!has_bid() || !has_ask()) return 0;
+        const std::int64_t b = levels_[best_bid_ticks_].total_qty;
+        const std::int64_t a = levels_[best_ask_ticks_].total_qty;
+        const std::int64_t total = b + a;
+        if (total == 0) return 0;
+        return static_cast<std::int32_t>((b - a) * 10000 / total);
+    }
+
+    // ====================================================================
+    // Mid-VWAP divergence
+    // ====================================================================
+    //
+    // mid_minus_tape_vwap_ticks() — current mid względem cumulative VWAP z tape.
+    // >0 = price drifted up from average; <0 = drifted down.
+    std::int32_t mid_minus_tape_vwap_ticks() const noexcept {
+        const std::int32_t vwap = tape_vwap_ticks();
+        const std::int32_t mid = mid_ticks();
+        if (vwap <= 0 || mid <= 0) return 0;
+        return mid - vwap;
     }
 
     std::int32_t largest_resting_order_qty() const noexcept {
