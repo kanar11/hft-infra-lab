@@ -52,6 +52,7 @@
 #include <array>
 #include <chrono>
 #include <climits>     // INT32_MAX (sentinel NO_ASK_TICKS)
+#include <cmath>       // std::sqrt — tape price stddev
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>     // std::abs(int) — auction imbalance scoring
@@ -2147,6 +2148,15 @@ private:
     // Quote flicker (TOB change without trade) — needs last_fill_ts vs last_tob_change_ts
     std::uint64_t quote_flicker_count_ = 0;
 
+    // TOB stability streak
+    std::uint64_t tob_unchanged_streak_ = 0;
+    std::uint64_t max_tob_unchanged_streak_ = 0;
+
+    // Time-weighted spread (∫ spread × dt)
+    std::uint64_t last_spread_sample_ts_ns_ = 0;
+    std::uint64_t time_weighted_spread_ticks_x_ns_ = 0;
+    std::uint64_t total_spread_dt_ns_ = 0;
+
     // Volume-at-price profile (zero-init via {})
     std::uint64_t volume_at_price_[LEVELS]{};
 
@@ -2164,6 +2174,13 @@ public:
     bool poll_tob_change() noexcept {
         const bool changed = (best_bid_ticks_ != last_observed_bid_ticks_)
                           || (best_ask_ticks_ != last_observed_ask_ticks_);
+        if (!changed) {
+            ++tob_unchanged_streak_;
+            if (tob_unchanged_streak_ > max_tob_unchanged_streak_)
+                max_tob_unchanged_streak_ = tob_unchanged_streak_;
+        } else {
+            tob_unchanged_streak_ = 0;
+        }
         if (changed) {
             const std::uint64_t now = mono_ns_now();
             // Quote-flicker: zmiana TOB pomiędzy ostatnim fillem a teraz?
@@ -2256,6 +2273,125 @@ public:
             }
         }
         return best_tick;
+    }
+
+    // ====================================================================
+    // TOB stability streak
+    // ====================================================================
+    //
+    // current_tob_unchanged_streak() — # konsekutywnych pollów, w których
+    // TOB nie zmienił się. max_tob_unchanged_streak_observed() — historyczne max.
+    // Wysoka wartość = stable book; niska = noisy/active flow.
+    std::uint64_t current_tob_unchanged_streak() const noexcept {
+        return tob_unchanged_streak_;
+    }
+    std::uint64_t max_tob_unchanged_streak_observed() const noexcept {
+        return max_tob_unchanged_streak_;
+    }
+
+    // ====================================================================
+    // Time-weighted spread (TWAS)
+    // ====================================================================
+    //
+    // Strategia okresowo wywołuje sample_time_weighted_spread(); akumulujemy
+    // (spread × dt) gdzie dt = czas od poprzedniego sampla. Mean TWAS =
+    // Σ spread×dt / Σ dt. Bardziej miarodajne niż arithmetic mean spread.
+    void sample_time_weighted_spread() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        const std::uint64_t now = mono_ns_now();
+        if (last_spread_sample_ts_ns_ == 0) {
+            last_spread_sample_ts_ns_ = now;
+            return;
+        }
+        if (now > last_spread_sample_ts_ns_) {
+            const std::uint64_t dt = now - last_spread_sample_ts_ns_;
+            const std::uint64_t spread =
+                static_cast<std::uint64_t>(best_ask_ticks_ - best_bid_ticks_);
+            time_weighted_spread_ticks_x_ns_ += spread * dt;
+            total_spread_dt_ns_ += dt;
+            last_spread_sample_ts_ns_ = now;
+        }
+    }
+    double mean_time_weighted_spread_ticks() const noexcept {
+        if (total_spread_dt_ns_ == 0) return 0.0;
+        return static_cast<double>(time_weighted_spread_ticks_x_ns_) /
+               static_cast<double>(total_spread_dt_ns_);
+    }
+
+    // ====================================================================
+    // Trade tape statistics
+    // ====================================================================
+    //
+    // Skanuje całe ring buffer (do TAPE_CAP wpisów) i wylicza statystyki
+    // ostatnich N trades. min/max/mean qty + cena std-dev jako volatility
+    // estimator.
+    struct TapeStats {
+        std::int32_t  n_samples;
+        std::int32_t  min_qty;
+        std::int32_t  max_qty;
+        double        mean_qty;
+        std::int32_t  min_price_ticks;
+        std::int32_t  max_price_ticks;
+        double        mean_price_ticks;
+        double        price_stddev_ticks;
+    };
+    TapeStats tape_statistics() const noexcept {
+        TapeStats s{0, 0, 0, 0.0, 0, 0, 0.0, 0.0};
+        const std::size_t n = std::min(tape_count_, TAPE_CAP);
+        if (n == 0) return s;
+        s.n_samples = static_cast<std::int32_t>(n);
+        const Trade& first = tape_[(tape_head_ + TAPE_CAP - n) % TAPE_CAP];
+        s.min_qty = s.max_qty = first.qty;
+        s.min_price_ticks = s.max_price_ticks = first.price_ticks;
+        std::int64_t sum_qty = 0, sum_px = 0;
+        for (std::size_t k = 0; k < n; ++k) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - n + k) % TAPE_CAP];
+            sum_qty += t.qty;
+            sum_px  += t.price_ticks;
+            if (t.qty < s.min_qty)        s.min_qty = t.qty;
+            if (t.qty > s.max_qty)        s.max_qty = t.qty;
+            if (t.price_ticks < s.min_price_ticks) s.min_price_ticks = t.price_ticks;
+            if (t.price_ticks > s.max_price_ticks) s.max_price_ticks = t.price_ticks;
+        }
+        s.mean_qty         = static_cast<double>(sum_qty) / static_cast<double>(n);
+        s.mean_price_ticks = static_cast<double>(sum_px)  / static_cast<double>(n);
+        // 2nd pass dla std-dev (numerically stable byłby Welford; tu prosty).
+        double var = 0.0;
+        for (std::size_t k = 0; k < n; ++k) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - n + k) % TAPE_CAP];
+            const double d = static_cast<double>(t.price_ticks) - s.mean_price_ticks;
+            var += d * d;
+        }
+        var /= static_cast<double>(n);
+        // sqrt bez <cmath> – uproszczenie via std::sqrt
+        s.price_stddev_ticks = std::sqrt(var);
+        return s;
+    }
+
+    // ====================================================================
+    // for_each_order — read-only iterator po wszystkich aktywnych orderach
+    // ====================================================================
+    //
+    // Wywołuje Visitor(const Order&) dla każdego aktywnego ordera (we wszystkich
+    // levels, w FIFO order per level, najlepsze ceny pierwsze). Replay/audit.
+    template <typename Visitor>
+    void for_each_order(Visitor v) const noexcept {
+        // Bids od best w dół
+        for (std::int32_t p = best_bid_ticks_; p >= 0 && p != NO_BID_TICKS; --p) {
+            const PriceLevel& lvl = levels_[p];
+            for (const Order* o = lvl.head; o != nullptr; o = o->next_at_level) {
+                v(*o);
+            }
+            if (p == 0) break;
+        }
+        // Asks od best w górę
+        for (std::int32_t p = best_ask_ticks_;
+             p < LEVELS && p != NO_ASK_TICKS; ++p) {
+            const PriceLevel& lvl = levels_[p];
+            for (const Order* o = lvl.head; o != nullptr; o = o->next_at_level) {
+                v(*o);
+            }
+        }
     }
 
     // current_tob_snapshot(): immutable read bez resetu state.

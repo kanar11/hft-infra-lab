@@ -1233,6 +1233,69 @@ void test_point_of_control() {
     ASSERT(b.point_of_control_ticks() == 10200, "poc_at_max_vol");
 }
 
+// ──────────────────────────────────────────────
+// TOB stability, time-weighted spread, tape stats, iterator
+// ──────────────────────────────────────────────
+
+void test_tob_stability_streak() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    (void)b.poll_tob_change();        // changed → streak=0
+    (void)b.poll_tob_change();        // unchanged → streak=1
+    (void)b.poll_tob_change();        // unchanged → streak=2
+    ASSERT(b.current_tob_unchanged_streak() == 2,        "streak_2");
+    ASSERT(b.max_tob_unchanged_streak_observed() == 2,   "max_streak_2");
+    b.submit(Side::BUY, 10001, 50);
+    (void)b.poll_tob_change();        // changed → reset
+    ASSERT(b.current_tob_unchanged_streak() == 0,        "streak_reset");
+    ASSERT(b.max_tob_unchanged_streak_observed() == 2,   "max_persists");
+}
+
+void test_time_weighted_spread_accumulates() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10005, 100);
+    b.sample_time_weighted_spread();   // first sample — sets baseline
+    // mała pętla zajmująca czas
+    for (volatile int i = 0; i < 1000; ++i) {}
+    b.sample_time_weighted_spread();
+    ASSERT(b.mean_time_weighted_spread_ticks() >= 0.0,
+                                                       "twas_nonneg");
+}
+
+void test_tape_statistics_basic() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);   // trade 1: qty=50, px=10100
+    b.submit(Side::SELL, 10110, 100);
+    b.submit(Side::BUY,  10110, 100);  // trade 2: qty=100, px=10110
+    auto ts = b.tape_statistics();
+    ASSERT(ts.n_samples == 2,                       "tape_n_2");
+    ASSERT(ts.min_qty == 50,                        "tape_minq_50");
+    ASSERT(ts.max_qty == 100,                       "tape_maxq_100");
+    ASSERT(ts.min_price_ticks == 10100,             "tape_minp");
+    ASSERT(ts.max_price_ticks == 10110,             "tape_maxp");
+    ASSERT(ts.mean_qty == 75.0,                     "tape_meanq_75");
+    ASSERT(ts.price_stddev_ticks > 0.0,             "tape_stddev_pos");
+}
+
+void test_for_each_order_visits_all() {
+    Book b;
+    b.submit(Side::BUY,  10000, 10);
+    b.submit(Side::BUY,  9999,  20);
+    b.submit(Side::SELL, 10010, 5);
+    b.submit(Side::SELL, 10020, 15);
+    std::int32_t count = 0;
+    std::int32_t qty_sum = 0;
+    b.for_each_order([&](const auto& o) {
+        ++count;
+        qty_sum += o.total_qty;
+    });
+    ASSERT(count == 4,                              "iter_4_orders");
+    ASSERT(qty_sum == 50,                           "iter_sum_qty_50");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1586,6 +1649,10 @@ int main(int argc, char* argv[]) {
     test_quote_flicker_zero_when_trade_intervenes();
     test_volume_at_price_accumulates();
     test_point_of_control();
+    test_tob_stability_streak();
+    test_time_weighted_spread_accumulates();
+    test_tape_statistics_basic();
+    test_for_each_order_visits_all();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
