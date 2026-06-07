@@ -2613,6 +2613,70 @@ public:
     // O(LEVELS × orders_per_level). Wykorzystywane okresowo, nie hot.
     // Wall = dużo qty w jednym orderze — może oznaczać iceberg, hidden
     // intent, lub bluff/manipulację (spoofing).
+    // ====================================================================
+    // Depth concentration index
+    // ====================================================================
+    //
+    // depth_concentration_bps(side, top_n): qty w top_n najlepszych levels
+    // jako % całkowitej qty po tej stronie (bps). Wysokie = liquidity blisko
+    // best price (tight book); niskie = depth rozłożona (thicker tail).
+    std::int32_t depth_concentration_bps(Side side, std::int32_t top_n) const noexcept {
+        std::int64_t top = 0, total = 0;
+        std::int32_t cnt = 0;
+        if (side == Side::BUY) {
+            if (!has_bid()) return 0;
+            for (std::int32_t p = best_bid_ticks_; p >= 0; --p) {
+                const std::int32_t q = levels_[p].total_qty;
+                if (q > 0) {
+                    total += q;
+                    if (cnt < top_n) { top += q; ++cnt; }
+                }
+            }
+        } else {
+            if (!has_ask()) return 0;
+            for (std::int32_t p = best_ask_ticks_; p < LEVELS; ++p) {
+                const std::int32_t q = levels_[p].total_qty;
+                if (q > 0) {
+                    total += q;
+                    if (cnt < top_n) { top += q; ++cnt; }
+                }
+            }
+        }
+        if (total == 0) return 0;
+        return static_cast<std::int32_t>(top * 10000 / total);
+    }
+
+    // ====================================================================
+    // Pending pegged + stop counts
+    // ====================================================================
+    std::size_t peg_orders_count() const noexcept { return peg_orders_.size(); }
+    // (stop_orders_count() już istnieje powyżej.)
+
+    // ====================================================================
+    // Active book averages
+    // ====================================================================
+    //
+    // avg_resting_qty_per_order(): średnia qty per resting order (Σ qty/order_count).
+    // Wysoka = institutional/iceberg-heavy; niska = retail/algo-heavy.
+    double avg_resting_qty_per_order() const noexcept {
+        std::int64_t total_qty = 0;
+        std::int64_t total_orders = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            total_qty    += levels_[p].total_qty;
+            total_orders += levels_[p].order_count;
+        }
+        if (total_orders == 0) return 0.0;
+        return static_cast<double>(total_qty) / static_cast<double>(total_orders);
+    }
+    // active_price_levels(): ile poziomów cenowych ma orders.
+    std::int32_t active_price_levels() const noexcept {
+        std::int32_t n = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            if (levels_[p].order_count > 0) ++n;
+        }
+        return n;
+    }
+
     std::int32_t largest_resting_order_qty() const noexcept {
         std::int32_t best = 0;
         for (std::int32_t p = 0; p < LEVELS; ++p) {

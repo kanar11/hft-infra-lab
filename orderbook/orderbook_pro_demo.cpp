@@ -1598,6 +1598,58 @@ void test_acceptance_ratio() {
     ASSERT(r > 0.6 && r < 0.7, "accept_ratio_0.67");
 }
 
+// ──────────────────────────────────────────────
+// Depth concentration + pending pegs + book averages
+// ──────────────────────────────────────────────
+
+void test_depth_concentration_top1_full() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);    // only 1 level
+    ASSERT(b.depth_concentration_bps(Side::BUY, 1) == 10000,
+                                                    "depth_conc_top1_full");
+}
+
+void test_depth_concentration_top1_half() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  100);
+    // top-1 has 100/200 = 5000 bps
+    ASSERT(b.depth_concentration_bps(Side::BUY, 1) == 5000,
+                                                    "depth_conc_top1_5000");
+}
+
+void test_depth_concentration_top3_full() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  100);
+    b.submit(Side::BUY, 9998,  100);
+    // top-3 = all 3 = 10000 bps
+    ASSERT(b.depth_concentration_bps(Side::BUY, 3) == 10000,
+                                                    "depth_conc_top3_full");
+}
+
+void test_peg_orders_count_zero_initially() {
+    Book b;
+    ASSERT(b.peg_orders_count() == 0,               "peg_count_0");
+}
+
+void test_avg_resting_qty_per_order() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  300);
+    // total qty 400, 2 orders → avg = 200
+    ASSERT(b.avg_resting_qty_per_order() == 200.0,  "avg_resting_200");
+}
+
+void test_active_price_levels() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 10000, 50);     // same level
+    b.submit(Side::BUY, 9999,  100);    // different level
+    b.submit(Side::SELL, 10010, 100);
+    ASSERT(b.active_price_levels() == 3, "active_levels_3");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1981,6 +2033,12 @@ int main(int argc, char* argv[]) {
     test_accepts_by_tif_counts();
     test_accepts_by_type_counts();
     test_acceptance_ratio();
+    test_depth_concentration_top1_full();
+    test_depth_concentration_top1_half();
+    test_depth_concentration_top3_full();
+    test_peg_orders_count_zero_initially();
+    test_avg_resting_qty_per_order();
+    test_active_price_levels();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
