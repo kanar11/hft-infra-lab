@@ -645,6 +645,9 @@ private:
             qty_remaining   -= exec_qty;
             exposure_on_fill(m->client_id, m->side, exec_qty);
             exposure_on_fill(taker->client_id, taker->side, exec_qty);
+            // Aggressive vs passive accounting per account
+            tag_aggressor_volume(taker->client_id, exec_qty);
+            tag_passive_volume(m->client_id, exec_qty);
 
             // Trade record (price = maker's price = lvl.price = m->price_ticks)
             record_trade(m->id, taker->id, m->price_ticks, exec_qty,
@@ -1989,10 +1992,41 @@ public:
         std::uint64_t orders_submitted    = 0;
         std::uint64_t orders_cancelled    = 0;
         std::uint64_t fills_received      = 0;
+        // Aggressive (taker) vs passive (maker) volume — przydatne dla rebates
+        // i toxicity scoring per account.
+        std::uint64_t aggressive_volume   = 0;    // ta strona była taker
+        std::uint64_t passive_volume      = 0;    // ta strona była maker
     };
     AccountExposure get_account_exposure(std::uint64_t client_id) const noexcept {
         const auto it = account_exposure_.find(client_id);
         return it == account_exposure_.end() ? AccountExposure{} : it->second;
+    }
+    // Aggressive ratio = taker_volume / (taker + maker). 1.0 = pure taker
+    // (płaci taker fee — wysoki cost); 0.0 = pure maker (zbiera rebate).
+    double aggressive_ratio_for(std::uint64_t client_id) const noexcept {
+        const auto ex = get_account_exposure(client_id);
+        const std::uint64_t total = ex.aggressive_volume + ex.passive_volume;
+        if (total == 0) return 0.0;
+        return static_cast<double>(ex.aggressive_volume) /
+               static_cast<double>(total);
+    }
+    // Per-account cancel-to-fill ratio.
+    double cancel_to_fill_ratio_for(std::uint64_t client_id) const noexcept {
+        const auto ex = get_account_exposure(client_id);
+        if (ex.fills_received == 0) return 0.0;
+        return static_cast<double>(ex.orders_cancelled) /
+               static_cast<double>(ex.fills_received);
+    }
+
+private:
+    // Helper hooks dla aggressor vs passive volume tagging.
+    void tag_aggressor_volume(std::uint64_t cid, std::int32_t qty) noexcept {
+        if (cid == 0) return;
+        account_exposure_[cid].aggressive_volume += static_cast<std::uint64_t>(qty);
+    }
+    void tag_passive_volume(std::uint64_t cid, std::int32_t qty) noexcept {
+        if (cid == 0) return;
+        account_exposure_[cid].passive_volume += static_cast<std::uint64_t>(qty);
     }
 
 private:

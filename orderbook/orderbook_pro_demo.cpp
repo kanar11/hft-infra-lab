@@ -1337,6 +1337,57 @@ void test_resting_order_count_buy_side() {
     ASSERT(b.resting_order_count(Side::SELL) == 0,   "rest_count_sell_0");
 }
 
+// ──────────────────────────────────────────────
+// Per-account aggressive/passive + CTR
+// ──────────────────────────────────────────────
+
+void test_aggressive_volume_taker() {
+    Book b;
+    constexpr std::uint64_t MAKER = 11;
+    constexpr std::uint64_t TAKER = 22;
+    b.submit(Side::SELL, 10100, 100, OrderType::LIMIT, TimeInForce::DAY,
+             /*order_id=*/0, /*client_id=*/MAKER);
+    b.submit(Side::BUY,  10100, 100, OrderType::LIMIT, TimeInForce::DAY,
+             0, TAKER);
+    const auto m_ex = b.get_account_exposure(MAKER);
+    const auto t_ex = b.get_account_exposure(TAKER);
+    ASSERT(t_ex.aggressive_volume == 100, "taker_agg_100");
+    ASSERT(t_ex.passive_volume    == 0,   "taker_pass_0");
+    ASSERT(m_ex.passive_volume    == 100, "maker_pass_100");
+    ASSERT(m_ex.aggressive_volume == 0,   "maker_agg_0");
+}
+
+void test_aggressive_ratio_mixed() {
+    Book b;
+    constexpr std::uint64_t ACC = 33;
+    // First: account is maker (passive 50)
+    b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, ACC);
+    b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 99);
+    // Second: account is taker (aggressive 50)
+    b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 99);
+    b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, ACC);
+    // 50 agg + 50 pass → ratio = 0.5
+    const double r = b.aggressive_ratio_for(ACC);
+    ASSERT(r > 0.45 && r < 0.55, "agg_ratio_half");
+}
+
+void test_cancel_to_fill_ratio_per_account() {
+    Book b;
+    constexpr std::uint64_t ACC = 44;
+    // Submit + cancel × 3
+    for (int i = 0; i < 3; ++i) {
+        auto id = b.submit(Side::BUY, 10000 + i, 100, OrderType::LIMIT,
+                            TimeInForce::DAY, 0, ACC);
+        b.cancel(id);
+    }
+    // One fill: maker SELL, then taker BUY by ACC
+    b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 99);
+    b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, ACC);
+    const double r = b.cancel_to_fill_ratio_for(ACC);
+    // 3 cancels / 1 fill = 3.0
+    ASSERT(r >= 2.9 && r <= 3.1, "per_acct_ctr_3");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1698,6 +1749,9 @@ int main(int argc, char* argv[]) {
     test_hidden_ratio_zero_for_limit();
     test_hidden_ratio_with_iceberg();
     test_resting_order_count_buy_side();
+    test_aggressive_volume_taker();
+    test_aggressive_ratio_mixed();
+    test_cancel_to_fill_ratio_per_account();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
