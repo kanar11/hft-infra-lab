@@ -839,6 +839,7 @@ public:
         auto reject = [&](RejectReason r) -> std::uint64_t {
             if (out_reason) *out_reason = r;
             ++stats_.total_orders_rejected;
+            tally_rejection(r);
             const std::uint64_t rid = order_id ? order_id : 0;
             if (client_id != 0) ++client_rejections_[client_id];
             emit(EventType::REJECT, rid, 0, price_ticks, qty,
@@ -905,6 +906,7 @@ public:
         o->status        = OrderStatus::NEW;
         o->submit_ts_ns  = mono_ns_now();
         ++stats_.total_orders_added;
+        tally_accept(type, tif);
 
         emit(EventType::ACCEPT, o->id, 0, o->price_ticks, o->total_qty,
              OrderStatus::OPEN, RejectReason::NONE);
@@ -1289,6 +1291,7 @@ public:
         auto reject = [&](RejectReason r) -> std::uint64_t {
             if (out_reason) *out_reason = r;
             ++stats_.total_orders_rejected;
+            tally_rejection(r);
             return 0;
         };
         if (qty <= 0) return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
@@ -1310,6 +1313,7 @@ public:
         stop_orders_.push_back(o);
         id_index_[o->id] = o;
         ++stats_.total_orders_added;
+        tally_accept(OrderType::STOP, TimeInForce::DAY);
         emit(EventType::ACCEPT, o->id, 0, trigger_ticks, qty,
              OrderStatus::NEW, RejectReason::NONE);
         return o->id;
@@ -1369,6 +1373,7 @@ public:
         auto reject = [&](RejectReason r) -> std::uint64_t {
             if (out_reason) *out_reason = r;
             ++stats_.total_orders_rejected;
+            tally_rejection(r);
             return 0;
         };
         if (qty <= 0) return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
@@ -1407,6 +1412,7 @@ public:
                 best_ask_ticks_ = initial_price;
         }
         ++stats_.total_orders_added;
+        tally_accept(OrderType::PEG, TimeInForce::DAY);
         emit(EventType::ACCEPT, o->id, 0, initial_price, qty,
              OrderStatus::OPEN, RejectReason::NONE);
         return o->id;
@@ -2243,6 +2249,13 @@ private:
     // Iceberg refresh counter
     std::uint64_t iceberg_refresh_count_ = 0;
 
+    // Per-reason rejection counters (RejectReason::* indexed; 13 values)
+    std::uint64_t rejections_by_reason_[13]{};
+    // Per-TIF acceptance counters (TimeInForce::* indexed; 5 values)
+    std::uint64_t accepts_by_tif_[5]{};
+    // Per-OrderType acceptance counters (10 values)
+    std::uint64_t accepts_by_type_[10]{};
+
     // Queue replenishment / consumption counters (TOB qty deltas)
     std::int32_t  last_tob_bid_qty_observed_ = -1;
     std::int32_t  last_tob_ask_qty_observed_ = -1;
@@ -2610,6 +2623,57 @@ public:
         }
         return best;
     }
+
+    // ====================================================================
+    // Per-reason / per-TIF / per-OrderType breakdowns
+    // ====================================================================
+    //
+    // Compliance dashboard — gdzie się odbijają zlecenia (kategoria błędów)
+    // i jakie typy/TIF preferują traderzy. Acceptance ratio = added / submitted.
+    std::uint64_t rejections_by_reason(RejectReason r) const noexcept {
+        const auto i = static_cast<std::size_t>(r);
+        return i < 13 ? rejections_by_reason_[i] : 0;
+    }
+    std::uint64_t accepts_by_tif(TimeInForce tif) const noexcept {
+        const auto i = static_cast<std::size_t>(tif);
+        return i < 5 ? accepts_by_tif_[i] : 0;
+    }
+    std::uint64_t accepts_by_type(OrderType t) const noexcept {
+        const auto i = static_cast<std::size_t>(t);
+        return i < 10 ? accepts_by_type_[i] : 0;
+    }
+    double acceptance_ratio() const noexcept {
+        const std::uint64_t added = stats_.total_orders_added;
+        const std::uint64_t rej   = stats_.total_orders_rejected;
+        const std::uint64_t total = added + rej;
+        if (total == 0) return 0.0;
+        return static_cast<double>(added) / static_cast<double>(total);
+    }
+    // Najbardziej "popularna" kategoria rejectu — diagnostic.
+    RejectReason most_common_reject_reason() const noexcept {
+        std::size_t best_i = 0;
+        std::uint64_t best_v = 0;
+        for (std::size_t i = 1; i < 13; ++i) {  // skip NONE=0
+            if (rejections_by_reason_[i] > best_v) {
+                best_v = rejections_by_reason_[i];
+                best_i = i;
+            }
+        }
+        return static_cast<RejectReason>(best_i);
+    }
+
+private:
+    void tally_rejection(RejectReason r) noexcept {
+        const auto i = static_cast<std::size_t>(r);
+        if (i < 13) ++rejections_by_reason_[i];
+    }
+    void tally_accept(OrderType t, TimeInForce tif) noexcept {
+        const auto ti = static_cast<std::size_t>(t);
+        const auto fi = static_cast<std::size_t>(tif);
+        if (ti < 10) ++accepts_by_type_[ti];
+        if (fi < 5)  ++accepts_by_tif_[fi];
+    }
+public:
 
     // ====================================================================
     // for_each_order — read-only iterator po wszystkich aktywnych orderach
@@ -2991,17 +3055,21 @@ public:
         // 2-pass: faza walidacji (sprawdzimy że pula i ceny OK), faza submit.
         if (active_orders_ + n > MAX_ORDERS) {
             ++stats_.total_orders_rejected;
+            tally_rejection(RejectReason::POOL_EXHAUSTED);
             return 0;
         }
         for (std::size_t i = 0; i < n; ++i) {
             const auto& q = quotes[i];
             if (q.qty <= 0 || !in_range(q.price_ticks)) {
                 ++stats_.total_orders_rejected;
+                tally_rejection(q.qty <= 0 ? RejectReason::QTY_ZERO_OR_NEGATIVE
+                                            : RejectReason::PRICE_OUT_OF_RANGE);
                 return 0;
             }
             // POST_ONLY semantic — quote nie może krzyżować rynku
             if (would_cross(q.side, q.price_ticks)) {
                 ++stats_.total_orders_rejected;
+                tally_rejection(RejectReason::POST_ONLY_WOULD_CROSS);
                 return 0;
             }
         }

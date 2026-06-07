@@ -1553,6 +1553,51 @@ void test_largest_resting_order_qty() {
     ASSERT(b.largest_resting_order_qty() == 200,    "wall_200");
 }
 
+// ──────────────────────────────────────────────
+// Per-reason / per-TIF / per-OrderType breakdowns
+// ──────────────────────────────────────────────
+
+void test_rejections_by_reason_counts() {
+    Book b;
+    RejectReason rr = RejectReason::NONE;
+    b.submit(Side::BUY, 10000, 0, OrderType::LIMIT, TimeInForce::DAY, 0, 0, 0, &rr);
+    b.submit(Side::BUY, 10000, 0, OrderType::LIMIT, TimeInForce::DAY, 0, 0, 0, &rr);
+    ASSERT(b.rejections_by_reason(RejectReason::QTY_ZERO_OR_NEGATIVE) == 2,
+                                                       "rej_qty_zero_2");
+    ASSERT(b.most_common_reject_reason() == RejectReason::QTY_ZERO_OR_NEGATIVE,
+                                                       "most_common_qty_zero");
+}
+
+void test_accepts_by_tif_counts() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100, OrderType::LIMIT, TimeInForce::DAY);
+    b.submit(Side::BUY, 9999,  100, OrderType::LIMIT, TimeInForce::GTC);
+    b.submit(Side::BUY, 9998,  100, OrderType::LIMIT, TimeInForce::GTC);
+    ASSERT(b.accepts_by_tif(TimeInForce::DAY) == 1, "tif_day_1");
+    ASSERT(b.accepts_by_tif(TimeInForce::GTC) == 2, "tif_gtc_2");
+    ASSERT(b.accepts_by_tif(TimeInForce::FOK) == 0, "tif_fok_0");
+}
+
+void test_accepts_by_type_counts() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100, OrderType::LIMIT);
+    b.submit(Side::BUY, 9999,  100, OrderType::LIMIT);
+    b.submit(Side::SELL, 11000, 1000, OrderType::ICEBERG,
+             TimeInForce::DAY, 0, 0, /*displayed=*/100);
+    ASSERT(b.accepts_by_type(OrderType::LIMIT)   == 2, "type_limit_2");
+    ASSERT(b.accepts_by_type(OrderType::ICEBERG) == 1, "type_iceberg_1");
+}
+
+void test_acceptance_ratio() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);  // accept
+    b.submit(Side::BUY, 10000, 100);  // accept
+    b.submit(Side::BUY, 10000, 0);    // reject (qty zero)
+    // 2/3 ≈ 0.667
+    const double r = b.acceptance_ratio();
+    ASSERT(r > 0.6 && r < 0.7, "accept_ratio_0.67");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1932,6 +1977,10 @@ int main(int argc, char* argv[]) {
     test_last_buy_fill_ts_set();
     test_iceberg_refresh_counter();
     test_largest_resting_order_qty();
+    test_rejections_by_reason_counts();
+    test_accepts_by_tif_counts();
+    test_accepts_by_type_counts();
+    test_acceptance_ratio();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
