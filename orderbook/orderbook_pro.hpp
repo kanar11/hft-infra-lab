@@ -248,6 +248,12 @@ struct BookStats {
     std::uint64_t  total_sweeps             = 0;          // taker fills (regardless of levels)
     std::uint64_t  multi_level_sweeps       = 0;          // taker matched >= 2 price levels
     std::uint64_t  sum_levels_touched       = 0;          // Σ levels traversed (per sweep)
+    std::uint64_t  priority_preserved_mods  = 0;          // modify qty-DOWN same-price
+    std::uint64_t  priority_lost_mods       = 0;          // modify zmieniający cenę / qty UP
+    std::uint64_t  total_quoted_spread_ticks_obs = 0;     // Σ best_ask-best_bid przy obserwacji
+    std::uint64_t  total_quoted_spread_samples   = 0;     // ile próbek (do mean spread)
+    std::uint64_t  total_effective_spread_2x_ticks = 0;   // Σ 2×|fill_px - mid| (signed)
+    std::uint64_t  total_effective_spread_samples  = 0;   // ile fillów (do mean effective)
 };
 
 
@@ -691,6 +697,9 @@ private:
         std::int32_t qty_left = taker->remaining_qty();
         const std::int32_t qty_pre = qty_left;
         std::int32_t levels_consumed = 0;
+        // Mid pre-match — używany do effective spread (TCA)
+        const std::int32_t mid_pre_ticks = has_bid() && has_ask()
+            ? (best_bid_ticks_ + best_ask_ticks_) / 2 : -1;
 
         if (taker->side == Side::BUY) {
             // BUY zjada asks od najlepszej (najtańszej) aż do limit price
@@ -719,6 +728,12 @@ private:
             ++stats_.total_sweeps;
             stats_.sum_levels_touched += static_cast<std::uint64_t>(levels_consumed);
             if (levels_consumed >= 2) ++stats_.multi_level_sweeps;
+        }
+        // Effective spread: 2× |VWAP(fills) − mid_pre|. Aproksymujemy fill_px = taker->price.
+        if (mid_pre_ticks >= 0 && qty_left < qty_pre) {
+            const std::int32_t diff = std::abs(taker->price_ticks - mid_pre_ticks);
+            stats_.total_effective_spread_2x_ticks += static_cast<std::uint64_t>(2 * diff);
+            ++stats_.total_effective_spread_samples;
         }
     }
 
@@ -933,20 +948,22 @@ public:
         Order* o = it->second;
 
         // Same-price + qty DOWN → priority-preserving in-place
+        // (reguła zgodna z NASDAQ ITCH/OUCH "Decrease" — zachowuje FIFO)
         if (new_price_ticks == o->price_ticks &&
-            new_qty < o->total_qty - o->filled_qty + o->filled_qty &&  // new_qty < total
+            new_qty < o->total_qty &&
             new_qty > o->filled_qty) {
             const std::int32_t delta = (o->total_qty - new_qty);
             o->total_qty = new_qty;
             o->displayed_qty -= std::min(delta, o->displayed_qty);
             levels_[o->price_ticks].total_qty -= std::min(delta, levels_[o->price_ticks].total_qty);
             ++stats_.total_orders_replaced;
+            ++stats_.priority_preserved_mods;
             emit(EventType::REPLACE, o->id, 0, o->price_ticks, new_qty,
                  o->status, RejectReason::NONE);
             return o->id;
         }
 
-        // Cancel + resubmit — gubi priority
+        // Cancel + resubmit — gubi priority (price change OR qty UP)
         const Side       side       = o->side;
         const OrderType  type       = o->type;
         const TimeInForce tif       = o->tif;
@@ -954,6 +971,7 @@ public:
         const std::int32_t  filled  = o->filled_qty;
         cancel_internal(o, /*emit_event=*/false);
         ++stats_.total_orders_replaced;
+        ++stats_.priority_lost_mods;
         return submit(side, new_price_ticks, new_qty - filled,
                       type, tif, order_id, client_id, 0, out_reason);
     }
@@ -2185,6 +2203,57 @@ public:
     std::uint64_t avg_age_ns_at_completion() const noexcept {
         return age_stats_count_ == 0 ? 0
             : age_stats_sum_ns_ / age_stats_count_;
+    }
+
+    // ====================================================================
+    // Execution quality / TCA metrics
+    // ====================================================================
+    //
+    // Quoted spread — okresowo sampluj wywołując sample_quoted_spread() z
+    // pętli marketdata. Mean quoted spread = Σ obs / N.
+    // Effective spread — accumulowany per fill w match_against():
+    //   eff_spread = 2 × |fill_px - mid_pre_match|
+    // Relacja eff/quoted < 1 → price improvement; > 1 → adverse selection.
+    void sample_quoted_spread() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        stats_.total_quoted_spread_ticks_obs +=
+            static_cast<std::uint64_t>(best_ask_ticks_ - best_bid_ticks_);
+        ++stats_.total_quoted_spread_samples;
+    }
+    double mean_quoted_spread_ticks() const noexcept {
+        if (stats_.total_quoted_spread_samples == 0) return 0.0;
+        return static_cast<double>(stats_.total_quoted_spread_ticks_obs) /
+               static_cast<double>(stats_.total_quoted_spread_samples);
+    }
+    double mean_effective_spread_ticks() const noexcept {
+        if (stats_.total_effective_spread_samples == 0) return 0.0;
+        return static_cast<double>(stats_.total_effective_spread_2x_ticks) /
+               static_cast<double>(stats_.total_effective_spread_samples);
+    }
+    // Realized vs quoted ratio (TCA klasyka). 0 == brak danych.
+    double effective_to_quoted_ratio() const noexcept {
+        const double q = mean_quoted_spread_ticks();
+        if (q <= 0.0) return 0.0;
+        return mean_effective_spread_ticks() / q;
+    }
+
+    // ====================================================================
+    // Cancel-to-trade ratio (CTR) — per-book i per-account
+    // ====================================================================
+    //
+    // SEC Rule 15c3-5 / MiFID II RTS 9: nadmierny CTR (>50:1) wskazuje na
+    // quote stuffing / spoofing. Wyliczane na podstawie cumulative stats.
+    double cancel_to_trade_ratio() const noexcept {
+        if (stats_.total_fills == 0) return 0.0;
+        return static_cast<double>(stats_.total_orders_cancelled) /
+               static_cast<double>(stats_.total_fills);
+    }
+    double priority_loss_ratio() const noexcept {
+        const std::uint64_t total = stats_.priority_preserved_mods +
+                                     stats_.priority_lost_mods;
+        if (total == 0) return 0.0;
+        return static_cast<double>(stats_.priority_lost_mods) /
+               static_cast<double>(total);
     }
 
 private:

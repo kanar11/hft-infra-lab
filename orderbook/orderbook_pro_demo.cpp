@@ -1002,6 +1002,99 @@ void test_age_stats_record_on_fill() {
     ASSERT(b.total_completed_lifecycles() >= 1,     "age_fill_lifecycle");
 }
 
+// ──────────────────────────────────────────────
+// Modify priority preservation rules
+// ──────────────────────────────────────────────
+
+void test_modify_qty_down_preserves_priority() {
+    Book b;
+    auto id1 = b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 10000, 50);   // za nami w FIFO
+    (void)b.modify(id1, 10000, 60);   // qty DOWN at same price
+    ASSERT(b.stats().priority_preserved_mods == 1, "mod_prio_preserved_1");
+    ASSERT(b.stats().priority_lost_mods == 0,       "mod_prio_lost_0");
+    // After mod, id1 still on front of FIFO with qty=60
+    ASSERT(b.queue_position(id1) == 0,              "mod_keeps_front_pos");
+}
+
+void test_modify_price_change_loses_priority() {
+    Book b;
+    auto id1 = b.submit(Side::BUY, 10000, 100);
+    (void)b.modify(id1, 10001, 100);  // price change → new submit
+    ASSERT(b.stats().priority_lost_mods == 1,       "mod_price_change_lost");
+    ASSERT(b.stats().priority_preserved_mods == 0,  "mod_price_change_no_pres");
+}
+
+void test_modify_qty_up_loses_priority() {
+    Book b;
+    auto id1 = b.submit(Side::BUY, 10000, 100);
+    (void)b.modify(id1, 10000, 200);  // qty UP → tail
+    ASSERT(b.stats().priority_lost_mods == 1,       "mod_qty_up_lost");
+}
+
+void test_priority_loss_ratio() {
+    Book b;
+    auto a = b.submit(Side::BUY, 10000, 100);
+    auto c = b.submit(Side::BUY, 10001, 100);
+    (void)b.modify(a, 10000, 50);     // preserved
+    (void)b.modify(c, 10002, 100);    // lost
+    const double r = b.priority_loss_ratio();
+    ASSERT(r > 0.4 && r < 0.6,                      "prio_loss_ratio_half");
+}
+
+// ──────────────────────────────────────────────
+// TCA: quoted + effective spread
+// ──────────────────────────────────────────────
+
+void test_quoted_spread_sampler() {
+    Book b;
+    b.submit(Side::BUY,  10000, 10);
+    b.submit(Side::SELL, 10005, 10);
+    b.sample_quoted_spread();
+    b.sample_quoted_spread();
+    ASSERT(b.stats().total_quoted_spread_samples == 2, "qspread_samples_2");
+    ASSERT(b.mean_quoted_spread_ticks() == 5.0,        "qspread_mean_5");
+}
+
+void test_quoted_spread_skips_one_sided() {
+    Book b;
+    b.submit(Side::BUY, 10000, 10);   // tylko bid
+    b.sample_quoted_spread();          // skips
+    ASSERT(b.stats().total_quoted_spread_samples == 0, "qspread_no_one_sided");
+}
+
+void test_effective_spread_recorded_on_fill() {
+    Book b;
+    b.submit(Side::SELL, 10010, 100);
+    b.submit(Side::BUY,  10000, 100);  // ustawia mid = 10005
+    // taker BUY na 10010, fillowany na 10010, mid_pre=10005 → eff = 2×5 = 10
+    b.submit(Side::BUY,  10010, 100);
+    ASSERT(b.stats().total_effective_spread_samples >= 1, "eff_sample_recorded");
+    ASSERT(b.mean_effective_spread_ticks() > 0.0,         "eff_mean_positive");
+}
+
+// ──────────────────────────────────────────────
+// Cancel-to-trade ratio (CTR)
+// ──────────────────────────────────────────────
+
+void test_ctr_zero_without_fills() {
+    Book b;
+    auto id = b.submit(Side::BUY, 10000, 100);
+    b.cancel(id);
+    ASSERT(b.cancel_to_trade_ratio() == 0.0,        "ctr_zero_no_fills");
+}
+
+void test_ctr_after_cancel_and_fill() {
+    Book b;
+    auto id1 = b.submit(Side::BUY, 10000, 100);
+    b.cancel(id1);
+    // generate a trade
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    const double ctr = b.cancel_to_trade_ratio();
+    ASSERT(ctr > 0.0,                                "ctr_positive");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1333,6 +1426,15 @@ int main(int argc, char* argv[]) {
     test_imbalance_top_3_levels();
     test_age_stats_record_on_cancel();
     test_age_stats_record_on_fill();
+    test_modify_qty_down_preserves_priority();
+    test_modify_price_change_loses_priority();
+    test_modify_qty_up_loses_priority();
+    test_priority_loss_ratio();
+    test_quoted_spread_sampler();
+    test_quoted_spread_skips_one_sided();
+    test_effective_spread_recorded_on_fill();
+    test_ctr_zero_without_fills();
+    test_ctr_after_cancel_and_fill();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
