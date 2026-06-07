@@ -1751,6 +1751,68 @@ void test_mid_minus_vwap_after_trade() {
     ASSERT(d > -200 && d < 200,                     "mid_vs_vwap_bounded");
 }
 
+// ──────────────────────────────────────────────
+// Mid trend + one-sided book + spread histogram + top-K
+// ──────────────────────────────────────────────
+
+void test_mid_trend_unknown_initially() {
+    Book b;
+    ASSERT(b.classify_mid_trend() == Book::MidTrend::UNKNOWN, "trend_unknown");
+}
+
+void test_mid_trend_up_after_rise() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    b.sample_mid_to_ring();
+    b.submit(Side::BUY,  10006, 100);    // bid up
+    b.sample_mid_to_ring();
+    ASSERT(b.classify_mid_trend() == Book::MidTrend::UP, "trend_up");
+}
+
+void test_one_sided_bid_only_counted() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);     // no ask
+    b.poll_tob_micro();
+    ASSERT(b.one_sided_bid_only_count() == 1, "one_sided_bid_only_1");
+    ASSERT(b.one_sided_ask_only_count() == 0, "one_sided_ask_only_0");
+}
+
+void test_spread_histogram_buckets() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10003, 100);    // spread=3
+    b.sample_spread_to_histogram();
+    b.submit(Side::SELL, 10001, 100);    // best_ask=10001, spread=1
+    b.sample_spread_to_histogram();
+    ASSERT(b.spread_histogram_bin(3) >= 1, "hist_bin_3_ge_1");
+    ASSERT(b.spread_histogram_bin(1) >= 1, "hist_bin_1_ge_1");
+    ASSERT(b.spread_histogram_total() == 2, "hist_total_2");
+}
+
+void test_spread_histogram_median() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::SELL, 10005, 100);    // spread=5
+    for (int i = 0; i < 3; ++i) b.sample_spread_to_histogram();
+    // Median of three 5s = 5
+    ASSERT(b.spread_histogram_median_ticks() == 5, "hist_median_5");
+}
+
+void test_top_k_largest_orders() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  300);
+    b.submit(Side::BUY, 9998,  50);
+    b.submit(Side::SELL, 10010, 200);
+    std::int32_t top3[3]{};
+    const auto n = b.top_k_resting_qty(top3, 3);
+    ASSERT(n == 3,                            "top_k_n_3");
+    ASSERT(top3[0] == 300,                    "top_k_max_300");
+    ASSERT(top3[1] == 200,                    "top_k_second_200");
+    ASSERT(top3[2] == 100,                    "top_k_third_100");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2149,6 +2211,12 @@ int main(int argc, char* argv[]) {
     test_tob_skewness_bid_heavy();
     test_tob_skewness_balanced();
     test_mid_minus_vwap_after_trade();
+    test_mid_trend_unknown_initially();
+    test_mid_trend_up_after_rise();
+    test_one_sided_bid_only_counted();
+    test_spread_histogram_buckets();
+    test_spread_histogram_median();
+    test_top_k_largest_orders();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

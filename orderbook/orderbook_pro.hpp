@@ -2261,6 +2261,15 @@ private:
     std::uint64_t spread_regime_normal_count_  = 0;
     std::uint64_t spread_regime_wide_count_    = 0;
 
+    // One-sided book counter (called by poll_tob_micro)
+    std::uint64_t one_sided_bid_only_ = 0;
+    std::uint64_t one_sided_ask_only_ = 0;
+
+    // Spread histogram (32 buckets: 0..30 ticks + 31=overflow)
+    static constexpr std::size_t SPREAD_HIST_BINS = 32;
+    std::uint64_t spread_histogram_[SPREAD_HIST_BINS]{};
+    std::uint64_t spread_hist_total_ = 0;
+
     // Latency arbitrage window detection
     std::uint64_t larb_window_ns_      = 0;            // 0 = off
     std::uint64_t larb_last_fill_ts_   = 0;
@@ -2564,6 +2573,8 @@ public:
     //  • queue_replenish: gdy TOB qty wzrosło względem poprzedniego polla =
     //    market makery dorzucają liquidity. Spadek = consumption.
     void poll_tob_micro() noexcept {
+        if (has_bid() && !has_ask()) { ++one_sided_bid_only_; return; }
+        if (!has_bid() && has_ask()) { ++one_sided_ask_only_; return; }
         if (!has_bid() || !has_ask()) return;
         const std::int32_t mid = (best_bid_ticks_ + best_ask_ticks_) / 2;
         const std::int32_t ask_offset = best_ask_ticks_ - mid;
@@ -2819,6 +2830,87 @@ public:
         const std::int32_t mid = mid_ticks();
         if (vwap <= 0 || mid <= 0) return 0;
         return mid - vwap;
+    }
+
+    // ====================================================================
+    // Mid-trend classifier
+    // ====================================================================
+    //
+    // 3-state: UP / DOWN / SIDEWAYS based on mid_ring delta.
+    enum class MidTrend : std::uint8_t { UNKNOWN = 0, UP = 1, DOWN = 2, SIDEWAYS = 3 };
+    MidTrend classify_mid_trend(std::int32_t sideways_band_ticks = 1) const noexcept {
+        if (mid_ring_count_ < 2) return MidTrend::UNKNOWN;
+        const std::int32_t d = mid_momentum_ticks();
+        if (d >  sideways_band_ticks) return MidTrend::UP;
+        if (d < -sideways_band_ticks) return MidTrend::DOWN;
+        return MidTrend::SIDEWAYS;
+    }
+
+    // ====================================================================
+    // One-sided book counters (called by poll_tob_micro)
+    // ====================================================================
+    std::uint64_t one_sided_bid_only_count() const noexcept { return one_sided_bid_only_; }
+    std::uint64_t one_sided_ask_only_count() const noexcept { return one_sided_ask_only_; }
+
+    // ====================================================================
+    // Spread histogram
+    // ====================================================================
+    //
+    // sample_spread_to_histogram() — bucketuje current spread do 32-bin hist.
+    // Bin index = min(31, spread). Bin 31 jest catch-all dla >= 31 ticków.
+    void sample_spread_to_histogram() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        const std::int32_t s = best_ask_ticks_ - best_bid_ticks_;
+        const std::size_t bin = std::min(static_cast<std::size_t>(s),
+                                         SPREAD_HIST_BINS - 1);
+        ++spread_histogram_[bin];
+        ++spread_hist_total_;
+    }
+    std::uint64_t spread_histogram_bin(std::size_t bin) const noexcept {
+        return bin < SPREAD_HIST_BINS ? spread_histogram_[bin] : 0;
+    }
+    std::uint64_t spread_histogram_total() const noexcept { return spread_hist_total_; }
+    // Median spread w bps — pierwszy bin z cumulative >= 50%.
+    std::int32_t spread_histogram_median_ticks() const noexcept {
+        if (spread_hist_total_ == 0) return -1;
+        const std::uint64_t target = spread_hist_total_ / 2;
+        std::uint64_t cum = 0;
+        for (std::size_t i = 0; i < SPREAD_HIST_BINS; ++i) {
+            cum += spread_histogram_[i];
+            if (cum > target) return static_cast<std::int32_t>(i);
+        }
+        return static_cast<std::int32_t>(SPREAD_HIST_BINS - 1);
+    }
+
+    // ====================================================================
+    // Top-K largest resting orders
+    // ====================================================================
+    //
+    // Wypełnia out_qty[] do max K największych remaining qty. Zwraca ile
+    // znaleziono. Prostą O(N×K) selection — używać tylko okresowo na małym K.
+    std::size_t top_k_resting_qty(std::int32_t* out_qty, std::size_t k) const noexcept {
+        if (!out_qty || k == 0) return 0;
+        for (std::size_t i = 0; i < k; ++i) out_qty[i] = 0;
+        std::size_t filled = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            for (const Order* o = levels_[p].head; o != nullptr; o = o->next_at_level) {
+                const std::int32_t left = o->total_qty - o->filled_qty;
+                if (left <= 0) continue;
+                // Wstaw do sortowanej tablicy (insertion-sort top-K)
+                std::size_t pos = std::min(filled, k - 1);
+                if (left > out_qty[pos] || filled < k) {
+                    if (filled < k) ++filled;
+                    // znajdź miejsce
+                    std::size_t i_ins = std::min(filled - 1, k - 1);
+                    while (i_ins > 0 && out_qty[i_ins - 1] < left) {
+                        out_qty[i_ins] = out_qty[i_ins - 1];
+                        --i_ins;
+                    }
+                    out_qty[i_ins] = left;
+                }
+            }
+        }
+        return filled;
     }
 
     std::int32_t largest_resting_order_qty() const noexcept {
