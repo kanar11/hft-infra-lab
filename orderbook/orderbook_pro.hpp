@@ -168,6 +168,7 @@ struct alignas(64) Order {
     std::uint64_t  expire_ts_ns;         // dla GTD; 0 = nigdy
     std::int32_t   stop_trigger_ticks;   // dla STOP/PEG: cena triggera/peg base
     std::int32_t   peg_offset_ticks;     // dla PEG: offset od best bid/ask/mid
+    std::int32_t   decision_mid_ticks;   // snapshot mid przy submit — dla IS (Implementation Shortfall)
     Order*         next_at_level;        // intrusive list (FIFO)
     Order*         prev_at_level;
     Order*         next_free;            // free list w pool (gdy slot wolny)
@@ -187,6 +188,7 @@ struct alignas(64) Order {
         expire_ts_ns = 0;
         stop_trigger_ticks = 0;
         peg_offset_ticks = 0;
+        decision_mid_ticks = -1;
         next_at_level = nullptr;
         prev_at_level = nullptr;
         next_free = nullptr;
@@ -681,6 +683,18 @@ private:
             qty_remaining   -= exec_qty;
             exposure_on_fill(m->client_id, m->side, exec_qty);
             exposure_on_fill(taker->client_id, taker->side, exec_qty);
+            // Implementation shortfall (per fill, signed by side).
+            // BUY: cost > 0 jeśli fill_px > decision_mid; SELL: cost > 0 jeśli fill_px < decision_mid.
+            if (taker->decision_mid_ticks > 0) {
+                const std::int64_t fp = m->price_ticks;
+                const std::int64_t dm = taker->decision_mid_ticks;
+                const std::int64_t cost_per_share = (taker->side == Side::BUY)
+                    ? (fp - dm) : (dm - fp);
+                cum_implementation_shortfall_ticks_qty_ +=
+                    cost_per_share * static_cast<std::int64_t>(exec_qty);
+                cum_implementation_shortfall_qty_ +=
+                    static_cast<std::uint64_t>(exec_qty);
+            }
             // Aggressive vs passive accounting per account
             tag_aggressor_volume(taker->client_id, exec_qty);
             tag_passive_volume(m->client_id, exec_qty);
@@ -926,6 +940,8 @@ public:
         o->tif           = tif;
         o->status        = OrderStatus::NEW;
         o->submit_ts_ns  = mono_ns_now();
+        o->decision_mid_ticks = (has_bid() && has_ask())
+            ? (best_bid_ticks_ + best_ask_ticks_) / 2 : -1;
         ++stats_.total_orders_added;
         tally_accept(type, tif);
 
@@ -2278,6 +2294,10 @@ private:
     std::uint64_t price_change_hist_[9]{};
     std::uint64_t price_change_total_ = 0;
 
+    // Implementation shortfall (Σ (fill_px - decision_mid) × qty × side_sign)
+    std::int64_t  cum_implementation_shortfall_ticks_qty_ = 0;
+    std::uint64_t cum_implementation_shortfall_qty_       = 0;
+
     // Spread histogram (32 buckets: 0..30 ticks + 31=overflow)
     static constexpr std::size_t SPREAD_HIST_BINS = 32;
     std::uint64_t spread_histogram_[SPREAD_HIST_BINS]{};
@@ -2933,6 +2953,22 @@ public:
     //   • |Kyle λ| znormalizowany przez mean_qty (proxy)
     //   • CTR (cancel-to-trade) clamped do 100
     // Każda komponenta równo ważona (33% × 33% × 33%).
+    // ====================================================================
+    // Implementation Shortfall (TCA — Almgren/Chriss style)
+    // ====================================================================
+    //
+    // IS = Σ (fill_px - decision_mid) × qty × side_sign across all fills.
+    // Pozytywny = trader stracił na ruchu rynku (adverse selection).
+    // mean_implementation_shortfall_ticks_per_share() — average cost per share.
+    std::int64_t cumulative_implementation_shortfall_ticks_qty() const noexcept {
+        return cum_implementation_shortfall_ticks_qty_;
+    }
+    double mean_implementation_shortfall_ticks_per_share() const noexcept {
+        if (cum_implementation_shortfall_qty_ == 0) return 0.0;
+        return static_cast<double>(cum_implementation_shortfall_ticks_qty_) /
+               static_cast<double>(cum_implementation_shortfall_qty_);
+    }
+
     std::uint32_t toxicity_composite_score_bps() const noexcept {
         const std::uint32_t vpin = vpin_bps();   // [0..10000]
         // |λ| normalized: rough bound by 1000 (5 ticks per 1 qty trade unit)

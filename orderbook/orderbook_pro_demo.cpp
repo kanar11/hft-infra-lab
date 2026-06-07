@@ -1882,6 +1882,40 @@ void test_cluster_volume_weighted_spread() {
     ASSERT(w >= 0.0 && w <= 100.0,                   "cluster_vw_spread_bounded");
 }
 
+// ──────────────────────────────────────────────
+// Implementation shortfall (TCA)
+// ──────────────────────────────────────────────
+
+void test_is_zero_without_fills() {
+    Book b;
+    ASSERT(b.cumulative_implementation_shortfall_ticks_qty() == 0, "is_zero_init");
+    ASSERT(b.mean_implementation_shortfall_ticks_per_share() == 0.0,
+                                                                   "is_mean_zero");
+}
+
+void test_is_buy_pays_adverse() {
+    Book b;
+    // Build market: bid 10000, ask 10010, mid=10005
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    // BUY taker @10010: decision_mid was 10005 at submit, fill @10010 → IS = +5×100 = +500
+    b.submit(Side::BUY,  10010, 100);
+    const auto is_total = b.cumulative_implementation_shortfall_ticks_qty();
+    ASSERT(is_total >= 400 && is_total <= 600,                     "is_buy_adverse_500");
+    const auto mean_per_share = b.mean_implementation_shortfall_ticks_per_share();
+    ASSERT(mean_per_share >= 4.0 && mean_per_share <= 6.0,         "is_per_share_5");
+}
+
+void test_is_sell_negative_when_paid_below_mid() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    // SELL taker hits bid @10000, mid=10005 at submit → IS = +5×100 = +500 (positive cost)
+    b.submit(Side::SELL, 10000, 100);
+    const auto is_total = b.cumulative_implementation_shortfall_ticks_qty();
+    ASSERT(is_total >= 400 && is_total <= 600,                     "is_sell_pays_500");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2292,6 +2326,9 @@ int main(int argc, char* argv[]) {
     test_toxicity_composite_zero_quiet();
     test_toxicity_composite_after_activity();
     test_cluster_volume_weighted_spread();
+    test_is_zero_without_fills();
+    test_is_buy_pays_adverse();
+    test_is_sell_negative_when_paid_below_mid();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
