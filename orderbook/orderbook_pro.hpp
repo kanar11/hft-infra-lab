@@ -244,6 +244,7 @@ struct BookStats {
     std::uint64_t  total_mass_cancels       = 0;
     std::uint64_t  total_auctions_executed  = 0;
     std::uint64_t  total_mass_quotes        = 0;
+    std::uint64_t  total_tob_changes        = 0;
 };
 
 
@@ -2075,6 +2076,39 @@ private:
     // Per-client rejection counter
     std::unordered_map<std::uint64_t, std::uint64_t>  client_rejections_;
 
+    // Top-of-book change detection — snapshot of last observed best_bid/best_ask.
+    // Used by tob_changed_since_last_check() which is a stateful "poll for changes" API.
+    std::int32_t  last_observed_bid_ticks_ = NO_BID_TICKS;
+    std::int32_t  last_observed_ask_ticks_ = NO_ASK_TICKS;
+
+public:
+    // ====================================================================
+    // Top-of-book change tracking
+    // ====================================================================
+    //
+    // poll_tob_change(): zwraca true gdy best_bid lub best_ask zmieniło się
+    // od ostatniego wywołania. Resetuje state. Strategie używają jako trigger
+    // do re-quote / decision points.
+    //
+    // total_tob_changes() — kumulatywny licznik zmian TOB (każdy submit/
+    // cancel/fill który zmienił best_bid lub best_ask).
+    bool poll_tob_change() noexcept {
+        const bool changed = (best_bid_ticks_ != last_observed_bid_ticks_)
+                          || (best_ask_ticks_ != last_observed_ask_ticks_);
+        if (changed) {
+            last_observed_bid_ticks_ = best_bid_ticks_;
+            last_observed_ask_ticks_ = best_ask_ticks_;
+            ++stats_.total_tob_changes;
+        }
+        return changed;
+    }
+
+    // current_tob_snapshot(): immutable read bez resetu state.
+    bool tob_has_changed_since_last_poll() const noexcept {
+        return (best_bid_ticks_ != last_observed_bid_ticks_)
+            || (best_ask_ticks_ != last_observed_ask_ticks_);
+    }
+
     // Hook: update size distribution z record_trade()
     void update_size_distribution(std::int32_t qty) noexcept {
         if (qty <= 100) {
@@ -2367,6 +2401,69 @@ public:
             if (slot_used_[i]) t += books_[i].active_orders();
         }
         return t;
+    }
+
+    // ====================================================================
+    // Cross-symbol arbitrage detection
+    // ====================================================================
+    //
+    // Skanuje pary symboli w klastrze i raportuje sytuacje gdzie:
+    //   bid_X >= ask_Y  (możemy kupić na Y, sprzedać na X z profitem)
+    //
+    // Use case: arbitrage detection przy listing tej samej akcji na wielu
+    // venues (NASDAQ vs NYSE) lub ETF arb (SPY vs IVV vs VOO). W praktyce
+    // realny arb wymaga uwzględnienia opłat + slippage, ale ta funkcja daje
+    // RAW signal.
+    struct ArbOpportunity {
+        char         long_symbol[9];   // gdzie ASK (kupimy)
+        char         short_symbol[9];  // gdzie BID (sprzedamy)
+        std::int32_t buy_price_ticks;  // ask na long_symbol
+        std::int32_t sell_price_ticks; // bid na short_symbol
+        std::int32_t spread_ticks;     // sell - buy (zysk pre-fees)
+        std::int32_t max_qty;          // min(ask_qty_long, bid_qty_short)
+    };
+
+    // detect_cross_arb: wypełnia `out[]` (max max_n) lukami arb. Zwraca ile.
+    std::size_t detect_cross_arb(ArbOpportunity* out, std::size_t max_n) const noexcept {
+        std::size_t found = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS && found < max_n; ++i) {
+            if (!slot_used_[i]) continue;
+            if (!books_[i].has_bid()) continue;
+            for (std::size_t j = 0; j < N_SYMBOLS && found < max_n; ++j) {
+                if (i == j || !slot_used_[j]) continue;
+                if (!books_[j].has_ask()) continue;
+                const std::int32_t bid_i = books_[i].best_bid_ticks();
+                const std::int32_t ask_j = books_[j].best_ask_ticks();
+                if (bid_i > ask_j) {
+                    // Arb: kupić na j @ ask_j, sprzedać na i @ bid_i
+                    ArbOpportunity& o = out[found++];
+                    std::strncpy(o.long_symbol,  symbols_[j], 8);
+                    o.long_symbol[8] = '\0';
+                    std::strncpy(o.short_symbol, symbols_[i], 8);
+                    o.short_symbol[8] = '\0';
+                    o.buy_price_ticks  = ask_j;
+                    o.sell_price_ticks = bid_i;
+                    o.spread_ticks     = bid_i - ask_j;
+                    const auto tob_i = books_[i].top_of_book();
+                    const auto tob_j = books_[j].top_of_book();
+                    o.max_qty = std::min(tob_j.ask_qty, tob_i.bid_qty);
+                }
+            }
+        }
+        return found;
+    }
+
+    // count_cross_arb: ile arb opportunities. Bez kopiowania do bufora.
+    std::size_t count_cross_arb() const noexcept {
+        std::size_t cnt = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i] || !books_[i].has_bid()) continue;
+            for (std::size_t j = 0; j < N_SYMBOLS; ++j) {
+                if (i == j || !slot_used_[j] || !books_[j].has_ask()) continue;
+                if (books_[i].best_bid_ticks() > books_[j].best_ask_ticks()) ++cnt;
+            }
+        }
+        return cnt;
     }
 };
 

@@ -849,6 +849,88 @@ void test_rejection_rate() {
     ASSERT(rate > 0.6 && rate < 0.7,                  "rejection_rate_two_thirds");
 }
 
+// ──────────────────────────────────────────────
+// Top-of-book change tracking
+// ──────────────────────────────────────────────
+
+void test_tob_poll_initial() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    ASSERT(b.poll_tob_change(),                       "tob_initial_change");
+    ASSERT(!b.poll_tob_change(),                       "tob_idempotent_after_poll");
+}
+
+void test_tob_poll_after_new_quote() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.poll_tob_change();   // consume initial
+    // Lepszy bid → TOB zmiana
+    b.submit(Side::BUY, 10010, 50);
+    ASSERT(b.poll_tob_change(),                       "tob_better_bid_detected");
+    ASSERT(!b.poll_tob_change(),                       "tob_drained");
+}
+
+void test_tob_poll_unchanged_when_lower_bid() {
+    Book b;
+    b.submit(Side::BUY, 10010, 100);
+    b.poll_tob_change();
+    // Gorszy bid (poniżej best) → TOB bez zmian
+    b.submit(Side::BUY, 9995, 50);
+    ASSERT(!b.poll_tob_change(),                       "tob_no_change_lower_bid");
+}
+
+void test_tob_counter_increments() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);    b.poll_tob_change();
+    b.submit(Side::SELL, 10100, 100);    b.poll_tob_change();
+    b.submit(Side::BUY,  10005, 50);     b.poll_tob_change();
+    ASSERT(b.stats().total_tob_changes >= 3,           "tob_counter_3_min");
+}
+
+// ──────────────────────────────────────────────
+// Cross-symbol arbitrage detection
+// ──────────────────────────────────────────────
+
+void test_cross_arb_detected() {
+    orderbook_pro::BookCluster<8, 16384, 4096> cluster;
+    cluster.register_symbol("SPY");
+    cluster.register_symbol("IVV");
+    auto* spy = cluster.book("SPY");
+    auto* ivv = cluster.book("IVV");
+
+    // SPY: bid 10010 → mogę sprzedać tu drogo
+    spy->submit(Side::BUY,  10010, 100);
+    spy->submit(Side::SELL, 10020, 100);
+    // IVV: ask 10005 → mogę kupić tu tanio
+    ivv->submit(Side::BUY,  10000, 100);
+    ivv->submit(Side::SELL, 10005, 100);
+    // ARB: kupić IVV @ 10005, sprzedać SPY @ 10010 = 5 ticki zysku
+
+    orderbook_pro::BookCluster<8, 16384, 4096>::ArbOpportunity opps[4];
+    auto n = cluster.detect_cross_arb(opps, 4);
+    ASSERT(n >= 1,                                     "arb_at_least_one");
+    ASSERT(opps[0].spread_ticks == 5,                  "arb_spread_5_ticks");
+    ASSERT(std::strcmp(opps[0].long_symbol, "IVV") == 0,   "arb_long_IVV");
+    ASSERT(std::strcmp(opps[0].short_symbol, "SPY") == 0,  "arb_short_SPY");
+    ASSERT(cluster.count_cross_arb() == n,             "arb_count_matches");
+}
+
+void test_cross_arb_none_when_aligned() {
+    orderbook_pro::BookCluster<8, 16384, 4096> cluster;
+    cluster.register_symbol("XYZ");
+    cluster.register_symbol("ABC");
+    auto* xyz = cluster.book("XYZ");
+    auto* abc = cluster.book("ABC");
+
+    xyz->submit(Side::BUY,  10000, 100);
+    xyz->submit(Side::SELL, 10010, 100);
+    // ABC top of book: bid below XYZ ask → brak arb
+    abc->submit(Side::BUY,  10000, 100);
+    abc->submit(Side::SELL, 10010, 100);
+
+    ASSERT(cluster.count_cross_arb() == 0,             "arb_none_when_aligned");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1169,6 +1251,12 @@ int main(int argc, char* argv[]) {
     test_reference_price_drift();
     test_reference_price_no_ref_set();
     test_rejection_rate();
+    test_tob_poll_initial();
+    test_tob_poll_after_new_quote();
+    test_tob_poll_unchanged_when_lower_bid();
+    test_tob_counter_increments();
+    test_cross_arb_detected();
+    test_cross_arb_none_when_aligned();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
