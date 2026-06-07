@@ -1650,6 +1650,47 @@ void test_active_price_levels() {
     ASSERT(b.active_price_levels() == 3, "active_levels_3");
 }
 
+// ──────────────────────────────────────────────
+// Mid ring + momentum + fill bands
+// ──────────────────────────────────────────────
+
+void test_mid_ring_starts_empty() {
+    Book b;
+    ASSERT(b.mid_ring_samples() == 0,                "mid_ring_empty");
+    ASSERT(b.mid_momentum_ticks() == 0,              "mid_mom_zero_empty");
+}
+
+void test_mid_ring_samples_after_quotes() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    b.sample_mid_to_ring();              // mid = 10005
+    b.sample_mid_to_ring();              // same mid
+    ASSERT(b.mid_ring_samples() == 2,                "mid_ring_2");
+}
+
+void test_mid_momentum_positive() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    b.sample_mid_to_ring();              // mid=10005 (oldest)
+    // raise the mid
+    b.submit(Side::BUY,  10005, 100);    // best_bid → 10005
+    b.sample_mid_to_ring();              // mid=(10005+10010)/2=10007
+    ASSERT(b.mid_momentum_ticks() >= 1,              "mid_mom_positive");
+}
+
+void test_fill_band_compliance() {
+    Book b;
+    b.set_fill_band_threshold_ticks(3);
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10001, 100);    // mid=10000.5 → mid_ticks=10000
+    // Fill within band: BUY at 10001 (|10001-10000|=1 ≤ 3)
+    b.submit(Side::BUY,  10001, 100);
+    ASSERT(b.fills_within_band() >= 1,               "band_within_1");
+    ASSERT(b.fill_band_compliance_ratio() > 0.0,     "band_compliance_pos");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2039,6 +2080,10 @@ int main(int argc, char* argv[]) {
     test_peg_orders_count_zero_initially();
     test_avg_resting_qty_per_order();
     test_active_price_levels();
+    test_mid_ring_starts_empty();
+    test_mid_ring_samples_after_quotes();
+    test_mid_momentum_positive();
+    test_fill_band_compliance();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

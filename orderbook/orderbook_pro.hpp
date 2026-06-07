@@ -777,6 +777,11 @@ private:
             const std::int32_t diff = std::abs(taker->price_ticks - mid_pre_ticks);
             stats_.total_effective_spread_2x_ticks += static_cast<std::uint64_t>(2 * diff);
             ++stats_.total_effective_spread_samples;
+            // Bands compliance
+            if (fill_band_threshold_ticks_ > 0) {
+                if (diff <= fill_band_threshold_ticks_) ++fills_within_band_;
+                else                                     ++fills_outside_band_;
+            }
         }
     }
 
@@ -2256,6 +2261,17 @@ private:
     // Per-OrderType acceptance counters (10 values)
     std::uint64_t accepts_by_type_[10]{};
 
+    // Mid-price ring buffer (last 16 samples)
+    static constexpr std::size_t MID_RING_CAP = 16;
+    std::int32_t  mid_ring_[MID_RING_CAP]{};
+    std::size_t   mid_ring_head_  = 0;
+    std::size_t   mid_ring_count_ = 0;
+
+    // Fill-vs-mid bands counter — narrow / wide threshold
+    std::int32_t  fill_band_threshold_ticks_ = 0;     // 0 = off
+    std::uint64_t fills_within_band_ = 0;
+    std::uint64_t fills_outside_band_ = 0;
+
     // Queue replenishment / consumption counters (TOB qty deltas)
     std::int32_t  last_tob_bid_qty_observed_ = -1;
     std::int32_t  last_tob_ask_qty_observed_ = -1;
@@ -2675,6 +2691,46 @@ public:
             if (levels_[p].order_count > 0) ++n;
         }
         return n;
+    }
+
+    // ====================================================================
+    // Mid-price ring buffer (last 16) + momentum signal
+    // ====================================================================
+    //
+    // sample_mid_to_ring() — strategia wywołuje okresowo. Mid-momentum =
+    // (latest - oldest) per sample interval; signal trendu w short horizon.
+    void sample_mid_to_ring() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        const std::int32_t m = (best_bid_ticks_ + best_ask_ticks_) / 2;
+        mid_ring_[mid_ring_head_ % MID_RING_CAP] = m;
+        ++mid_ring_head_;
+        if (mid_ring_count_ < MID_RING_CAP) ++mid_ring_count_;
+    }
+    std::size_t mid_ring_samples() const noexcept { return mid_ring_count_; }
+    std::int32_t mid_momentum_ticks() const noexcept {
+        if (mid_ring_count_ < 2) return 0;
+        const std::size_t n = mid_ring_count_;
+        const std::size_t oldest_idx = (mid_ring_head_ + MID_RING_CAP - n) % MID_RING_CAP;
+        const std::size_t newest_idx = (mid_ring_head_ + MID_RING_CAP - 1) % MID_RING_CAP;
+        return mid_ring_[newest_idx] - mid_ring_[oldest_idx];
+    }
+
+    // ====================================================================
+    // Fill-bands compliance metric
+    // ====================================================================
+    //
+    // set_fill_band_threshold_ticks(T) — uzbrojenie. Fills z |fill_px - mid| ≤ T
+    // → fills_within_band; else outside. Ratio = within / (within + outside).
+    void set_fill_band_threshold_ticks(std::int32_t t) noexcept {
+        fill_band_threshold_ticks_ = t;
+    }
+    std::uint64_t fills_within_band() const noexcept  { return fills_within_band_; }
+    std::uint64_t fills_outside_band() const noexcept { return fills_outside_band_; }
+    double fill_band_compliance_ratio() const noexcept {
+        const std::uint64_t total = fills_within_band_ + fills_outside_band_;
+        if (total == 0) return 0.0;
+        return static_cast<double>(fills_within_band_) /
+               static_cast<double>(total);
     }
 
     std::int32_t largest_resting_order_qty() const noexcept {
