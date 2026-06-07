@@ -1388,6 +1388,23 @@ void test_cancel_to_fill_ratio_per_account() {
     ASSERT(r >= 2.9 && r <= 3.1, "per_acct_ctr_3");
 }
 
+// ──────────────────────────────────────────────
+// BookHealth dashboard
+// ──────────────────────────────────────────────
+
+void test_book_health_snapshot() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    b.submit(Side::SELL, 10010, 100);   // taker BUY does nothing, but agg flow
+    b.submit(Side::BUY,  10010, 100);   // taker BUY → fill
+    auto h = b.health_snapshot();
+    ASSERT(h.spread_ticks >= 0,                "health_spread_nn");
+    ASSERT(h.total_fills >= 1,                  "health_fills_ge_1");
+    ASSERT(h.last_event_seq_num > 0,            "health_seq_nonzero");
+    ASSERT(h.total_orders_added >= 3,           "health_added_ge_3");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -1752,6 +1769,7 @@ int main(int argc, char* argv[]) {
     test_aggressive_volume_taker();
     test_aggressive_ratio_mixed();
     test_cancel_to_fill_ratio_per_account();
+    test_book_health_snapshot();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

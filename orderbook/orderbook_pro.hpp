@@ -2422,6 +2422,58 @@ public:
     std::uint64_t last_event_seq_num() const noexcept { return last_emitted_seq_; }
 
     // ====================================================================
+    // BookHealth — jednorazowy dashboard snapshot (zero alocacji)
+    // ====================================================================
+    //
+    // Aggreguje najbardziej przydatne metryki dla operator panel / monitoring
+    // / circuit-breaker decyzji w jeden tani odczyt.
+    struct BookHealth {
+        // Liquidity
+        std::int32_t  spread_ticks;
+        std::int32_t  imbalance_bps_tob;
+        std::int32_t  imbalance_bps_3;
+        double        hidden_liquidity_ratio;
+        // Flow
+        std::int32_t  flow_imbalance_bps;
+        std::uint32_t vpin_bps;
+        double        cancel_to_trade_ratio;
+        // Microstructure
+        double        mean_quoted_spread_ticks;
+        double        mean_effective_spread_ticks;
+        double        effective_to_quoted_ratio;
+        // Stability
+        std::uint64_t quote_flicker_count;
+        std::uint64_t max_tob_unchanged_streak;
+        std::uint64_t spread_compression_count;
+        // Counts
+        std::uint64_t total_fills;
+        std::uint64_t total_orders_added;
+        std::uint64_t total_orders_cancelled;
+        std::uint64_t last_event_seq_num;
+    };
+    BookHealth health_snapshot() noexcept {
+        BookHealth h{};
+        h.spread_ticks           = spread_ticks();
+        h.imbalance_bps_tob      = imbalance_bps();
+        h.imbalance_bps_3        = imbalance_bps_n(3);
+        h.hidden_liquidity_ratio = hidden_liquidity_ratio();
+        h.flow_imbalance_bps     = flow_imbalance_bps();
+        h.vpin_bps               = vpin_bps();
+        h.cancel_to_trade_ratio  = cancel_to_trade_ratio();
+        h.mean_quoted_spread_ticks    = mean_quoted_spread_ticks();
+        h.mean_effective_spread_ticks = mean_effective_spread_ticks();
+        h.effective_to_quoted_ratio   = effective_to_quoted_ratio();
+        h.quote_flicker_count    = quote_flicker_count();
+        h.max_tob_unchanged_streak = max_tob_unchanged_streak_observed();
+        h.spread_compression_count = spread_compression_count();
+        h.total_fills            = stats_.total_fills;
+        h.total_orders_added     = stats_.total_orders_added;
+        h.total_orders_cancelled = stats_.total_orders_cancelled;
+        h.last_event_seq_num     = last_emitted_seq_;
+        return h;
+    }
+
+    // ====================================================================
     // Hidden liquidity ratio (visible vs hidden capacity)
     // ====================================================================
     //
