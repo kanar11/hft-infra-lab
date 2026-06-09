@@ -2479,11 +2479,11 @@ void test_ofi_signal() {
     Book b;
     b.submit(Side::BUY,  10000, 100);
     b.submit(Side::SELL, 10100, 100);
-    b.sample_ofi_ck();  // baseline
+    b.sample_ofi();  // baseline
 
     // Buy pressure: dodatkowa qty na BID
     b.submit(Side::BUY, 10000, 200);
-    auto delta = b.sample_ofi_ck();
+    auto delta = b.sample_ofi();
     ASSERT(delta > 0,                          "ofi_buy_pressure_positive");
     ASSERT(b.cumulative_ofi() > 0,             "ofi_cumulative_positive");
 }
