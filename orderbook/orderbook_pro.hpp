@@ -498,13 +498,20 @@ class FullOrderBook {
             cum_sell_notional_ticks_ += notional;
             cum_sell_volume_         += static_cast<std::uint64_t>(qty);
         }
-        // Inter-trade time gap
+        // Inter-trade time gap + Welford variance
         if (prev_trade_ts_ns_for_gap_ != 0 && ts_ns > prev_trade_ts_ns_for_gap_) {
             const std::uint64_t gap = ts_ns - prev_trade_ts_ns_for_gap_;
             if (gap < inter_trade_gap_min_ns_) inter_trade_gap_min_ns_ = gap;
             if (gap > inter_trade_gap_max_ns_) inter_trade_gap_max_ns_ = gap;
             inter_trade_gap_sum_ns_ += gap;
             ++inter_trade_gap_count_;
+            // Welford for variance
+            ++gap_var_count_;
+            const double gap_d = static_cast<double>(gap);
+            const double delta = gap_d - gap_var_mean_;
+            gap_var_mean_ += delta / static_cast<double>(gap_var_count_);
+            const double delta2 = gap_d - gap_var_mean_;
+            gap_var_M2_ += delta * delta2;
         }
         prev_trade_ts_ns_for_gap_ = ts_ns;
         // Largest single trade
@@ -2424,6 +2431,27 @@ private:
     double  ema_signed_volume_ = 0.0;
     bool    ema_signed_volume_init_ = false;
 
+    // Cont-Kukanov OFI state
+    std::int32_t  ofi_prev_bid_ticks_ = NO_BID_TICKS;
+    std::int32_t  ofi_prev_ask_ticks_ = NO_ASK_TICKS;
+    std::int32_t  ofi_prev_bid_qty_   = 0;
+    std::int32_t  ofi_prev_ask_qty_   = 0;
+    std::int64_t  ofi_cumulative_     = 0;
+    std::uint64_t ofi_samples_        = 0;
+
+    // Trade clustering — variance/mean inter-trade gap (overdispersion)
+    // Welford's algorithm dla running variance
+    double        gap_var_mean_       = 0.0;
+    double        gap_var_M2_         = 0.0;
+    std::uint64_t gap_var_count_      = 0;
+
+    // Maker survival snapshot — set of maker_ids active at last poll
+    std::uint64_t maker_survival_total_polls_  = 0;
+    std::uint64_t maker_survival_total_orders_ = 0;
+    std::uint64_t maker_survival_survivors_    = 0;
+    // Snapshot vector reused
+    std::vector<std::uint64_t> maker_survival_prev_ids_;
+
     // Time-weighted mid (Σ mid × dt / Σ dt)
     std::uint64_t last_twmid_sample_ts_ns_ = 0;
     std::int32_t  last_twmid_sample_ticks_ = 0;
@@ -3405,6 +3433,101 @@ public:
     // bardziej responsywny niż cumulative flow imbalance.
     double ema_signed_volume() const noexcept { return ema_signed_volume_; }
     bool   ema_signed_volume_ready() const noexcept { return ema_signed_volume_init_; }
+
+    // ====================================================================
+    // Cont-Kukanov Order Flow Imbalance (OFI)
+    // ====================================================================
+    //
+    // Klasyczna formuła z Cont/Kukanov 2014:
+    //   OFI = ΔW_b - ΔW_a
+    // gdzie:
+    //   ΔW_b: +q_b jeśli bid price up; q_b - q_b_prev jeśli unchanged; -q_b_prev jeśli down
+    //   ΔW_a: -q_a jeśli ask price up; q_a_prev - q_a jeśli unchanged; +q_a_prev jeśli down
+    // (Strona ask jest invertowana — wzrost asku zmniejsza buy pressure.)
+    void sample_ofi() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        const std::int32_t bq = levels_[best_bid_ticks_].total_qty;
+        const std::int32_t aq = levels_[best_ask_ticks_].total_qty;
+        ++ofi_samples_;
+        if (ofi_prev_bid_ticks_ == NO_BID_TICKS) {
+            // first sample — establish baseline
+            ofi_prev_bid_ticks_ = best_bid_ticks_;
+            ofi_prev_ask_ticks_ = best_ask_ticks_;
+            ofi_prev_bid_qty_   = bq;
+            ofi_prev_ask_qty_   = aq;
+            return;
+        }
+        // Bid contribution
+        std::int64_t dw_b = 0;
+        if (best_bid_ticks_ > ofi_prev_bid_ticks_)      dw_b = +bq;
+        else if (best_bid_ticks_ < ofi_prev_bid_ticks_) dw_b = -ofi_prev_bid_qty_;
+        else                                              dw_b = bq - ofi_prev_bid_qty_;
+        // Ask contribution
+        std::int64_t dw_a = 0;
+        if (best_ask_ticks_ > ofi_prev_ask_ticks_)      dw_a = +ofi_prev_ask_qty_;
+        else if (best_ask_ticks_ < ofi_prev_ask_ticks_) dw_a = -aq;
+        else                                              dw_a = ofi_prev_ask_qty_ - aq;
+        ofi_cumulative_ += dw_b - dw_a;
+        ofi_prev_bid_ticks_ = best_bid_ticks_;
+        ofi_prev_ask_ticks_ = best_ask_ticks_;
+        ofi_prev_bid_qty_   = bq;
+        ofi_prev_ask_qty_   = aq;
+    }
+    std::int64_t ofi_cumulative() const noexcept   { return ofi_cumulative_; }
+    std::uint64_t ofi_samples()  const noexcept   { return ofi_samples_; }
+    double ofi_per_sample() const noexcept {
+        if (ofi_samples_ < 2) return 0.0;
+        return static_cast<double>(ofi_cumulative_) /
+               static_cast<double>(ofi_samples_ - 1);
+    }
+
+    // ====================================================================
+    // Trade clustering coefficient (Fano factor — var/mean of inter-trade gaps)
+    // ====================================================================
+    //
+    // Fano factor > 1 = overdispersed (bursty / clustered trades).
+    // = 1 → Poisson process. < 1 → underdispersed (regular).
+    double trade_gap_variance_ns_sq() const noexcept {
+        if (gap_var_count_ < 2) return 0.0;
+        return gap_var_M2_ / static_cast<double>(gap_var_count_ - 1);
+    }
+    double trade_gap_mean_ns_dbl() const noexcept { return gap_var_mean_; }
+    double trade_clustering_fano() const noexcept {
+        if (gap_var_count_ < 2 || gap_var_mean_ <= 0.0) return 0.0;
+        return trade_gap_variance_ns_sq() / gap_var_mean_;
+    }
+
+    // ====================================================================
+    // Maker survival ratio (across polls)
+    // ====================================================================
+    //
+    // sample_maker_survival(): snapshot wszystkich aktywnych order_id; w
+    // kolejnym pollu zlicza ile z poprzedniego snapshota nadal żyje.
+    // mean_survival_ratio = total_survivors / total_orders_prev_sampled.
+    void sample_maker_survival() {
+        ++maker_survival_total_polls_;
+        if (!maker_survival_prev_ids_.empty()) {
+            std::uint64_t survivors = 0;
+            for (auto id : maker_survival_prev_ids_) {
+                if (id_index_.find(id) != id_index_.end()) ++survivors;
+            }
+            maker_survival_total_orders_ += maker_survival_prev_ids_.size();
+            maker_survival_survivors_    += survivors;
+        }
+        maker_survival_prev_ids_.clear();
+        maker_survival_prev_ids_.reserve(id_index_.size());
+        for (const auto& kv : id_index_) {
+            maker_survival_prev_ids_.push_back(kv.first);
+        }
+    }
+    double maker_survival_ratio() const noexcept {
+        if (maker_survival_total_orders_ == 0) return 0.0;
+        return static_cast<double>(maker_survival_survivors_) /
+               static_cast<double>(maker_survival_total_orders_);
+    }
+    std::uint64_t maker_survival_total_polls() const noexcept {
+        return maker_survival_total_polls_;
+    }
 
 private:
     static std::size_t qty_to_log2_bin(std::int32_t q) noexcept {
