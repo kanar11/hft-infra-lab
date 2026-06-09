@@ -2414,7 +2414,8 @@ private:
     double  ema_imbalance_bps_value_ = 0.0;
     bool    ema_imbalance_init_ = false;
 
-    // Microprice ring buffer (last 16 samples)
+    // Microprice ring buffer (last MID_RING_CAP samples — definicja niżej)
+    static constexpr std::size_t MID_RING_CAP = 16;
     std::int32_t  microprice_ring_[MID_RING_CAP]{};
     std::size_t   microprice_ring_head_  = 0;
     std::size_t   microprice_ring_count_ = 0;
@@ -2463,8 +2464,7 @@ private:
     // Per-OrderType acceptance counters (10 values)
     std::uint64_t accepts_by_type_[10]{};
 
-    // Mid-price ring buffer (last 16 samples)
-    static constexpr std::size_t MID_RING_CAP = 16;
+    // Mid-price ring buffer (MID_RING_CAP zdefiniowane wyżej w sekcji microprice)
     std::int32_t  mid_ring_[MID_RING_CAP]{};
     std::size_t   mid_ring_head_  = 0;
     std::size_t   mid_ring_count_ = 0;
