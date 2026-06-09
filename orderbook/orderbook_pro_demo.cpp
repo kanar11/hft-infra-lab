@@ -1511,7 +1511,7 @@ void test_cluster_aggregations() {
     cluster.register_symbol("MSFT");
     auto* a = cluster.book("AAPL");
     auto* m = cluster.book("MSFT");
-    ASSERT(a && m,                                    "cluster_books_present");
+    if (!a || !m) { ASSERT(false, "cluster_books_present"); return; }
     a->submit(Side::SELL, 10100, 100);
     a->submit(Side::BUY,  10100, 100);   // fill
     m->submit(Side::SELL, 10200, 50);
@@ -1868,6 +1868,7 @@ void test_cluster_volume_weighted_spread() {
     cluster.register_symbol("MSFT");
     auto* a = cluster.book("AAPL");
     auto* m = cluster.book("MSFT");
+    if (!a || !m) { ASSERT(false, "vw_spread_books_present"); return; }
     // AAPL: spread 2 ticks, volume 100
     a->submit(Side::BUY,  10000, 100);
     a->submit(Side::SELL, 10002, 100);
