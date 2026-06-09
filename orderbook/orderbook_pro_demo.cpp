@@ -2070,6 +2070,66 @@ void test_mean_trade_qty() {
     ASSERT(b.mean_trade_qty() == 150.0,                 "mean_trade_qty_150");
 }
 
+// ──────────────────────────────────────────────
+// Per-side maker fills + mean notional + cluster imbalance + top-K levels
+// ──────────────────────────────────────────────
+
+void test_maker_fills_sell_side_counted() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);   // maker SELL
+    b.submit(Side::BUY,  10100, 100);    // taker BUY → SELL maker fully filled
+    ASSERT(b.maker_fills_sell_side() >= 1, "maker_fills_sell_1");
+    ASSERT(b.maker_fills_buy_side() == 0,   "maker_fills_buy_0");
+}
+
+void test_maker_fills_buy_side_counted() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);   // maker BUY
+    b.submit(Side::SELL, 10000, 100);    // taker SELL → BUY maker fully filled
+    ASSERT(b.maker_fills_buy_side() >= 1,  "maker_fills_buy_1");
+}
+
+void test_mean_fill_notional() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);    // notional = 10100×100 = 1010000
+    b.submit(Side::SELL, 10200, 50);
+    b.submit(Side::BUY,  10200, 50);     // notional = 10200×50 = 510000
+    // total 2 fills, total notional 1520000 → mean = 760000
+    const double m = b.mean_fill_notional_ticks();
+    ASSERT(m > 750000.0 && m < 770000.0,    "mean_fill_notional_760k");
+}
+
+void test_cluster_flow_imbalance() {
+    using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
+    Cluster cluster;
+    cluster.register_symbol("AAPL");
+    cluster.register_symbol("MSFT");
+    auto* a = cluster.book("AAPL");
+    auto* m = cluster.book("MSFT");
+    if (!a || !m) { ASSERT(false, "cluster_imb_books"); return; }
+    a->submit(Side::SELL, 10100, 100);
+    a->submit(Side::BUY,  10100, 100);   // taker BUY 100
+    m->submit(Side::SELL, 10200, 50);
+    m->submit(Side::BUY,  10200, 50);    // taker BUY 50
+    // Across cluster: buy_vol=150, sell_vol=0 → imbalance = 10000
+    ASSERT(cluster.cluster_flow_imbalance_bps() == 10000, "cluster_imb_full_buy");
+}
+
+void test_top_k_active_levels_by_qty() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  300);   // top
+    b.submit(Side::BUY, 9998,  50);
+    b.submit(Side::SELL, 10010, 200);  // second
+    std::int32_t prices[3]{}, qtys[3]{};
+    const auto n = b.top_k_active_levels_by_qty(prices, qtys, 3);
+    ASSERT(n == 3,                          "topk_lvl_n_3");
+    ASSERT(qtys[0] == 300 && prices[0] == 9999,  "topk_lvl_max_300_at_9999");
+    ASSERT(qtys[1] == 200 && prices[1] == 10010, "topk_lvl_second_200");
+    ASSERT(qtys[2] == 100 && prices[2] == 10000, "topk_lvl_third_100");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2498,6 +2558,11 @@ int main(int argc, char* argv[]) {
     test_fill_rate_ratio();
     test_twmid_sample_accumulates();
     test_mean_trade_qty();
+    test_maker_fills_sell_side_counted();
+    test_maker_fills_buy_side_counted();
+    test_mean_fill_notional();
+    test_cluster_flow_imbalance();
+    test_top_k_active_levels_by_qty();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

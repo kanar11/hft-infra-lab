@@ -784,6 +784,8 @@ private:
                 id_index_.erase(m->id);
                 record_lifecycle_age(m->submit_ts_ns);
                 ++completion_filled_fully_;
+                if (m->side == Side::BUY) ++maker_fills_buy_side_;
+                else                       ++maker_fills_sell_side_;
                 free_order(m);
                 m = next_m;
             } else {
@@ -2387,6 +2389,9 @@ private:
     std::uint64_t completion_cancelled_unfilled_= 0; // filled_qty == 0
     std::uint64_t completion_expired_partial_  = 0;
     std::uint64_t completion_expired_unfilled_ = 0;
+    // Per-side maker fills (by m->side when fully filled in match_at_level)
+    std::uint64_t maker_fills_buy_side_  = 0;
+    std::uint64_t maker_fills_sell_side_ = 0;
 
     // Time-weighted mid (Σ mid × dt / Σ dt)
     std::uint64_t last_twmid_sample_ts_ns_ = 0;
@@ -3203,6 +3208,64 @@ public:
     }
 
     // ====================================================================
+    // Per-side maker fills
+    // ====================================================================
+    //
+    // Liczba maker orderów fully filled per side. BUY maker fully filled =
+    // strong sell pressure ate complete bid. SELL maker fully filled =
+    // strong buy pressure. Asymmetry → directional bias indicator.
+    std::uint64_t maker_fills_buy_side() const noexcept  { return maker_fills_buy_side_; }
+    std::uint64_t maker_fills_sell_side() const noexcept { return maker_fills_sell_side_; }
+
+    // ====================================================================
+    // Mean fill notional (Σ price × qty / Σ fills)
+    // ====================================================================
+    //
+    // Większy = block trading / institutional flow; mniejszy = retail/algo.
+    double mean_fill_notional_ticks() const noexcept {
+        if (stats_.total_fills == 0) return 0.0;
+        // Recompute from tape (cumulative buy + sell notionals are tape-derived)
+        const std::int64_t total_notional = cum_buy_notional_ticks_ +
+                                             cum_sell_notional_ticks_;
+        return static_cast<double>(total_notional) /
+               static_cast<double>(stats_.total_fills);
+    }
+
+    // ====================================================================
+    // Most-active levels by qty (top-K)
+    // ====================================================================
+    //
+    // top_k_active_levels_by_qty(out_prices, out_qtys, k): zwraca top-K
+    // poziomów cenowych z największą total_qty. O(LEVELS × K) — okresowe.
+    std::size_t top_k_active_levels_by_qty(std::int32_t* out_prices,
+                                            std::int32_t* out_qtys,
+                                            std::size_t k) const noexcept {
+        if (!out_prices || !out_qtys || k == 0) return 0;
+        for (std::size_t i = 0; i < k; ++i) {
+            out_prices[i] = -1;
+            out_qtys[i] = 0;
+        }
+        std::size_t filled = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            const std::int32_t q = levels_[p].total_qty;
+            if (q <= 0) continue;
+            std::size_t pos = std::min(filled, k - 1);
+            if (q > out_qtys[pos] || filled < k) {
+                if (filled < k) ++filled;
+                std::size_t i_ins = std::min(filled - 1, k - 1);
+                while (i_ins > 0 && out_qtys[i_ins - 1] < q) {
+                    out_qtys[i_ins]   = out_qtys[i_ins - 1];
+                    out_prices[i_ins] = out_prices[i_ins - 1];
+                    --i_ins;
+                }
+                out_qtys[i_ins]   = q;
+                out_prices[i_ins] = p;
+            }
+        }
+        return filled;
+    }
+
+    // ====================================================================
     // Last-N rolling VWAP z tape
     // ====================================================================
     //
@@ -3992,6 +4055,20 @@ public:
         if (total_volume == 0) return 0.0;
         return static_cast<double>(weighted_spread) /
                static_cast<double>(total_volume);
+    }
+
+    // Cluster-wide cumulative flow imbalance ważony po volumie per symbol.
+    // Σ buy_vol / Σ (buy + sell) vol × 10000 (bps).
+    std::int32_t cluster_flow_imbalance_bps() const noexcept {
+        std::int64_t buy = 0, sell = 0;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i]) continue;
+            buy  += static_cast<std::int64_t>(books_[i].taker_buy_volume());
+            sell += static_cast<std::int64_t>(books_[i].taker_sell_volume());
+        }
+        const std::int64_t total = buy + sell;
+        if (total == 0) return 0;
+        return static_cast<std::int32_t>((buy - sell) * 10000 / total);
     }
 
     // Symbol z najwyższym book-level flow_imbalance (informational flow magnet).
