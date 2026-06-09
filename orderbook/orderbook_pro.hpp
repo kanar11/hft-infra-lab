@@ -2393,6 +2393,11 @@ private:
     std::uint64_t maker_fills_buy_side_  = 0;
     std::uint64_t maker_fills_sell_side_ = 0;
 
+    // Best-bid qty histogram (16 bins, log2-style: 0, 1-2, 3-4, 5-8, ...)
+    static constexpr std::size_t QTY_HIST_BINS = 16;
+    std::uint64_t best_bid_qty_hist_[QTY_HIST_BINS]{};
+    std::uint64_t best_ask_qty_hist_[QTY_HIST_BINS]{};
+
     // Time-weighted mid (Σ mid × dt / Σ dt)
     std::uint64_t last_twmid_sample_ts_ns_ = 0;
     std::int32_t  last_twmid_sample_ticks_ = 0;
@@ -3237,6 +3242,98 @@ public:
     //
     // top_k_active_levels_by_qty(out_prices, out_qtys, k): zwraca top-K
     // poziomów cenowych z największą total_qty. O(LEVELS × K) — okresowe.
+    // ====================================================================
+    // Depth pyramid score
+    // ====================================================================
+    //
+    // depth_pyramid_steepness_bps(side, depth_n): slope between best level qty
+    // i N-tego level qty. Wysokie = stromy spadek głębokości (tightly stacked
+    // best level, thin tail); niskie = równomierne rozłożenie depth.
+    // (qty_at_best - qty_at_n-th_level) / qty_at_best × 10000.
+    std::int32_t depth_pyramid_steepness_bps(Side side, std::int32_t depth_n) const noexcept {
+        if (depth_n < 2) return 0;
+        std::int32_t qty_best = 0, qty_nth = 0;
+        std::int32_t cnt = 0;
+        if (side == Side::BUY) {
+            if (!has_bid()) return 0;
+            for (std::int32_t p = best_bid_ticks_; p >= 0 && cnt < depth_n; --p) {
+                const std::int32_t q = levels_[p].total_qty;
+                if (q > 0) {
+                    if (cnt == 0) qty_best = q;
+                    qty_nth = q;
+                    ++cnt;
+                }
+            }
+        } else {
+            if (!has_ask()) return 0;
+            for (std::int32_t p = best_ask_ticks_; p < LEVELS && cnt < depth_n; ++p) {
+                const std::int32_t q = levels_[p].total_qty;
+                if (q > 0) {
+                    if (cnt == 0) qty_best = q;
+                    qty_nth = q;
+                    ++cnt;
+                }
+            }
+        }
+        if (cnt < depth_n || qty_best == 0) return 0;
+        return static_cast<std::int32_t>(
+            static_cast<std::int64_t>(qty_best - qty_nth) * 10000 / qty_best);
+    }
+
+    // ====================================================================
+    // Cumulative resting volume per side
+    // ====================================================================
+    //
+    // Σ qty po wszystkich BUY / SELL levels. O(LEVELS) — okresowy odczyt.
+    std::int64_t cumulative_resting_volume(Side side) const noexcept {
+        std::int64_t total = 0;
+        if (side == Side::BUY) {
+            if (!has_bid()) return 0;
+            for (std::int32_t p = 0; p <= best_bid_ticks_ && p < LEVELS; ++p) {
+                total += levels_[p].total_qty;
+            }
+        } else {
+            if (!has_ask()) return 0;
+            for (std::int32_t p = best_ask_ticks_; p < LEVELS; ++p) {
+                total += levels_[p].total_qty;
+            }
+        }
+        return total;
+    }
+
+    // ====================================================================
+    // Best-level qty histogram (16 log2-style bins)
+    // ====================================================================
+    //
+    // sample_best_qty_histogram() — periodyczny hook. Bin index = log2(qty)
+    // clamped to [0..15]. Strategia analizuje "typical" best-level depth.
+    void sample_best_qty_histogram() noexcept {
+        if (has_bid()) {
+            const std::int32_t bq = levels_[best_bid_ticks_].total_qty;
+            ++best_bid_qty_hist_[qty_to_log2_bin(bq)];
+        }
+        if (has_ask()) {
+            const std::int32_t aq = levels_[best_ask_ticks_].total_qty;
+            ++best_ask_qty_hist_[qty_to_log2_bin(aq)];
+        }
+    }
+    std::uint64_t best_bid_qty_hist_bin(std::size_t i) const noexcept {
+        return i < QTY_HIST_BINS ? best_bid_qty_hist_[i] : 0;
+    }
+    std::uint64_t best_ask_qty_hist_bin(std::size_t i) const noexcept {
+        return i < QTY_HIST_BINS ? best_ask_qty_hist_[i] : 0;
+    }
+
+private:
+    static std::size_t qty_to_log2_bin(std::int32_t q) noexcept {
+        if (q <= 0) return 0;
+        std::size_t b = 0;
+        std::uint32_t v = static_cast<std::uint32_t>(q);
+        while (v > 1 && b < QTY_HIST_BINS - 1) { v >>= 1; ++b; }
+        return b;
+    }
+public:
+
     std::size_t top_k_active_levels_by_qty(std::int32_t* out_prices,
                                             std::int32_t* out_qtys,
                                             std::size_t k) const noexcept {

@@ -2130,6 +2130,51 @@ void test_top_k_active_levels_by_qty() {
     ASSERT(qtys[2] == 100 && prices[2] == 10000, "topk_lvl_third_100");
 }
 
+// ──────────────────────────────────────────────
+// Depth pyramid + cumulative resting vol + best qty histogram
+// ──────────────────────────────────────────────
+
+void test_depth_pyramid_steepness_steep() {
+    Book b;
+    b.submit(Side::BUY, 10000, 1000);   // best
+    b.submit(Side::BUY, 9999,  100);
+    b.submit(Side::BUY, 9998,  10);
+    // 1→3 spadek: (1000 - 10)/1000 × 10000 = 9900
+    const auto s = b.depth_pyramid_steepness_bps(Side::BUY, 3);
+    ASSERT(s > 9000,                          "pyramid_steep");
+}
+
+void test_depth_pyramid_flat() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  100);
+    b.submit(Side::BUY, 9998,  100);
+    // 1→3: (100-100)/100 = 0
+    const auto s = b.depth_pyramid_steepness_bps(Side::BUY, 3);
+    ASSERT(s == 0,                            "pyramid_flat_0");
+}
+
+void test_cumulative_resting_volume_buy() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  200);
+    b.submit(Side::BUY, 9998,  50);
+    ASSERT(b.cumulative_resting_volume(Side::BUY)  == 350, "cum_rest_buy_350");
+    ASSERT(b.cumulative_resting_volume(Side::SELL) == 0,    "cum_rest_sell_0");
+}
+
+void test_best_qty_histogram_samples() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 50);
+    b.sample_best_qty_histogram();
+    b.sample_best_qty_histogram();
+    // qty 100 → bin ≈ log2(100) = 6 (100 → 50 → 25 → 12 → 6 → 3 → 1 = 6 shifts)
+    std::uint64_t total_bid = 0;
+    for (std::size_t i = 0; i < 16; ++i) total_bid += b.best_bid_qty_hist_bin(i);
+    ASSERT(total_bid == 2,                                  "bid_hist_total_2");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2563,6 +2608,10 @@ int main(int argc, char* argv[]) {
     test_mean_fill_notional();
     test_cluster_flow_imbalance();
     test_top_k_active_levels_by_qty();
+    test_depth_pyramid_steepness_steep();
+    test_depth_pyramid_flat();
+    test_cumulative_resting_volume_buy();
+    test_best_qty_histogram_samples();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
