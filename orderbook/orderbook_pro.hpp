@@ -478,6 +478,17 @@ class FullOrderBook {
             taker_sell_volume_ += static_cast<std::uint64_t>(qty);
             ++taker_sell_count_;
         }
+        // Signed volume EMA
+        {
+            const double signed_q = (taker_side == Side::BUY ? +1.0 : -1.0) *
+                                    static_cast<double>(qty);
+            if (!ema_signed_volume_init_) {
+                ema_signed_volume_ = signed_q;
+                ema_signed_volume_init_ = true;
+            } else {
+                ema_signed_volume_ = 0.1 * signed_q + 0.9 * ema_signed_volume_;
+            }
+        }
         // Per-side trade VWAP
         const std::int64_t notional = static_cast<std::int64_t>(price_ticks) * qty;
         if (taker_side == Side::BUY) {
@@ -2398,6 +2409,20 @@ private:
     std::uint64_t best_bid_qty_hist_[QTY_HIST_BINS]{};
     std::uint64_t best_ask_qty_hist_[QTY_HIST_BINS]{};
 
+    // EMA imbalance (alpha = 0.1 default; configurable)
+    double  ema_imbalance_alpha_ = 0.1;
+    double  ema_imbalance_bps_value_ = 0.0;
+    bool    ema_imbalance_init_ = false;
+
+    // Microprice ring buffer (last 16 samples)
+    std::int32_t  microprice_ring_[MID_RING_CAP]{};
+    std::size_t   microprice_ring_head_  = 0;
+    std::size_t   microprice_ring_count_ = 0;
+
+    // Signed-volume EMA (alpha 0.1)
+    double  ema_signed_volume_ = 0.0;
+    bool    ema_signed_volume_init_ = false;
+
     // Time-weighted mid (Σ mid × dt / Σ dt)
     std::uint64_t last_twmid_sample_ts_ns_ = 0;
     std::int32_t  last_twmid_sample_ticks_ = 0;
@@ -3323,6 +3348,63 @@ public:
     std::uint64_t best_ask_qty_hist_bin(std::size_t i) const noexcept {
         return i < QTY_HIST_BINS ? best_ask_qty_hist_[i] : 0;
     }
+
+    // ====================================================================
+    // EMA imbalance (alpha-blended TOB imbalance signal)
+    // ====================================================================
+    //
+    // sample_ema_imbalance() — periodyczny hook. EMA filtruje noise z imbalance.
+    // alpha = 0.1 default (responsywność: 10 sampli ~ ε90 decay).
+    void set_ema_imbalance_alpha(double a) noexcept {
+        if (a > 0.0 && a <= 1.0) ema_imbalance_alpha_ = a;
+    }
+    void sample_ema_imbalance() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        const std::int64_t b = levels_[best_bid_ticks_].total_qty;
+        const std::int64_t a = levels_[best_ask_ticks_].total_qty;
+        const std::int64_t total = b + a;
+        if (total == 0) return;
+        const double current_bps = static_cast<double>((b - a) * 10000) /
+                                    static_cast<double>(total);
+        if (!ema_imbalance_init_) {
+            ema_imbalance_bps_value_ = current_bps;
+            ema_imbalance_init_ = true;
+        } else {
+            ema_imbalance_bps_value_ = ema_imbalance_alpha_ * current_bps +
+                                       (1.0 - ema_imbalance_alpha_) * ema_imbalance_bps_value_;
+        }
+    }
+    double ema_imbalance_bps() const noexcept { return ema_imbalance_bps_value_; }
+
+    // ====================================================================
+    // Microprice ring buffer (last MID_RING_CAP samples)
+    // ====================================================================
+    void sample_microprice_to_ring() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        const std::int32_t mp = microprice_ticks();
+        microprice_ring_[microprice_ring_head_ % MID_RING_CAP] = mp;
+        ++microprice_ring_head_;
+        if (microprice_ring_count_ < MID_RING_CAP) ++microprice_ring_count_;
+    }
+    std::size_t microprice_ring_samples() const noexcept {
+        return microprice_ring_count_;
+    }
+    std::int32_t microprice_momentum_ticks() const noexcept {
+        if (microprice_ring_count_ < 2) return 0;
+        const std::size_t n = microprice_ring_count_;
+        const std::size_t oldest_idx = (microprice_ring_head_ + MID_RING_CAP - n) % MID_RING_CAP;
+        const std::size_t newest_idx = (microprice_ring_head_ + MID_RING_CAP - 1) % MID_RING_CAP;
+        return microprice_ring_[newest_idx] - microprice_ring_[oldest_idx];
+    }
+
+    // ====================================================================
+    // Signed-volume EMA (order flow filter)
+    // ====================================================================
+    //
+    // EMA z signed qty (+qty BUY, -qty SELL) per trade. Sygnał direction
+    // bardziej responsywny niż cumulative flow imbalance.
+    double ema_signed_volume() const noexcept { return ema_signed_volume_; }
+    bool   ema_signed_volume_ready() const noexcept { return ema_signed_volume_init_; }
 
 private:
     static std::size_t qty_to_log2_bin(std::int32_t q) noexcept {

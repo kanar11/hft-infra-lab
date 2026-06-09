@@ -2175,6 +2175,52 @@ void test_best_qty_histogram_samples() {
     ASSERT(total_bid == 2,                                  "bid_hist_total_2");
 }
 
+// ──────────────────────────────────────────────
+// EMA imbalance + microprice ring + signed-vol EMA
+// ──────────────────────────────────────────────
+
+void test_ema_imbalance_init() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 50);
+    b.sample_ema_imbalance();
+    // First sample: bid=100, ask=50, imb = (100-50)/150 × 10000 = 3333
+    ASSERT(b.ema_imbalance_bps() > 3000.0 && b.ema_imbalance_bps() < 3500.0,
+                                                    "ema_imb_init_3333");
+}
+
+void test_ema_imbalance_smooths() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 50);
+    b.sample_ema_imbalance();
+    const double first = b.ema_imbalance_bps();
+    // Reduce bid → imbalance moves toward 0
+    auto id = b.submit(Side::BUY, 10000, 200);    // bid grows MORE one-sided
+    (void)id;
+    b.sample_ema_imbalance();
+    // EMA powinien się przesunąć w kierunku nowego sygnału, ale wolniej
+    const double second = b.ema_imbalance_bps();
+    ASSERT(second != first,                         "ema_smoothed_moves");
+}
+
+void test_microprice_ring_after_two_samples() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    b.sample_microprice_to_ring();
+    b.sample_microprice_to_ring();
+    ASSERT(b.microprice_ring_samples() == 2,        "mp_ring_2");
+}
+
+void test_signed_volume_ema_after_buy_trade() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);   // taker BUY 100 → ema = +100
+    ASSERT(b.ema_signed_volume_ready(),             "sv_ema_ready");
+    ASSERT(b.ema_signed_volume() > 0.0,             "sv_ema_positive_buy");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2612,6 +2658,10 @@ int main(int argc, char* argv[]) {
     test_depth_pyramid_flat();
     test_cumulative_resting_volume_buy();
     test_best_qty_histogram_samples();
+    test_ema_imbalance_init();
+    test_ema_imbalance_smooths();
+    test_microprice_ring_after_two_samples();
+    test_signed_volume_ema_after_buy_trade();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
