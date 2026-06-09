@@ -1971,6 +1971,44 @@ void test_last_n_vwap_rolling() {
     ASSERT(b.last_n_vwap_ticks(1) == 10200, "lastN_vwap_1_10200");
 }
 
+// ──────────────────────────────────────────────
+// First-fill latency + burst detector
+// ──────────────────────────────────────────────
+
+void test_first_fill_latency_zero_init() {
+    Book b;
+    ASSERT(b.first_fill_latency_count()  == 0,    "ffl_count_0");
+    ASSERT(b.first_fill_latency_mean_ns() == 0,    "ffl_mean_0");
+    ASSERT(b.first_fill_latency_min_ns() == 0,     "ffl_min_0");
+}
+
+void test_first_fill_latency_recorded() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);    // both filled at once
+    ASSERT(b.first_fill_latency_count() >= 1,     "ffl_count_ge_1");
+    // mean >= 0 (instant fills can be 0 ns)
+    ASSERT(b.first_fill_latency_max_ns() >= b.first_fill_latency_mean_ns(),
+                                                   "ffl_max_ge_mean");
+}
+
+void test_burst_detector_off_by_default() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  100);
+    ASSERT(b.burst_runs_count() == 0,             "burst_off_0");
+}
+
+void test_burst_detector_catches_rapid_submits() {
+    Book b;
+    b.set_burst_window_ns(1'000'000'000ULL);   // 1 second window
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 9999,  100);
+    b.submit(Side::BUY, 9998,  100);
+    ASSERT(b.burst_runs_count() >= 1,             "burst_run_caught");
+    ASSERT(b.burst_current_run_count() >= 2,      "burst_run_size_ge_2");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2389,6 +2427,10 @@ int main(int argc, char* argv[]) {
     test_inter_trade_gap_after_two_trades();
     test_largest_single_trade_qty();
     test_last_n_vwap_rolling();
+    test_first_fill_latency_zero_init();
+    test_first_fill_latency_recorded();
+    test_burst_detector_off_by_default();
+    test_burst_detector_catches_rapid_submits();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

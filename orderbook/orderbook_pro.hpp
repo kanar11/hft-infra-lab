@@ -169,6 +169,7 @@ struct alignas(64) Order {
     std::int32_t   stop_trigger_ticks;   // dla STOP/PEG: cena triggera/peg base
     std::int32_t   peg_offset_ticks;     // dla PEG: offset od best bid/ask/mid
     std::int32_t   decision_mid_ticks;   // snapshot mid przy submit — dla IS (Implementation Shortfall)
+    std::uint64_t  first_fill_ts_ns;     // ts pierwszego fill (0 jeśli nic nie wypełnione)
     Order*         next_at_level;        // intrusive list (FIFO)
     Order*         prev_at_level;
     Order*         next_free;            // free list w pool (gdy slot wolny)
@@ -189,6 +190,7 @@ struct alignas(64) Order {
         stop_trigger_ticks = 0;
         peg_offset_ticks = 0;
         decision_mid_ticks = -1;
+        first_fill_ts_ns = 0;
         next_at_level = nullptr;
         prev_at_level = nullptr;
         next_free = nullptr;
@@ -701,6 +703,15 @@ private:
             m->filled_qty   += exec_qty;
             taker->filled_qty += exec_qty;
             qty_remaining   -= exec_qty;
+            // First-fill ts hook + latency stats (per order, only once)
+            if (m->first_fill_ts_ns == 0) {
+                m->first_fill_ts_ns = ts_ns;
+                record_first_fill_latency(m->submit_ts_ns, ts_ns);
+            }
+            if (taker->first_fill_ts_ns == 0) {
+                taker->first_fill_ts_ns = ts_ns;
+                record_first_fill_latency(taker->submit_ts_ns, ts_ns);
+            }
             exposure_on_fill(m->client_id, m->side, exec_qty);
             exposure_on_fill(taker->client_id, taker->side, exec_qty);
             // Implementation shortfall (per fill, signed by side).
@@ -962,6 +973,22 @@ public:
         o->submit_ts_ns  = mono_ns_now();
         o->decision_mid_ticks = (has_bid() && has_ask())
             ? (best_bid_ticks_ + best_ask_ticks_) / 2 : -1;
+        // Burst detector
+        if (burst_window_ns_ > 0) {
+            if (burst_last_submit_ns_ != 0 &&
+                o->submit_ts_ns > burst_last_submit_ns_ &&
+                (o->submit_ts_ns - burst_last_submit_ns_) <= burst_window_ns_) {
+                if (burst_in_run_count_ == 0) {
+                    ++burst_runs_count_;
+                    burst_in_run_count_ = 2;
+                } else {
+                    ++burst_in_run_count_;
+                }
+            } else {
+                burst_in_run_count_ = 0;
+            }
+            burst_last_submit_ns_ = o->submit_ts_ns;
+        }
         ++stats_.total_orders_added;
         tally_accept(type, tif);
 
@@ -2334,6 +2361,27 @@ private:
     // Largest single trade observed
     std::int32_t  largest_single_trade_qty_ = 0;
 
+    // First-fill latency tracker (per order, recorded once on first fill)
+    std::uint64_t first_fill_latency_count_   = 0;
+    std::uint64_t first_fill_latency_sum_ns_  = 0;
+    std::uint64_t first_fill_latency_max_ns_  = 0;
+    std::uint64_t first_fill_latency_min_ns_  = UINT64_MAX;
+
+    // Submission burst detector
+    std::uint64_t burst_window_ns_   = 0;     // 0 = off
+    std::uint64_t burst_last_submit_ns_ = 0;
+    std::uint64_t burst_runs_count_  = 0;     // # bursts (≥2 submits within window)
+    std::uint64_t burst_in_run_count_ = 0;    // counter dla bieżącego runa
+
+    void record_first_fill_latency(std::uint64_t submit_ts, std::uint64_t fill_ts) noexcept {
+        if (submit_ts == 0 || fill_ts < submit_ts) return;
+        const std::uint64_t lat = fill_ts - submit_ts;
+        ++first_fill_latency_count_;
+        first_fill_latency_sum_ns_ += lat;
+        if (lat > first_fill_latency_max_ns_) first_fill_latency_max_ns_ = lat;
+        if (lat < first_fill_latency_min_ns_) first_fill_latency_min_ns_ = lat;
+    }
+
     // Spread histogram (32 buckets: 0..30 ticks + 31=overflow)
     static constexpr std::size_t SPREAD_HIST_BINS = 32;
     std::uint64_t spread_histogram_[SPREAD_HIST_BINS]{};
@@ -3033,6 +3081,40 @@ public:
     std::int32_t largest_single_trade_qty() const noexcept {
         return largest_single_trade_qty_;
     }
+
+    // ====================================================================
+    // First-fill latency stats
+    // ====================================================================
+    //
+    // Mierzone per order — od submit_ts do first_fill_ts (ns). Reflektuje:
+    //  • dla maker: queue wait time przed pierwszym matchem
+    //  • dla taker: matching engine latency
+    std::uint64_t first_fill_latency_count() const noexcept {
+        return first_fill_latency_count_;
+    }
+    std::uint64_t first_fill_latency_min_ns() const noexcept {
+        return first_fill_latency_count_ == 0 ? 0 : first_fill_latency_min_ns_;
+    }
+    std::uint64_t first_fill_latency_max_ns() const noexcept {
+        return first_fill_latency_max_ns_;
+    }
+    std::uint64_t first_fill_latency_mean_ns() const noexcept {
+        if (first_fill_latency_count_ == 0) return 0;
+        return first_fill_latency_sum_ns_ / first_fill_latency_count_;
+    }
+
+    // ====================================================================
+    // Submission burst detector
+    // ====================================================================
+    //
+    // set_burst_window_ns(ε): incrementuj counter "burst run" gdy następuje
+    // submit w odstępie ≤ ε od poprzedniego. Burst signal = volatility regime
+    // change lub coordinated order entry.
+    void set_burst_window_ns(std::uint64_t window_ns) noexcept {
+        burst_window_ns_ = window_ns;
+    }
+    std::uint64_t burst_runs_count() const noexcept { return burst_runs_count_; }
+    std::uint64_t burst_current_run_count() const noexcept { return burst_in_run_count_; }
 
     // ====================================================================
     // Last-N rolling VWAP z tape
