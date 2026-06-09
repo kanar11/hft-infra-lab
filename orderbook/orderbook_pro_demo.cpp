@@ -1946,7 +1946,9 @@ void test_inter_trade_gap_after_two_trades() {
     b.submit(Side::SELL, 10100, 50);
     b.submit(Side::BUY,  10100, 50);
     ASSERT(b.inter_trade_gap_sample_count() >= 1, "gap_samples_ge_1");
-    ASSERT(b.inter_trade_gap_mean_ns() >= 0,      "gap_mean_nonneg");
+    // mean ≤ max (sanity — both unsigned, niezależne od konkretnych wartości)
+    ASSERT(b.inter_trade_gap_mean_ns() <= b.inter_trade_gap_max_ns(),
+                                                   "gap_mean_le_max");
 }
 
 void test_largest_single_trade_qty() {
