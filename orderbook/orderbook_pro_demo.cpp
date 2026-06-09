@@ -2011,6 +2011,65 @@ void test_burst_detector_catches_rapid_submits() {
     ASSERT(b.burst_current_run_count() >= 2,      "burst_run_size_ge_2");
 }
 
+// ──────────────────────────────────────────────
+// Completion histogram + TWAP-of-mid + mean trade qty
+// ──────────────────────────────────────────────
+
+void test_completion_filled_fully() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);   // SELL maker fully filled
+    ASSERT(b.completion_filled_fully() >= 1,            "comp_filled_ge_1");
+}
+
+void test_completion_cancelled_unfilled() {
+    Book b;
+    auto id = b.submit(Side::BUY, 10000, 100);
+    b.cancel(id);
+    ASSERT(b.completion_cancelled_unfilled() == 1,      "comp_cxl_unfilled_1");
+    ASSERT(b.completion_cancelled_partial() == 0,       "comp_cxl_partial_0");
+}
+
+void test_completion_cancelled_partial() {
+    Book b;
+    auto id = b.submit(Side::BUY, 10000, 100);  // maker
+    b.submit(Side::SELL, 10000, 50);             // partial fill maker
+    b.cancel(id);
+    ASSERT(b.completion_cancelled_partial() == 1,       "comp_cxl_partial_1");
+}
+
+void test_fill_rate_ratio() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);    // 1 fully filled
+    auto id = b.submit(Side::BUY, 10000, 100);
+    b.cancel(id);                        // 1 cancelled
+    // 3 added, 1 filled fully → ratio ~ 0.33
+    const double r = b.fill_rate_ratio();
+    ASSERT(r > 0.0 && r < 1.0,                          "fill_rate_in_unit");
+}
+
+void test_twmid_sample_accumulates() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    b.sample_time_weighted_mid();
+    for (volatile int i = 0; i < 1000; ++i) {}
+    b.sample_time_weighted_mid();
+    ASSERT(b.time_weighted_mid_total_dt_ns() > 0,       "twmid_dt_pos");
+    ASSERT(b.mean_time_weighted_mid_ticks() > 0.0,      "twmid_mean_pos");
+}
+
+void test_mean_trade_qty() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);    // qty 100
+    b.submit(Side::SELL, 10101, 200);
+    b.submit(Side::BUY,  10101, 200);    // qty 200
+    // 2 fills, vol 300 → mean = 150
+    ASSERT(b.mean_trade_qty() == 150.0,                 "mean_trade_qty_150");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2433,6 +2492,12 @@ int main(int argc, char* argv[]) {
     test_first_fill_latency_recorded();
     test_burst_detector_off_by_default();
     test_burst_detector_catches_rapid_submits();
+    test_completion_filled_fully();
+    test_completion_cancelled_unfilled();
+    test_completion_cancelled_partial();
+    test_fill_rate_ratio();
+    test_twmid_sample_accumulates();
+    test_mean_trade_qty();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

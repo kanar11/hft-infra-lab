@@ -783,6 +783,7 @@ private:
                 if (lvl.order_count > 0) --lvl.order_count;
                 id_index_.erase(m->id);
                 record_lifecycle_age(m->submit_ts_ns);
+                ++completion_filled_fully_;
                 free_order(m);
                 m = next_m;
             } else {
@@ -870,6 +871,8 @@ private:
                     OrderStatus::CANCELLED);
         exposure_on_cancel(o->client_id, o->side, leftover);
         record_lifecycle_age(o->submit_ts_ns);
+        if (o->filled_qty == 0)        ++completion_cancelled_unfilled_;
+        else                            ++completion_cancelled_partial_;
         free_order(o);
         ++stats_.total_orders_cancelled;
         push_delta(levels_[cancel_price].empty() ? 'D' : 'M',
@@ -1012,6 +1015,7 @@ public:
             // Pełen fill → zwolnij slot (nie wchodzi do księgi)
             o->status = OrderStatus::FILLED;
             const std::uint64_t rid = o->id;
+            ++completion_filled_fully_;
             free_order(o);
             return rid;
         }
@@ -1023,6 +1027,8 @@ public:
             const std::uint64_t rid = o->id;
             emit(EventType::CANCEL, rid, 0, o->price_ticks, left,
                  OrderStatus::CANCELLED, RejectReason::NONE);
+            if (o->filled_qty == 0) ++completion_cancelled_unfilled_;
+            else                    ++completion_cancelled_partial_;
             free_order(o);
             return rid;
         }
@@ -1598,6 +1604,8 @@ public:
             emit(EventType::EXPIRE, oid, 0, price, left,
                  OrderStatus::EXPIRED, RejectReason::NONE);
             id_index_.erase(oid);
+            if (o->filled_qty == 0) ++completion_expired_unfilled_;
+            else                    ++completion_expired_partial_;
             free_order(o);
             ++stats_.total_orders_expired;
         }
@@ -2373,6 +2381,19 @@ private:
     std::uint64_t burst_runs_count_  = 0;     // # bursts (≥2 submits within window)
     std::uint64_t burst_in_run_count_ = 0;    // counter dla bieżącego runa
 
+    // Order completion histogram
+    std::uint64_t completion_filled_fully_     = 0;  // total_qty == filled_qty
+    std::uint64_t completion_cancelled_partial_= 0;  // 0 < filled_qty < total_qty
+    std::uint64_t completion_cancelled_unfilled_= 0; // filled_qty == 0
+    std::uint64_t completion_expired_partial_  = 0;
+    std::uint64_t completion_expired_unfilled_ = 0;
+
+    // Time-weighted mid (Σ mid × dt / Σ dt)
+    std::uint64_t last_twmid_sample_ts_ns_ = 0;
+    std::int32_t  last_twmid_sample_ticks_ = 0;
+    std::int64_t  twmid_sum_ticks_x_ns_    = 0;
+    std::uint64_t twmid_total_dt_ns_       = 0;
+
     void record_first_fill_latency(std::uint64_t submit_ts, std::uint64_t fill_ts) noexcept {
         if (submit_ts == 0 || fill_ts < submit_ts) return;
         const std::uint64_t lat = fill_ts - submit_ts;
@@ -3115,6 +3136,71 @@ public:
     }
     std::uint64_t burst_runs_count() const noexcept { return burst_runs_count_; }
     std::uint64_t burst_current_run_count() const noexcept { return burst_in_run_count_; }
+
+    // ====================================================================
+    // Order completion histogram
+    // ====================================================================
+    //
+    // Cztery kategorie completion:
+    //  • filled_fully — match wzięło całą qty
+    //  • cancelled_partial — cancel po częściowym fillu
+    //  • cancelled_unfilled — cancel bez żadnego fillu
+    //  • expired_partial / expired_unfilled — analogicznie ale przez GTD/DAY
+    // Ratio = filled_fully / total_orders_added — book "execution efficiency".
+    std::uint64_t completion_filled_fully() const noexcept     { return completion_filled_fully_; }
+    std::uint64_t completion_cancelled_partial() const noexcept{ return completion_cancelled_partial_; }
+    std::uint64_t completion_cancelled_unfilled() const noexcept{ return completion_cancelled_unfilled_; }
+    std::uint64_t completion_expired_partial() const noexcept  { return completion_expired_partial_; }
+    std::uint64_t completion_expired_unfilled() const noexcept { return completion_expired_unfilled_; }
+    double fill_rate_ratio() const noexcept {
+        const std::uint64_t added = stats_.total_orders_added;
+        if (added == 0) return 0.0;
+        return static_cast<double>(completion_filled_fully_) /
+               static_cast<double>(added);
+    }
+
+    // ====================================================================
+    // Time-weighted mid (TWAP-of-mid)
+    // ====================================================================
+    //
+    // Strategia okresowo wywołuje sample_time_weighted_mid(). Akumuluje
+    // (mid × dt) między samplami. mean = sum / total_dt. Lepszy benchmark
+    // niż simple mid snapshot.
+    void sample_time_weighted_mid() noexcept {
+        if (!has_bid() || !has_ask()) return;
+        const std::int32_t mid = (best_bid_ticks_ + best_ask_ticks_) / 2;
+        const std::uint64_t now = mono_ns_now();
+        if (last_twmid_sample_ts_ns_ == 0) {
+            last_twmid_sample_ts_ns_ = now;
+            last_twmid_sample_ticks_ = mid;
+            return;
+        }
+        if (now > last_twmid_sample_ts_ns_) {
+            const std::uint64_t dt = now - last_twmid_sample_ts_ns_;
+            // Trapezoidal: dla stabilnej średniej używamy poprzedniego mid × dt
+            twmid_sum_ticks_x_ns_ +=
+                static_cast<std::int64_t>(last_twmid_sample_ticks_) *
+                static_cast<std::int64_t>(dt);
+            twmid_total_dt_ns_ += dt;
+            last_twmid_sample_ts_ns_ = now;
+            last_twmid_sample_ticks_ = mid;
+        }
+    }
+    double mean_time_weighted_mid_ticks() const noexcept {
+        if (twmid_total_dt_ns_ == 0) return 0.0;
+        return static_cast<double>(twmid_sum_ticks_x_ns_) /
+               static_cast<double>(twmid_total_dt_ns_);
+    }
+    std::uint64_t time_weighted_mid_total_dt_ns() const noexcept {
+        return twmid_total_dt_ns_;
+    }
+
+    // Mean trade qty across całego cumulative tape
+    double mean_trade_qty() const noexcept {
+        if (stats_.total_fills == 0) return 0.0;
+        return static_cast<double>(stats_.total_volume) /
+               static_cast<double>(stats_.total_fills);
+    }
 
     // ====================================================================
     // Last-N rolling VWAP z tape
