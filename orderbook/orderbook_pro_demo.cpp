@@ -2229,7 +2229,7 @@ void test_ofi_first_sample_baseline() {
     Book b;
     b.submit(Side::BUY,  10000, 100);
     b.submit(Side::SELL, 10010, 100);
-    b.sample_ofi();                       // establishes baseline
+    b.sample_ofi_ck();                       // establishes baseline
     ASSERT(b.ofi_cumulative() == 0,       "ofi_first_baseline_0");
     ASSERT(b.ofi_samples() == 1,           "ofi_samples_1");
 }
@@ -2238,9 +2238,9 @@ void test_ofi_bid_increases_positive_flow() {
     Book b;
     b.submit(Side::BUY,  10000, 100);
     b.submit(Side::SELL, 10010, 100);
-    b.sample_ofi();
+    b.sample_ofi_ck();
     b.submit(Side::BUY,  10000, 50);     // bid qty grows (100 → 150)
-    b.sample_ofi();
+    b.sample_ofi_ck();
     // dw_b = 150 - 100 = +50 (unchanged price), dw_a = 100 - 100 = 0 → OFI = +50
     ASSERT(b.ofi_cumulative() == 50,      "ofi_bid_grow_50");
 }
@@ -2249,9 +2249,9 @@ void test_ofi_bid_price_up_strong_positive() {
     Book b;
     b.submit(Side::BUY,  10000, 100);
     b.submit(Side::SELL, 10010, 100);
-    b.sample_ofi();
+    b.sample_ofi_ck();
     b.submit(Side::BUY,  10001, 80);     // new best bid price 10001 (qty 80)
-    b.sample_ofi();
+    b.sample_ofi_ck();
     // dw_b = +80 (price up), dw_a = 0 → OFI = +80
     ASSERT(b.ofi_cumulative() == 80,      "ofi_bid_price_up");
 }
@@ -2479,11 +2479,11 @@ void test_ofi_signal() {
     Book b;
     b.submit(Side::BUY,  10000, 100);
     b.submit(Side::SELL, 10100, 100);
-    b.sample_ofi();  // baseline
+    b.sample_ofi_ck();  // baseline
 
     // Buy pressure: dodatkowa qty na BID
     b.submit(Side::BUY, 10000, 200);
-    auto delta = b.sample_ofi();
+    auto delta = b.sample_ofi_ck();
     ASSERT(delta > 0,                          "ofi_buy_pressure_positive");
     ASSERT(b.cumulative_ofi() > 0,             "ofi_cumulative_positive");
 }

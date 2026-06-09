@@ -3472,7 +3472,8 @@ public:
     //   ΔW_b: +q_b jeśli bid price up; q_b - q_b_prev jeśli unchanged; -q_b_prev jeśli down
     //   ΔW_a: -q_a jeśli ask price up; q_a_prev - q_a jeśli unchanged; +q_a_prev jeśli down
     // (Strona ask jest invertowana — wzrost asku zmniejsza buy pressure.)
-    void sample_ofi() noexcept {
+    // (Nazwa _ck dla disambiguation względem prostszego sample_ofi() wyżej.)
+    void sample_ofi_ck() noexcept {
         if (!has_bid() || !has_ask()) return;
         const std::int32_t bq = levels_[best_bid_ticks_].total_qty;
         const std::int32_t aq = levels_[best_ask_ticks_].total_qty;
