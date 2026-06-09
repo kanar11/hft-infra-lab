@@ -478,6 +478,18 @@ class FullOrderBook {
             taker_sell_volume_ += static_cast<std::uint64_t>(qty);
             ++taker_sell_count_;
         }
+        // Trade direction Markov chain
+        if (markov_has_prev_) {
+            if (markov_prev_side_ == Side::BUY) {
+                if (taker_side == Side::BUY) ++markov_BB_;
+                else                          ++markov_BS_;
+            } else {
+                if (taker_side == Side::BUY) ++markov_SB_;
+                else                          ++markov_SS_;
+            }
+        }
+        markov_prev_side_ = taker_side;
+        markov_has_prev_  = true;
         // Signed volume EMA
         {
             const double signed_q = (taker_side == Side::BUY ? +1.0 : -1.0) *
@@ -1056,6 +1068,12 @@ public:
         // Włóż do księgi (FIFO)
         o->status = OrderStatus::OPEN;
         if (o->filled_qty > 0) o->status = OrderStatus::PARTIALLY_FILLED;
+        // Queue depth at arrival — sample przed enqueue (current order_count = pozycja w FIFO)
+        const std::int32_t qd_arrival = levels_[o->price_ticks].order_count;
+        queue_depth_arrival_sum_ += static_cast<std::uint64_t>(qd_arrival);
+        ++queue_depth_arrival_count_;
+        if (qd_arrival > queue_depth_arrival_max_)
+            queue_depth_arrival_max_ = qd_arrival;
         enqueue_at_level(o);
         id_index_[o->id] = o;
 
@@ -2452,6 +2470,16 @@ private:
     // Snapshot vector reused
     std::vector<std::uint64_t> maker_survival_prev_ids_;
 
+    // Trade direction Markov chain (BB, BS, SB, SS counters)
+    Side          markov_prev_side_     = Side::BUY;
+    bool          markov_has_prev_      = false;
+    std::uint64_t markov_BB_ = 0, markov_BS_ = 0, markov_SB_ = 0, markov_SS_ = 0;
+
+    // Queue depth at maker arrival
+    std::uint64_t queue_depth_arrival_sum_   = 0;
+    std::uint64_t queue_depth_arrival_count_ = 0;
+    std::int32_t  queue_depth_arrival_max_   = 0;
+
     // Time-weighted mid (Σ mid × dt / Σ dt)
     std::uint64_t last_twmid_sample_ts_ns_ = 0;
     std::int32_t  last_twmid_sample_ticks_ = 0;
@@ -3527,6 +3555,73 @@ public:
     }
     std::uint64_t maker_survival_total_polls() const noexcept {
         return maker_survival_total_polls_;
+    }
+
+    // ====================================================================
+    // Trade direction Markov chain (BB, BS, SB, SS counters)
+    // ====================================================================
+    //
+    // Tracking serial dependence trade direction. P(BUY|BUY) → "trend persistence".
+    // Wysoka P(BUY|BUY) = trending; wysoka P(BUY|SELL) = mean-reverting.
+    std::uint64_t markov_count_BB() const noexcept { return markov_BB_; }
+    std::uint64_t markov_count_BS() const noexcept { return markov_BS_; }
+    std::uint64_t markov_count_SB() const noexcept { return markov_SB_; }
+    std::uint64_t markov_count_SS() const noexcept { return markov_SS_; }
+    double markov_prob_buy_given_buy() const noexcept {
+        const auto t = markov_BB_ + markov_BS_;
+        return t == 0 ? 0.0 : static_cast<double>(markov_BB_) /
+                              static_cast<double>(t);
+    }
+    double markov_prob_buy_given_sell() const noexcept {
+        const auto t = markov_SB_ + markov_SS_;
+        return t == 0 ? 0.0 : static_cast<double>(markov_SB_) /
+                              static_cast<double>(t);
+    }
+    double markov_trend_persistence_bps() const noexcept {
+        // (P(B|B) + P(S|S)) - 1.0 × 10000 — pozytywne = trending; ujemne = reverting
+        const auto bb_tot = markov_BB_ + markov_BS_;
+        const auto ss_tot = markov_SB_ + markov_SS_;
+        if (bb_tot == 0 || ss_tot == 0) return 0.0;
+        const double pbb = static_cast<double>(markov_BB_) /
+                            static_cast<double>(bb_tot);
+        const double pss = static_cast<double>(markov_SS_) /
+                            static_cast<double>(ss_tot);
+        return (pbb + pss - 1.0) * 10000.0;
+    }
+
+    // ====================================================================
+    // Queue depth at maker arrival (FIFO position rejestrowana na enqueue)
+    // ====================================================================
+    //
+    // Strategia obserwuje: gdy nowy maker wpada na pusty level → great queue
+    // priority; gdy na crowded level → low priority.
+    double mean_queue_depth_at_arrival() const noexcept {
+        if (queue_depth_arrival_count_ == 0) return 0.0;
+        return static_cast<double>(queue_depth_arrival_sum_) /
+               static_cast<double>(queue_depth_arrival_count_);
+    }
+    std::int32_t max_queue_depth_at_arrival() const noexcept {
+        return queue_depth_arrival_max_;
+    }
+    std::uint64_t queue_depth_arrival_samples() const noexcept {
+        return queue_depth_arrival_count_;
+    }
+
+    // ====================================================================
+    // Trade momentum count from tape (last N net direction)
+    // ====================================================================
+    //
+    // Wraca signed value: +N gdy ostatnie N to BUY-takers; -N gdy SELL-takers.
+    // Range: [-min(n, tape_count), +min(n, tape_count)].
+    std::int32_t trade_momentum_last_n(std::size_t n) const noexcept {
+        const std::size_t avail = std::min(tape_count_, TAPE_CAP);
+        const std::size_t use   = std::min(n, avail);
+        std::int32_t score = 0;
+        for (std::size_t k = 0; k < use; ++k) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - 1 - k) % TAPE_CAP];
+            score += (t.taker_side == Side::BUY) ? +1 : -1;
+        }
+        return score;
     }
 
 private:

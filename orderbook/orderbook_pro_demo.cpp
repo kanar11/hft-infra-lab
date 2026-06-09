@@ -2286,6 +2286,71 @@ void test_maker_survival_after_two_polls() {
     ASSERT(b.maker_survival_ratio() == 1.0,       "survival_ratio_1.0");
 }
 
+// ──────────────────────────────────────────────
+// Markov chain + queue depth at arrival + trade momentum
+// ──────────────────────────────────────────────
+
+void test_markov_trending_all_buys() {
+    Book b;
+    for (int i = 0; i < 4; ++i) {
+        b.submit(Side::SELL, 10100 + i, 50);
+        b.submit(Side::BUY,  10100 + i, 50);
+    }
+    // 4 BUY trades → 3 BB transitions, 0 BS
+    ASSERT(b.markov_count_BB() == 3,                "markov_BB_3");
+    ASSERT(b.markov_count_BS() == 0,                "markov_BS_0");
+    ASSERT(b.markov_prob_buy_given_buy() == 1.0,    "P(B|B)=1.0");
+}
+
+void test_markov_alternating() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);    // BUY
+    b.submit(Side::BUY,  9900,  50);
+    b.submit(Side::SELL, 9900,  50);    // SELL → BS transition
+    b.submit(Side::SELL, 10101, 50);
+    b.submit(Side::BUY,  10101, 50);    // BUY → SB transition
+    ASSERT(b.markov_count_BB() == 0,                "alt_BB_0");
+    ASSERT(b.markov_count_BS() == 1,                "alt_BS_1");
+    ASSERT(b.markov_count_SB() == 1,                "alt_SB_1");
+}
+
+void test_queue_depth_at_arrival_empty_level() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);   // pierwszy na level → qd=0
+    ASSERT(b.queue_depth_arrival_samples() == 1,    "qda_samples_1");
+    ASSERT(b.mean_queue_depth_at_arrival() == 0.0,  "qda_mean_0");
+    ASSERT(b.max_queue_depth_at_arrival() == 0,     "qda_max_0");
+}
+
+void test_queue_depth_at_arrival_crowded() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);   // qd=0
+    b.submit(Side::BUY, 10000, 50);    // qd=1
+    b.submit(Side::BUY, 10000, 30);    // qd=2
+    ASSERT(b.max_queue_depth_at_arrival() == 2,     "qda_max_2");
+    // mean = (0+1+2)/3 = 1.0
+    ASSERT(b.mean_queue_depth_at_arrival() == 1.0,  "qda_mean_1.0");
+}
+
+void test_trade_momentum_last_n_all_buys() {
+    Book b;
+    for (int i = 0; i < 3; ++i) {
+        b.submit(Side::SELL, 10100 + i, 50);
+        b.submit(Side::BUY,  10100 + i, 50);
+    }
+    ASSERT(b.trade_momentum_last_n(3) == 3,         "momentum_+3_all_buys");
+}
+
+void test_trade_momentum_balanced() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);   // BUY
+    b.submit(Side::BUY,  9900,  50);
+    b.submit(Side::SELL, 9900,  50);   // SELL
+    ASSERT(b.trade_momentum_last_n(2) == 0,         "momentum_0_balanced");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2733,6 +2798,12 @@ int main(int argc, char* argv[]) {
     test_trade_clustering_fano_one_sample();
     test_trade_clustering_fano_after_trades();
     test_maker_survival_after_two_polls();
+    test_markov_trending_all_buys();
+    test_markov_alternating();
+    test_queue_depth_at_arrival_empty_level();
+    test_queue_depth_at_arrival_crowded();
+    test_trade_momentum_last_n_all_buys();
+    test_trade_momentum_balanced();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
