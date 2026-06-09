@@ -1917,6 +1917,60 @@ void test_is_sell_negative_when_paid_below_mid() {
     ASSERT(is_total >= 400 && is_total <= 600,                     "is_sell_pays_500");
 }
 
+// ──────────────────────────────────────────────
+// Per-side VWAP + inter-trade gap + largest single + last-N VWAP
+// ──────────────────────────────────────────────
+
+void test_per_side_vwap_split() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);     // taker BUY @10100
+    b.submit(Side::BUY,  9900,  100);
+    b.submit(Side::SELL, 9900,  100);     // taker SELL @9900
+    ASSERT(b.buy_vwap_ticks()  == 10100, "buy_vwap_10100");
+    ASSERT(b.sell_vwap_ticks() == 9900,  "sell_vwap_9900");
+    ASSERT(b.buy_vs_sell_vwap_spread_ticks() == 200, "vwap_spread_200");
+}
+
+void test_per_side_vwap_zero_no_trades() {
+    Book b;
+    ASSERT(b.buy_vwap_ticks()  == 0,     "buy_vwap_zero_init");
+    ASSERT(b.sell_vwap_ticks() == 0,     "sell_vwap_zero_init");
+}
+
+void test_inter_trade_gap_after_two_trades() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    for (volatile int i = 0; i < 1000; ++i) {}
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    ASSERT(b.inter_trade_gap_sample_count() >= 1, "gap_samples_ge_1");
+    ASSERT(b.inter_trade_gap_mean_ns() >= 0,      "gap_mean_nonneg");
+}
+
+void test_largest_single_trade_qty() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    b.submit(Side::SELL, 10101, 200);
+    b.submit(Side::BUY,  10101, 200);    // biggest single
+    b.submit(Side::SELL, 10102, 30);
+    b.submit(Side::BUY,  10102, 30);
+    ASSERT(b.largest_single_trade_qty() == 200, "largest_trade_200");
+}
+
+void test_last_n_vwap_rolling() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);   // trade @10100
+    b.submit(Side::SELL, 10200, 100);
+    b.submit(Side::BUY,  10200, 100);   // trade @10200
+    // Last-2 VWAP = (10100×100 + 10200×100) / 200 = 10150
+    ASSERT(b.last_n_vwap_ticks(2) == 10150, "lastN_vwap_10150");
+    ASSERT(b.last_n_vwap_ticks(1) == 10200, "lastN_vwap_1_10200");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2330,6 +2384,11 @@ int main(int argc, char* argv[]) {
     test_is_zero_without_fills();
     test_is_buy_pays_adverse();
     test_is_sell_negative_when_paid_below_mid();
+    test_per_side_vwap_split();
+    test_per_side_vwap_zero_no_trades();
+    test_inter_trade_gap_after_two_trades();
+    test_largest_single_trade_qty();
+    test_last_n_vwap_rolling();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

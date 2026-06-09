@@ -476,6 +476,26 @@ class FullOrderBook {
             taker_sell_volume_ += static_cast<std::uint64_t>(qty);
             ++taker_sell_count_;
         }
+        // Per-side trade VWAP
+        const std::int64_t notional = static_cast<std::int64_t>(price_ticks) * qty;
+        if (taker_side == Side::BUY) {
+            cum_buy_notional_ticks_ += notional;
+            cum_buy_volume_         += static_cast<std::uint64_t>(qty);
+        } else {
+            cum_sell_notional_ticks_ += notional;
+            cum_sell_volume_         += static_cast<std::uint64_t>(qty);
+        }
+        // Inter-trade time gap
+        if (prev_trade_ts_ns_for_gap_ != 0 && ts_ns > prev_trade_ts_ns_for_gap_) {
+            const std::uint64_t gap = ts_ns - prev_trade_ts_ns_for_gap_;
+            if (gap < inter_trade_gap_min_ns_) inter_trade_gap_min_ns_ = gap;
+            if (gap > inter_trade_gap_max_ns_) inter_trade_gap_max_ns_ = gap;
+            inter_trade_gap_sum_ns_ += gap;
+            ++inter_trade_gap_count_;
+        }
+        prev_trade_ts_ns_for_gap_ = ts_ns;
+        // Largest single trade
+        if (qty > largest_single_trade_qty_) largest_single_trade_qty_ = qty;
         // Tick-by-tick Δp distribution (clipped do [-4, +4])
         if (prev_trade_px_for_lambda_ >= 0) {
             const std::int32_t raw = price_ticks - static_cast<std::int32_t>(prev_trade_px_for_lambda_);
@@ -2298,6 +2318,22 @@ private:
     std::int64_t  cum_implementation_shortfall_ticks_qty_ = 0;
     std::uint64_t cum_implementation_shortfall_qty_       = 0;
 
+    // Per-side VWAP accumulators
+    std::int64_t  cum_buy_notional_ticks_  = 0;
+    std::uint64_t cum_buy_volume_          = 0;
+    std::int64_t  cum_sell_notional_ticks_ = 0;
+    std::uint64_t cum_sell_volume_         = 0;
+
+    // Inter-trade time gap stats
+    std::uint64_t prev_trade_ts_ns_for_gap_ = 0;
+    std::uint64_t inter_trade_gap_min_ns_   = UINT64_MAX;
+    std::uint64_t inter_trade_gap_max_ns_   = 0;
+    std::uint64_t inter_trade_gap_sum_ns_   = 0;
+    std::uint64_t inter_trade_gap_count_    = 0;
+
+    // Largest single trade observed
+    std::int32_t  largest_single_trade_qty_ = 0;
+
     // Spread histogram (32 buckets: 0..30 ticks + 31=overflow)
     static constexpr std::size_t SPREAD_HIST_BINS = 32;
     std::uint64_t spread_histogram_[SPREAD_HIST_BINS]{};
@@ -2947,6 +2983,78 @@ public:
     //   • |Kyle λ| znormalizowany przez mean_qty (proxy)
     //   • CTR (cancel-to-trade) clamped do 100
     // Każda komponenta równo ważona (33% × 33% × 33%).
+    // ====================================================================
+    // Per-side trade VWAP (z całego tape; buy-taker vs sell-taker)
+    // ====================================================================
+    //
+    // buy_vwap_ticks() / sell_vwap_ticks() — VWAP osobno dla każdego kierunku
+    // taker order flow. Asymmetric: buy_vwap > mid → bullish; sell_vwap < mid → bearish.
+    std::int32_t buy_vwap_ticks() const noexcept {
+        if (cum_buy_volume_ == 0) return 0;
+        return static_cast<std::int32_t>(
+            cum_buy_notional_ticks_ / static_cast<std::int64_t>(cum_buy_volume_));
+    }
+    std::int32_t sell_vwap_ticks() const noexcept {
+        if (cum_sell_volume_ == 0) return 0;
+        return static_cast<std::int32_t>(
+            cum_sell_notional_ticks_ / static_cast<std::int64_t>(cum_sell_volume_));
+    }
+    // buy_vs_sell_vwap_spread_ticks: dodatni gdy buy_taker_vwap > sell_taker_vwap
+    std::int32_t buy_vs_sell_vwap_spread_ticks() const noexcept {
+        const auto b = buy_vwap_ticks();
+        const auto s = sell_vwap_ticks();
+        if (b == 0 || s == 0) return 0;
+        return b - s;
+    }
+
+    // ====================================================================
+    // Inter-trade time gap statistics
+    // ====================================================================
+    //
+    // Mean / min / max gap ns między kolejnymi trades. Niskie = burst flow,
+    // wysokie = quiet periods. Distribution shape = clustering metryka.
+    std::uint64_t inter_trade_gap_min_ns() const noexcept {
+        return inter_trade_gap_count_ == 0 ? 0 : inter_trade_gap_min_ns_;
+    }
+    std::uint64_t inter_trade_gap_max_ns() const noexcept {
+        return inter_trade_gap_max_ns_;
+    }
+    std::uint64_t inter_trade_gap_mean_ns() const noexcept {
+        if (inter_trade_gap_count_ == 0) return 0;
+        return inter_trade_gap_sum_ns_ / inter_trade_gap_count_;
+    }
+    std::uint64_t inter_trade_gap_sample_count() const noexcept {
+        return inter_trade_gap_count_;
+    }
+
+    // ====================================================================
+    // Largest single trade observed (block detector)
+    // ====================================================================
+    std::int32_t largest_single_trade_qty() const noexcept {
+        return largest_single_trade_qty_;
+    }
+
+    // ====================================================================
+    // Last-N rolling VWAP z tape
+    // ====================================================================
+    //
+    // last_n_vwap_ticks(n): VWAP ostatnich min(n, tape_count) trades. Daje
+    // bardziej responsywny VWAP niż cumulative (zapomina old data).
+    std::int32_t last_n_vwap_ticks(std::size_t n) const noexcept {
+        const std::size_t avail = std::min(tape_count_, TAPE_CAP);
+        const std::size_t use   = std::min(n, avail);
+        if (use == 0) return 0;
+        std::int64_t notional = 0;
+        std::int64_t volume   = 0;
+        for (std::size_t k = 0; k < use; ++k) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - 1 - k) % TAPE_CAP];
+            notional += static_cast<std::int64_t>(t.price_ticks) * t.qty;
+            volume   += t.qty;
+        }
+        if (volume == 0) return 0;
+        return static_cast<std::int32_t>(notional / volume);
+    }
+
     // ====================================================================
     // Implementation Shortfall (TCA — Almgren/Chriss style)
     // ====================================================================
