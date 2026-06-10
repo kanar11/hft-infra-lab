@@ -1551,6 +1551,26 @@ public:
         if (last_trade_ticks_ < 0 || stop_orders_.empty()) return;
         for (std::size_t i = 0; i < stop_orders_.size(); ) {
             Order* o = stop_orders_[i];
+            // Trailing stop (STOP + peg_offset > 0): ratchet trigger za ceną
+            // gdy rynek idzie korzystnie. SELL: trigger podąża W GÓRĘ
+            // (high-water - offset); BUY: W DÓŁ (low-water + offset).
+            // Ratchet nigdy nie self-triggeruje: nowy trigger jest zawsze
+            // offset od last_trade, więc warunek trigger nie zachodzi.
+            if (o->peg_offset_ticks > 0) {
+                if (o->side == Side::SELL) {
+                    const std::int32_t nt = last_trade_ticks_ - o->peg_offset_ticks;
+                    if (nt > o->stop_trigger_ticks && nt >= 0) {
+                        o->stop_trigger_ticks = nt;
+                        ++trailing_ratchets_;
+                    }
+                } else {
+                    const std::int32_t nt = last_trade_ticks_ + o->peg_offset_ticks;
+                    if (nt < o->stop_trigger_ticks && nt < LEVELS) {
+                        o->stop_trigger_ticks = nt;
+                        ++trailing_ratchets_;
+                    }
+                }
+            }
             const bool buy_trigger  = (o->side == Side::BUY)
                                     && (last_trade_ticks_ >= o->stop_trigger_ticks);
             const bool sell_trigger = (o->side == Side::SELL)
@@ -1580,6 +1600,55 @@ public:
 
     std::size_t stop_orders_count() const noexcept { return stop_orders_.size(); }
     std::int32_t last_trade_ticks() const noexcept { return last_trade_ticks_; }
+
+    // ====================================================================
+    // Trailing stop
+    // ====================================================================
+    //
+    // Stop z triggerem podążającym za rynkiem o trail_offset_ticks:
+    //   SELL (ochrona longa): trigger = high-water-mark - offset, ratchet up
+    //   BUY  (ochrona shorta): trigger = low-water-mark + offset, ratchet down
+    // Initial trigger liczony od reference = last_trade (fallback: mid).
+    // Marker: type == STOP && peg_offset_ticks > 0 (plain STOP ma offset 0).
+    // Ratchet dzieje się w check_stop_triggers — wymaga regularnego callowania.
+    std::uint64_t submit_trailing_stop(Side side,
+                                        std::int32_t trail_offset_ticks,
+                                        std::int32_t limit_ticks,
+                                        std::int32_t qty,
+                                        std::uint64_t order_id = 0,
+                                        std::uint64_t client_id = 0,
+                                        RejectReason* out_reason = nullptr) noexcept {
+        auto reject = [&](RejectReason r) -> std::uint64_t {
+            if (out_reason) *out_reason = r;
+            ++stats_.total_orders_rejected;
+            tally_rejection(r);
+            return 0;
+        };
+        if (qty <= 0)                return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
+        if (trail_offset_ticks <= 0) return reject(RejectReason::PRICE_OUT_OF_RANGE);
+        std::int32_t ref = last_trade_ticks_;
+        if (ref < 0) ref = mid_ticks();
+        if (ref < 0)                 return reject(RejectReason::PRICE_OUT_OF_RANGE);
+        const std::int32_t trigger = (side == Side::SELL)
+            ? ref - trail_offset_ticks : ref + trail_offset_ticks;
+        if (trigger < 0 || trigger >= LEVELS)
+            return reject(RejectReason::PRICE_OUT_OF_RANGE);
+        const std::uint64_t sid = submit_stop(side, trigger, limit_ticks, qty,
+                                               order_id, client_id, out_reason);
+        if (sid == 0) return 0;
+        auto it = id_index_.find(sid);
+        if (it != id_index_.end())
+            it->second->peg_offset_ticks = trail_offset_ticks;
+        return sid;
+    }
+    std::size_t trailing_stops_count() const noexcept {
+        std::size_t n = 0;
+        for (const Order* o : stop_orders_) {
+            if (o->peg_offset_ticks > 0) ++n;
+        }
+        return n;
+    }
+    std::uint64_t trailing_ratchet_count() const noexcept { return trailing_ratchets_; }
 
     // ====================================================================
     // PEG order management
@@ -2716,6 +2785,9 @@ private:
     std::unordered_map<std::uint64_t, BracketSpec> bracket_specs_;  // entry_id → spec
     std::vector<BracketSpec> bracket_pending_;   // armowane po pętli match
     std::uint64_t brackets_armed_ = 0;
+
+    // Trailing stop ratchets (trigger przesunięty za rynkiem)
+    std::uint64_t trailing_ratchets_ = 0;
 
     void bracket_on_full_fill(std::uint64_t id) noexcept {
         auto it = bracket_specs_.find(id);

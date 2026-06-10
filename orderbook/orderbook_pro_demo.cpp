@@ -2747,6 +2747,74 @@ void test_bracket_cancel_entry_disarms() {
     ASSERT(b.stop_orders_count() == 0,             "bracket_cxl_no_sl");
 }
 
+// ──────────────────────────────────────────────
+// Trailing stop (#44)
+// ──────────────────────────────────────────────
+
+void test_trailing_stop_initial_trigger_from_last_trade() {
+    Book b;
+    b.submit(Side::SELL, 10000, 10);
+    b.submit(Side::BUY,  10000, 10);    // last_trade = 10000
+    auto ts = b.submit_trailing_stop(Side::SELL, /*offset*/50, /*limit*/0, 100);
+    ASSERT(ts != 0,                                 "trail_accepted");
+    auto* o = b.find_order(ts);
+    ASSERT(o && o->stop_trigger_ticks == 9950,      "trail_init_trig_9950");
+    ASSERT(b.trailing_stops_count() == 1,           "trail_count_1");
+}
+
+void test_trailing_stop_ratchets_up_on_rally() {
+    Book b;
+    b.submit(Side::SELL, 10000, 10);
+    b.submit(Side::BUY,  10000, 10);
+    auto ts = b.submit_trailing_stop(Side::SELL, 50, 0, 100);   // trigger 9950
+    b.submit(Side::SELL, 10100, 10);
+    b.submit(Side::BUY,  10100, 10);    // rally → last_trade 10100
+    b.check_stop_triggers();             // ratchet: 10100-50 = 10050
+    auto* o = b.find_order(ts);
+    ASSERT(o && o->stop_trigger_ticks == 10050,     "trail_ratchet_10050");
+    ASSERT(b.trailing_ratchet_count() == 1,         "trail_ratchet_cnt_1");
+    ASSERT(b.stop_orders_count() == 1,              "trail_still_pending");
+}
+
+void test_trailing_stop_triggers_on_drop() {
+    Book b;
+    b.submit(Side::SELL, 10000, 10);
+    b.submit(Side::BUY,  10000, 10);
+    b.submit_trailing_stop(Side::SELL, 50, 0, 100); // trigger 9950
+    b.submit(Side::SELL, 10100, 10);
+    b.submit(Side::BUY,  10100, 10);    // rally
+    b.check_stop_triggers();             // ratchet → 10050
+    b.submit(Side::BUY, 10040, 100);    // bid — liquidity dla market stopa
+    b.submit(Side::SELL, 10050, 10);
+    b.submit(Side::BUY,  10050, 10);    // drop → last_trade 10050
+    b.check_stop_triggers();             // 10050 <= 10050 → TRIGGER → market SELL
+    ASSERT(b.stop_orders_count() == 0,              "trail_triggered");
+    ASSERT(b.stats().total_stop_triggers == 1,      "trail_trig_stat");
+    // Market SELL 100 zjadł bid 10040
+    ASSERT(b.total_volume_at_price(10040) == 0,     "trail_filled_bid");
+}
+
+void test_trailing_stop_buy_ratchets_down() {
+    Book b;
+    b.submit(Side::SELL, 10000, 10);
+    b.submit(Side::BUY,  10000, 10);
+    auto ts = b.submit_trailing_stop(Side::BUY, 30, 0, 100);    // trigger 10030
+    b.submit(Side::SELL, 9900, 10);
+    b.submit(Side::BUY,  9900, 10);     // drop → low-water 9900
+    b.check_stop_triggers();             // ratchet down: 9900+30 = 9930
+    auto* o = b.find_order(ts);
+    ASSERT(o && o->stop_trigger_ticks == 9930,      "trail_buy_ratchet_9930");
+    ASSERT(b.stop_orders_count() == 1,              "trail_buy_pending");
+}
+
+void test_trailing_stop_rejects_without_reference() {
+    Book b;   // pusta księga — brak last_trade i brak mid
+    RejectReason rr = RejectReason::NONE;
+    auto ts = b.submit_trailing_stop(Side::SELL, 50, 0, 100, 0, 0, &rr);
+    ASSERT(ts == 0,                                 "trail_no_ref_rejected");
+    ASSERT(rr == RejectReason::PRICE_OUT_OF_RANGE,  "trail_no_ref_reason");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3235,6 +3303,11 @@ int main(int argc, char* argv[]) {
     test_bracket_arms_on_later_maker_fill();
     test_bracket_tp_fill_cancels_sl();
     test_bracket_cancel_entry_disarms();
+    test_trailing_stop_initial_trigger_from_last_trade();
+    test_trailing_stop_ratchets_up_on_rally();
+    test_trailing_stop_triggers_on_drop();
+    test_trailing_stop_buy_ratchets_down();
+    test_trailing_stop_rejects_without_reference();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
