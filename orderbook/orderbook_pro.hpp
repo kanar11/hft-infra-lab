@@ -857,6 +857,7 @@ private:
                 ++completion_filled_fully_;
                 if (m->side == Side::BUY) ++maker_fills_buy_side_;
                 else                       ++maker_fills_sell_side_;
+                oco_on_complete(m->id);
                 free_order(m);
                 m = next_m;
             } else {
@@ -970,6 +971,7 @@ private:
         else                            ++completion_cancelled_partial_;
         if (o->side == Side::BUY) ++cancellations_by_buy_;
         else                       ++cancellations_by_sell_;
+        oco_on_complete(o->id);
         free_order(o);
         ++stats_.total_orders_cancelled;
         push_delta(levels_[cancel_price].empty() ? 'D' : 'M',
@@ -1105,6 +1107,7 @@ public:
         if (type != OrderType::POST_ONLY && type != OrderType::HIDDEN &&
             !in_auction_mode_) {
             match_against(o);
+            process_oco_pending();
         }
 
         // Po matchu:
@@ -1170,6 +1173,7 @@ public:
         auto it = id_index_.find(order_id);
         if (it == id_index_.end()) return false;
         cancel_internal(it->second, /*emit_event=*/true);
+        process_oco_pending();
         return true;
     }
 
@@ -1692,6 +1696,7 @@ public:
         // STOP orders też (są w id_index_ więc już objęte)
         // Peg orders były objęte przez id_index_ + is_active() check
         stats_.total_mass_cancels += cancelled;
+        process_oco_pending();
         return cancelled;
     }
 
@@ -1727,9 +1732,11 @@ public:
             id_index_.erase(oid);
             if (o->filled_qty == 0) ++completion_expired_unfilled_;
             else                    ++completion_expired_partial_;
+            oco_on_complete(oid);
             free_order(o);
             ++stats_.total_orders_expired;
         }
+        process_oco_pending();
         return to_expire.size();
     }
 
@@ -1958,6 +1965,7 @@ public:
                              OrderStatus::FILLED, RejectReason::NONE);
                         unlink_from_level(o);
                         id_index_.erase(o->id);
+                        oco_on_complete(o->id);
                         free_order(o);
                     } else {
                         o->status = OrderStatus::PARTIALLY_FILLED;
@@ -1991,6 +1999,7 @@ public:
                              OrderStatus::FILLED, RejectReason::NONE);
                         unlink_from_level(o);
                         id_index_.erase(o->id);
+                        oco_on_complete(o->id);
                         free_order(o);
                     } else {
                         o->status = OrderStatus::PARTIALLY_FILLED;
@@ -2004,6 +2013,7 @@ public:
 
         refresh_best_bid_from(LEVELS - 1);
         refresh_best_ask_from(0);
+        process_oco_pending();
         ++stats_.total_auctions_executed;
         return res;
     }
@@ -2610,6 +2620,37 @@ private:
         AccountVwap& v = account_vwap_[cid];
         v.notional_ticks += static_cast<std::int64_t>(px) * qty;
         v.volume         += qty;
+    }
+
+    // OCO (One-Cancels-Other) — para orderów; completion jednej nogi
+    // (full fill / cancel / expire) kasuje drugą. Cancel partnera jest
+    // DEFEROWANY przez oco_pending_cancel_ — nie wolno unlinkować innych
+    // orderów w środku pętli match (dangling next_m).
+    std::unordered_map<std::uint64_t, std::uint64_t> oco_partner_;
+    std::vector<std::uint64_t> oco_pending_cancel_;
+    std::uint64_t oco_triggered_cancels_ = 0;
+
+    void oco_on_complete(std::uint64_t id) noexcept {
+        auto it = oco_partner_.find(id);
+        if (it == oco_partner_.end()) return;
+        const std::uint64_t partner = it->second;
+        oco_partner_.erase(it);
+        oco_partner_.erase(partner);
+        oco_pending_cancel_.push_back(partner);
+    }
+
+    void process_oco_pending() noexcept {
+        while (!oco_pending_cancel_.empty()) {
+            const std::uint64_t pid = oco_pending_cancel_.back();
+            oco_pending_cancel_.pop_back();
+            auto it = id_index_.find(pid);
+            if (it != id_index_.end()) {
+                ++oco_triggered_cancels_;
+                // cancel_internal wywoła oco_on_complete partnera — wpisy
+                // pary już skasowane, więc no-op (brak rekursji)
+                cancel_internal(it->second, /*emit_event=*/true);
+            }
+        }
     }
 
     // Time-weighted mid (Σ mid × dt / Σ dt)
@@ -3818,6 +3859,41 @@ public:
     // ====================================================================
     std::uint64_t cancellations_by_buy()  const noexcept { return cancellations_by_buy_; }
     std::uint64_t cancellations_by_sell() const noexcept { return cancellations_by_sell_; }
+
+    // ====================================================================
+    // OCO (One-Cancels-Other) — bracket orders
+    // ====================================================================
+    //
+    // link_oco(a, b): łączy dwa RESTING ordery w parę. Completion jednej nogi
+    // (full fill / cancel / expire / auction fill) automatycznie kasuje drugą.
+    // Partial fill NIE triggeruje (tylko pełne wypełnienie). modify() nogi
+    // przechodzi przez cancel_internal → kasuje partnera (zrób unlink_oco
+    // wcześniej jeśli niepożądane). STOP orders (czekające na trigger) nie
+    // są wspierane — tylko ordery w księdze.
+    bool link_oco(std::uint64_t a, std::uint64_t b) noexcept {
+        if (a == 0 || b == 0 || a == b) return false;
+        if (id_index_.find(a) == id_index_.end()) return false;
+        if (id_index_.find(b) == id_index_.end()) return false;
+        if (oco_partner_.count(a) != 0 || oco_partner_.count(b) != 0)
+            return false;   // któraś noga już w innej parze
+        oco_partner_[a] = b;
+        oco_partner_[b] = a;
+        return true;
+    }
+    bool unlink_oco(std::uint64_t id) noexcept {
+        auto it = oco_partner_.find(id);
+        if (it == oco_partner_.end()) return false;
+        const std::uint64_t partner = it->second;
+        oco_partner_.erase(it);
+        oco_partner_.erase(partner);
+        return true;
+    }
+    std::uint64_t oco_partner_of(std::uint64_t id) const noexcept {
+        const auto it = oco_partner_.find(id);
+        return it == oco_partner_.end() ? 0 : it->second;
+    }
+    std::size_t active_oco_pairs() const noexcept { return oco_partner_.size() / 2; }
+    std::uint64_t oco_triggered_cancels() const noexcept { return oco_triggered_cancels_; }
 
     // ====================================================================
     // Lee-Ready trade classification (quote rule + tick test)

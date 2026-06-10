@@ -2621,6 +2621,64 @@ void test_modify_down_limit_depth_still_correct() {
     ASSERT(b.audit_book_integrity() == 0,              "mod_limit_audit_0");
 }
 
+// ──────────────────────────────────────────────
+// OCO — One-Cancels-Other (#42)
+// ──────────────────────────────────────────────
+
+void test_oco_link_and_partner() {
+    Book b;
+    auto a = b.submit(Side::SELL, 10100, 100);
+    auto c = b.submit(Side::BUY,  9900,  50);
+    ASSERT(b.link_oco(a, c),                       "oco_link_ok");
+    ASSERT(b.oco_partner_of(a) == c,                "oco_partner_a");
+    ASSERT(b.oco_partner_of(c) == a,                "oco_partner_c");
+    ASSERT(b.active_oco_pairs() == 1,               "oco_pairs_1");
+}
+
+void test_oco_link_rejects_bad_args() {
+    Book b;
+    auto a = b.submit(Side::SELL, 10100, 100);
+    ASSERT(!b.link_oco(a, a),                       "oco_no_self_link");
+    ASSERT(!b.link_oco(a, 9999),                    "oco_no_ghost_partner");
+    ASSERT(!b.link_oco(0, a),                       "oco_no_zero_id");
+}
+
+void test_oco_fill_cancels_partner() {
+    Book b;
+    auto a = b.submit(Side::SELL, 10100, 100);   // take-profit leg
+    auto c = b.submit(Side::BUY,  9900,  50);    // stop-side leg
+    b.link_oco(a, c);
+    b.submit(Side::BUY, 10100, 100);             // taker — full fill nogi a
+    ASSERT(b.find_order(a) == nullptr,              "oco_leg_a_filled");
+    ASSERT(b.find_order(c) == nullptr,              "oco_leg_c_auto_cxl");
+    ASSERT(b.active_oco_pairs() == 0,               "oco_pairs_0_after");
+    ASSERT(b.oco_triggered_cancels() == 1,          "oco_trig_1");
+    ASSERT(b.audit_book_integrity() == 0,            "oco_audit_0");
+}
+
+void test_oco_cancel_cancels_partner() {
+    Book b;
+    auto a = b.submit(Side::SELL, 10100, 100);
+    auto c = b.submit(Side::BUY,  9900,  50);
+    b.link_oco(a, c);
+    b.cancel(a);
+    ASSERT(b.find_order(c) == nullptr,              "oco_cxl_partner_gone");
+    ASSERT(b.oco_triggered_cancels() == 1,          "oco_cxl_trig_1");
+    ASSERT(b.active_oco_pairs() == 0,               "oco_cxl_pairs_0");
+}
+
+void test_oco_unlink_breaks_pair() {
+    Book b;
+    auto a = b.submit(Side::SELL, 10100, 100);
+    auto c = b.submit(Side::BUY,  9900,  50);
+    b.link_oco(a, c);
+    ASSERT(b.unlink_oco(a),                         "oco_unlink_ok");
+    b.submit(Side::BUY, 10100, 100);                // full fill nogi a
+    // Po unlink noga c przeżywa fill nogi a
+    ASSERT(b.find_order(c) != nullptr,              "oco_unlinked_survives");
+    ASSERT(b.oco_triggered_cancels() == 0,          "oco_unlink_no_trig");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3098,6 +3156,11 @@ int main(int argc, char* argv[]) {
     test_modify_down_iceberg_hidden_consistent();
     test_modify_down_iceberg_neighbor_depth();
     test_modify_down_limit_depth_still_correct();
+    test_oco_link_and_partner();
+    test_oco_link_rejects_bad_args();
+    test_oco_fill_cancels_partner();
+    test_oco_cancel_cancels_partner();
+    test_oco_unlink_breaks_pair();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
