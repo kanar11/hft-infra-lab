@@ -3288,6 +3288,33 @@ void benchmark(int iterations) {
     std::printf("    total_volume:     %lu\n", b.stats().total_volume);
     std::printf("    pool peak used:   %lu / %lu\n",
                 b.pool_used_high_water(), b.pool_capacity());
+
+    // Burst aktywności PO pomiarach latencji (nie zaburza percentyli) —
+    // benchmark sam nie crossuje (fills=0), a sekcja analytics potrzebuje
+    // trade'ów żeby pokazać metryki w akcji.
+    for (int i = 0; i < 200; ++i) {
+        const std::int32_t px = 10050 + (i % 7) - 3;
+        b.submit(Side::SELL, px, 20 + (i % 30));
+        b.submit(Side::BUY,  px, 20 + (i % 30));
+        if ((i & 15) == 0) {
+            (void)b.poll_tob_change();
+            b.poll_tob_micro();
+            b.sample_mid_to_ring();
+        }
+    }
+    std::printf("  Analytics snapshot (po 200-trade burst):\n");
+    std::printf("    vpin_bps:           %u\n",   b.vpin_bps());
+    std::printf("    flow_imbalance_bps: %d\n",   b.flow_imbalance_bps());
+    std::printf("    kyle_lambda:        %.4f\n", b.kyle_lambda());
+    std::printf("    lee_ready_accuracy: %.2f\n", b.lee_ready_accuracy());
+    std::printf("    trades_per_second:  %.0f\n", b.trades_per_second());
+    std::printf("    fano_clustering:    %.2f\n", b.trade_clustering_fano());
+    std::printf("    hurst_rs:           %.2f\n", b.hurst_rs_estimate());
+    std::printf("    mean_trade_qty:     %.1f\n", b.mean_trade_qty());
+    std::printf("    realized_vol:       %.4f\n", b.realized_volatility_log_returns());
+    std::printf("    toxicity_score_bps: %u\n",   b.toxicity_composite_score_bps());
+    std::printf("    active_levels:      %d\n",   b.active_price_levels());
+    std::printf("    audit_violations:   %lu\n",  b.audit_book_integrity());
 }
 
 
