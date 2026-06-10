@@ -535,6 +535,33 @@ class FullOrderBook {
         prev_trade_ts_ns_for_gap_ = ts_ns;
         // Largest single trade
         if (qty > largest_single_trade_qty_) largest_single_trade_qty_ = qty;
+        // Lee-Ready classification — jak outside observer (bez taker_side)
+        // sklasyfikowałby trade: quote rule (vs mid), fallback tick test
+        // (vs poprzednia cena). W engine znamy faktyczny taker_side, więc
+        // liczymy accuracy (Lee/Ready 1991 raportują ~85% na NYSE).
+        {
+            const std::int32_t m_now = mid_ticks();
+            bool classifiable = true;
+            Side classified = Side::BUY;
+            if (m_now > 0 && price_ticks != m_now) {
+                classified = (price_ticks > m_now) ? Side::BUY : Side::SELL;
+            } else if (prev_trade_px_for_lambda_ >= 0 &&
+                       static_cast<std::int64_t>(price_ticks) !=
+                           prev_trade_px_for_lambda_) {
+                classified = (static_cast<std::int64_t>(price_ticks) >
+                              prev_trade_px_for_lambda_) ? Side::BUY : Side::SELL;
+            } else {
+                classifiable = false;
+            }
+            if (classifiable) {
+                ++lr_total_classified_;
+                if (classified == Side::BUY) ++lr_buy_classified_;
+                else                          ++lr_sell_classified_;
+                if (classified == taker_side) ++lr_correct_;
+            } else {
+                ++lr_unclassifiable_;
+            }
+        }
         // Tick-by-tick Δp distribution (clipped do [-4, +4])
         if (prev_trade_px_for_lambda_ >= 0) {
             const std::int32_t raw = price_ticks - static_cast<std::int32_t>(prev_trade_px_for_lambda_);
@@ -751,6 +778,8 @@ private:
             }
             exposure_on_fill(m->client_id, m->side, exec_qty);
             exposure_on_fill(taker->client_id, taker->side, exec_qty);
+            account_vwap_on_fill(m->client_id, m->price_ticks, exec_qty);
+            account_vwap_on_fill(taker->client_id, m->price_ticks, exec_qty);
             // Implementation shortfall (per fill, signed by side).
             // BUY: cost > 0 jeśli fill_px > decision_mid; SELL: cost > 0 jeśli fill_px < decision_mid.
             if (taker->decision_mid_ticks > 0) {
@@ -1098,7 +1127,12 @@ public:
 
         // Włóż do księgi (FIFO)
         o->status = OrderStatus::OPEN;
-        if (o->filled_qty > 0) o->status = OrderStatus::PARTIALLY_FILLED;
+        if (o->filled_qty > 0) {
+            o->status = OrderStatus::PARTIALLY_FILLED;
+            // Resztka po partial matchu: displayed nie może przekraczać
+            // remaining — inaczej L2 depth zawyżony o filled_qty.
+            o->displayed_qty = std::min(o->displayed_qty, o->remaining_qty());
+        }
         // Queue depth at arrival — sample przed enqueue (current order_count = pozycja w FIFO)
         const std::int32_t qd_arrival = levels_[o->price_ticks].order_count;
         queue_depth_arrival_sum_ += static_cast<std::uint64_t>(qd_arrival);
@@ -2528,6 +2562,28 @@ private:
     std::uint64_t cancellations_by_buy_  = 0;
     std::uint64_t cancellations_by_sell_ = 0;
 
+    // Lee-Ready classification accuracy
+    std::uint64_t lr_total_classified_ = 0;
+    std::uint64_t lr_correct_          = 0;
+    std::uint64_t lr_buy_classified_   = 0;
+    std::uint64_t lr_sell_classified_  = 0;
+    std::uint64_t lr_unclassifiable_   = 0;
+
+    // Per-account VWAP (notional + volume per client_id)
+    struct AccountVwap {
+        std::int64_t notional_ticks = 0;
+        std::int64_t volume         = 0;
+    };
+    std::unordered_map<std::uint64_t, AccountVwap> account_vwap_;
+
+    void account_vwap_on_fill(std::uint64_t cid, std::int32_t px,
+                               std::int32_t qty) noexcept {
+        if (cid == 0) return;
+        AccountVwap& v = account_vwap_[cid];
+        v.notional_ticks += static_cast<std::int64_t>(px) * qty;
+        v.volume         += qty;
+    }
+
     // Time-weighted mid (Σ mid × dt / Σ dt)
     std::uint64_t last_twmid_sample_ts_ns_ = 0;
     std::int32_t  last_twmid_sample_ticks_ = 0;
@@ -3701,6 +3757,67 @@ public:
     // ====================================================================
     std::uint64_t cancellations_by_buy()  const noexcept { return cancellations_by_buy_; }
     std::uint64_t cancellations_by_sell() const noexcept { return cancellations_by_sell_; }
+
+    // ====================================================================
+    // Lee-Ready trade classification (quote rule + tick test)
+    // ====================================================================
+    //
+    // Klasyka mikrostruktury: px > mid → BUY-initiated, px < mid → SELL,
+    // px == mid → tick test. accuracy = % zgodności z faktycznym taker_side.
+    double lee_ready_accuracy() const noexcept {
+        if (lr_total_classified_ == 0) return 0.0;
+        return static_cast<double>(lr_correct_) /
+               static_cast<double>(lr_total_classified_);
+    }
+    std::uint64_t lee_ready_classified_total() const noexcept { return lr_total_classified_; }
+    std::uint64_t lee_ready_classified_buy()   const noexcept { return lr_buy_classified_; }
+    std::uint64_t lee_ready_classified_sell()  const noexcept { return lr_sell_classified_; }
+    std::uint64_t lee_ready_unclassifiable()   const noexcept { return lr_unclassifiable_; }
+
+    // ====================================================================
+    // Per-account VWAP
+    // ====================================================================
+    //
+    // VWAP wszystkich fillów danego client_id (maker i taker side łącznie).
+    // 0 = brak fillów dla tego konta.
+    std::int32_t account_vwap_ticks(std::uint64_t client_id) const noexcept {
+        const auto it = account_vwap_.find(client_id);
+        if (it == account_vwap_.end() || it->second.volume == 0) return 0;
+        return static_cast<std::int32_t>(it->second.notional_ticks /
+                                          it->second.volume);
+    }
+
+    // ====================================================================
+    // Book integrity audit (struktura intrusive list + agregaty)
+    // ====================================================================
+    //
+    // Defensywny self-check invariantów:
+    //   • prev/next spójne (doubly-linked)
+    //   • order->price_ticks == index levelu
+    //   • lvl.order_count == faktyczna liczba node'ów
+    //   • lvl.total_qty == Σ displayed_qty
+    //   • lvl.tail wskazuje ostatni node
+    // Zwraca liczbę naruszeń (0 = księga spójna). O(LEVELS + orders).
+    std::uint64_t audit_book_integrity() const noexcept {
+        std::uint64_t violations = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            const PriceLevel& lvl = levels_[p];
+            std::int32_t count = 0;
+            std::int64_t qty_sum = 0;
+            const Order* prev = nullptr;
+            for (const Order* o = lvl.head; o != nullptr; o = o->next_at_level) {
+                if (o->prev_at_level != prev) ++violations;
+                if (o->price_ticks != p)      ++violations;
+                ++count;
+                qty_sum += o->displayed_qty;
+                prev = o;
+            }
+            if (lvl.tail != prev)         ++violations;
+            if (lvl.order_count != count) ++violations;
+            if (lvl.total_qty != qty_sum) ++violations;
+        }
+        return violations;
+    }
 
     std::int32_t trade_momentum_last_n(std::size_t n) const noexcept {
         const std::size_t avail = std::min(tape_count_, TAPE_CAP);

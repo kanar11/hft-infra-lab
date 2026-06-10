@@ -2407,6 +2407,72 @@ void test_cancellations_per_side() {
     ASSERT(b.cancellations_by_sell() == 1, "cxl_sell_1");
 }
 
+// ──────────────────────────────────────────────
+// Lee-Ready + per-account VWAP + book integrity + partial-rest depth
+// ──────────────────────────────────────────────
+
+void test_lee_ready_buy_classified() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10100, 100);   // taker BUY @ ask; mid=10050 → BUY
+    ASSERT(b.lee_ready_classified_total() == 1, "lr_total_1");
+    ASSERT(b.lee_ready_classified_buy()   == 1, "lr_buy_1");
+    ASSERT(b.lee_ready_accuracy() == 1.0,        "lr_acc_1.0");
+}
+
+void test_lee_ready_sell_classified() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::SELL, 10000, 100);   // taker SELL @ bid; mid=10050 → SELL
+    ASSERT(b.lee_ready_classified_sell() == 1,   "lr_sell_1");
+    ASSERT(b.lee_ready_accuracy() == 1.0,         "lr_acc_sell_1.0");
+}
+
+void test_account_vwap_single_fill() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, /*client*/7);
+    b.submit(Side::BUY,  10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, /*client*/8);
+    ASSERT(b.account_vwap_ticks(7)  == 10100, "acct7_vwap_10100");
+    ASSERT(b.account_vwap_ticks(8)  == 10100, "acct8_vwap_10100");
+    ASSERT(b.account_vwap_ticks(99) == 0,     "acct99_vwap_0");
+}
+
+void test_account_vwap_two_fills() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    b.submit(Side::BUY,  10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
+    b.submit(Side::SELL, 10200, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    b.submit(Side::BUY,  10200, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
+    // (10100×100 + 10200×100)/200 = 10150
+    ASSERT(b.account_vwap_ticks(8) == 10150,  "acct8_vwap_10150");
+}
+
+void test_book_integrity_clean() {
+    Book b;
+    ASSERT(b.audit_book_integrity() == 0, "integrity_empty_0");
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 10000, 50);
+    b.submit(Side::SELL, 10010, 80);
+    ASSERT(b.audit_book_integrity() == 0, "integrity_after_submits_0");
+    b.submit(Side::BUY, 10010, 30);      // partial fill maker ask
+    ASSERT(b.audit_book_integrity() == 0, "integrity_after_fill_0");
+    auto id = b.submit(Side::BUY, 9999, 10);
+    b.cancel(id);
+    ASSERT(b.audit_book_integrity() == 0, "integrity_after_cancel_0");
+}
+
+void test_partial_fill_rest_displays_remaining() {
+    Book b;
+    b.submit(Side::SELL, 10100, 30);
+    // Taker BUY 100 @ 10100: fill 30, resztka 70 wchodzi do księgi
+    b.submit(Side::BUY, 10100, 100);
+    // L2 depth na 10100 (bid side) powinno pokazywać 70, nie 100
+    ASSERT(b.total_volume_at_price(10100) == 70, "partial_rest_shows_70");
+    ASSERT(b.audit_book_integrity() == 0,         "partial_rest_integrity");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2866,6 +2932,12 @@ int main(int argc, char* argv[]) {
     test_slippage_guard_violations_caught();
     test_nbbo_violations_zero_normal();
     test_cancellations_per_side();
+    test_lee_ready_buy_classified();
+    test_lee_ready_sell_classified();
+    test_account_vwap_single_fill();
+    test_account_vwap_two_fills();
+    test_book_integrity_clean();
+    test_partial_fill_rest_displays_remaining();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
