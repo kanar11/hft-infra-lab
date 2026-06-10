@@ -2679,6 +2679,74 @@ void test_oco_unlink_breaks_pair() {
     ASSERT(b.oco_triggered_cancels() == 0,          "oco_unlink_no_trig");
 }
 
+// ──────────────────────────────────────────────
+// Bracket orders + pending STOP cancel (#43)
+// ──────────────────────────────────────────────
+
+void test_cancel_pending_stop_direct() {
+    Book b;
+    auto sid = b.submit_stop(Side::SELL, 9900, 0, 100);
+    ASSERT(sid != 0 && b.stop_orders_count() == 1, "stop_pending_1");
+    // Stara wersja: cancel_internal wymagał is_active() → STOP NEW niemożliwy
+    // do anulowania (kill switch go pomijał)
+    ASSERT(b.cancel(sid),                          "stop_cancellable");
+    ASSERT(b.stop_orders_count() == 0,             "stop_removed");
+    ASSERT(b.find_order(sid) == nullptr,           "stop_not_in_index");
+}
+
+void test_mass_cancel_includes_pending_stops() {
+    Book b;
+    b.submit_stop(Side::SELL, 9900, 0, 100, 0, /*client*/5);
+    b.submit(Side::BUY, 10000, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 5);
+    const auto n = b.mass_cancel(5);
+    ASSERT(n == 2,                                 "mass_cxl_inc_stop_2");
+    ASSERT(b.stop_orders_count() == 0,             "mass_cxl_stop_gone");
+}
+
+void test_bracket_arms_on_immediate_fill() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);              // liquidity dla entry
+    auto e = b.submit_bracket(Side::BUY, 10100, 100, /*tp*/10200, /*sl*/9900);
+    ASSERT(e != 0,                                 "bracket_entry_ok");
+    ASSERT(b.brackets_armed() == 1,                "bracket_armed_now");
+    ASSERT(b.active_oco_pairs() == 1,              "bracket_oco_pair");
+    ASSERT(b.stop_orders_count() == 1,             "bracket_sl_pending");
+    ASSERT(b.total_volume_at_price(10200) == 100,  "bracket_tp_resting");
+    ASSERT(b.audit_book_integrity() == 0,           "bracket_audit_0");
+}
+
+void test_bracket_arms_on_later_maker_fill() {
+    Book b;
+    auto e = b.submit_bracket(Side::BUY, 10000, 100, 10200, 9900);
+    ASSERT(e != 0,                                 "bracket2_entry_ok");
+    ASSERT(b.pending_bracket_specs() == 1,         "bracket2_spec_waiting");
+    ASSERT(b.brackets_armed() == 0,                "bracket2_not_armed_yet");
+    b.submit(Side::SELL, 10000, 100);              // taker fills entry maker
+    ASSERT(b.pending_bracket_specs() == 0,         "bracket2_spec_consumed");
+    ASSERT(b.brackets_armed() == 1,                "bracket2_armed");
+    ASSERT(b.stop_orders_count() == 1,             "bracket2_sl_pending");
+}
+
+void test_bracket_tp_fill_cancels_sl() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit_bracket(Side::BUY, 10100, 100, 10200, 9900);   // armed od razu
+    b.submit(Side::BUY, 10200, 100);               // taker fills TP
+    // OCO: full fill TP → pending SL stop auto-cancelled (ścieżka STOP/NEW)
+    ASSERT(b.stop_orders_count() == 0,             "bracket_sl_auto_cxl");
+    ASSERT(b.oco_triggered_cancels() == 1,         "bracket_oco_trig_1");
+    ASSERT(b.active_oco_pairs() == 0,              "bracket_pairs_0");
+}
+
+void test_bracket_cancel_entry_disarms() {
+    Book b;
+    auto e = b.submit_bracket(Side::BUY, 10000, 100, 10200, 9900);
+    b.cancel(e);
+    ASSERT(b.pending_bracket_specs() == 0,         "bracket_cxl_disarmed");
+    ASSERT(b.brackets_armed() == 0,                "bracket_cxl_no_arm");
+    ASSERT(b.stop_orders_count() == 0,             "bracket_cxl_no_sl");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3161,6 +3229,12 @@ int main(int argc, char* argv[]) {
     test_oco_fill_cancels_partner();
     test_oco_cancel_cancels_partner();
     test_oco_unlink_breaks_pair();
+    test_cancel_pending_stop_direct();
+    test_mass_cancel_includes_pending_stops();
+    test_bracket_arms_on_immediate_fill();
+    test_bracket_arms_on_later_maker_fill();
+    test_bracket_tp_fill_cancels_sl();
+    test_bracket_cancel_entry_disarms();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

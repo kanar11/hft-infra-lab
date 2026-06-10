@@ -858,6 +858,7 @@ private:
                 if (m->side == Side::BUY) ++maker_fills_buy_side_;
                 else                       ++maker_fills_sell_side_;
                 oco_on_complete(m->id);
+                bracket_on_full_fill(m->id);
                 free_order(m);
                 m = next_m;
             } else {
@@ -972,6 +973,7 @@ private:
         if (o->side == Side::BUY) ++cancellations_by_buy_;
         else                       ++cancellations_by_sell_;
         oco_on_complete(o->id);
+        bracket_specs_.erase(o->id);   // cancel entry = disarm bracket
         free_order(o);
         ++stats_.total_orders_cancelled;
         push_delta(levels_[cancel_price].empty() ? 'D' : 'M',
@@ -1108,6 +1110,7 @@ public:
             !in_auction_mode_) {
             match_against(o);
             process_oco_pending();
+            process_bracket_pending();
         }
 
         // Po matchu:
@@ -1172,7 +1175,15 @@ public:
     bool cancel(std::uint64_t order_id) noexcept {
         auto it = id_index_.find(order_id);
         if (it == id_index_.end()) return false;
-        cancel_internal(it->second, /*emit_event=*/true);
+        Order* o = it->second;
+        // Pending STOP nie jest w levelach (status NEW, nie is_active) —
+        // osobna ścieżka przez stop_orders_.
+        if (o->type == OrderType::STOP && o->status == OrderStatus::NEW) {
+            const bool ok = cancel_pending_stop(o);
+            process_oco_pending();
+            return ok;
+        }
+        cancel_internal(o, /*emit_event=*/true);
         process_oco_pending();
         return true;
     }
@@ -1683,18 +1694,27 @@ public:
         // Iterate by collecting ids first — modyfikacja id_index_ podczas
         // iteracji UB.
         std::vector<Order*> to_cancel;
+        std::vector<Order*> to_cancel_stops;
         to_cancel.reserve(id_index_.size());
         for (auto& kv : id_index_) {
-            if (kv.second->client_id == client_id && kv.second->is_active()) {
-                to_cancel.push_back(kv.second);
+            Order* o = kv.second;
+            if (o->client_id != client_id) continue;
+            if (o->is_active()) {
+                to_cancel.push_back(o);
+            } else if (o->type == OrderType::STOP &&
+                       o->status == OrderStatus::NEW) {
+                // Kill switch MUSI objąć też pending stops — czekający STOP
+                // ma status NEW (nie is_active), stara wersja go pomijała
+                to_cancel_stops.push_back(o);
             }
         }
         for (Order* o : to_cancel) {
             cancel_internal(o, /*emit_event=*/true);
             ++cancelled;
         }
-        // STOP orders też (są w id_index_ więc już objęte)
-        // Peg orders były objęte przez id_index_ + is_active() check
+        for (Order* o : to_cancel_stops) {
+            if (cancel_pending_stop(o)) ++cancelled;
+        }
         stats_.total_mass_cancels += cancelled;
         process_oco_pending();
         return cancelled;
@@ -1733,6 +1753,7 @@ public:
             if (o->filled_qty == 0) ++completion_expired_unfilled_;
             else                    ++completion_expired_partial_;
             oco_on_complete(oid);
+            bracket_specs_.erase(oid);
             free_order(o);
             ++stats_.total_orders_expired;
         }
@@ -1966,6 +1987,7 @@ public:
                         unlink_from_level(o);
                         id_index_.erase(o->id);
                         oco_on_complete(o->id);
+                        bracket_on_full_fill(o->id);
                         free_order(o);
                     } else {
                         o->status = OrderStatus::PARTIALLY_FILLED;
@@ -2000,6 +2022,7 @@ public:
                         unlink_from_level(o);
                         id_index_.erase(o->id);
                         oco_on_complete(o->id);
+                        bracket_on_full_fill(o->id);
                         free_order(o);
                     } else {
                         o->status = OrderStatus::PARTIALLY_FILLED;
@@ -2014,6 +2037,7 @@ public:
         refresh_best_bid_from(LEVELS - 1);
         refresh_best_ask_from(0);
         process_oco_pending();
+        process_bracket_pending();
         ++stats_.total_auctions_executed;
         return res;
     }
@@ -2648,8 +2672,75 @@ private:
                 ++oco_triggered_cancels_;
                 // cancel_internal wywoła oco_on_complete partnera — wpisy
                 // pary już skasowane, więc no-op (brak rekursji)
-                cancel_internal(it->second, /*emit_event=*/true);
+                Order* o = it->second;
+                if (o->type == OrderType::STOP && o->status == OrderStatus::NEW)
+                    cancel_pending_stop(o);
+                else
+                    cancel_internal(o, /*emit_event=*/true);
             }
+        }
+    }
+
+    // Cancel STOP czekającego na trigger — nie jest w levelach, więc
+    // cancel_internal (wymagający is_active()) go nie obsługuje. Usuwa
+    // z stop_orders_ (swap-erase), id_index_ i emituje CANCEL.
+    bool cancel_pending_stop(Order* o) noexcept {
+        for (std::size_t i = 0; i < stop_orders_.size(); ++i) {
+            if (stop_orders_[i] == o) {
+                stop_orders_[i] = stop_orders_.back();
+                stop_orders_.pop_back();
+                o->status = OrderStatus::CANCELLED;
+                emit(EventType::CANCEL, o->id, 0, o->price_ticks,
+                     o->remaining_qty(), OrderStatus::CANCELLED,
+                     RejectReason::NONE);
+                id_index_.erase(o->id);
+                oco_on_complete(o->id);
+                bracket_specs_.erase(o->id);
+                free_order(o);
+                ++stats_.total_orders_cancelled;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Bracket: entry order + spec exitów (TP limit + SL stop) odpalanych
+    // automatycznie po FULL fillu entry. Exits linkowane jako para OCO.
+    struct BracketSpec {
+        Side          exit_side;
+        std::int32_t  tp_price_ticks;
+        std::int32_t  sl_trigger_ticks;
+        std::int32_t  qty;
+        std::uint64_t client_id;
+    };
+    std::unordered_map<std::uint64_t, BracketSpec> bracket_specs_;  // entry_id → spec
+    std::vector<BracketSpec> bracket_pending_;   // armowane po pętli match
+    std::uint64_t brackets_armed_ = 0;
+
+    void bracket_on_full_fill(std::uint64_t id) noexcept {
+        auto it = bracket_specs_.find(id);
+        if (it == bracket_specs_.end()) return;
+        bracket_pending_.push_back(it->second);
+        bracket_specs_.erase(it);
+    }
+
+    void arm_bracket_exits(const BracketSpec& s) noexcept {
+        const std::uint64_t tp = submit(s.exit_side, s.tp_price_ticks, s.qty,
+                                         OrderType::LIMIT, TimeInForce::GTC,
+                                         0, s.client_id);
+        const std::uint64_t sl = submit_stop(s.exit_side, s.sl_trigger_ticks,
+                                              /*limit=*/0, s.qty, 0, s.client_id);
+        if (tp != 0 && sl != 0) {
+            (void)link_oco(tp, sl);
+            ++brackets_armed_;
+        }
+    }
+
+    void process_bracket_pending() noexcept {
+        while (!bracket_pending_.empty()) {
+            const BracketSpec s = bracket_pending_.back();
+            bracket_pending_.pop_back();
+            arm_bracket_exits(s);
         }
     }
 
@@ -3894,6 +3985,42 @@ public:
     }
     std::size_t active_oco_pairs() const noexcept { return oco_partner_.size() / 2; }
     std::uint64_t oco_triggered_cancels() const noexcept { return oco_triggered_cancels_; }
+
+    // ====================================================================
+    // Bracket orders (entry + auto TP/SL)
+    // ====================================================================
+    //
+    // submit_bracket(side, entry_price, qty, tp_price, sl_trigger):
+    //   1. Submituje entry LIMIT/DAY.
+    //   2. Po FULL fillu entry automatycznie armuje exity po przeciwnej
+    //      stronie: take-profit LIMIT/GTC @ tp_price + stop-loss STOP
+    //      (market-on-trigger) @ sl_trigger, zlinkowane jako para OCO.
+    //   3. Cancel/expire entry przed fillem = disarm (exity nie powstają).
+    // Partial fill nie armuje (tylko pełne wypełnienie). Zwraca entry_id
+    // lub 0 przy reject.
+    std::uint64_t submit_bracket(Side side, std::int32_t entry_price_ticks,
+                                  std::int32_t qty,
+                                  std::int32_t tp_price_ticks,
+                                  std::int32_t sl_trigger_ticks,
+                                  std::uint64_t client_id = 0) noexcept {
+        const Side exit_side = (side == Side::BUY) ? Side::SELL : Side::BUY;
+        const BracketSpec spec{exit_side, tp_price_ticks, sl_trigger_ticks,
+                               qty, client_id};
+        const std::uint64_t entry_id =
+            submit(side, entry_price_ticks, qty, OrderType::LIMIT,
+                   TimeInForce::DAY, 0, client_id);
+        if (entry_id == 0) return 0;
+        if (id_index_.find(entry_id) == id_index_.end()) {
+            // Entry wypełniony natychmiast jako taker (LIMIT/DAY nie jest
+            // IOC, więc brak w indeksie == full fill) — armuj od razu
+            arm_bracket_exits(spec);
+        } else {
+            bracket_specs_[entry_id] = spec;
+        }
+        return entry_id;
+    }
+    std::size_t pending_bracket_specs() const noexcept { return bracket_specs_.size(); }
+    std::uint64_t brackets_armed() const noexcept { return brackets_armed_; }
 
     // ====================================================================
     // Lee-Ready trade classification (quote rule + tick test)
