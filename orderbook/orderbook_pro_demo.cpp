@@ -2927,6 +2927,71 @@ void test_loc_provides_price_discovery_for_moc() {
     ASSERT(b.audit_book_integrity() == 0,          "loc_moc_audit_0");
 }
 
+// ──────────────────────────────────────────────
+// SSR (uptick rule) + reduce-only (#48)
+// ──────────────────────────────────────────────
+
+void test_ssr_blocks_short_at_or_below_bid() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.set_ssr_active(true);
+    RejectReason rr = RejectReason::NONE;
+    ASSERT(b.submit_short(10000, 50, 0, 0, &rr) == 0, "ssr_block_at_bid");
+    ASSERT(rr == RejectReason::SSR_RESTRICTED,         "ssr_reason");
+    ASSERT(b.submit_short(9999, 50) == 0,              "ssr_block_below_bid");
+    auto ok = b.submit_short(10001, 50);
+    ASSERT(ok != 0,                                    "ssr_allows_above_bid");
+    ASSERT(b.total_volume_at_price(10001) == 50,       "ssr_short_rests");
+}
+
+void test_ssr_inactive_allows_short_into_bid() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    auto id = b.submit_short(10000, 50);    // SSR off → crossuje bid
+    ASSERT(id != 0,                                    "ssr_off_accepted");
+    ASSERT(b.stats().total_fills == 1,                 "ssr_off_filled");
+}
+
+void test_ssr_circuit_breaker_trips_on_decline() {
+    Book b;
+    b.arm_ssr_circuit_breaker(10000, 1000);    // 10% → trigger 9000
+    ASSERT(!b.ssr_active(),                            "ssr_not_yet");
+    b.submit(Side::SELL, 9500, 10);
+    b.submit(Side::BUY,  9500, 10);             // trade 9500 > 9000 → no trip
+    ASSERT(!b.ssr_active(),                            "ssr_still_off_9500");
+    b.submit(Side::SELL, 9000, 10);
+    b.submit(Side::BUY,  9000, 10);             // trade 9000 ≤ 9000 → TRIP
+    ASSERT(b.ssr_active(),                             "ssr_tripped");
+    ASSERT(b.ssr_trips() == 1,                         "ssr_trips_1");
+}
+
+void test_reduce_only_clamps_to_position() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 9);
+    b.submit(Side::BUY,  10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    // client 7 long 100 → reduce-only SELL 150 clamped do 100
+    auto id = b.submit_reduce_only(Side::SELL, 10200, 150, 7);
+    ASSERT(id != 0,                                    "ro_accepted");
+    auto* o = b.find_order(id);
+    ASSERT(o && o->total_qty == 100,                   "ro_clamped_100");
+}
+
+void test_reduce_only_rejects_without_position() {
+    Book b;
+    RejectReason rr = RejectReason::NONE;
+    ASSERT(b.submit_reduce_only(Side::SELL, 10000, 50, 7, &rr) == 0,
+                                                       "ro_no_pos_rejected");
+    ASSERT(rr == RejectReason::REDUCE_ONLY_NO_POSITION, "ro_reason");
+    ASSERT(b.rejections_by_reason(RejectReason::REDUCE_ONLY_NO_POSITION) == 1,
+                                                       "ro_tally");
+    // Zły kierunek: long position + reduce-only BUY też odpada
+    Book c;
+    c.submit(Side::SELL, 10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 9);
+    c.submit(Side::BUY,  10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    ASSERT(c.submit_reduce_only(Side::BUY, 10000, 50, 7) == 0,
+                                                       "ro_wrong_dir_rejected");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3428,6 +3493,11 @@ int main(int argc, char* argv[]) {
     test_loc_queue_and_cancel();
     test_loc_fills_and_remainder_cancelled();
     test_loc_provides_price_discovery_for_moc();
+    test_ssr_blocks_short_at_or_below_bid();
+    test_ssr_inactive_allows_short_into_bid();
+    test_ssr_circuit_breaker_trips_on_decline();
+    test_reduce_only_clamps_to_position();
+    test_reduce_only_rejects_without_position();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

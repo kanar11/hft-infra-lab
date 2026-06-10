@@ -146,6 +146,8 @@ enum class RejectReason : std::uint8_t {
     HALTED                = 10,  // book halted (trading halt)
     MIN_QTY_NOT_MET       = 11,  // matched < min_qty constraint
     LULD_BAND_BREACH      = 12,  // cena poza Limit Up / Limit Down bandami
+    SSR_RESTRICTED        = 13,  // short sale przy aktywnym SSR ≤ best bid (Rule 201)
+    REDUCE_ONLY_NO_POSITION = 14, // reduce-only bez pozycji do zredukowania
 };
 
 
@@ -540,6 +542,11 @@ class FullOrderBook {
         prev_trade_ts_ns_for_gap_ = ts_ns;
         // Largest single trade
         if (qty > largest_single_trade_qty_) largest_single_trade_qty_ = qty;
+        // SSR circuit breaker (Rule 201): spadek do progu aktywuje restriction
+        if (ssr_armed_ && !ssr_active_ && price_ticks <= ssr_trigger_px_) {
+            ssr_active_ = true;
+            ++ssr_trips_;
+        }
         // Lee-Ready classification — jak outside observer (bez taker_side)
         // sklasyfikowałby trade: quote rule (vs mid), fallback tick test
         // (vs poprzednia cena). W engine znamy faktyczny taker_side, więc
@@ -2266,6 +2273,74 @@ public:
     }
 
     // ====================================================================
+    // Short-Sale Restriction (SEC Rule 201 — uptick rule)
+    // ====================================================================
+    //
+    // Przy aktywnym SSR short sale może być wykonany tylko POWYŻEJ current
+    // best bid (cena ≤ bid oznaczałaby agresywny short uderzający w bid —
+    // zakazane). Rule 201 aktywuje się po 10% spadku od reference (close
+    // poprzedniego dnia) — arm_ssr_circuit_breaker armuje auto-trigger
+    // sprawdzany per trade w record_trade.
+    void set_ssr_active(bool on) noexcept { ssr_active_ = on; }
+    bool ssr_active() const noexcept { return ssr_active_; }
+    void arm_ssr_circuit_breaker(std::int32_t reference_price_ticks,
+                                  std::int32_t decline_bps) noexcept {
+        ssr_trigger_px_ = reference_price_ticks -
+            static_cast<std::int32_t>(
+                static_cast<std::int64_t>(reference_price_ticks) *
+                decline_bps / 10000);
+        ssr_armed_ = true;
+    }
+    std::uint64_t ssr_trips() const noexcept { return ssr_trips_; }
+
+    std::uint64_t submit_short(std::int32_t price_ticks, std::int32_t qty,
+                                std::uint64_t order_id = 0,
+                                std::uint64_t client_id = 0,
+                                RejectReason* out_reason = nullptr) noexcept {
+        if (ssr_active_ && has_bid() && price_ticks <= best_bid_ticks_) {
+            if (out_reason) *out_reason = RejectReason::SSR_RESTRICTED;
+            ++stats_.total_orders_rejected;
+            tally_rejection(RejectReason::SSR_RESTRICTED);
+            return 0;
+        }
+        return submit(Side::SELL, price_ticks, qty, OrderType::LIMIT,
+                      TimeInForce::DAY, order_id, client_id, 0, out_reason);
+    }
+
+    // ====================================================================
+    // Reduce-only orders
+    // ====================================================================
+    //
+    // Order może tylko ZREDUKOWAĆ pozycję konta (filled_net_qty), nigdy
+    // powiększyć/odwrócić. Qty clamped do |pozycji| (konwencja crypto
+    // venues); brak pozycji lub zły kierunek = reject. Check jest
+    // point-in-time przy submit — resting order nie jest re-amendowany
+    // gdy pozycja się zmieni (uproszczenie).
+    std::uint64_t submit_reduce_only(Side side, std::int32_t price_ticks,
+                                      std::int32_t qty,
+                                      std::uint64_t client_id,
+                                      RejectReason* out_reason = nullptr) noexcept {
+        std::int64_t allowed = 0;
+        if (client_id != 0) {
+            const AccountExposure ex = get_account_exposure(client_id);
+            const std::int64_t pos = ex.filled_net_qty;   // >0 long, <0 short
+            if (side == Side::SELL && pos > 0)
+                allowed = std::min<std::int64_t>(pos, qty);
+            else if (side == Side::BUY && pos < 0)
+                allowed = std::min<std::int64_t>(-pos, qty);
+        }
+        if (allowed <= 0) {
+            if (out_reason) *out_reason = RejectReason::REDUCE_ONLY_NO_POSITION;
+            ++stats_.total_orders_rejected;
+            tally_rejection(RejectReason::REDUCE_ONLY_NO_POSITION);
+            return 0;
+        }
+        return submit(side, price_ticks, static_cast<std::int32_t>(allowed),
+                      OrderType::LIMIT, TimeInForce::DAY, 0, client_id, 0,
+                      out_reason);
+    }
+
+    // ====================================================================
     // L2 incremental delta protocol
     // ====================================================================
     //
@@ -2967,6 +3042,12 @@ private:
     std::uint64_t loc_submitted_          = 0;
     std::uint64_t loc_cancelled_unfilled_ = 0;
 
+    // Short-Sale Restriction (SEC Rule 201 — uptick rule)
+    bool          ssr_active_     = false;
+    bool          ssr_armed_      = false;     // circuit breaker uzbrojony
+    std::int32_t  ssr_trigger_px_ = 0;         // spadek ≤ tej ceny aktywuje SSR
+    std::uint64_t ssr_trips_      = 0;
+
     void bracket_on_full_fill(std::uint64_t id) noexcept {
         auto it = bracket_specs_.find(id);
         if (it == bracket_specs_.end()) return;
@@ -3028,7 +3109,7 @@ private:
     std::uint64_t iceberg_refresh_count_ = 0;
 
     // Per-reason rejection counters (RejectReason::* indexed; 13 values)
-    std::uint64_t rejections_by_reason_[13]{};
+    std::uint64_t rejections_by_reason_[15]{};
     // Per-TIF acceptance counters (TimeInForce::* indexed; 5 values)
     std::uint64_t accepts_by_tif_[5]{};
     // Per-OrderType acceptance counters (10 values)
@@ -4479,7 +4560,7 @@ public:
     // i jakie typy/TIF preferują traderzy. Acceptance ratio = added / submitted.
     std::uint64_t rejections_by_reason(RejectReason r) const noexcept {
         const auto i = static_cast<std::size_t>(r);
-        return i < 13 ? rejections_by_reason_[i] : 0;
+        return i < 15 ? rejections_by_reason_[i] : 0;
     }
     std::uint64_t accepts_by_tif(TimeInForce tif) const noexcept {
         const auto i = static_cast<std::size_t>(tif);
@@ -4500,7 +4581,7 @@ public:
     RejectReason most_common_reject_reason() const noexcept {
         std::size_t best_i = 0;
         std::uint64_t best_v = 0;
-        for (std::size_t i = 1; i < 13; ++i) {  // skip NONE=0
+        for (std::size_t i = 1; i < 15; ++i) {  // skip NONE=0
             if (rejections_by_reason_[i] > best_v) {
                 best_v = rejections_by_reason_[i];
                 best_i = i;
@@ -4512,7 +4593,7 @@ public:
 private:
     void tally_rejection(RejectReason r) noexcept {
         const auto i = static_cast<std::size_t>(r);
-        if (i < 13) ++rejections_by_reason_[i];
+        if (i < 15) ++rejections_by_reason_[i];
     }
     void tally_accept(OrderType t, TimeInForce tif) noexcept {
         const auto ti = static_cast<std::size_t>(t);
