@@ -2584,6 +2584,43 @@ void test_hurst_trending_bounded() {
     ASSERT(h > 0.5 && h < 1.2, "hurst_trend_gt_half");
 }
 
+// ──────────────────────────────────────────────
+// Modify in-place accounting (regresje #41)
+// ──────────────────────────────────────────────
+
+void test_modify_down_iceberg_hidden_consistent() {
+    Book b;
+    auto ice = b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+                         TimeInForce::DAY, 0, 0, /*displayed=*/100);
+    // Decrease 1000 → 500: 100 z displayed, 400 z hidden reserve.
+    // Stary kod nie ruszał total_hidden → audit łapał violation.
+    ASSERT(b.modify(ice, 10100, 500) == ice,        "mod_ice_same_id");
+    ASSERT(b.audit_book_integrity() == 0,            "mod_ice_audit_0");
+    auto* o = b.find_order(ice);
+    ASSERT(o && o->total_qty == 500,                 "mod_ice_total_500");
+}
+
+void test_modify_down_iceberg_neighbor_depth() {
+    Book b;
+    auto ice = b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+                         TimeInForce::DAY, 0, 0, /*displayed=*/100);
+    b.submit(Side::SELL, 10100, 50);                 // sąsiad na tym samym levelu
+    (void)b.modify(ice, 10100, 500);
+    // Stary kod odejmował min(delta, level_total)=150 od level total →
+    // depth 0 i zgubione 50 sąsiada; ma być 50
+    ASSERT(b.total_volume_at_price(10100) == 50,     "mod_ice_neighbor_50");
+    ASSERT(b.audit_book_integrity() == 0,             "mod_ice_neighbor_audit");
+}
+
+void test_modify_down_limit_depth_still_correct() {
+    Book b;
+    auto id = b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::BUY, 10000, 50);
+    (void)b.modify(id, 10000, 60);                    // delta 40, czysty displayed
+    ASSERT(b.total_volume_at_price(10000) == 110,     "mod_limit_depth_110");
+    ASSERT(b.audit_book_integrity() == 0,              "mod_limit_audit_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3058,6 +3095,9 @@ int main(int argc, char* argv[]) {
     test_hurst_zero_few_trades();
     test_hurst_flat_returns_half();
     test_hurst_trending_bounded();
+    test_modify_down_iceberg_hidden_consistent();
+    test_modify_down_iceberg_neighbor_depth();
+    test_modify_down_limit_depth_still_correct();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

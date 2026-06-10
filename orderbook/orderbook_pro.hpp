@@ -1196,9 +1196,16 @@ public:
             new_qty < o->total_qty &&
             new_qty > o->filled_qty) {
             const std::int32_t delta = (o->total_qty - new_qty);
+            // Redukcja idzie najpierw z displayed, nadwyżka z hidden reserve.
+            // Level aggregates spadają dokładnie o tyle, o ile spadły
+            // komponenty ordera — stary kod odejmował min(delta, level_total)
+            // od total_qty (psuł Σ displayed przy wielu orderach na levelu)
+            // i w ogóle nie ruszał total_hidden (iceberg decrease).
+            const std::int32_t vis_delta = std::min(delta, o->displayed_qty);
             o->total_qty = new_qty;
-            o->displayed_qty -= std::min(delta, o->displayed_qty);
-            levels_[o->price_ticks].total_qty -= std::min(delta, levels_[o->price_ticks].total_qty);
+            o->displayed_qty -= vis_delta;
+            levels_[o->price_ticks].total_qty    -= vis_delta;
+            levels_[o->price_ticks].total_hidden -= (delta - vis_delta);
             ++stats_.total_orders_replaced;
             ++stats_.priority_preserved_mods;
             emit(EventType::REPLACE, o->id, 0, o->price_ticks, new_qty,
