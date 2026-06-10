@@ -2869,6 +2869,64 @@ void test_moc_empty_book_all_cancelled() {
     ASSERT(b.moc_cancelled_unfilled() == 2,      "moc_empty_cxl_2");
 }
 
+// ──────────────────────────────────────────────
+// NOII (indicative auction) + Limit-On-Close (#47)
+// ──────────────────────────────────────────────
+
+void test_noii_indicative_without_execution() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10005, 100);
+    b.submit(Side::SELL, 10005, 60);
+    b.exit_auction_mode();
+    auto noii = b.indicative_auction_info();
+    ASSERT(noii.executed,                         "noii_would_cross");
+    ASSERT(noii.clearing_price_ticks == 10005,    "noii_clearing_10005");
+    ASSERT(noii.matched_qty == 60,                "noii_matched_60");
+    ASSERT(noii.surplus_bid_qty == 40,            "noii_surplus_bid_40");
+    // Księga NIETKNIĘTA — oba ordery nadal resting (100 + 60 displayed)
+    ASSERT(b.total_volume_at_price(10005) == 160, "noii_book_untouched");
+    // Faktyczny cross zgadza się z indicative
+    auto r = b.run_auction();
+    ASSERT(r.executed && r.matched_qty == 60 &&
+           r.clearing_price_ticks == 10005,       "noii_matches_actual");
+}
+
+void test_loc_queue_and_cancel() {
+    Book b;
+    auto l = b.submit_loc(Side::SELL, 10005, 50);
+    ASSERT(l != 0 && b.loc_queue_size() == 1,     "loc_q_1");
+    ASSERT(b.cancel_loc(l),                       "loc_cxl_ok");
+    ASSERT(b.loc_queue_size() == 0,               "loc_q_0");
+    ASSERT(b.submit_loc(Side::SELL, 10005, 0) == 0, "loc_reject_qty0");
+}
+
+void test_loc_fills_and_remainder_cancelled() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY, 10005, 50);     // kontra tylko 50
+    b.exit_auction_mode();
+    b.submit_loc(Side::SELL, 10005, 80);
+    auto r = b.run_closing_auction();
+    ASSERT(r.executed && r.matched_qty == 50,     "loc_cross_50");
+    // Resztka 30 nie restuje — on-close semantics
+    ASSERT(b.loc_cancelled_unfilled() == 1,       "loc_leftover_cxl");
+    ASSERT(b.total_volume_at_price(10005) == 0,   "loc_book_clean");
+    ASSERT(b.audit_book_integrity() == 0,          "loc_audit_0");
+}
+
+void test_loc_provides_price_discovery_for_moc() {
+    Book b;   // pusta księga — LOC daje cenę, MOC crossuje z nim
+    b.submit_loc(Side::SELL, 10005, 50);
+    b.submit_moc(Side::BUY, 50);
+    auto r = b.run_closing_auction();
+    ASSERT(r.executed && r.matched_qty == 50 &&
+           r.clearing_price_ticks == 10005,       "loc_moc_cross_10005");
+    ASSERT(b.moc_cancelled_unfilled() == 0,       "loc_moc_no_leftover");
+    ASSERT(b.loc_cancelled_unfilled() == 0,       "loc_no_leftover");
+    ASSERT(b.audit_book_integrity() == 0,          "loc_moc_audit_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3366,6 +3424,10 @@ int main(int argc, char* argv[]) {
     test_moc_fills_at_clearing();
     test_moc_remainder_cancelled();
     test_moc_empty_book_all_cancelled();
+    test_noii_indicative_without_execution();
+    test_loc_queue_and_cancel();
+    test_loc_fills_and_remainder_cancelled();
+    test_loc_provides_price_discovery_for_moc();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

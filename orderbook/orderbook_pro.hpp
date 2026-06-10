@@ -1975,7 +1975,11 @@ public:
         bool          executed;
     };
 
-    AuctionResult run_auction() noexcept {
+    // NOII (Net Order Imbalance Indicator) — indicative clearing BEZ
+    // egzekucji. Giełdy broadcastują to przed opening/closing cross
+    // (NASDAQ NOII: indicative price + paired qty + imbalance side/qty).
+    // executed == true znaczy "cross by zaszedł" — księga nietknięta.
+    AuctionResult indicative_auction_info() const noexcept {
         AuctionResult res{};
         res.clearing_price_ticks = -1;
         if (!has_bid() || !has_ask()) return res;
@@ -1989,7 +1993,6 @@ public:
         std::int32_t best_imbalance = INT32_MAX;
 
         // cum_bid(p) liczone od HIGH w dół, cum_ask(p) od LOW w górę
-        // Najpierw zlicz total per side w zakresie.
         const std::int32_t lo = std::min(best_bid_ticks_, best_ask_ticks_);
         const std::int32_t hi = std::max(best_bid_ticks_, best_ask_ticks_);
 
@@ -1999,14 +2002,14 @@ public:
             // przy auction queue gdy obie strony przecinają sobie poziomy).
             std::int32_t cum_bid = 0;
             for (std::int32_t bp = hi; bp >= p; --bp) {
-                for (Order* o = levels_[bp].head; o; o = o->next_at_level) {
+                for (const Order* o = levels_[bp].head; o; o = o->next_at_level) {
                     if (o->side == Side::BUY && o->is_active())
                         cum_bid += o->displayed_qty;
                 }
             }
             std::int32_t cum_ask = 0;
             for (std::int32_t ap = lo; ap <= p; ++ap) {
-                for (Order* o = levels_[ap].head; o; o = o->next_at_level) {
+                for (const Order* o = levels_[ap].head; o; o = o->next_at_level) {
                     if (o->side == Side::SELL && o->is_active())
                         cum_ask += o->displayed_qty;
                 }
@@ -2023,10 +2026,20 @@ public:
             }
         }
         if (best_matched <= 0) return res;
-
         res.clearing_price_ticks = best_clearing;
         res.matched_qty          = best_matched;
         res.executed             = true;
+        return res;
+    }
+
+    AuctionResult run_auction() noexcept {
+        // Clearing search współdzielony z NOII — tu tylko egzekucja.
+        AuctionResult res = indicative_auction_info();
+        if (!res.executed) return res;
+        const std::int32_t best_clearing = res.clearing_price_ticks;
+        const std::int32_t best_matched  = res.matched_qty;
+        const std::int32_t lo = std::min(best_bid_ticks_, best_ask_ticks_);
+        const std::int32_t hi = std::max(best_bid_ticks_, best_ask_ticks_);
 
         // Faktyczne wypełnienie at clearing price — FIFO per side
         // (dla determinism, oversubscription = older orders win)
@@ -2150,8 +2163,22 @@ public:
     AuctionResult run_closing_auction() noexcept {
         AuctionResult res{};
         res.clearing_price_ticks = -1;
-        // Zakres istniejącej księgi (injection prices). Pusta księga = MOC
-        // nie ma z czym crossować — kasuj wszystkie.
+        in_auction_mode_ = true;
+        // 1. LOC — wchodzą na SWOICH limit prices (uczestniczą w price
+        //    discovery; mogą rozszerzyć zakres clearing search, ale o realne
+        //    ceny, nie ekstremalne)
+        std::vector<std::uint64_t> injected_loc;
+        injected_loc.reserve(loc_queue_.size());
+        for (const LocOrder& l : loc_queue_) {
+            const std::uint64_t oid = submit(l.side, l.price_ticks, l.qty,
+                                              OrderType::LIMIT, TimeInForce::DAY,
+                                              l.id, l.client_id);
+            if (oid != 0) injected_loc.push_back(oid);
+        }
+        loc_queue_.clear();
+        // 2. MOC — na krawędzi zakresu księgi (już z LOC; MOC ma być
+        //    najbardziej agresywny → price priority). Pusta księga nawet po
+        //    LOC = brak price discovery — kasuj MOCe.
         std::int32_t book_hi, book_lo;
         if (has_bid() && has_ask()) {
             book_hi = std::max(best_bid_ticks_, best_ask_ticks_);
@@ -2163,27 +2190,33 @@ public:
         } else {
             moc_cancelled_unfilled_ += moc_queue_.size();
             moc_queue_.clear();
+            in_auction_mode_ = false;
             return res;
         }
-        // Inject w auction mode (bez natychmiastowego matchu), reuse MOC id
-        in_auction_mode_ = true;
-        std::vector<std::uint64_t> injected;
-        injected.reserve(moc_queue_.size());
+        std::vector<std::uint64_t> injected_moc;
+        injected_moc.reserve(moc_queue_.size());
         for (const MocOrder& m : moc_queue_) {
             const std::int32_t px = (m.side == Side::BUY) ? book_hi : book_lo;
             const std::uint64_t oid = submit(m.side, px, m.qty,
                                               OrderType::LIMIT, TimeInForce::DAY,
                                               m.id, m.client_id);
-            if (oid != 0) injected.push_back(oid);
+            if (oid != 0) injected_moc.push_back(oid);
         }
         moc_queue_.clear();
         in_auction_mode_ = false;   // closing cross kończy auction mode
         res = run_auction();
-        // Market semantics: niewypełnione resztki MOC nie restują
-        for (std::uint64_t oid : injected) {
+        // 3. On-close semantics: resztki (MOC i LOC) nie restują
+        for (std::uint64_t oid : injected_moc) {
             auto it = id_index_.find(oid);
             if (it != id_index_.end()) {
                 ++moc_cancelled_unfilled_;
+                cancel_internal(it->second, /*emit_event=*/true);
+            }
+        }
+        for (std::uint64_t oid : injected_loc) {
+            auto it = id_index_.find(oid);
+            if (it != id_index_.end()) {
+                ++loc_cancelled_unfilled_;
                 cancel_internal(it->second, /*emit_event=*/true);
             }
         }
@@ -2194,6 +2227,42 @@ public:
     std::uint64_t moc_submitted() const noexcept { return moc_submitted_; }
     std::uint64_t moc_cancelled_unfilled() const noexcept {
         return moc_cancelled_unfilled_;
+    }
+
+    // Limit-On-Close — limit order tylko na closing cross.
+    std::uint64_t submit_loc(Side side, std::int32_t price_ticks,
+                              std::int32_t qty,
+                              std::uint64_t client_id = 0,
+                              RejectReason* out_reason = nullptr) noexcept {
+        auto fail = [&](RejectReason r) -> std::uint64_t {
+            if (out_reason) *out_reason = r;
+            ++stats_.total_orders_rejected;
+            tally_rejection(r);
+            return 0;
+        };
+        if (qty <= 0)              return fail(RejectReason::QTY_ZERO_OR_NEGATIVE);
+        if (!in_range(price_ticks)) return fail(RejectReason::PRICE_OUT_OF_RANGE);
+        const std::uint64_t id = next_order_id_++;
+        loc_queue_.push_back(LocOrder{side, price_ticks, qty, client_id, id});
+        ++loc_submitted_;
+        emit(EventType::ACCEPT, id, 0, price_ticks, qty, OrderStatus::NEW,
+             RejectReason::NONE);
+        return id;
+    }
+    bool cancel_loc(std::uint64_t id) noexcept {
+        for (std::size_t i = 0; i < loc_queue_.size(); ++i) {
+            if (loc_queue_[i].id == id) {
+                loc_queue_[i] = loc_queue_.back();
+                loc_queue_.pop_back();
+                return true;
+            }
+        }
+        return false;
+    }
+    std::size_t loc_queue_size() const noexcept { return loc_queue_.size(); }
+    std::uint64_t loc_submitted() const noexcept { return loc_submitted_; }
+    std::uint64_t loc_cancelled_unfilled() const noexcept {
+        return loc_cancelled_unfilled_;
     }
 
     // ====================================================================
@@ -2884,6 +2953,19 @@ private:
     std::vector<MocOrder> moc_queue_;
     std::uint64_t moc_submitted_          = 0;
     std::uint64_t moc_cancelled_unfilled_ = 0;
+
+    // Limit-On-Close — jak MOC, ale z limit price (uczestniczy w price
+    // discovery crossu; resztki też nie restują)
+    struct LocOrder {
+        Side          side;
+        std::int32_t  price_ticks;
+        std::int32_t  qty;
+        std::uint64_t client_id;
+        std::uint64_t id;
+    };
+    std::vector<LocOrder> loc_queue_;
+    std::uint64_t loc_submitted_          = 0;
+    std::uint64_t loc_cancelled_unfilled_ = 0;
 
     void bracket_on_full_fill(std::uint64_t id) noexcept {
         auto it = bracket_specs_.find(id);
