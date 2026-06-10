@@ -2473,6 +2473,55 @@ void test_partial_fill_rest_displays_remaining() {
     ASSERT(b.audit_book_integrity() == 0,         "partial_rest_integrity");
 }
 
+// ──────────────────────────────────────────────
+// Hidden accounting drift + auction depth (regresje #39)
+// ──────────────────────────────────────────────
+
+void test_hidden_no_drift_after_partial_cancel() {
+    Book b;
+    auto id = b.submit(Side::BUY, 10000, 100);   // maker
+    b.submit(Side::SELL, 10000, 30);              // partial fill 30
+    b.cancel(id);                                  // cancel resztki 70
+    // Stara formuła T-D w unlink driftowała total_hidden do -30 → ratio 1.0
+    ASSERT(b.hidden_liquidity_ratio() == 0.0, "hidden_no_drift_0");
+    ASSERT(b.audit_book_integrity() == 0,      "hidden_drift_audit_0");
+}
+
+void test_iceberg_partial_cancel_hidden_consistent() {
+    Book b;
+    auto ice = b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+                         TimeInForce::DAY, 0, 0, /*displayed=*/100);
+    b.submit(Side::BUY, 10100, 150);   // 100 displayed + refresh + 50
+    b.cancel(ice);
+    ASSERT(b.hidden_liquidity_ratio() == 0.0, "ice_partial_cxl_ratio_0");
+    ASSERT(b.audit_book_integrity() == 0,      "ice_partial_cxl_audit_0");
+}
+
+void test_auction_partial_fill_depth_correct() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10000, 60);
+    b.exit_auction_mode();
+    auto r = b.run_auction();
+    ASSERT(r.executed && r.matched_qty == 60,    "auction_pf_matched_60");
+    // BUY partial: 60 filled, 40 resztki → depth == 40 (stary kod: 100)
+    ASSERT(b.total_volume_at_price(10000) == 40, "auction_pf_depth_40");
+    ASSERT(b.audit_book_integrity() == 0,         "auction_pf_audit_0");
+}
+
+void test_auction_full_fill_clean_book() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10000, 50);
+    b.submit(Side::SELL, 10000, 50);
+    b.exit_auction_mode();
+    auto r = b.run_auction();
+    ASSERT(r.executed && r.matched_qty == 50,    "auction_ff_matched_50");
+    ASSERT(b.total_volume_at_price(10000) == 0,  "auction_ff_depth_0");
+    ASSERT(b.audit_book_integrity() == 0,         "auction_ff_audit_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2938,6 +2987,10 @@ int main(int argc, char* argv[]) {
     test_account_vwap_two_fills();
     test_book_integrity_clean();
     test_partial_fill_rest_displays_remaining();
+    test_hidden_no_drift_after_partial_cancel();
+    test_iceberg_partial_cancel_hidden_consistent();
+    test_auction_partial_fill_depth_correct();
+    test_auction_full_fill_clean_book();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

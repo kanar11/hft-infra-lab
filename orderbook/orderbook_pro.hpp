@@ -385,7 +385,9 @@ class FullOrderBook {
         else          lvl.head = o;
         lvl.tail = o;
         lvl.total_qty    += o->displayed_qty;
-        lvl.total_hidden += (o->total_qty - o->displayed_qty);
+        // Hidden remainder = total - filled - displayed (filled może być > 0
+        // przy partial-fill-then-rest; stara formuła T-D liczyła filled jako hidden)
+        lvl.total_hidden += (o->total_qty - o->filled_qty - o->displayed_qty);
         ++lvl.order_count;
     }
 
@@ -397,7 +399,10 @@ class FullOrderBook {
         if (o->next_at_level) o->next_at_level->prev_at_level = o->prev_at_level;
         else                  lvl.tail = o->prev_at_level;
         lvl.total_qty    -= o->displayed_qty;
-        lvl.total_hidden -= (o->total_qty - o->displayed_qty);
+        // Symetrycznie do enqueue: T - F - D. Stara formuła T-D powodowała
+        // ujemny drift total_hidden przy cancel partially-filled makera
+        // (fill dekrementuje D, więc T-D rosło o filled_qty).
+        lvl.total_hidden -= (o->total_qty - o->filled_qty - o->displayed_qty);
         if (lvl.order_count > 0) --lvl.order_count;
     }
 
@@ -1929,6 +1934,11 @@ public:
                         std::min(o->remaining_qty(), bid_remaining);
                     o->filled_qty += take;
                     bid_remaining -= take;
+                    // Aggregate accounting — najpierw displayed, reszta z hidden
+                    const std::int32_t vis_take = std::min(take, o->displayed_qty);
+                    levels_[p].total_qty    -= vis_take;
+                    o->displayed_qty        -= vis_take;
+                    levels_[p].total_hidden -= (take - vis_take);
                     if (o->filled_qty >= o->total_qty) {
                         o->status = OrderStatus::FILLED;
                         emit(EventType::FILL, o->id, 0, best_clearing, take,
@@ -1955,6 +1965,11 @@ public:
                         std::min(o->remaining_qty(), ask_remaining);
                     o->filled_qty += take;
                     ask_remaining -= take;
+                    // Aggregate accounting — najpierw displayed, reszta z hidden
+                    const std::int32_t vis_take = std::min(take, o->displayed_qty);
+                    levels_[p].total_qty    -= vis_take;
+                    o->displayed_qty        -= vis_take;
+                    levels_[p].total_hidden -= (take - vis_take);
                     record_trade(o->id, 0, best_clearing, take,
                                  Side::BUY, ts);
                     if (o->filled_qty >= o->total_qty) {
@@ -3796,6 +3811,7 @@ public:
     //   • order->price_ticks == index levelu
     //   • lvl.order_count == faktyczna liczba node'ów
     //   • lvl.total_qty == Σ displayed_qty
+    //   • lvl.total_hidden == Σ (total - filled - displayed)
     //   • lvl.tail wskazuje ostatni node
     // Zwraca liczbę naruszeń (0 = księga spójna). O(LEVELS + orders).
     std::uint64_t audit_book_integrity() const noexcept {
@@ -3804,17 +3820,20 @@ public:
             const PriceLevel& lvl = levels_[p];
             std::int32_t count = 0;
             std::int64_t qty_sum = 0;
+            std::int64_t hidden_sum = 0;
             const Order* prev = nullptr;
             for (const Order* o = lvl.head; o != nullptr; o = o->next_at_level) {
                 if (o->prev_at_level != prev) ++violations;
                 if (o->price_ticks != p)      ++violations;
                 ++count;
-                qty_sum += o->displayed_qty;
+                qty_sum    += o->displayed_qty;
+                hidden_sum += o->total_qty - o->filled_qty - o->displayed_qty;
                 prev = o;
             }
-            if (lvl.tail != prev)         ++violations;
-            if (lvl.order_count != count) ++violations;
-            if (lvl.total_qty != qty_sum) ++violations;
+            if (lvl.tail != prev)            ++violations;
+            if (lvl.order_count != count)    ++violations;
+            if (lvl.total_qty != qty_sum)    ++violations;
+            if (lvl.total_hidden != hidden_sum) ++violations;
         }
         return violations;
     }
