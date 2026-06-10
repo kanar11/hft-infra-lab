@@ -2992,6 +2992,49 @@ void test_reduce_only_rejects_without_position() {
                                                        "ro_wrong_dir_rejected");
 }
 
+// ──────────────────────────────────────────────
+// Replay determinism (#49)
+// ──────────────────────────────────────────────
+
+void test_replay_determinism_identical_state() {
+    // Ta sama sekwencja operacji na dwóch księgach musi dać identyczny stan.
+    // Chroni przed nondeterminizmem (np. iteracja po unordered_map wpływająca
+    // na wynik matchingu). Scenariusz przechodzi przez: limit, partial taker,
+    // iceberg, modify (price change), cancel, OCO fill-cancels-partner.
+    auto scenario = [](Book& b) {
+        b.submit(Side::BUY,  10000, 100);
+        b.submit(Side::SELL, 10010, 80);
+        b.submit(Side::BUY,  10010, 30);                  // partial taker
+        auto x = b.submit(Side::BUY, 9995, 50);
+        b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+                 TimeInForce::DAY, 0, 0, /*displayed=*/100);
+        (void)b.modify(x, 9996, 40);                      // price change, ten sam id
+        b.submit(Side::SELL, 10000, 40);                  // hits bid
+        b.cancel(x);
+        auto a1 = b.submit(Side::SELL, 10005, 20);
+        auto a2 = b.submit(Side::BUY,  9990, 20);
+        b.link_oco(a1, a2);
+        b.submit(Side::BUY, 10005, 20);                   // fill a1 → OCO kasuje a2
+    };
+    Book b1;
+    Book b2;
+    scenario(b1);
+    scenario(b2);
+    ASSERT(b1.best_bid_ticks() == b2.best_bid_ticks(),       "det_bid_eq");
+    ASSERT(b1.best_ask_ticks() == b2.best_ask_ticks(),       "det_ask_eq");
+    ASSERT(b1.stats().total_fills == b2.stats().total_fills, "det_fills_eq");
+    ASSERT(b1.stats().total_volume == b2.stats().total_volume, "det_vol_eq");
+    ASSERT(b1.stats().total_orders_added ==
+           b2.stats().total_orders_added,                     "det_added_eq");
+    ASSERT(b1.active_orders() == b2.active_orders(),          "det_active_eq");
+    for (std::int32_t px : {9990, 9995, 9996, 10000, 10005, 10010, 10100}) {
+        ASSERT(b1.total_volume_at_price(px) ==
+               b2.total_volume_at_price(px),                  "det_depth_eq");
+    }
+    ASSERT(b1.audit_book_integrity() == 0,                    "det_audit1_0");
+    ASSERT(b2.audit_book_integrity() == 0,                    "det_audit2_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3498,6 +3541,7 @@ int main(int argc, char* argv[]) {
     test_ssr_circuit_breaker_trips_on_decline();
     test_reduce_only_clamps_to_position();
     test_reduce_only_rejects_without_position();
+    test_replay_determinism_identical_state();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

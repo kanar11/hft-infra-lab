@@ -51,6 +51,12 @@ detection i aggregacjami.
   parę OCO; cancel entry = disarm
 - **Trailing stop**: `submit_trailing_stop(side, offset, ...)` — trigger
   podąża za rynkiem (SELL: high-water − offset, BUY: low-water + offset)
+- **MOC** (Market-On-Close): `submit_moc(side, qty)` — kolejka poza księgą,
+  wykonanie w closing cross z price priority; resztki nie restują
+- **LOC** (Limit-On-Close): `submit_loc(side, price, qty)` — jak MOC, ale
+  z limitem; uczestniczy w price discovery crossu
+- **Reduce-only**: `submit_reduce_only(...)` — qty clamped do |pozycji|
+  konta, nigdy nie powiększy/odwróci pozycji
 
 ### Time in force (5) + STP (5 polityk)
 DAY / GTC / IOC / FOK / GTD (`expire_gtd()` sweep). Self-trade prevention:
@@ -61,9 +67,14 @@ NONE / CANCEL_NEWEST / CANCEL_OLDEST / CANCEL_BOTH / DECREMENT_AND_CXL
 `enter_auction_mode()` → orders czekają bez matchu → `run_auction()` znajduje
 single clearing price maksymalizujący matched qty (tie-break: min imbalance),
 FIFO przy oversubscription, pełny incremental accounting depth/hidden.
+`indicative_auction_info()` — NOII (NASDAQ-style): indicative price + paired
+qty + imbalance per side BEZ egzekucji; `run_closing_auction()` — pełny
+closing cross z injection MOC/LOC.
 
 ### Compliance / market integrity
 - **LULD** circuit breaker (Limit Up / Limit Down bandy)
+- **SSR** — uptick rule (SEC Rule 201): short ≤ best bid odrzucany przy
+  aktywnym SSR; auto-trigger circuit breaker na spadku od reference
 - **MIFID II RTS27/28** — effective spread, signed price impact, executions
 - **Quote stuffing detection** (SEC 15c3-5) — per-account cancel rate flags
 - **Kill switch**: `mass_cancel(client_id)` — obejmuje też pending STOPy
