@@ -2522,6 +2522,68 @@ void test_auction_full_fill_clean_book() {
     ASSERT(b.audit_book_integrity() == 0,         "auction_ff_audit_0");
 }
 
+// ──────────────────────────────────────────────
+// Snapshot round-trip integrity + next_id + Hurst (#40)
+// ──────────────────────────────────────────────
+
+void test_snapshot_roundtrip_audit_clean() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit(Side::SELL, 10000, 30);    // partial fill maker (F=30, D=70)
+    b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+             TimeInForce::DAY, 0, 0, /*displayed=*/100);
+    std::vector<std::uint8_t> buf(b.snapshot_size_estimate() + 64);
+    const auto written = b.serialize_snapshot(buf.data(), buf.size());
+    ASSERT(written > 0,                            "rt_snap_written");
+    Book b2;
+    ASSERT(b2.load_snapshot(buf.data(), written),  "rt_snap_loaded");
+    ASSERT(b2.audit_book_integrity() == 0,          "rt_snap_audit_0");
+    ASSERT(b2.total_volume_at_price(10000) == 70,   "rt_snap_depth_70");
+    ASSERT(b2.total_volume_at_price(10100) == 100,  "rt_snap_ice_100");
+}
+
+void test_snapshot_next_id_no_collision() {
+    Book b;
+    auto id1 = b.submit(Side::BUY, 10000, 100);    // auto id
+    std::vector<std::uint8_t> buf(b.snapshot_size_estimate() + 64);
+    const auto written = b.serialize_snapshot(buf.data(), buf.size());
+    Book b2;
+    ASSERT(b2.load_snapshot(buf.data(), written),  "id_snap_loaded");
+    auto id2 = b2.submit(Side::BUY, 9999, 50);     // auto id — musi być nowy
+    ASSERT(id2 != 0,                                "id_new_accepted");
+    ASSERT(id2 != id1,                              "id_no_collision");
+    ASSERT(b2.find_order(id1) != nullptr,           "id_old_still_reachable");
+    ASSERT(b2.find_order(id2) != nullptr,           "id_new_reachable");
+}
+
+void test_hurst_zero_few_trades() {
+    Book b;
+    b.submit(Side::SELL, 10100, 50);
+    b.submit(Side::BUY,  10100, 50);
+    ASSERT(b.hurst_rs_estimate() == 0.0, "hurst_zero_lt8");
+}
+
+void test_hurst_flat_returns_half() {
+    Book b;
+    for (int i = 0; i < 10; ++i) {
+        b.submit(Side::SELL, 10100, 50);
+        b.submit(Side::BUY,  10100, 50);
+    }
+    ASSERT(b.hurst_rs_estimate() == 0.5, "hurst_flat_0.5");
+}
+
+void test_hurst_trending_bounded() {
+    Book b;
+    for (int i = 0; i < 12; ++i) {
+        b.submit(Side::SELL, 10100 + i * 10, 50);
+        b.submit(Side::BUY,  10100 + i * 10, 50);
+    }
+    // Monotoniczny trend → H > 0.5 (persistence); single-window crude,
+    // więc tylko luźne bounds
+    const double h = b.hurst_rs_estimate();
+    ASSERT(h > 0.5 && h < 1.2, "hurst_trend_gt_half");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2991,6 +3053,11 @@ int main(int argc, char* argv[]) {
     test_iceberg_partial_cancel_hidden_consistent();
     test_auction_partial_fill_depth_correct();
     test_auction_full_fill_clean_book();
+    test_snapshot_roundtrip_audit_clean();
+    test_snapshot_next_id_no_collision();
+    test_hurst_zero_few_trades();
+    test_hurst_flat_returns_half();
+    test_hurst_trending_bounded();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

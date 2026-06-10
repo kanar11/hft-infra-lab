@@ -1415,12 +1415,14 @@ public:
 
         clear();
         std::size_t off = 16;
+        std::uint64_t max_loaded_id = 0;
         for (std::uint64_t i = 0; i < count; ++i) {
             OrderRecord r;
             std::memcpy(&r, buf + off, sizeof(r));
             off += sizeof(r);
             Order* o = alloc_order();
             if (!o) return false;
+            if (r.id > max_loaded_id) max_loaded_id = r.id;
             o->id            = r.id;
             o->client_id     = r.client_id;
             o->price_ticks   = r.price_ticks;
@@ -1445,6 +1447,10 @@ public:
                     best_ask_ticks_ = o->price_ticks;
             }
         }
+        // Auto-id musi przeskoczyć wczytane ordery — inaczej nowy submit z
+        // order_id=0 dostaje kolidujący id i nadpisuje wpis w id_index_
+        // (restored order zostaje osierocony w levelu).
+        if (max_loaded_id >= next_order_id_) next_order_id_ = max_loaded_id + 1;
         return true;
     }
 
@@ -2866,6 +2872,39 @@ public:
         // sqrt bez <cmath> – uproszczenie via std::sqrt
         s.price_stddev_ticks = std::sqrt(var);
         return s;
+    }
+
+    // ====================================================================
+    // Hurst exponent (single-window R/S estimate z tape prices)
+    // ====================================================================
+    //
+    // H ≈ log(R/S) / log(N) gdzie R = range mean-adjusted cumulative
+    // deviations, S = std-dev. Random walk → ~0.5; trending → >0.5;
+    // mean-reverting → <0.5. Single-window = crude (proper estymator robi
+    // regresję po wielu oknach), ale wystarcza jako rough regime signal.
+    // Zwraca 0.0 gdy <8 trades; 0.5 gdy ceny płaskie (S=0).
+    double hurst_rs_estimate() const noexcept {
+        const std::size_t n = std::min(tape_count_, TAPE_CAP);
+        if (n < 8) return 0.0;
+        double mean = 0.0;
+        for (std::size_t k = 0; k < n; ++k) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - n + k) % TAPE_CAP];
+            mean += static_cast<double>(t.price_ticks);
+        }
+        mean /= static_cast<double>(n);
+        double cum = 0.0, lo = 0.0, hi = 0.0, var = 0.0;
+        for (std::size_t k = 0; k < n; ++k) {
+            const Trade& t = tape_[(tape_head_ + TAPE_CAP - n + k) % TAPE_CAP];
+            const double d = static_cast<double>(t.price_ticks) - mean;
+            cum += d;
+            if (cum < lo) lo = cum;
+            if (cum > hi) hi = cum;
+            var += d * d;
+        }
+        const double R = hi - lo;
+        const double S = std::sqrt(var / static_cast<double>(n));
+        if (S <= 0.0 || R <= 0.0) return 0.5;
+        return std::log(R / S) / std::log(static_cast<double>(n));
     }
 
     // ====================================================================
