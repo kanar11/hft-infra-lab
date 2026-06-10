@@ -524,6 +524,13 @@ class FullOrderBook {
             gap_var_mean_ += delta / static_cast<double>(gap_var_count_);
             const double delta2 = gap_d - gap_var_mean_;
             gap_var_M2_ += delta * delta2;
+            // Autocorrelation lag-1 of gaps (raw, without centering — simple estimator)
+            if (gap_prev_has_) {
+                gap_autocorr_xy_sum_ += gap_d * gap_prev_value_;
+                gap_autocorr_xx_sum_ += gap_prev_value_ * gap_prev_value_;
+            }
+            gap_prev_value_ = gap_d;
+            gap_prev_has_   = true;
         }
         prev_trade_ts_ns_for_gap_ = ts_ns;
         // Largest single trade
@@ -876,6 +883,28 @@ private:
                 if (diff <= fill_band_threshold_ticks_) ++fills_within_band_;
                 else                                     ++fills_outside_band_;
             }
+            // Slippage guard violation
+            if (slippage_guard_threshold_ticks_ > 0 &&
+                diff > slippage_guard_threshold_ticks_) {
+                ++slippage_guard_violations_;
+            }
+        }
+        // NBBO audit — czy taker zapłacił gorzej niż best opposite quote PRZED match?
+        // Mid_pre_ticks już sniedzedrugiej strony; sprawdzamy: fill at taker->limit
+        // dla BUY powinien być <= best_ask_pre; dla SELL >= best_bid_pre.
+        // (Tu prosta heurystyka — porównanie do limit price.)
+        if (qty_left < qty_pre) {
+            if (taker->side == Side::BUY &&
+                taker->price_ticks > 0 &&
+                mid_pre_ticks > 0 &&
+                taker->price_ticks > mid_pre_ticks + 1000) {
+                ++nbbo_violations_count_;
+            } else if (taker->side == Side::SELL &&
+                       taker->price_ticks > 0 &&
+                       mid_pre_ticks > 0 &&
+                       taker->price_ticks < mid_pre_ticks - 1000) {
+                ++nbbo_violations_count_;
+            }
         }
     }
 
@@ -905,6 +934,8 @@ private:
         record_lifecycle_age(o->submit_ts_ns);
         if (o->filled_qty == 0)        ++completion_cancelled_unfilled_;
         else                            ++completion_cancelled_partial_;
+        if (o->side == Side::BUY) ++cancellations_by_buy_;
+        else                       ++cancellations_by_sell_;
         free_order(o);
         ++stats_.total_orders_cancelled;
         push_delta(levels_[cancel_price].empty() ? 'D' : 'M',
@@ -2480,6 +2511,23 @@ private:
     std::uint64_t queue_depth_arrival_count_ = 0;
     std::int32_t  queue_depth_arrival_max_   = 0;
 
+    // Autocorrelation lag-1 of inter-trade gaps
+    double   gap_prev_value_ = 0.0;
+    bool     gap_prev_has_   = false;
+    double   gap_autocorr_xy_sum_ = 0.0;
+    double   gap_autocorr_xx_sum_ = 0.0;
+
+    // Slippage budget guard
+    std::int32_t  slippage_guard_threshold_ticks_ = 0;     // 0 = off
+    std::uint64_t slippage_guard_violations_       = 0;
+
+    // NBBO violation audit (defensywne — nie powinno się zdarzyć w correct engine)
+    std::uint64_t nbbo_violations_count_ = 0;
+
+    // Per-side cancellation counters
+    std::uint64_t cancellations_by_buy_  = 0;
+    std::uint64_t cancellations_by_sell_ = 0;
+
     // Time-weighted mid (Σ mid × dt / Σ dt)
     std::uint64_t last_twmid_sample_ts_ns_ = 0;
     std::int32_t  last_twmid_sample_ticks_ = 0;
@@ -3614,6 +3662,46 @@ public:
     //
     // Wraca signed value: +N gdy ostatnie N to BUY-takers; -N gdy SELL-takers.
     // Range: [-min(n, tape_count), +min(n, tape_count)].
+    // ====================================================================
+    // Inter-trade gap autocorrelation lag-1
+    // ====================================================================
+    //
+    // ACF₁ = Σ x_i × x_{i-1} / Σ x_{i-1}² (uncentered estimator).
+    // Pozytywne = trended timing; ujemne = alternating; ≈0 = uncorrelated.
+    double inter_trade_gap_autocorr_lag1() const noexcept {
+        if (gap_autocorr_xx_sum_ <= 0.0) return 0.0;
+        return gap_autocorr_xy_sum_ / gap_autocorr_xx_sum_;
+    }
+
+    // ====================================================================
+    // Slippage budget guard
+    // ====================================================================
+    //
+    // set_slippage_guard_threshold_ticks(T): counter ile fill events miało
+    // |fill_px - mid_pre| > T. Pure detection (nie blokuje matchu).
+    void set_slippage_guard_threshold_ticks(std::int32_t t) noexcept {
+        slippage_guard_threshold_ticks_ = t;
+    }
+    std::uint64_t slippage_guard_violations() const noexcept {
+        return slippage_guard_violations_;
+    }
+
+    // ====================================================================
+    // NBBO violation audit (defensive)
+    // ====================================================================
+    //
+    // Liczy fillów które wyglądały na "off-NBBO" (taker limit znacząco poza
+    // mid). Sanity — w correct engine powinno być 0 dla quiet markets.
+    std::uint64_t nbbo_violations_count() const noexcept {
+        return nbbo_violations_count_;
+    }
+
+    // ====================================================================
+    // Per-side cancellation counters
+    // ====================================================================
+    std::uint64_t cancellations_by_buy()  const noexcept { return cancellations_by_buy_; }
+    std::uint64_t cancellations_by_sell() const noexcept { return cancellations_by_sell_; }
+
     std::int32_t trade_momentum_last_n(std::size_t n) const noexcept {
         const std::size_t avail = std::min(tape_count_, TAPE_CAP);
         const std::size_t use   = std::min(n, avail);

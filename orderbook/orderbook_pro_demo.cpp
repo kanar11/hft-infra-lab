@@ -2351,6 +2351,62 @@ void test_trade_momentum_balanced() {
     ASSERT(b.trade_momentum_last_n(2) == 0,         "momentum_0_balanced");
 }
 
+// ──────────────────────────────────────────────
+// ACF lag-1 + slippage guard + NBBO audit + per-side cancel
+// ──────────────────────────────────────────────
+
+void test_acf_lag1_zero_without_data() {
+    Book b;
+    ASSERT(b.inter_trade_gap_autocorr_lag1() == 0.0, "acf_zero_empty");
+}
+
+void test_acf_lag1_after_trades() {
+    Book b;
+    for (int i = 0; i < 5; ++i) {
+        b.submit(Side::SELL, 10100 + i, 50);
+        b.submit(Side::BUY,  10100 + i, 50);
+        for (volatile int j = 0; j < 200; ++j) {}
+    }
+    // ACF in [-1, 1] approximately
+    const double acf = b.inter_trade_gap_autocorr_lag1();
+    ASSERT(acf >= -1.5 && acf <= 1.5, "acf_bounded");
+}
+
+void test_slippage_guard_violations_zero_off() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10000, 100);    // mid=10050
+    b.submit(Side::BUY,  10100, 100);     // taker BUY fills @10100, diff=50
+    ASSERT(b.slippage_guard_violations() == 0, "slip_off_0");
+}
+
+void test_slippage_guard_violations_caught() {
+    Book b;
+    b.set_slippage_guard_threshold_ticks(10);
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10000, 100);     // mid=10050
+    b.submit(Side::BUY,  10100, 100);      // diff=|10100-10050|=50 > 10
+    ASSERT(b.slippage_guard_violations() >= 1, "slip_caught_1");
+}
+
+void test_nbbo_violations_zero_normal() {
+    Book b;
+    b.submit(Side::SELL, 10100, 100);
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::BUY,  10100, 100);     // normal fill
+    ASSERT(b.nbbo_violations_count() == 0, "nbbo_normal_0");
+}
+
+void test_cancellations_per_side() {
+    Book b;
+    auto a = b.submit(Side::BUY, 10000, 100);
+    auto c = b.submit(Side::SELL, 11000, 50);
+    b.cancel(a);
+    b.cancel(c);
+    ASSERT(b.cancellations_by_buy()  == 1, "cxl_buy_1");
+    ASSERT(b.cancellations_by_sell() == 1, "cxl_sell_1");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -2804,6 +2860,12 @@ int main(int argc, char* argv[]) {
     test_queue_depth_at_arrival_crowded();
     test_trade_momentum_last_n_all_buys();
     test_trade_momentum_balanced();
+    test_acf_lag1_zero_without_data();
+    test_acf_lag1_after_trades();
+    test_slippage_guard_violations_zero_off();
+    test_slippage_guard_violations_caught();
+    test_nbbo_violations_zero_normal();
+    test_cancellations_per_side();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
