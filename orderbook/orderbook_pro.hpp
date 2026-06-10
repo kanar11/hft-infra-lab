@@ -2112,6 +2112,91 @@ public:
     }
 
     // ====================================================================
+    // Market-On-Close (MOC)
+    // ====================================================================
+    //
+    // submit_moc: order czeka w osobnej kolejce (nie w księdze) do closing
+    // cross. run_closing_auction() wstrzykuje MOC jako LIMIT na krawędzi
+    // ISTNIEJĄCEGO zakresu księgi (BUY → hi, SELL → lo) — zawsze in-the-money
+    // przy każdym clearing price i z price priority w fill loopach, a zakres
+    // clearing search się nie rozszerza (search jest O(range²)).
+    // Resztki MOC po cross są kasowane — market order nie restuje.
+    std::uint64_t submit_moc(Side side, std::int32_t qty,
+                              std::uint64_t client_id = 0,
+                              RejectReason* out_reason = nullptr) noexcept {
+        if (qty <= 0) {
+            if (out_reason) *out_reason = RejectReason::QTY_ZERO_OR_NEGATIVE;
+            ++stats_.total_orders_rejected;
+            tally_rejection(RejectReason::QTY_ZERO_OR_NEGATIVE);
+            return 0;
+        }
+        const std::uint64_t id = next_order_id_++;
+        moc_queue_.push_back(MocOrder{side, qty, client_id, id});
+        ++moc_submitted_;
+        emit(EventType::ACCEPT, id, 0, 0, qty, OrderStatus::NEW,
+             RejectReason::NONE);
+        return id;
+    }
+    bool cancel_moc(std::uint64_t id) noexcept {
+        for (std::size_t i = 0; i < moc_queue_.size(); ++i) {
+            if (moc_queue_[i].id == id) {
+                moc_queue_[i] = moc_queue_.back();
+                moc_queue_.pop_back();
+                return true;
+            }
+        }
+        return false;
+    }
+    AuctionResult run_closing_auction() noexcept {
+        AuctionResult res{};
+        res.clearing_price_ticks = -1;
+        // Zakres istniejącej księgi (injection prices). Pusta księga = MOC
+        // nie ma z czym crossować — kasuj wszystkie.
+        std::int32_t book_hi, book_lo;
+        if (has_bid() && has_ask()) {
+            book_hi = std::max(best_bid_ticks_, best_ask_ticks_);
+            book_lo = std::min(best_bid_ticks_, best_ask_ticks_);
+        } else if (has_bid()) {
+            book_hi = book_lo = best_bid_ticks_;
+        } else if (has_ask()) {
+            book_hi = book_lo = best_ask_ticks_;
+        } else {
+            moc_cancelled_unfilled_ += moc_queue_.size();
+            moc_queue_.clear();
+            return res;
+        }
+        // Inject w auction mode (bez natychmiastowego matchu), reuse MOC id
+        in_auction_mode_ = true;
+        std::vector<std::uint64_t> injected;
+        injected.reserve(moc_queue_.size());
+        for (const MocOrder& m : moc_queue_) {
+            const std::int32_t px = (m.side == Side::BUY) ? book_hi : book_lo;
+            const std::uint64_t oid = submit(m.side, px, m.qty,
+                                              OrderType::LIMIT, TimeInForce::DAY,
+                                              m.id, m.client_id);
+            if (oid != 0) injected.push_back(oid);
+        }
+        moc_queue_.clear();
+        in_auction_mode_ = false;   // closing cross kończy auction mode
+        res = run_auction();
+        // Market semantics: niewypełnione resztki MOC nie restują
+        for (std::uint64_t oid : injected) {
+            auto it = id_index_.find(oid);
+            if (it != id_index_.end()) {
+                ++moc_cancelled_unfilled_;
+                cancel_internal(it->second, /*emit_event=*/true);
+            }
+        }
+        process_oco_pending();
+        return res;
+    }
+    std::size_t moc_queue_size() const noexcept { return moc_queue_.size(); }
+    std::uint64_t moc_submitted() const noexcept { return moc_submitted_; }
+    std::uint64_t moc_cancelled_unfilled() const noexcept {
+        return moc_cancelled_unfilled_;
+    }
+
+    // ====================================================================
     // L2 incremental delta protocol
     // ====================================================================
     //
@@ -2788,6 +2873,17 @@ private:
 
     // Trailing stop ratchets (trigger przesunięty za rynkiem)
     std::uint64_t trailing_ratchets_ = 0;
+
+    // Market-On-Close — kolejka czekająca na closing cross (nie w księdze)
+    struct MocOrder {
+        Side          side;
+        std::int32_t  qty;
+        std::uint64_t client_id;
+        std::uint64_t id;
+    };
+    std::vector<MocOrder> moc_queue_;
+    std::uint64_t moc_submitted_          = 0;
+    std::uint64_t moc_cancelled_unfilled_ = 0;
 
     void bracket_on_full_fill(std::uint64_t id) noexcept {
         auto it = bracket_specs_.find(id);

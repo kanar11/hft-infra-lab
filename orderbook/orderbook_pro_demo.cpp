@@ -2815,6 +2815,60 @@ void test_trailing_stop_rejects_without_reference() {
     ASSERT(rr == RejectReason::PRICE_OUT_OF_RANGE,  "trail_no_ref_reason");
 }
 
+// ──────────────────────────────────────────────
+// Market-On-Close (#46)
+// ──────────────────────────────────────────────
+
+void test_moc_queue_and_cancel() {
+    Book b;
+    auto m1 = b.submit_moc(Side::BUY, 100);
+    ASSERT(m1 != 0,                              "moc_accepted");
+    ASSERT(b.moc_queue_size() == 1,              "moc_q_1");
+    ASSERT(b.cancel_moc(m1),                     "moc_cxl_ok");
+    ASSERT(b.moc_queue_size() == 0,              "moc_q_0");
+    ASSERT(b.submit_moc(Side::BUY, 0) == 0,      "moc_reject_qty0");
+}
+
+void test_moc_fills_at_clearing() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::SELL, 10005, 100);
+    b.submit(Side::BUY,  10005, 50);
+    b.exit_auction_mode();
+    b.submit_moc(Side::BUY, 50);
+    auto r = b.run_closing_auction();
+    ASSERT(r.executed,                           "moc_cross_executed");
+    ASSERT(r.matched_qty == 100,                 "moc_matched_100");
+    ASSERT(b.moc_cancelled_unfilled() == 0,      "moc_no_leftover");
+    ASSERT(b.total_volume_at_price(10005) == 0,  "moc_book_clean");
+    ASSERT(b.audit_book_integrity() == 0,         "moc_audit_0");
+}
+
+void test_moc_remainder_cancelled() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::SELL, 10005, 30);    // tylko 30 kontra-liquidity
+    b.exit_auction_mode();
+    b.submit_moc(Side::BUY, 100);
+    auto r = b.run_closing_auction();
+    ASSERT(r.executed,                           "moc_pf_executed");
+    ASSERT(r.matched_qty == 30,                  "moc_pf_matched_30");
+    // Resztka 70 nie restuje — market semantics
+    ASSERT(b.moc_cancelled_unfilled() == 1,      "moc_pf_leftover_cxl");
+    ASSERT(b.total_volume_at_price(10005) == 0,  "moc_pf_book_clean");
+    ASSERT(b.audit_book_integrity() == 0,         "moc_pf_audit_0");
+}
+
+void test_moc_empty_book_all_cancelled() {
+    Book b;
+    b.submit_moc(Side::BUY, 100);
+    b.submit_moc(Side::SELL, 50);
+    auto r = b.run_closing_auction();
+    ASSERT(!r.executed,                          "moc_empty_no_exec");
+    ASSERT(b.moc_queue_size() == 0,              "moc_empty_q_cleared");
+    ASSERT(b.moc_cancelled_unfilled() == 2,      "moc_empty_cxl_2");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3308,6 +3362,10 @@ int main(int argc, char* argv[]) {
     test_trailing_stop_triggers_on_drop();
     test_trailing_stop_buy_ratchets_down();
     test_trailing_stop_rejects_without_reference();
+    test_moc_queue_and_cancel();
+    test_moc_fills_at_clearing();
+    test_moc_remainder_cancelled();
+    test_moc_empty_book_all_cancelled();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
