@@ -170,6 +170,7 @@ struct alignas(64) Order {
     std::uint64_t  expire_ts_ns;         // dla GTD; 0 = nigdy
     std::int32_t   stop_trigger_ticks;   // dla STOP/PEG: cena triggera/peg base
     std::int32_t   peg_offset_ticks;     // dla PEG: offset od best bid/ask/mid
+    std::int32_t   peg_cap_ticks;        // dla PEG: limit cap (BUY: max, SELL: min); 0 = brak
     std::int32_t   decision_mid_ticks;   // snapshot mid przy submit — dla IS (Implementation Shortfall)
     std::int32_t   iceberg_display_size; // dla ICEBERG: rozmiar refresh (0 = nie-iceberg)
     std::uint64_t  first_fill_ts_ns;     // ts pierwszego fill (0 jeśli nic nie wypełnione)
@@ -192,6 +193,7 @@ struct alignas(64) Order {
         expire_ts_ns = 0;
         stop_trigger_ticks = 0;
         peg_offset_ticks = 0;
+        peg_cap_ticks = 0;
         decision_mid_ticks = -1;
         iceberg_display_size = 0;
         first_fill_ts_ns = 0;
@@ -1708,7 +1710,8 @@ public:
                               std::int32_t qty,
                               std::uint64_t order_id = 0,
                               std::uint64_t client_id = 0,
-                              RejectReason* out_reason = nullptr) noexcept {
+                              RejectReason* out_reason = nullptr,
+                              std::int32_t cap_ticks = 0) noexcept {
         auto reject = [&](RejectReason r) -> std::uint64_t {
             if (out_reason) *out_reason = r;
             ++stats_.total_orders_rejected;
@@ -1725,6 +1728,11 @@ public:
             if (!has_ask()) initial_price = LEVELS - 1;
             else            initial_price = best_ask_ticks_ + peg_offset_ticks;
         }
+        // Pegged-with-limit: cap to twardy limit ceny (BUY: sufit, SELL: podłoga)
+        if (cap_ticks > 0) {
+            if (side == Side::BUY  && initial_price > cap_ticks) initial_price = cap_ticks;
+            if (side == Side::SELL && initial_price < cap_ticks) initial_price = cap_ticks;
+        }
         if (initial_price < 0 || initial_price >= LEVELS)
             return reject(RejectReason::PRICE_OUT_OF_RANGE);
 
@@ -1740,6 +1748,7 @@ public:
         o->status        = OrderStatus::OPEN;
         o->submit_ts_ns  = mono_ns_now();
         o->peg_offset_ticks = peg_offset_ticks;
+        o->peg_cap_ticks    = cap_ticks;
         enqueue_at_level(o);
         id_index_[o->id] = o;
         peg_orders_.push_back(o);
@@ -1765,7 +1774,8 @@ public:
                                   std::int32_t qty,
                                   std::uint64_t order_id = 0,
                                   std::uint64_t client_id = 0,
-                                  RejectReason* out_reason = nullptr) noexcept {
+                                  RejectReason* out_reason = nullptr,
+                                  std::int32_t cap_ticks = 0) noexcept {
         auto reject = [&](RejectReason r) -> std::uint64_t {
             if (out_reason) *out_reason = r;
             ++stats_.total_orders_rejected;
@@ -1775,7 +1785,11 @@ public:
         if (qty <= 0) return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
         const std::int32_t mp = mid_ticks();
         if (mp < 0) return reject(RejectReason::PRICE_OUT_OF_RANGE);
-        const std::int32_t initial_price = mp + peg_offset_ticks;
+        std::int32_t initial_price = mp + peg_offset_ticks;
+        if (cap_ticks > 0) {
+            if (side == Side::BUY  && initial_price > cap_ticks) initial_price = cap_ticks;
+            if (side == Side::SELL && initial_price < cap_ticks) initial_price = cap_ticks;
+        }
         if (initial_price < 0 || initial_price >= LEVELS)
             return reject(RejectReason::PRICE_OUT_OF_RANGE);
 
@@ -1791,6 +1805,7 @@ public:
         o->status        = OrderStatus::OPEN;
         o->submit_ts_ns  = mono_ns_now();
         o->peg_offset_ticks   = peg_offset_ticks;
+        o->peg_cap_ticks      = cap_ticks;
         o->stop_trigger_ticks = 1;   // marker: mid-peg
         enqueue_at_level(o);
         id_index_[o->id] = o;
@@ -1828,6 +1843,13 @@ public:
             } else {
                 if (!has_ask()) continue;
                 target = best_ask_ticks_ + o->peg_offset_ticks;
+            }
+            // Pegged-with-limit: target nigdy nie przekracza capu
+            if (o->peg_cap_ticks > 0) {
+                if (o->side == Side::BUY  && target > o->peg_cap_ticks)
+                    target = o->peg_cap_ticks;
+                if (o->side == Side::SELL && target < o->peg_cap_ticks)
+                    target = o->peg_cap_ticks;
             }
             if (target < 0 || target >= LEVELS) continue;
             if (target == o->price_ticks) continue;

@@ -3193,6 +3193,41 @@ void test_auction_extension_passes_below_threshold() {
     ASSERT(b.auction_extensions_count() == 0,       "ext3_no_extension");
 }
 
+// ──────────────────────────────────────────────
+// Pegged-with-limit (#55)
+// ──────────────────────────────────────────────
+
+void test_peg_cap_limits_buy_reprice() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10020, 100);
+    b.submit_peg(Side::BUY, 0, 50, 0, 0, nullptr, /*cap*/10003);
+    b.submit(Side::BUY, 10005, 30);     // best_bid → 10005
+    b.reprice_pegs();                    // target 10005, clamp → 10003
+    ASSERT(b.total_volume_at_price(10003) == 50,  "peg_cap_buy_at_10003");
+    ASSERT(b.audit_book_integrity() == 0,          "peg_cap_buy_audit_0");
+}
+
+void test_peg_cap_initial_clamp() {
+    Book b;
+    b.submit(Side::BUY,  10010, 100);
+    b.submit(Side::SELL, 10030, 100);
+    // initial = best_bid 10010, cap 10005 → wchodzi od razu na 10005
+    b.submit_peg(Side::BUY, 0, 50, 0, 0, nullptr, /*cap*/10005);
+    ASSERT(b.total_volume_at_price(10005) == 50,  "peg_cap_init_10005");
+}
+
+void test_peg_cap_sell_floor() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10020, 100);
+    b.submit_peg(Side::SELL, 0, 50, 0, 0, nullptr, /*cap*/10015);
+    b.submit(Side::SELL, 10010, 30);    // best_ask → 10010
+    b.reprice_pegs();                    // target 10010, podłoga → 10015
+    ASSERT(b.total_volume_at_price(10015) == 50,  "peg_cap_sell_at_10015");
+    ASSERT(b.audit_book_integrity() == 0,          "peg_cap_sell_audit_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3739,6 +3774,9 @@ int main(int argc, char* argv[]) {
     test_auction_extension_on_imbalance();
     test_auction_extension_then_cross();
     test_auction_extension_passes_below_threshold();
+    test_peg_cap_limits_buy_reprice();
+    test_peg_cap_initial_clamp();
+    test_peg_cap_sell_floor();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
