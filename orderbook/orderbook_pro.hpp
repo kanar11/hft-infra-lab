@@ -1456,6 +1456,29 @@ public:
                 off += sizeof(r);
             }
         }
+        // Pending STOPy są zaalokowane (liczone w active_orders_ = header
+        // count), ale NIE siedzą w levels — bez tej pętli zapisany count
+        // byłby większy niż liczba rekordów i load_snapshot by failował.
+        for (const Order* o : stop_orders_) {
+            OrderRecord r{};
+            r.id            = o->id;
+            r.client_id     = o->client_id;
+            r.price_ticks   = o->price_ticks;
+            r.total_qty     = o->total_qty;
+            r.filled_qty    = o->filled_qty;
+            r.displayed_qty = o->displayed_qty;
+            r.side          = static_cast<std::uint8_t>(o->side);
+            r.type          = static_cast<std::uint8_t>(o->type);
+            r.tif           = static_cast<std::uint8_t>(o->tif);
+            r.status        = static_cast<std::uint8_t>(o->status);
+            r.submit_ts_ns  = o->submit_ts_ns;
+            r.expire_ts_ns  = o->expire_ts_ns;
+            r.stop_trigger_ticks = o->stop_trigger_ticks;
+            r.peg_offset_ticks   = o->peg_offset_ticks;
+            r.iceberg_display_size = o->iceberg_display_size;
+            std::memcpy(buf + off, &r, sizeof(r));
+            off += sizeof(r);
+        }
         return off;
     }
 
@@ -1496,8 +1519,17 @@ public:
             o->stop_trigger_ticks = r.stop_trigger_ticks;
             o->peg_offset_ticks   = r.peg_offset_ticks;
             o->iceberg_display_size = r.iceberg_display_size;
+            // Routing per typ: pending STOP wraca do stop_orders_ (nie do
+            // levels), PEG do levels + peg_orders_ (inaczej traci reprice).
+            if (o->type == OrderType::STOP &&
+                o->status == OrderStatus::NEW) {
+                stop_orders_.push_back(o);
+                id_index_[o->id] = o;
+                continue;
+            }
             enqueue_at_level(o);
             id_index_[o->id] = o;
+            if (o->type == OrderType::PEG) peg_orders_.push_back(o);
             if (o->side == Side::BUY) {
                 if (best_bid_ticks_ == NO_BID_TICKS || o->price_ticks > best_bid_ticks_)
                     best_bid_ticks_ = o->price_ticks;
@@ -1525,8 +1557,11 @@ public:
             levels_[p].clear();
         }
         id_index_.clear();
+        // Pending STOPy nie siedzą w levels — pętla wyżej ich nie zwolniła.
+        // Bez tego free pool przeciekał (slot ani w free-list, ani osiągalny).
+        for (Order* o : stop_orders_) free_order(o);
         stop_orders_.clear();
-        peg_orders_.clear();
+        peg_orders_.clear();   // pegi są w levels — już zwolnione wyżej
         best_bid_ticks_ = NO_BID_TICKS;
         best_ask_ticks_ = NO_ASK_TICKS;
         last_trade_ticks_ = -1;

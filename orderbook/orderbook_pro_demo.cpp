@@ -3228,6 +3228,63 @@ void test_peg_cap_sell_floor() {
     ASSERT(b.audit_book_integrity() == 0,          "peg_cap_sell_audit_0");
 }
 
+// ──────────────────────────────────────────────
+// Snapshot: pending STOP + PEG rebuild + clear leak (#57)
+// ──────────────────────────────────────────────
+
+void test_snapshot_with_pending_stop_roundtrip() {
+    Book b;
+    b.submit(Side::BUY, 10000, 100);
+    b.submit_stop(Side::SELL, /*trigger*/9900, /*limit*/9890, 50);
+    ASSERT(b.stop_orders_count() == 1,              "stop_snap_pending_1");
+    std::vector<std::uint8_t> buf(b.snapshot_size_estimate() + 64);
+    const auto written = b.serialize_snapshot(buf.data(), buf.size());
+    ASSERT(written > 0,                             "stop_snap_written");
+    Book b2;
+    // Stary kod: header count zawierał stopa, ale rekord nie był pisany —
+    // len check failował i load zwracał false
+    ASSERT(b2.load_snapshot(buf.data(), written),   "stop_snap_load_ok");
+    ASSERT(b2.stop_orders_count() == 1,             "stop_snap_restored");
+    ASSERT(b2.total_volume_at_price(10000) == 100,  "stop_snap_book_intact");
+    // Trigger działa w odtworzonej księdze
+    b2.submit(Side::SELL, 10000, 100);    // zjada bid (trade @ 10000, bez triggera)
+    b2.submit(Side::BUY,  9900, 5);
+    b2.submit(Side::SELL, 9900, 5);       // trade @ 9900 → warunek triggera
+    b2.check_stop_triggers();
+    ASSERT(b2.stop_orders_count() == 0,             "stop_snap_triggered");
+    ASSERT(b2.total_volume_at_price(9890) == 50,    "stop_snap_resubmit_9890");
+    ASSERT(b2.audit_book_integrity() == 0,           "stop_snap_audit_0");
+}
+
+void test_snapshot_restores_peg_reprice() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10020, 100);
+    b.submit_peg(Side::BUY, 0, 50);     // @ 10000
+    std::vector<std::uint8_t> buf(b.snapshot_size_estimate() + 64);
+    const auto written = b.serialize_snapshot(buf.data(), buf.size());
+    Book b2;
+    ASSERT(b2.load_snapshot(buf.data(), written),   "peg_snap_load_ok");
+    // Stary kod: peg trafiał do levels, ale nie do peg_orders_ → martwy peg
+    ASSERT(b2.peg_orders_count() == 1,              "peg_snap_in_vector");
+    b2.submit(Side::BUY, 10005, 30);
+    b2.reprice_pegs();
+    // Peg podążył: 10000 → 10005 (dołącza do limita 30)
+    ASSERT(b2.total_volume_at_price(10005) == 80,   "peg_snap_reprices_80");
+    ASSERT(b2.audit_book_integrity() == 0,           "peg_snap_audit_0");
+}
+
+void test_clear_frees_pending_stops() {
+    Book b;
+    b.submit_stop(Side::SELL, 9900, 0, 50);
+    ASSERT(b.active_orders() == 1,                  "clear_stop_alloc_1");
+    b.clear();
+    // Stary kod: clear zwalniał tylko ordery z levels — pending stop
+    // przeciekał (slot ani w free-list, ani osiągalny)
+    ASSERT(b.active_orders() == 0,                  "clear_stop_freed");
+    ASSERT(b.stop_orders_count() == 0,              "clear_stop_vector_empty");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3777,6 +3834,9 @@ int main(int argc, char* argv[]) {
     test_peg_cap_limits_buy_reprice();
     test_peg_cap_initial_clamp();
     test_peg_cap_sell_floor();
+    test_snapshot_with_pending_stop_roundtrip();
+    test_snapshot_restores_peg_reprice();
+    test_clear_frees_pending_stops();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
