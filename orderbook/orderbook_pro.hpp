@@ -148,6 +148,7 @@ enum class RejectReason : std::uint8_t {
     LULD_BAND_BREACH      = 12,  // cena poza Limit Up / Limit Down bandami
     SSR_RESTRICTED        = 13,  // short sale przy aktywnym SSR ≤ best bid (Rule 201)
     REDUCE_ONLY_NO_POSITION = 14, // reduce-only bez pozycji do zredukowania
+    RATE_LIMITED          = 15,  // konto przekroczyło token bucket (msg rate)
 };
 
 
@@ -1055,6 +1056,12 @@ public:
                                        return reject(RejectReason::PRICE_OUT_OF_RANGE);
         if (order_id != 0 && id_index_.find(order_id) != id_index_.end())
                                        return reject(RejectReason::DUPLICATE_ID);
+        // Rate limit (token bucket) — tylko zewnętrzne submity; wewnętrzne
+        // resubmity engine (stop trigger, MOC/LOC injection, bracket arming)
+        // dotyczą orderów już zaakceptowanych i nie zżerają tokenów
+        if (rate_limiting_enabled_ && !in_internal_submit_ && client_id != 0 &&
+            !consume_rate_token(client_id))
+                                       return reject(RejectReason::RATE_LIMITED);
         // LULD check — quote poza band'em → REJECT (+opt-in auto-halt)
         if (luld_enabled_ && (price_ticks < luld_low_ticks_ ||
                                 price_ticks > luld_high_ticks_)) {
@@ -1662,8 +1669,10 @@ public:
                 // limit_ticks=0 → market: użyj NO_BID/NO_ASK jako limit fallback
                 const std::int32_t limit_p = (lp > 0) ? lp
                                               : (sd == Side::BUY ? LEVELS - 1 : 0);
+                in_internal_submit_ = true;
                 submit(sd, limit_p, qy, OrderType::LIMIT, TimeInForce::DAY,
                        oid, cid, 0, nullptr);
+                in_internal_submit_ = false;
             } else {
                 ++i;
             }
@@ -2309,6 +2318,26 @@ public:
     }
 
     // ====================================================================
+    // Rate limiting per account (token bucket)
+    // ====================================================================
+    //
+    // Msg-rate throttle (SEC 15c3-5 pre-trade control). Każdy ZEWNĘTRZNY
+    // submit konta zżera 1 token; bucket refilluje refill_per_sec do
+    // capacity. Brak tokenu = reject RATE_LIMITED. Wewnętrzne resubmity
+    // engine (stop trigger, MOC/LOC injection, bracket arming) są bypass —
+    // dotyczą orderów już zaakceptowanych. Konta bez wpisu są bez limitu.
+    void set_account_rate_limit(std::uint64_t client_id, double capacity,
+                                 double refill_per_sec) noexcept {
+        if (client_id == 0 || capacity < 1.0 || refill_per_sec < 0.0) return;
+        rate_buckets_[client_id] = RateBucket{capacity, capacity,
+                                               refill_per_sec, mono_ns_now()};
+        rate_limiting_enabled_ = true;
+    }
+    std::uint64_t rate_limited_rejects() const noexcept {
+        return rate_limited_rejects_;
+    }
+
+    // ====================================================================
     // Market-On-Close (MOC)
     // ====================================================================
     //
@@ -2348,6 +2377,7 @@ public:
         AuctionResult res{};
         res.clearing_price_ticks = -1;
         in_auction_mode_ = true;
+        in_internal_submit_ = true;   // injections nie zżerają rate tokenów
         // 1. LOC — wchodzą na SWOICH limit prices (uczestniczą w price
         //    discovery; mogą rozszerzyć zakres clearing search, ale o realne
         //    ceny, nie ekstremalne)
@@ -2375,6 +2405,7 @@ public:
             moc_cancelled_unfilled_ += moc_queue_.size();
             moc_queue_.clear();
             in_auction_mode_ = false;
+            in_internal_submit_ = false;
             return res;
         }
         std::vector<std::uint64_t> injected_moc;
@@ -2388,6 +2419,7 @@ public:
         }
         moc_queue_.clear();
         in_auction_mode_ = false;   // closing cross kończy auction mode
+        in_internal_submit_ = false;
         res = run_auction();
         // 3. On-close semantics: resztki (MOC i LOC) nie restują
         for (std::uint64_t oid : injected_moc) {
@@ -3233,6 +3265,37 @@ private:
     // Auction imbalance extensions
     std::uint64_t auction_extensions_ = 0;
 
+    // Rate limiting per account — token bucket (msg rate throttle)
+    struct RateBucket {
+        double        tokens;
+        double        capacity;
+        double        refill_per_sec;
+        std::uint64_t last_refill_ns;
+    };
+    std::unordered_map<std::uint64_t, RateBucket> rate_buckets_;
+    bool          rate_limiting_enabled_ = false;
+    bool          in_internal_submit_    = false;   // bypass dla resubmitów engine
+    std::uint64_t rate_limited_rejects_  = 0;
+
+    bool consume_rate_token(std::uint64_t cid) noexcept {
+        auto it = rate_buckets_.find(cid);
+        if (it == rate_buckets_.end()) return true;   // konto bez limitu
+        RateBucket& rb = it->second;
+        const std::uint64_t now = mono_ns_now();
+        if (now > rb.last_refill_ns) {
+            rb.tokens = std::min(rb.capacity,
+                rb.tokens + static_cast<double>(now - rb.last_refill_ns) *
+                            rb.refill_per_sec / 1e9);
+            rb.last_refill_ns = now;
+        }
+        if (rb.tokens < 1.0) {
+            ++rate_limited_rejects_;
+            return false;
+        }
+        rb.tokens -= 1.0;
+        return true;
+    }
+
     void bracket_on_full_fill(std::uint64_t id) noexcept {
         auto it = bracket_specs_.find(id);
         if (it == bracket_specs_.end()) return;
@@ -3241,11 +3304,13 @@ private:
     }
 
     void arm_bracket_exits(const BracketSpec& s) noexcept {
+        in_internal_submit_ = true;
         const std::uint64_t tp = submit(s.exit_side, s.tp_price_ticks, s.qty,
                                          OrderType::LIMIT, TimeInForce::GTC,
                                          0, s.client_id);
         const std::uint64_t sl = submit_stop(s.exit_side, s.sl_trigger_ticks,
                                               /*limit=*/0, s.qty, 0, s.client_id);
+        in_internal_submit_ = false;
         if (tp != 0 && sl != 0) {
             (void)link_oco(tp, sl);
             ++brackets_armed_;
@@ -3294,7 +3359,7 @@ private:
     std::uint64_t iceberg_refresh_count_ = 0;
 
     // Per-reason rejection counters (RejectReason::* indexed; 13 values)
-    std::uint64_t rejections_by_reason_[15]{};
+    std::uint64_t rejections_by_reason_[16]{};
     // Per-TIF acceptance counters (TimeInForce::* indexed; 5 values)
     std::uint64_t accepts_by_tif_[5]{};
     // Per-OrderType acceptance counters (10 values)
@@ -4745,7 +4810,7 @@ public:
     // i jakie typy/TIF preferują traderzy. Acceptance ratio = added / submitted.
     std::uint64_t rejections_by_reason(RejectReason r) const noexcept {
         const auto i = static_cast<std::size_t>(r);
-        return i < 15 ? rejections_by_reason_[i] : 0;
+        return i < 16 ? rejections_by_reason_[i] : 0;
     }
     std::uint64_t accepts_by_tif(TimeInForce tif) const noexcept {
         const auto i = static_cast<std::size_t>(tif);
@@ -4766,7 +4831,7 @@ public:
     RejectReason most_common_reject_reason() const noexcept {
         std::size_t best_i = 0;
         std::uint64_t best_v = 0;
-        for (std::size_t i = 1; i < 15; ++i) {  // skip NONE=0
+        for (std::size_t i = 1; i < 16; ++i) {  // skip NONE=0
             if (rejections_by_reason_[i] > best_v) {
                 best_v = rejections_by_reason_[i];
                 best_i = i;
@@ -4778,7 +4843,7 @@ public:
 private:
     void tally_rejection(RejectReason r) noexcept {
         const auto i = static_cast<std::size_t>(r);
-        if (i < 15) ++rejections_by_reason_[i];
+        if (i < 16) ++rejections_by_reason_[i];
     }
     void tally_accept(OrderType t, TimeInForce tif) noexcept {
         const auto ti = static_cast<std::size_t>(t);

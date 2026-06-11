@@ -3285,6 +3285,45 @@ void test_clear_frees_pending_stops() {
     ASSERT(b.stop_orders_count() == 0,              "clear_stop_vector_empty");
 }
 
+// ──────────────────────────────────────────────
+// Rate limiting per account (#58)
+// ──────────────────────────────────────────────
+
+void test_rate_limit_burst_capacity() {
+    Book b;
+    b.set_account_rate_limit(7, 3.0, 0.001);   // 3 tokeny, znikomy refill
+    ASSERT(b.submit(Side::BUY, 10000, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 7) != 0,   "rl_1_ok");
+    ASSERT(b.submit(Side::BUY, 9999,  10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 7) != 0,   "rl_2_ok");
+    ASSERT(b.submit(Side::BUY, 9998,  10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 7) != 0,   "rl_3_ok");
+    RejectReason rr = RejectReason::NONE;
+    ASSERT(b.submit(Side::BUY, 9997, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 7, 0, &rr) == 0, "rl_4_rejected");
+    ASSERT(rr == RejectReason::RATE_LIMITED,        "rl_reason");
+    ASSERT(b.rate_limited_rejects() == 1,           "rl_counter_1");
+    // Inne konto i cid 0 — bez limitu
+    ASSERT(b.submit(Side::BUY, 9996, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 8) != 0,   "rl_other_acct_ok");
+    ASSERT(b.submit(Side::BUY, 9995, 10) != 0,      "rl_cid0_ok");
+}
+
+void test_rate_limit_stop_trigger_bypasses() {
+    Book b;
+    b.set_account_rate_limit(7, 1.0, 0.001);   // 1 token
+    b.submit_stop(Side::SELL, 9900, 9890, 50, 0, 7);
+    ASSERT(b.submit(Side::BUY, 10000, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 7) != 0,   "rl_token_used");
+    // Token wyczerpany — ale trigger stopa to internal resubmit → bypass
+    b.submit(Side::SELL, 10000, 10);    // cid 0 zjada bid 7 → trade @ 10000
+    b.submit(Side::BUY,  9900, 5);
+    b.submit(Side::SELL, 9900, 5);      // trade @ 9900 → warunek triggera
+    b.check_stop_triggers();
+    ASSERT(b.stop_orders_count() == 0,              "rl_stop_triggered");
+    ASSERT(b.total_volume_at_price(9890) == 50,     "rl_stop_resubmitted");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3837,6 +3876,8 @@ int main(int argc, char* argv[]) {
     test_snapshot_with_pending_stop_roundtrip();
     test_snapshot_restores_peg_reprice();
     test_clear_frees_pending_stops();
+    test_rate_limit_burst_capacity();
+    test_rate_limit_stop_trigger_bypasses();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
