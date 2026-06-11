@@ -3633,6 +3633,31 @@ void benchmark(int iterations) {
     std::printf("    toxicity_score_bps: %u\n",   b.toxicity_composite_score_bps());
     std::printf("    active_levels:      %d\n",   b.active_price_levels());
     std::printf("    audit_violations:   %lu\n",  b.audit_book_integrity());
+
+    // Koszt per-call metryk — które można wołać na hot path (O(1) accumulatory),
+    // a które tylko okresowo (O(LEVELS) / O(tape) skany)
+    auto time_calls = [](const char* name, auto&& fn, int n) {
+        volatile std::int64_t sink = 0;
+        const auto t0 = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < n; ++i) sink += static_cast<std::int64_t>(fn());
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            t1 - t0).count();
+        std::printf("    %-24s %10.1f ns/call\n", name,
+                    static_cast<double>(ns) / n);
+        (void)sink;
+    };
+    std::printf("  Analytics cost:\n");
+    time_calls("vpin_bps",             [&]{ return b.vpin_bps(); }, 100000);
+    time_calls("microprice_ticks",     [&]{ return b.microprice_ticks(); }, 100000);
+    time_calls("imbalance_bps_n(3)",   [&]{ return b.imbalance_bps_n(3); }, 100000);
+    time_calls("toxicity_score_bps",   [&]{ return b.toxicity_composite_score_bps(); }, 100000);
+    time_calls("kyle_lambda",          [&]{ return static_cast<std::int64_t>(
+                                                b.kyle_lambda() * 1e6); }, 100000);
+    time_calls("hurst_rs (O(tape))",   [&]{ return static_cast<std::int64_t>(
+                                                b.hurst_rs_estimate() * 1e6); }, 1000);
+    time_calls("active_levels (O(L))", [&]{ return b.active_price_levels(); }, 200);
+    time_calls("audit (O(L+orders))",  [&]{ return b.audit_book_integrity(); }, 200);
 }
 
 
