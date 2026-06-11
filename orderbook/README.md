@@ -34,10 +34,12 @@ detection i aggregacjami.
 - **IOC** (Immediate-Or-Cancel) — weź co możesz teraz, resztę kasuj
 - **FOK** (Fill-Or-Kill) — cała qty albo nic (atomowy)
 - **POST_ONLY** (ALO) — odrzuć jeśli zostałbyś takerem (cross na entry)
-- **ICEBERG** — pokazuj tylko `displayed_qty`, refresh z hidden reserve;
+- **ICEBERG** — pokazuj tylko `displayed_qty`, refresh z hidden reserve do
+  oryginalnego display size (+ opcjonalny anti-detection jitter ±bps);
   po refresh maker traci priority (tail FIFO)
 - **STOP** — trigger-on-price, po triggerze staje się LIMIT/MARKET
-- **PEG** — peg do best bid/ask + offset, re-quote po zmianie TOB
+- **PEG** — peg do best bid/ask + offset (`submit_peg`) albo do midpointu
+  (`submit_peg_mid`), opcjonalny twardy cap price; re-quote po zmianie TOB
 - **MARKET** — bez ceny, zjadasz aż do wyczerpania
 - **HIDDEN** — dark-pool semantyka: niewidoczne w L1/L2, match w cross/auction
 - **AON** (All-Or-None) — fill jak FOK, ale persiste w księdze
@@ -69,7 +71,9 @@ single clearing price maksymalizujący matched qty (tie-break: min imbalance),
 FIFO przy oversubscription, pełny incremental accounting depth/hidden.
 `indicative_auction_info()` — NOII (NASDAQ-style): indicative price + paired
 qty + imbalance per side BEZ egzekucji; `run_closing_auction()` — pełny
-closing cross z injection MOC/LOC.
+closing cross z injection MOC/LOC; `try_run_auction(threshold)` — volatility
+extension (LSE/Xetra): surplus > próg odracza cross zamiast wykonywać go
+z dużym imbalance.
 
 ### Compliance / market integrity
 - **LULD** circuit breaker (Limit Up / Limit Down bandy)
@@ -134,8 +138,9 @@ Book b2;
 b2.load_snapshot(buf.data(), written);   // rebuild + audit-clean + id continuity
 ```
 
-Wire format: 4 B magic `"OBPO"` + 4 B version + 8 B count + N×packed
-`OrderRecord`. Zero alokacji; `next_order_id_` kontynuuje za max wczytanym id.
+Wire format: 4 B magic `"OBPO"` + 4 B version (aktualna: 2) + 8 B count +
+N×packed `OrderRecord` (70 B). Zero alokacji; `next_order_id_` kontynuuje
+za max wczytanym id; iceberg refresh size przeżywa round-trip.
 
 ### L2 delta protocol
 18-bajtowy wire format (typy A/D/M/T), `enable_delta_queue(true)` + drain —
