@@ -3324,6 +3324,35 @@ void test_rate_limit_stop_trigger_bypasses() {
     ASSERT(b.total_volume_at_price(9890) == 50,     "rl_stop_resubmitted");
 }
 
+// ──────────────────────────────────────────────
+// Wash-trade surveillance w aukcji (#59)
+// ──────────────────────────────────────────────
+
+void test_auction_wash_trade_flagged() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10005, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    b.submit(Side::SELL, 10005, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    b.exit_auction_mode();
+    auto r = b.run_auction();
+    ASSERT(r.executed && r.matched_qty == 50,        "wash_cross_ok");
+    // Client 7 wziął udział po obu stronach → flagged
+    ASSERT(b.last_auction_wash_clients() == 1,       "wash_last_1");
+    ASSERT(b.auction_wash_trade_flags() == 1,        "wash_total_1");
+}
+
+void test_auction_wash_clean_different_clients() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10005, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    b.submit(Side::SELL, 10005, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
+    b.exit_auction_mode();
+    auto r = b.run_auction();
+    ASSERT(r.executed,                                "wash2_cross_ok");
+    ASSERT(b.last_auction_wash_clients() == 0,        "wash2_clean");
+    ASSERT(b.auction_wash_trade_flags() == 0,         "wash2_total_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3878,6 +3907,8 @@ int main(int argc, char* argv[]) {
     test_clear_frees_pending_stops();
     test_rate_limit_burst_capacity();
     test_rate_limit_stop_trigger_bypasses();
+    test_auction_wash_trade_flagged();
+    test_auction_wash_clean_different_clients();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

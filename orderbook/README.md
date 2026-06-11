@@ -81,6 +81,10 @@ z dużym imbalance.
   aktywnym SSR; auto-trigger circuit breaker na spadku od reference
 - **MIFID II RTS27/28** — effective spread, signed price impact, executions
 - **Quote stuffing detection** (SEC 15c3-5) — per-account cancel rate flags
+- **Rate limiting** — token bucket per account (msg-rate throttle); reject
+  RATE_LIMITED, wewnętrzne resubmity engine bypass
+- **Wash-trade surveillance** — flaguje klientów z fillami po obu stronach
+  jednego crossa aukcyjnego
 - **Kill switch**: `mass_cancel(client_id)` — obejmuje też pending STOPy
 - **Per-account exposure** — open/filled net+gross qty per client_id
 - **Audit log** + **event seq numbers** (gap detect / dedup u konsumenta)

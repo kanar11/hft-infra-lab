@@ -2213,6 +2213,11 @@ public:
         std::int32_t bid_remaining = best_matched;
         std::int32_t ask_remaining = best_matched;
         const std::uint64_t ts = mono_ns_now();
+        // Wash-trade surveillance: per-client filled qty per side. Fills
+        // w aukcji są anonimowe (brak pairingu maker-taker), więc STP nie
+        // może działać pairwise — zamiast tego flagujemy klientów, którzy
+        // wzięli udział po OBU stronach crossa (compliance reporting).
+        std::unordered_map<std::uint64_t, std::int64_t> wash_buy, wash_sell;
 
         // Wykonaj BIDS od najwyższej ceny w dół, ale wszystkie po clearing_price
         for (std::int32_t p = hi; p >= best_clearing && bid_remaining > 0; --p) {
@@ -2224,6 +2229,7 @@ public:
                         std::min(o->remaining_qty(), bid_remaining);
                     o->filled_qty += take;
                     bid_remaining -= take;
+                    if (o->client_id != 0) wash_buy[o->client_id] += take;
                     // Aggregate accounting — najpierw displayed, reszta z hidden
                     const std::int32_t vis_take = std::min(take, o->displayed_qty);
                     levels_[p].total_qty    -= vis_take;
@@ -2257,6 +2263,7 @@ public:
                         std::min(o->remaining_qty(), ask_remaining);
                     o->filled_qty += take;
                     ask_remaining -= take;
+                    if (o->client_id != 0) wash_sell[o->client_id] += take;
                     // Aggregate accounting — najpierw displayed, reszta z hidden
                     const std::int32_t vis_take = std::min(take, o->displayed_qty);
                     levels_[p].total_qty    -= vis_take;
@@ -2282,6 +2289,16 @@ public:
                 o = next;
             }
         }
+
+        // Flaguj klientów z fillami po obu stronach crossa
+        last_auction_wash_clients_ = 0;
+        for (const auto& kv : wash_buy) {
+            if (kv.second <= 0) continue;
+            const auto it_s = wash_sell.find(kv.first);
+            if (it_s != wash_sell.end() && it_s->second > 0)
+                ++last_auction_wash_clients_;
+        }
+        auction_wash_trade_flags_ += last_auction_wash_clients_;
 
         refresh_best_bid_from(LEVELS - 1);
         refresh_best_ask_from(0);
@@ -2315,6 +2332,16 @@ public:
     }
     std::uint64_t auction_extensions_count() const noexcept {
         return auction_extensions_;
+    }
+
+    // Wash-trade surveillance: klienci z fillami po OBU stronach jednego
+    // crossa. Fills aukcyjne są anonimowe (brak pairingu), więc STP nie
+    // zadziała pairwise — to flaga compliance, nie prewencja.
+    std::uint64_t auction_wash_trade_flags() const noexcept {
+        return auction_wash_trade_flags_;
+    }
+    std::uint64_t last_auction_wash_clients() const noexcept {
+        return last_auction_wash_clients_;
     }
 
     // ====================================================================
@@ -3264,6 +3291,10 @@ private:
 
     // Auction imbalance extensions
     std::uint64_t auction_extensions_ = 0;
+
+    // Wash-trade surveillance w aukcji (ten sam client po obu stronach crossa)
+    std::uint64_t auction_wash_trade_flags_  = 0;   // Σ flagged clients (all crosses)
+    std::uint64_t last_auction_wash_clients_ = 0;   // z ostatniego crossu
 
     // Rate limiting per account — token bucket (msg rate throttle)
     struct RateBucket {
