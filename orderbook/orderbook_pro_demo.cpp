@@ -3109,6 +3109,42 @@ void test_peg_mid_rejects_without_tob() {
     ASSERT(rr == RejectReason::PRICE_OUT_OF_RANGE,  "pegmid_no_tob_reason");
 }
 
+// ──────────────────────────────────────────────
+// Iceberg refresh jitter (#53)
+// ──────────────────────────────────────────────
+
+void test_iceberg_jitter_within_band() {
+    Book b;
+    b.set_iceberg_refresh_jitter_bps(2000);   // ±20%
+    b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+             TimeInForce::DAY, 0, 0, /*displayed=*/100);
+    b.submit(Side::BUY, 10100, 100);    // zjada displayed → refresh z jitterem
+    const std::int32_t refilled = b.total_volume_at_price(10100);
+    ASSERT(refilled >= 80 && refilled <= 120,      "ice_jitter_band_80_120");
+    ASSERT(b.audit_book_integrity() == 0,           "ice_jitter_audit_0");
+}
+
+void test_iceberg_jitter_deterministic_replay() {
+    auto scenario = [](Book& b) -> std::int32_t {
+        b.set_iceberg_refresh_jitter_bps(2000);
+        b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+                 TimeInForce::DAY, 0, 0, 100);
+        b.submit(Side::BUY, 10100, 100);
+        return b.total_volume_at_price(10100);
+    };
+    Book b1;
+    Book b2;
+    ASSERT(scenario(b1) == scenario(b2),            "ice_jitter_replay_eq");
+}
+
+void test_iceberg_jitter_off_keeps_exact_size() {
+    Book b;   // jitter default 0
+    b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+             TimeInForce::DAY, 0, 0, 250);
+    b.submit(Side::BUY, 10100, 250);
+    ASSERT(b.total_volume_at_price(10100) == 250,   "ice_jitter_off_exact");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3649,6 +3685,9 @@ int main(int argc, char* argv[]) {
     test_peg_mid_initial_price();
     test_peg_mid_reprices_on_mid_change();
     test_peg_mid_rejects_without_tob();
+    test_iceberg_jitter_within_band();
+    test_iceberg_jitter_deterministic_replay();
+    test_iceberg_jitter_off_keeps_exact_size();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

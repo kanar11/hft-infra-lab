@@ -828,8 +828,24 @@ private:
                 // oryginalnego display size (fallback 100 dla legacy orderów
                 // bez zapisanego rozmiaru, np. wczytanych ze starego snapshotu)
                 const std::int32_t hidden = m->total_qty - m->filled_qty;
-                const std::int32_t show = (m->iceberg_display_size > 0)
-                                           ? m->iceberg_display_size : 100;
+                std::int32_t show = (m->iceberg_display_size > 0)
+                                     ? m->iceberg_display_size : 100;
+                // Anti-detection jitter: stały refresh size zdradza iceberg
+                // (predatorzy liczą powtarzalne refille). LCG deterministyczny
+                // — replay tej samej sekwencji daje identyczne refreshe.
+                if (ice_jitter_bps_ > 0) {
+                    ice_jitter_rng_ = ice_jitter_rng_ * 6364136223846793005ULL
+                                      + 1442695040888963407ULL;
+                    const std::int32_t span = static_cast<std::int32_t>(
+                        (static_cast<std::int64_t>(show) * ice_jitter_bps_) / 10000);
+                    if (span > 0) {
+                        const std::int32_t delta = static_cast<std::int32_t>(
+                            (ice_jitter_rng_ >> 33) %
+                            static_cast<std::uint64_t>(2 * span + 1)) - span;
+                        show += delta;
+                        if (show < 1) show = 1;
+                    }
+                }
                 m->displayed_qty = std::min(hidden, show);
                 lvl.total_qty    += m->displayed_qty;
                 ++iceberg_refresh_count_;
@@ -1668,6 +1684,15 @@ public:
         return n;
     }
     std::uint64_t trailing_ratchet_count() const noexcept { return trailing_ratchets_; }
+
+    // Iceberg refresh jitter — randomizacja rozmiaru refilla ±bps/10000.
+    // 0 = off (deterministyczny refresh do display size). Typowo 1000-3000.
+    void set_iceberg_refresh_jitter_bps(std::int32_t bps) noexcept {
+        if (bps >= 0 && bps <= 9000) ice_jitter_bps_ = bps;
+    }
+    std::int32_t iceberg_refresh_jitter_bps() const noexcept {
+        return ice_jitter_bps_;
+    }
 
     // ====================================================================
     // PEG order management
@@ -3116,6 +3141,11 @@ private:
     bool          ssr_armed_      = false;     // circuit breaker uzbrojony
     std::int32_t  ssr_trigger_px_ = 0;         // spadek ≤ tej ceny aktywuje SSR
     std::uint64_t ssr_trips_      = 0;
+
+    // Iceberg refresh jitter (anti-detection) — deterministyczny LCG,
+    // ta sama sekwencja operacji daje te same refreshe (replay-safe)
+    std::int32_t  ice_jitter_bps_ = 0;         // 0 = off; 2000 = ±20%
+    std::uint64_t ice_jitter_rng_ = 0x9E3779B97F4A7C15ULL;
 
     void bracket_on_full_fill(std::uint64_t id) noexcept {
         auto it = bracket_specs_.find(id);
