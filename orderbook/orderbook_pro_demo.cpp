@@ -3145,6 +3145,54 @@ void test_iceberg_jitter_off_keeps_exact_size() {
     ASSERT(b.total_volume_at_price(10100) == 250,   "ice_jitter_off_exact");
 }
 
+// ──────────────────────────────────────────────
+// Auction imbalance extension (#54)
+// ──────────────────────────────────────────────
+
+void test_auction_extension_on_imbalance() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10005, 200);
+    b.submit(Side::SELL, 10005, 50);     // surplus_bid = 150
+    b.exit_auction_mode();
+    auto r = b.try_run_auction(/*threshold*/100);   // 150 > 100 → extension
+    ASSERT(!r.executed,                             "ext_not_crossed");
+    ASSERT(r.surplus_bid_qty == 150,                "ext_surplus_150");
+    ASSERT(r.clearing_price_ticks == 10005,         "ext_indicative_px");
+    ASSERT(b.auction_extensions_count() == 1,       "ext_counter_1");
+    // Księga NIETKNIĘTA — 200 + 50 displayed nadal na levelu
+    ASSERT(b.total_volume_at_price(10005) == 250,   "ext_book_intact");
+}
+
+void test_auction_extension_then_cross() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10005, 200);
+    b.submit(Side::SELL, 10005, 50);
+    b.exit_auction_mode();
+    (void)b.try_run_auction(100);        // extension
+    b.enter_auction_mode();
+    b.submit(Side::SELL, 10005, 150);    // kontra dosypana w extension
+    b.exit_auction_mode();
+    auto r = b.try_run_auction(100);     // surplus 0 → cross
+    ASSERT(r.executed,                              "ext2_crossed");
+    ASSERT(r.matched_qty == 200,                    "ext2_matched_200");
+    ASSERT(b.auction_extensions_count() == 1,       "ext2_counter_still_1");
+    ASSERT(b.total_volume_at_price(10005) == 0,     "ext2_book_clean");
+    ASSERT(b.audit_book_integrity() == 0,            "ext2_audit_0");
+}
+
+void test_auction_extension_passes_below_threshold() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10005, 120);
+    b.submit(Side::SELL, 10005, 100);    // surplus 20 ≤ threshold
+    b.exit_auction_mode();
+    auto r = b.try_run_auction(100);
+    ASSERT(r.executed && r.matched_qty == 100,      "ext3_cross_direct");
+    ASSERT(b.auction_extensions_count() == 0,       "ext3_no_extension");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3688,6 +3736,9 @@ int main(int argc, char* argv[]) {
     test_iceberg_jitter_within_band();
     test_iceberg_jitter_deterministic_replay();
     test_iceberg_jitter_off_keeps_exact_size();
+    test_auction_extension_on_imbalance();
+    test_auction_extension_then_cross();
+    test_auction_extension_passes_below_threshold();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

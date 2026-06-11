@@ -2226,6 +2226,32 @@ public:
     }
 
     // ====================================================================
+    // Auction imbalance extension (volatility extension)
+    // ====================================================================
+    //
+    // Realne giełdy (LSE, Xetra) przedłużają aukcję gdy imbalance przekracza
+    // próg — daje czas na napływ kontry zamiast crossować z dużym surplusem.
+    // Model: try_run_auction(threshold) — gdy surplus po którejś stronie
+    // > threshold, cross NIE jest wykonywany (księga nietknięta), licznik
+    // extension rośnie, a zwrot niesie indicative values (executed == false
+    // sygnalizuje extension). Caller dosypuje orders i ponawia.
+    AuctionResult try_run_auction(std::int32_t max_surplus_threshold) noexcept {
+        AuctionResult ind = indicative_auction_info();
+        if (!ind.executed) return ind;
+        const std::int32_t surplus = std::max(ind.surplus_bid_qty,
+                                               ind.surplus_ask_qty);
+        if (surplus > max_surplus_threshold) {
+            ++auction_extensions_;
+            ind.executed = false;   // extension — indicative values zostają
+            return ind;
+        }
+        return run_auction();
+    }
+    std::uint64_t auction_extensions_count() const noexcept {
+        return auction_extensions_;
+    }
+
+    // ====================================================================
     // Market-On-Close (MOC)
     // ====================================================================
     //
@@ -3146,6 +3172,9 @@ private:
     // ta sama sekwencja operacji daje te same refreshe (replay-safe)
     std::int32_t  ice_jitter_bps_ = 0;         // 0 = off; 2000 = ±20%
     std::uint64_t ice_jitter_rng_ = 0x9E3779B97F4A7C15ULL;
+
+    // Auction imbalance extensions
+    std::uint64_t auction_extensions_ = 0;
 
     void bracket_on_full_fill(std::uint64_t id) noexcept {
         auto it = bracket_specs_.find(id);
