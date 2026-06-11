@@ -1732,6 +1732,58 @@ public:
         return o->id;
     }
 
+    // Mid-peg: pinned do mid + offset (zamiast best bid/ask). Marker w
+    // stop_trigger_ticks == 1 (primary peg ma tam 0; STOP nie jest w
+    // peg_orders_, więc brak kolizji). Offset powinien trzymać cenę
+    // wewnątrz spreadu — peg nie matchuje przy entry (jak primary peg).
+    std::uint64_t submit_peg_mid(Side side, std::int32_t peg_offset_ticks,
+                                  std::int32_t qty,
+                                  std::uint64_t order_id = 0,
+                                  std::uint64_t client_id = 0,
+                                  RejectReason* out_reason = nullptr) noexcept {
+        auto reject = [&](RejectReason r) -> std::uint64_t {
+            if (out_reason) *out_reason = r;
+            ++stats_.total_orders_rejected;
+            tally_rejection(r);
+            return 0;
+        };
+        if (qty <= 0) return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
+        const std::int32_t mp = mid_ticks();
+        if (mp < 0) return reject(RejectReason::PRICE_OUT_OF_RANGE);
+        const std::int32_t initial_price = mp + peg_offset_ticks;
+        if (initial_price < 0 || initial_price >= LEVELS)
+            return reject(RejectReason::PRICE_OUT_OF_RANGE);
+
+        Order* o = alloc_order();
+        if (!o) return reject(RejectReason::POOL_EXHAUSTED);
+        o->id            = order_id ? order_id : next_order_id_++;
+        o->client_id     = client_id;
+        o->price_ticks   = initial_price;
+        o->total_qty     = qty;
+        o->displayed_qty = qty;
+        o->side          = side;
+        o->type          = OrderType::PEG;
+        o->status        = OrderStatus::OPEN;
+        o->submit_ts_ns  = mono_ns_now();
+        o->peg_offset_ticks   = peg_offset_ticks;
+        o->stop_trigger_ticks = 1;   // marker: mid-peg
+        enqueue_at_level(o);
+        id_index_[o->id] = o;
+        peg_orders_.push_back(o);
+        if (side == Side::BUY) {
+            if (best_bid_ticks_ == NO_BID_TICKS || initial_price > best_bid_ticks_)
+                best_bid_ticks_ = initial_price;
+        } else {
+            if (best_ask_ticks_ == NO_ASK_TICKS || initial_price < best_ask_ticks_)
+                best_ask_ticks_ = initial_price;
+        }
+        ++stats_.total_orders_added;
+        tally_accept(OrderType::PEG, TimeInForce::DAY);
+        emit(EventType::ACCEPT, o->id, 0, initial_price, qty,
+             OrderStatus::OPEN, RejectReason::NONE);
+        return o->id;
+    }
+
     // reprice_pegs: wywołaj po zmianie top of book. Każdy peg, którego target
     // price się rozjechał z aktualnym, zostaje przeniesiony.
     void reprice_pegs() noexcept {
@@ -1740,7 +1792,12 @@ public:
             Order* o = peg_orders_[i];
             if (!o->is_active()) continue;
             std::int32_t target;
-            if (o->side == Side::BUY) {
+            if (o->stop_trigger_ticks == 1) {
+                // Mid-peg — wymaga obu stron TOB
+                const std::int32_t mp = mid_ticks();
+                if (mp < 0) continue;
+                target = mp + o->peg_offset_ticks;
+            } else if (o->side == Side::BUY) {
                 if (!has_bid()) continue;
                 target = best_bid_ticks_ + o->peg_offset_ticks;
             } else {

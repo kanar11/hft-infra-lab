@@ -3075,6 +3075,40 @@ void test_iceberg_snapshot_preserves_refresh_size() {
     ASSERT(b2.audit_book_integrity() == 0,          "ice_snap_audit_0");
 }
 
+// ──────────────────────────────────────────────
+// Mid-peg (#52)
+// ──────────────────────────────────────────────
+
+void test_peg_mid_initial_price() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);    // mid = 10005
+    auto id = b.submit_peg_mid(Side::BUY, -2, 50);   // 10005 - 2 = 10003
+    ASSERT(id != 0,                                "pegmid_accepted");
+    ASSERT(b.total_volume_at_price(10003) == 50,   "pegmid_at_10003");
+    ASSERT(b.best_bid_ticks() == 10003,            "pegmid_becomes_bid");
+}
+
+void test_peg_mid_reprices_on_mid_change() {
+    Book b;
+    b.submit(Side::BUY,  10000, 100);
+    b.submit(Side::SELL, 10010, 100);
+    b.submit_peg_mid(Side::BUY, -2, 50);   // @ 10003
+    b.submit(Side::BUY, 10007, 30);        // best_bid 10007 → mid 10008
+    b.reprice_pegs();                       // target 10008-2 = 10006
+    ASSERT(b.total_volume_at_price(10006) == 50,   "pegmid_moved_10006");
+    ASSERT(b.total_volume_at_price(10003) == 0,    "pegmid_left_10003");
+    ASSERT(b.audit_book_integrity() == 0,           "pegmid_audit_0");
+}
+
+void test_peg_mid_rejects_without_tob() {
+    Book b;
+    RejectReason rr = RejectReason::NONE;
+    ASSERT(b.submit_peg_mid(Side::BUY, -2, 50, 0, 0, &rr) == 0,
+                                                    "pegmid_no_tob_rejected");
+    ASSERT(rr == RejectReason::PRICE_OUT_OF_RANGE,  "pegmid_no_tob_reason");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3612,6 +3646,9 @@ int main(int argc, char* argv[]) {
     test_iceberg_refresh_uses_original_display();
     test_iceberg_display_clamped_to_qty();
     test_iceberg_snapshot_preserves_refresh_size();
+    test_peg_mid_initial_price();
+    test_peg_mid_reprices_on_mid_change();
+    test_peg_mid_rejects_without_tob();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
