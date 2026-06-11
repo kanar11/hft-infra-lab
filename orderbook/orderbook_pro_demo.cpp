@@ -3035,6 +3035,46 @@ void test_replay_determinism_identical_state() {
     ASSERT(b2.audit_book_integrity() == 0,                    "det_audit2_0");
 }
 
+// ──────────────────────────────────────────────
+// Iceberg custom refresh size (#51)
+// ──────────────────────────────────────────────
+
+void test_iceberg_refresh_uses_original_display() {
+    Book b;
+    b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+             TimeInForce::DAY, 0, 0, /*displayed=*/250);
+    ASSERT(b.total_volume_at_price(10100) == 250,  "ice_init_250");
+    b.submit(Side::BUY, 10100, 250);    // zjada cały displayed
+    // Refresh do ORYGINALNEGO display size 250 (stary kod: hardcoded 100)
+    ASSERT(b.total_volume_at_price(10100) == 250,  "ice_refresh_250");
+    ASSERT(b.iceberg_refresh_count() == 1,         "ice_refresh_cnt_1");
+    ASSERT(b.audit_book_integrity() == 0,           "ice_refresh_audit_0");
+}
+
+void test_iceberg_display_clamped_to_qty() {
+    Book b;
+    // displayed > qty — stary kod wpuszczał displayed=200 przy total=100
+    // (level total 200, hidden -100 → audit violation)
+    b.submit(Side::SELL, 10100, 100, OrderType::ICEBERG,
+             TimeInForce::DAY, 0, 0, /*displayed=*/200);
+    ASSERT(b.total_volume_at_price(10100) == 100,  "ice_clamp_100");
+    ASSERT(b.audit_book_integrity() == 0,           "ice_clamp_audit_0");
+}
+
+void test_iceberg_snapshot_preserves_refresh_size() {
+    Book b;
+    b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
+             TimeInForce::DAY, 0, 0, /*displayed=*/250);
+    std::vector<std::uint8_t> buf(b.snapshot_size_estimate() + 64);
+    const auto written = b.serialize_snapshot(buf.data(), buf.size());
+    Book b2;
+    ASSERT(b2.load_snapshot(buf.data(), written),  "ice_snap_loaded");
+    b2.submit(Side::BUY, 10100, 250);   // zjada displayed w odtworzonej księdze
+    // Refresh size przetrwał round-trip (snapshot v2)
+    ASSERT(b2.total_volume_at_price(10100) == 250, "ice_snap_refresh_250");
+    ASSERT(b2.audit_book_integrity() == 0,          "ice_snap_audit_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3569,6 +3609,9 @@ int main(int argc, char* argv[]) {
     test_reduce_only_clamps_to_position();
     test_reduce_only_rejects_without_position();
     test_replay_determinism_identical_state();
+    test_iceberg_refresh_uses_original_display();
+    test_iceberg_display_clamped_to_qty();
+    test_iceberg_snapshot_preserves_refresh_size();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

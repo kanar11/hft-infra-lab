@@ -171,6 +171,7 @@ struct alignas(64) Order {
     std::int32_t   stop_trigger_ticks;   // dla STOP/PEG: cena triggera/peg base
     std::int32_t   peg_offset_ticks;     // dla PEG: offset od best bid/ask/mid
     std::int32_t   decision_mid_ticks;   // snapshot mid przy submit — dla IS (Implementation Shortfall)
+    std::int32_t   iceberg_display_size; // dla ICEBERG: rozmiar refresh (0 = nie-iceberg)
     std::uint64_t  first_fill_ts_ns;     // ts pierwszego fill (0 jeśli nic nie wypełnione)
     Order*         next_at_level;        // intrusive list (FIFO)
     Order*         prev_at_level;
@@ -192,6 +193,7 @@ struct alignas(64) Order {
         stop_trigger_ticks = 0;
         peg_offset_ticks = 0;
         decision_mid_ticks = -1;
+        iceberg_display_size = 0;
         first_fill_ts_ns = 0;
         next_at_level = nullptr;
         prev_at_level = nullptr;
@@ -822,11 +824,13 @@ private:
 
             if (m->displayed_qty == 0 && m->total_qty - m->filled_qty > 0 &&
                 m->type == OrderType::ICEBERG) {
-                // Iceberg: doślij displayed z hidden reserve
+                // Iceberg: doślij displayed z hidden reserve — refresh do
+                // oryginalnego display size (fallback 100 dla legacy orderów
+                // bez zapisanego rozmiaru, np. wczytanych ze starego snapshotu)
                 const std::int32_t hidden = m->total_qty - m->filled_qty;
-                const std::int32_t orig_displayed = m->displayed_qty;
-                (void)orig_displayed;
-                m->displayed_qty = std::min(hidden, /*iceberg_show=*/100);
+                const std::int32_t show = (m->iceberg_display_size > 0)
+                                           ? m->iceberg_display_size : 100;
+                m->displayed_qty = std::min(hidden, show);
                 lvl.total_qty    += m->displayed_qty;
                 ++iceberg_refresh_count_;
                 lvl.total_hidden -= m->displayed_qty;
@@ -1073,10 +1077,15 @@ public:
         // HIDDEN: pełna qty w total_hidden, displayed=0 → niewidoczne w L1/L2.
         // ICEBERG: pokazuj tylko displayed_qty arg (jeśli >0).
         // Pozostałe: pełna widoczność.
-        o->displayed_qty = (type == OrderType::HIDDEN)             ? 0
-                          : (type == OrderType::ICEBERG && displayed_qty > 0)
-                                                                    ? displayed_qty
-                                                                    : qty;
+        // Iceberg display clamped do qty — displayed > total psułoby hidden
+        // accounting (T-F-D < 0). Zapamiętujemy rozmiar dla refreshów.
+        const std::int32_t ice_show =
+            (type == OrderType::ICEBERG && displayed_qty > 0)
+                ? std::min(displayed_qty, qty) : 0;
+        o->displayed_qty = (type == OrderType::HIDDEN) ? 0
+                          : (ice_show > 0)              ? ice_show
+                                                        : qty;
+        o->iceberg_display_size = ice_show;
         o->side          = side;
         o->type          = type;
         o->tif           = tif;
@@ -1363,7 +1372,7 @@ public:
     //   [4 B magic "OBPRO" prefix nadpisany, no]
     //   [4 B version (1)]
     //   [8 B active_orders count]
-    //   [N × OrderRecord (66 B each)]
+    //   [N × OrderRecord (70 B each — v2 dodała iceberg_display_size)]
     //
     // To NIE jest delta — to FULL snapshot. Delta zaimplementowana przez
     // event callback z EventType (caller may build incremental log).
@@ -1385,9 +1394,10 @@ public:
         std::uint64_t expire_ts_ns;
         std::int32_t  stop_trigger_ticks;
         std::int32_t  peg_offset_ticks;
+        std::int32_t  iceberg_display_size;   // od wersji 2
     };
 
-    static constexpr std::uint32_t SNAPSHOT_VERSION = 1;
+    static constexpr std::uint32_t SNAPSHOT_VERSION = 2;
     static constexpr std::uint32_t SNAPSHOT_MAGIC   = 0x4F42504F;  // "OBPO"
 
     std::size_t snapshot_size_estimate() const noexcept {
@@ -1423,6 +1433,7 @@ public:
                 r.expire_ts_ns  = o->expire_ts_ns;
                 r.stop_trigger_ticks = o->stop_trigger_ticks;
                 r.peg_offset_ticks   = o->peg_offset_ticks;
+                r.iceberg_display_size = o->iceberg_display_size;
                 std::memcpy(buf + off, &r, sizeof(r));
                 off += sizeof(r);
             }
@@ -1466,6 +1477,7 @@ public:
             o->expire_ts_ns  = r.expire_ts_ns;
             o->stop_trigger_ticks = r.stop_trigger_ticks;
             o->peg_offset_ticks   = r.peg_offset_ticks;
+            o->iceberg_display_size = r.iceberg_display_size;
             enqueue_at_level(o);
             id_index_[o->id] = o;
             if (o->side == Side::BUY) {
