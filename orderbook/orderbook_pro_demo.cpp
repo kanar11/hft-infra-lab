@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <vector>
 
 
@@ -3353,6 +3354,46 @@ void test_auction_wash_clean_different_clients() {
     ASSERT(b.auction_wash_trade_flags() == 0,         "wash2_total_0");
 }
 
+// ──────────────────────────────────────────────
+// BookCluster snapshot — multi-symbol recovery (#61)
+// ──────────────────────────────────────────────
+
+void test_cluster_snapshot_roundtrip() {
+    using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
+    // Heap — dwa klastry na stacku to za dużo (4 księgi × ~1 MB każdy)
+    std::unique_ptr<Cluster> c1(new Cluster());
+    std::unique_ptr<Cluster> c2(new Cluster());
+    c1->register_symbol("AAPL");
+    c1->register_symbol("MSFT");
+    auto* a = c1->book("AAPL");
+    auto* m = c1->book("MSFT");
+    if (!a || !m) { ASSERT(false, "clsnap_books"); return; }
+    a->submit(Side::BUY,  10000, 100);
+    a->submit(Side::SELL, 10010, 80);
+    m->submit(Side::BUY,  9500,  60);
+    std::vector<std::uint8_t> buf(c1->snapshot_size_estimate() + 64);
+    const auto written = c1->serialize_snapshot(buf.data(), buf.size());
+    ASSERT(written > 0,                               "clsnap_written");
+    ASSERT(c2->load_snapshot(buf.data(), written),    "clsnap_loaded");
+    auto* a2 = c2->book("AAPL");
+    auto* m2 = c2->book("MSFT");
+    ASSERT(a2 != nullptr && m2 != nullptr,            "clsnap_symbols");
+    if (!a2 || !m2) return;
+    ASSERT(a2->total_volume_at_price(10000) == 100,   "clsnap_aapl_bid");
+    ASSERT(a2->total_volume_at_price(10010) == 80,    "clsnap_aapl_ask");
+    ASSERT(m2->total_volume_at_price(9500)  == 60,    "clsnap_msft_bid");
+    ASSERT(a2->audit_book_integrity() == 0,            "clsnap_a_audit");
+    ASSERT(m2->audit_book_integrity() == 0,            "clsnap_m_audit");
+    ASSERT(c2->active_symbol_count() == 2,             "clsnap_count_2");
+}
+
+void test_cluster_snapshot_bad_magic_rejected() {
+    using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
+    std::unique_ptr<Cluster> c(new Cluster());
+    std::uint8_t junk[32] = {1, 2, 3, 4};
+    ASSERT(!c->load_snapshot(junk, sizeof(junk)),     "clsnap_bad_magic");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3934,6 +3975,8 @@ int main(int argc, char* argv[]) {
     test_rate_limit_stop_trigger_bypasses();
     test_auction_wash_trade_flagged();
     test_auction_wash_clean_different_clients();
+    test_cluster_snapshot_roundtrip();
+    test_cluster_snapshot_bad_magic_rejected();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

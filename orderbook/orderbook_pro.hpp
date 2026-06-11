@@ -5554,6 +5554,83 @@ public:
         return static_cast<std::int32_t>((buy - sell) * 10000 / total);
     }
 
+    // ====================================================================
+    // Cluster snapshot — multi-symbol recovery
+    // ====================================================================
+    //
+    // Wire format: 4 B magic "OBCL" + 4 B version + 8 B count, potem per
+    // symbol: 9 B nazwa + 8 B długość snapshotu księgi + bytes (format
+    // księgi v2, włącznie z pending stopami i pegami).
+    static constexpr std::uint32_t CLUSTER_SNAPSHOT_MAGIC   = 0x4C43424FU;  // "OBCL"
+    static constexpr std::uint32_t CLUSTER_SNAPSHOT_VERSION = 1;
+
+    std::size_t snapshot_size_estimate() const noexcept {
+        std::size_t total = 4 + 4 + 8;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (slot_used_[i])
+                total += 9 + 8 + books_[i].snapshot_size_estimate();
+        }
+        return total;
+    }
+
+    std::size_t serialize_snapshot(std::uint8_t* buf, std::size_t cap) const noexcept {
+        if (cap < snapshot_size_estimate()) return 0;
+        std::size_t off = 0;
+        const std::uint32_t magic   = CLUSTER_SNAPSHOT_MAGIC;
+        const std::uint32_t version = CLUSTER_SNAPSHOT_VERSION;
+        const std::uint64_t count   = active_count_;
+        std::memcpy(buf + off, &magic,   4); off += 4;
+        std::memcpy(buf + off, &version, 4); off += 4;
+        std::memcpy(buf + off, &count,   8); off += 8;
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (!slot_used_[i]) continue;
+            std::memcpy(buf + off, symbols_[i], 9); off += 9;
+            // Długość przed snapshotem — serializuj za polem, wpisz potem
+            const std::size_t blen = books_[i].serialize_snapshot(
+                buf + off + 8, cap - off - 8);
+            if (blen == 0) return 0;   // pusta księga pisze 16 B, 0 = błąd
+            const std::uint64_t blen64 = blen;
+            std::memcpy(buf + off, &blen64, 8);
+            off += 8 + blen;
+        }
+        return off;
+    }
+
+    bool load_snapshot(const std::uint8_t* buf, std::size_t len) noexcept {
+        if (len < 16) return false;
+        std::uint32_t magic, version;
+        std::uint64_t count;
+        std::memcpy(&magic,   buf,     4);
+        std::memcpy(&version, buf + 4, 4);
+        std::memcpy(&count,   buf + 8, 8);
+        if (magic != CLUSTER_SNAPSHOT_MAGIC)     return false;
+        if (version != CLUSTER_SNAPSHOT_VERSION) return false;
+        if (count > N_SYMBOLS)                   return false;
+        // Pełny reset klastra — książki używanych slotów też
+        for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
+            if (slot_used_[i]) books_[i].clear();
+            slot_used_[i] = false;
+        }
+        active_count_ = 0;
+        std::size_t off = 16;
+        for (std::uint64_t k = 0; k < count; ++k) {
+            if (off + 9 + 8 > len) return false;
+            char sym[9];
+            std::memcpy(sym, buf + off, 9); off += 9;
+            sym[8] = '\0';
+            std::uint64_t blen;
+            std::memcpy(&blen, buf + off, 8); off += 8;
+            if (off + blen > len) return false;
+            if (!register_symbol(sym)) return false;
+            BookT* bk = book(sym);
+            if (!bk || !bk->load_snapshot(buf + off,
+                                           static_cast<std::size_t>(blen)))
+                return false;
+            off += blen;
+        }
+        return true;
+    }
+
     // Symbol z najwyższym book-level flow_imbalance (informational flow magnet).
     const char* most_imbalanced_symbol() const noexcept {
         std::size_t best = N_SYMBOLS;
