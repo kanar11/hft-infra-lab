@@ -3648,6 +3648,21 @@ void benchmark(int iterations) {
     std::printf("    pool peak used:   %lu / %lu\n",
                 b.pool_used_high_water(), b.pool_capacity());
 
+    // Ścieżka crossing (taker) — droższa od resting add (match_at_level +
+    // record_trade + analytics hooks per fill); mierzona osobno
+    std::vector<std::int64_t> cross_lat;
+    cross_lat.reserve(2000);
+    for (int i = 0; i < 2000; ++i) {
+        b.submit(Side::SELL, 10050, 10);   // maker (resting)
+        const auto x0 = std::chrono::high_resolution_clock::now();
+        b.submit(Side::BUY, 10050, 10);    // taker — cross + full fill
+        const auto x1 = std::chrono::high_resolution_clock::now();
+        cross_lat.push_back(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(x1 - x0).count());
+    }
+    std::printf("  cross p50:      %lld ns\n", static_cast<long long>(pct(cross_lat, 0.50)));
+    std::printf("  cross p99:      %lld ns\n", static_cast<long long>(pct(cross_lat, 0.99)));
+
     // Burst aktywności PO pomiarach latencji (nie zaburza percentyli) —
     // benchmark sam nie crossuje (fills=0), a sekcja analytics potrzebuje
     // trade'ów żeby pokazać metryki w akcji.
