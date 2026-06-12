@@ -1719,20 +1719,29 @@ public:
         if (last_trade_ticks_ < 0 || stop_orders_.empty()) return;
         for (std::size_t i = 0; i < stop_orders_.size(); ) {
             Order* o = stop_orders_[i];
+            // Referencja per order: plain stop ZAWSZE last_trade; trailing
+            // z włączonym trybem mid używa mid (ratchet I trigger z tej
+            // samej referencji — mieszanie psułoby self-trigger safety).
+            // Fallback do last_trade gdy mid niedostępny (one-sided book).
+            std::int32_t ref = last_trade_ticks_;
+            if (o->peg_offset_ticks > 0 && trailing_ratchet_on_mid_) {
+                const std::int32_t mp = mid_ticks();
+                if (mp > 0) ref = mp;
+            }
             // Trailing stop (STOP + peg_offset > 0): ratchet trigger za ceną
             // gdy rynek idzie korzystnie. SELL: trigger podąża W GÓRĘ
             // (high-water - offset); BUY: W DÓŁ (low-water + offset).
             // Ratchet nigdy nie self-triggeruje: nowy trigger jest zawsze
-            // offset od last_trade, więc warunek trigger nie zachodzi.
+            // offset od ref, więc warunek trigger nie zachodzi w tym ticku.
             if (o->peg_offset_ticks > 0) {
                 if (o->side == Side::SELL) {
-                    const std::int32_t nt = last_trade_ticks_ - o->peg_offset_ticks;
+                    const std::int32_t nt = ref - o->peg_offset_ticks;
                     if (nt > o->stop_trigger_ticks && nt >= 0) {
                         o->stop_trigger_ticks = nt;
                         ++trailing_ratchets_;
                     }
                 } else {
-                    const std::int32_t nt = last_trade_ticks_ + o->peg_offset_ticks;
+                    const std::int32_t nt = ref + o->peg_offset_ticks;
                     if (nt < o->stop_trigger_ticks && nt < LEVELS) {
                         o->stop_trigger_ticks = nt;
                         ++trailing_ratchets_;
@@ -1740,9 +1749,9 @@ public:
                 }
             }
             const bool buy_trigger  = (o->side == Side::BUY)
-                                    && (last_trade_ticks_ >= o->stop_trigger_ticks);
+                                    && (ref >= o->stop_trigger_ticks);
             const bool sell_trigger = (o->side == Side::SELL)
-                                    && (last_trade_ticks_ <= o->stop_trigger_ticks);
+                                    && (ref <= o->stop_trigger_ticks);
             if (buy_trigger || sell_trigger) {
                 // Wyciągnij z queue, zachowaj parametry, resubmit jako LIMIT/MARKET
                 const Side       sd  = o->side;
@@ -1819,6 +1828,17 @@ public:
         return n;
     }
     std::uint64_t trailing_ratchet_count() const noexcept { return trailing_ratchets_; }
+
+    // Trailing na mid: ratchet i trigger z midpointu zamiast last_trade.
+    // Reaguje na ruch quote'ów bez trade'ów (mniejszy gap risk w cichym
+    // rynku). Plain stopy zawsze na last_trade. Fallback do last_trade
+    // gdy mid niedostępny.
+    void set_trailing_ratchet_on_mid(bool on) noexcept {
+        trailing_ratchet_on_mid_ = on;
+    }
+    bool trailing_ratchet_on_mid() const noexcept {
+        return trailing_ratchet_on_mid_;
+    }
 
     // Iceberg refresh jitter — randomizacja rozmiaru refilla ±bps/10000.
     // 0 = off (deterministyczny refresh do display size). Typowo 1000-3000.
@@ -3423,6 +3443,9 @@ private:
 
     // Trailing stop ratchets (trigger przesunięty za rynkiem)
     std::uint64_t trailing_ratchets_ = 0;
+    // Opt-in: trailing śledzi mid zamiast last_trade (reaguje na ruch
+    // quote'ów bez trade'ów; trigger też z mid — spójna referencja)
+    bool          trailing_ratchet_on_mid_ = false;
 
     // Market-On-Close — kolejka czekająca na closing cross (nie w księdze)
     struct MocOrder {

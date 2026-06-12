@@ -3628,6 +3628,46 @@ void test_queue_depth_histogram() {
     ASSERT(bins[3] == 0 && bins[4] == 0 && bins[5] == 0, "qdh_rest_0");
 }
 
+// ──────────────────────────────────────────────
+// Trailing stop na mid (#71)
+// ──────────────────────────────────────────────
+
+void test_trailing_mid_ratchet_without_trades() {
+    Book b;
+    b.set_trailing_ratchet_on_mid(true);
+    b.submit(Side::SELL, 10000, 10);
+    b.submit(Side::BUY,  10000, 10);    // lt = 10000 (ref dla entry)
+    auto ts = b.submit_trailing_stop(Side::SELL, 50, /*limit*/10030, 100);
+    // Quotes idą w górę BEZ żadnego trade'u → mid 10105
+    auto b1 = b.submit(Side::BUY, 10100, 10);
+    b.submit(Side::SELL, 10110, 10);
+    b.check_stop_triggers();             // ratchet z mid: 10105-50 = 10055
+    auto* o = b.find_order(ts);
+    ASSERT(o && o->stop_trigger_ticks == 10055, "tmid_ratchet_10055");
+    ASSERT(b.stop_orders_count() == 1,          "tmid_pending");
+    // Mid spada do 10055: bid 10100 → 10000
+    b.cancel(b1);
+    b.submit(Side::BUY, 10000, 10);      // mid (10000+10110)/2 = 10055
+    b.check_stop_triggers();              // 10055 ≤ 10055 → TRIGGER
+    ASSERT(b.stop_orders_count() == 0,          "tmid_triggered");
+    // SELL LIMIT 10030×100 nie crossuje bidu 10000 → restuje w całości
+    ASSERT(b.total_volume_at_price(10030) == 100, "tmid_resubmit_100");
+    ASSERT(b.audit_book_integrity() == 0,        "tmid_audit_0");
+}
+
+void test_trailing_default_ignores_mid() {
+    Book b;   // flaga off — ratchet tylko z last_trade
+    b.submit(Side::SELL, 10000, 10);
+    b.submit(Side::BUY,  10000, 10);
+    auto ts = b.submit_trailing_stop(Side::SELL, 50, 0, 100);
+    b.submit(Side::BUY,  10100, 10);
+    b.submit(Side::SELL, 10110, 10);    // mid 10105, ale zero trade'ów
+    b.check_stop_triggers();
+    auto* o = b.find_order(ts);
+    ASSERT(o && o->stop_trigger_ticks == 9950,  "tdef_no_mid_ratchet");
+    ASSERT(b.stop_orders_count() == 1,          "tdef_pending");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4237,6 +4277,8 @@ int main(int argc, char* argv[]) {
     test_modify_preserves_bracket_spec();
     test_modify_bracket_qty_down_scales_exits();
     test_queue_depth_histogram();
+    test_trailing_mid_ratchet_without_trades();
+    test_trailing_default_ignores_mid();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
