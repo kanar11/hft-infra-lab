@@ -3545,6 +3545,40 @@ void test_drop_copy_sees_replace_stop_auction() {
     ASSERT(cap.n == 2,                          "dc2_auction_fill_seen");
 }
 
+// ──────────────────────────────────────────────
+// Modify zachowuje OCO (#68)
+// ──────────────────────────────────────────────
+
+void test_modify_preserves_oco_link() {
+    Book b;
+    auto a = b.submit(Side::SELL, 10100, 100);
+    auto c = b.submit(Side::BUY,  9900,  50);
+    b.link_oco(a, c);
+    // Price change → cancel+resubmit; stary kod kasował tu partnera
+    ASSERT(b.modify(a, 10090, 100) == a,        "moco_same_id");
+    ASSERT(b.find_order(c) != nullptr,           "moco_partner_alive");
+    ASSERT(b.oco_partner_of(a) == c,             "moco_link_restored");
+    ASSERT(b.active_oco_pairs() == 1,            "moco_pair_1");
+    // Semantyka OCO nietknięta: fill zmodyfikowanej nogi kasuje partnera
+    b.submit(Side::BUY, 10090, 100);
+    ASSERT(b.find_order(c) == nullptr,           "moco_fill_cancels_partner");
+    ASSERT(b.oco_triggered_cancels() == 1,       "moco_trig_1");
+}
+
+void test_modify_filled_resubmit_cancels_partner() {
+    Book b;
+    auto a = b.submit(Side::SELL, 10100, 100);
+    auto c = b.submit(Side::BUY,  9900,  50);
+    b.link_oco(a, c);
+    b.submit(Side::BUY, 10000, 100);             // czekający bid (cid 0)
+    // Modify SELL → 10000: resubmit crossuje bid → full fill → partner pada
+    (void)b.modify(a, 10000, 100);
+    ASSERT(b.find_order(a) == nullptr,           "moco2_filled");
+    ASSERT(b.find_order(c) == nullptr,           "moco2_partner_cancelled");
+    ASSERT(b.oco_triggered_cancels() == 1,       "moco2_trig_1");
+    ASSERT(b.audit_book_integrity() == 0,         "moco2_audit_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4149,6 +4183,8 @@ int main(int argc, char* argv[]) {
     test_luld_breach_triggers_auction_pause();
     test_drop_copy_filters_by_account();
     test_drop_copy_sees_replace_stop_auction();
+    test_modify_preserves_oco_link();
+    test_modify_filled_resubmit_cancels_partner();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

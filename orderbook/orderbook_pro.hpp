@@ -1316,11 +1316,31 @@ public:
         const TimeInForce tif       = o->tif;
         const std::uint64_t client_id = o->client_id;
         const std::int32_t  filled  = o->filled_qty;
+        // OCO przeżywa cancel-replace (order_id się nie zmienia — konwencja
+        // venue). Stash + unlink PRZED cancel_internal, żeby nie skasował
+        // partnera; restore po udanym resubmicie.
+        const std::uint64_t oco_partner = oco_partner_of(order_id);
+        if (oco_partner != 0) (void)unlink_oco(order_id);
         cancel_internal(o, /*emit_event=*/false);
         ++stats_.total_orders_replaced;
         ++stats_.priority_lost_mods;
-        return submit(side, new_price_ticks, new_qty - filled,
-                      type, tif, order_id, client_id, 0, out_reason);
+        const std::uint64_t nid = submit(side, new_price_ticks,
+                                          new_qty - filled, type, tif,
+                                          order_id, client_id, 0, out_reason);
+        if (oco_partner != 0 && nid != 0) {
+            if (id_index_.find(nid) != id_index_.end() &&
+                id_index_.find(oco_partner) != id_index_.end()) {
+                (void)link_oco(nid, oco_partner);
+            } else if (id_index_.find(nid) == id_index_.end()) {
+                // Zmodyfikowana noga od razu fully filled → semantyka OCO:
+                // partner pada (pending queue liczy i obsłuży też STOP/NEW)
+                oco_pending_cancel_.push_back(oco_partner);
+                process_oco_pending();
+            }
+        }
+        // nid == 0 (reject resubmitu): order przepadł, para rozwiązana —
+        // partner zostaje samodzielnym orderem
+        return nid;
     }
 
     // ====================================================================
@@ -4697,9 +4717,9 @@ public:
     // link_oco(a, b): łączy dwa RESTING ordery w parę. Completion jednej nogi
     // (full fill / cancel / expire / auction fill) automatycznie kasuje drugą.
     // Partial fill NIE triggeruje (tylko pełne wypełnienie). modify() nogi
-    // przechodzi przez cancel_internal → kasuje partnera (zrób unlink_oco
-    // wcześniej jeśli niepożądane). STOP orders (czekające na trigger) nie
-    // są wspierane — tylko ordery w księdze.
+    // ZACHOWUJE parę (cancel-replace, order_id bez zmian); jeśli
+    // zmodyfikowana noga od razu w pełni się wypełni, partner pada normalnie.
+    // Pending STOP może być nogą (kasowany przez cancel_pending_stop).
     bool link_oco(std::uint64_t a, std::uint64_t b) noexcept {
         if (a == 0 || b == 0 || a == b) return false;
         if (id_index_.find(a) == id_index_.end()) return false;
