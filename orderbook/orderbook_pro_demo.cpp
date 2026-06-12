@@ -3394,6 +3394,56 @@ void test_cluster_snapshot_bad_magic_rejected() {
     ASSERT(!c->load_snapshot(junk, sizeof(junk)),     "clsnap_bad_magic");
 }
 
+// ──────────────────────────────────────────────
+// Session lifecycle (#63)
+// ──────────────────────────────────────────────
+
+void test_session_full_day_lifecycle() {
+    using Phase = orderbook_pro::SessionPhase;
+    Book b;
+    ASSERT(b.session_phase() == Phase::CONTINUOUS,   "phase_default_cont");
+    // Pre-open: crossing orders czekają bez matchu
+    b.begin_pre_open();
+    ASSERT(b.session_phase() == Phase::PRE_OPEN,     "phase_preopen");
+    b.submit(Side::BUY,  10005, 100);
+    b.submit(Side::SELL, 10005, 60);
+    ASSERT(b.stats().total_fills == 0,               "preopen_no_match");
+    // Opening cross
+    auto ro = b.open_market();
+    ASSERT(ro.executed && ro.matched_qty == 60,      "opening_cross_60");
+    ASSERT(b.session_phase() == Phase::CONTINUOUS,   "phase_cont_after_open");
+    // Continuous: normalny match (resztka bida 40)
+    b.submit(Side::SELL, 10005, 40);
+    ASSERT(b.total_volume_at_price(10005) == 0,      "continuous_match_ok");
+    // Closing: orders + MOC czekają na cross
+    b.begin_closing();
+    ASSERT(b.session_phase() == Phase::CLOSING,      "phase_closing");
+    b.submit(Side::SELL, 10005, 30);
+    b.submit_moc(Side::BUY, 30);
+    auto rc = b.close_market();
+    ASSERT(rc.executed && rc.matched_qty == 30,      "closing_cross_30");
+    ASSERT(b.session_phase() == Phase::CLOSED,       "phase_closed");
+    ASSERT(b.audit_book_integrity() == 0,             "lifecycle_audit_0");
+}
+
+void test_session_closed_rejects_submits() {
+    Book b;
+    auto resting = b.submit(Side::BUY, 9000, 10);    // przed zamknięciem
+    b.begin_closing();
+    (void)b.close_market();
+    RejectReason rr = RejectReason::NONE;
+    ASSERT(b.submit(Side::BUY, 10000, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 0, 0, &rr) == 0, "closed_submit_rej");
+    ASSERT(rr == RejectReason::MARKET_CLOSED,        "closed_reason");
+    ASSERT(b.submit_stop(Side::SELL, 9900, 0, 10) == 0,  "closed_stop_rej");
+    ASSERT(b.submit_moc(Side::BUY, 10) == 0,         "closed_moc_rej");
+    ASSERT(b.submit_loc(Side::BUY, 10000, 10) == 0,  "closed_loc_rej");
+    ASSERT(b.rejections_by_reason(RejectReason::MARKET_CLOSED) == 4,
+                                                      "closed_tally_4");
+    // Cancel pozostaje dozwolony (czyszczenie GTC po sesji)
+    ASSERT(b.cancel(resting),                        "closed_cancel_ok");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -3992,6 +4042,8 @@ int main(int argc, char* argv[]) {
     test_auction_wash_clean_different_clients();
     test_cluster_snapshot_roundtrip();
     test_cluster_snapshot_bad_magic_rejected();
+    test_session_full_day_lifecycle();
+    test_session_closed_rejects_submits();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

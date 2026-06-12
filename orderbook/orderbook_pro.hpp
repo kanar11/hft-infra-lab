@@ -149,6 +149,17 @@ enum class RejectReason : std::uint8_t {
     SSR_RESTRICTED        = 13,  // short sale przy aktywnym SSR ≤ best bid (Rule 201)
     REDUCE_ONLY_NO_POSITION = 14, // reduce-only bez pozycji do zredukowania
     RATE_LIMITED          = 15,  // konto przekroczyło token bucket (msg rate)
+    MARKET_CLOSED         = 16,  // sesja w fazie CLOSED — submity odrzucane
+};
+
+
+// Faza sesji giełdowej. Book startuje w CONTINUOUS (backward compat) —
+// lifecycle używasz opt-in przez begin_pre_open()/open_market()/...
+enum class SessionPhase : std::uint8_t {
+    PRE_OPEN   = 0,   // orders queue do opening cross, brak continuous match
+    CONTINUOUS = 1,   // normalny matching
+    CLOSING    = 2,   // orders queue do closing cross
+    CLOSED     = 3,   // submity odrzucane (MARKET_CLOSED); cancel dozwolony
 };
 
 
@@ -1050,6 +1061,8 @@ public:
         };
 
         // Walidacje
+        if (session_phase_ == SessionPhase::CLOSED)
+                                       return reject(RejectReason::MARKET_CLOSED);
         if (halted_)                   return reject(RejectReason::HALTED);
         if (qty <= 0)                  return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
         if (!in_range(price_ticks) && type != OrderType::MARKET)
@@ -1599,6 +1612,8 @@ public:
             tally_rejection(r);
             return 0;
         };
+        if (session_phase_ == SessionPhase::CLOSED)
+            return reject(RejectReason::MARKET_CLOSED);
         if (qty <= 0) return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
         if (trigger_ticks < PRICE_MIN_TICKS || trigger_ticks >= LEVELS)
             return reject(RejectReason::PRICE_OUT_OF_RANGE);
@@ -1762,6 +1777,8 @@ public:
             tally_rejection(r);
             return 0;
         };
+        if (session_phase_ == SessionPhase::CLOSED)
+            return reject(RejectReason::MARKET_CLOSED);
         if (qty <= 0) return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
         // Initial price compute
         std::int32_t initial_price;
@@ -1826,6 +1843,8 @@ public:
             tally_rejection(r);
             return 0;
         };
+        if (session_phase_ == SessionPhase::CLOSED)
+            return reject(RejectReason::MARKET_CLOSED);
         if (qty <= 0) return reject(RejectReason::QTY_ZERO_OR_NEGATIVE);
         const std::int32_t mp = mid_ticks();
         if (mp < 0) return reject(RejectReason::PRICE_OUT_OF_RANGE);
@@ -2334,6 +2353,37 @@ public:
         return auction_extensions_;
     }
 
+    // ====================================================================
+    // Session lifecycle (pre-open → continuous → closing → closed)
+    // ====================================================================
+    //
+    // Pełny dzień sesyjny z egzekwowaniem reguł per faza:
+    //   begin_pre_open()  → orders queue (auction mode), brak matchu
+    //   open_market()     → opening cross, przejście do CONTINUOUS
+    //   begin_closing()   → orders queue do closing cross
+    //   close_market()    → closing cross (z MOC/LOC), przejście do CLOSED;
+    //                       submity w CLOSED odrzucane (MARKET_CLOSED),
+    //                       cancel pozostaje dozwolony (np. czyszczenie GTC)
+    void begin_pre_open() noexcept {
+        session_phase_ = SessionPhase::PRE_OPEN;
+        in_auction_mode_ = true;
+    }
+    AuctionResult open_market() noexcept {
+        in_auction_mode_ = false;
+        session_phase_ = SessionPhase::CONTINUOUS;
+        return run_auction();
+    }
+    void begin_closing() noexcept {
+        session_phase_ = SessionPhase::CLOSING;
+        in_auction_mode_ = true;
+    }
+    AuctionResult close_market() noexcept {
+        AuctionResult r = run_closing_auction();   // sam zarządza auction flag
+        session_phase_ = SessionPhase::CLOSED;
+        return r;
+    }
+    SessionPhase session_phase() const noexcept { return session_phase_; }
+
     // Wash-trade surveillance: klienci z fillami po OBU stronach jednego
     // crossa. Fills aukcyjne są anonimowe (brak pairingu), więc STP nie
     // zadziała pairwise — to flaga compliance, nie prewencja.
@@ -2377,6 +2427,12 @@ public:
     std::uint64_t submit_moc(Side side, std::int32_t qty,
                               std::uint64_t client_id = 0,
                               RejectReason* out_reason = nullptr) noexcept {
+        if (session_phase_ == SessionPhase::CLOSED) {
+            if (out_reason) *out_reason = RejectReason::MARKET_CLOSED;
+            ++stats_.total_orders_rejected;
+            tally_rejection(RejectReason::MARKET_CLOSED);
+            return 0;
+        }
         if (qty <= 0) {
             if (out_reason) *out_reason = RejectReason::QTY_ZERO_OR_NEGATIVE;
             ++stats_.total_orders_rejected;
@@ -2483,6 +2539,8 @@ public:
             tally_rejection(r);
             return 0;
         };
+        if (session_phase_ == SessionPhase::CLOSED)
+                                   return fail(RejectReason::MARKET_CLOSED);
         if (qty <= 0)              return fail(RejectReason::QTY_ZERO_OR_NEGATIVE);
         if (!in_range(price_ticks)) return fail(RejectReason::PRICE_OUT_OF_RANGE);
         const std::uint64_t id = next_order_id_++;
@@ -3292,6 +3350,9 @@ private:
     // Auction imbalance extensions
     std::uint64_t auction_extensions_ = 0;
 
+    // Faza sesji (lifecycle opt-in; default CONTINUOUS = backward compat)
+    SessionPhase session_phase_ = SessionPhase::CONTINUOUS;
+
     // Wash-trade surveillance w aukcji (ten sam client po obu stronach crossa)
     std::uint64_t auction_wash_trade_flags_  = 0;   // Σ flagged clients (all crosses)
     std::uint64_t last_auction_wash_clients_ = 0;   // z ostatniego crossu
@@ -3390,7 +3451,7 @@ private:
     std::uint64_t iceberg_refresh_count_ = 0;
 
     // Per-reason rejection counters (RejectReason::* indexed; 13 values)
-    std::uint64_t rejections_by_reason_[16]{};
+    std::uint64_t rejections_by_reason_[17]{};
     // Per-TIF acceptance counters (TimeInForce::* indexed; 5 values)
     std::uint64_t accepts_by_tif_[5]{};
     // Per-OrderType acceptance counters (10 values)
@@ -4841,7 +4902,7 @@ public:
     // i jakie typy/TIF preferują traderzy. Acceptance ratio = added / submitted.
     std::uint64_t rejections_by_reason(RejectReason r) const noexcept {
         const auto i = static_cast<std::size_t>(r);
-        return i < 16 ? rejections_by_reason_[i] : 0;
+        return i < 17 ? rejections_by_reason_[i] : 0;
     }
     std::uint64_t accepts_by_tif(TimeInForce tif) const noexcept {
         const auto i = static_cast<std::size_t>(tif);
@@ -4862,7 +4923,7 @@ public:
     RejectReason most_common_reject_reason() const noexcept {
         std::size_t best_i = 0;
         std::uint64_t best_v = 0;
-        for (std::size_t i = 1; i < 16; ++i) {  // skip NONE=0
+        for (std::size_t i = 1; i < 17; ++i) {  // skip NONE=0
             if (rejections_by_reason_[i] > best_v) {
                 best_v = rejections_by_reason_[i];
                 best_i = i;
@@ -4874,7 +4935,7 @@ public:
 private:
     void tally_rejection(RejectReason r) noexcept {
         const auto i = static_cast<std::size_t>(r);
-        if (i < 16) ++rejections_by_reason_[i];
+        if (i < 17) ++rejections_by_reason_[i];
     }
     void tally_accept(OrderType t, TimeInForce tif) noexcept {
         const auto ti = static_cast<std::size_t>(t);
