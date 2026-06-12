@@ -3485,6 +3485,39 @@ void test_luld_breach_triggers_auction_pause() {
     ASSERT(b.audit_book_integrity() == 0,             "luld_reopen_audit_0");
 }
 
+// ──────────────────────────────────────────────
+// Drop copy — strumień eventów jednego konta (#65)
+// ──────────────────────────────────────────────
+
+void test_drop_copy_filters_by_account() {
+    struct Cap { int n; std::uint64_t cli; };
+    static Cap cap;   // lambda bez capture → konwersja na fn ptr
+    cap = Cap{0, 0};
+    Book b;
+    b.set_drop_copy(7, [](const BookEvent& ev, void* ctx) {
+        auto* c = static_cast<Cap*>(ctx);
+        ++c->n;
+        c->cli = ev.client_id;
+    }, &cap);
+    // Klient 7 maker + klient 8 taker → drop copy widzi tylko eventy "7"
+    b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
+    // ACCEPT(7) + FILL maker(7) = 2; ACCEPT(8)/FILL taker(8) pominięte
+    ASSERT(cap.n == 2,                              "dc_two_events");
+    ASSERT(cap.cli == 7,                            "dc_client_7");
+    ASSERT(b.drop_copy_events() == 2,               "dc_counter_2");
+    // cid 0 niewidoczny
+    b.submit(Side::BUY, 9000, 10);
+    ASSERT(cap.n == 2,                              "dc_ignores_cid0");
+    // Cancel i reject klienta 7 też w strumieniu
+    auto id7 = b.submit(Side::SELL, 10200, 10, OrderType::LIMIT,
+                         TimeInForce::DAY, 0, 7);    // ACCEPT → 3
+    b.cancel(id7);                                   // CANCEL → 4
+    b.submit(Side::BUY, 10000, 0, OrderType::LIMIT,
+             TimeInForce::DAY, 0, 7);                // REJECT → 5
+    ASSERT(cap.n == 5,                              "dc_cancel_reject_seen");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4087,6 +4120,7 @@ int main(int argc, char* argv[]) {
     test_session_closed_rejects_submits();
     test_halt_for_auction_queues_and_reopens();
     test_luld_breach_triggers_auction_pause();
+    test_drop_copy_filters_by_account();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

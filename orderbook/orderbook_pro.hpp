@@ -291,6 +291,7 @@ struct BookEvent {
     RejectReason  reject_reason;     // tylko dla REJECT
     std::uint64_t ts_ns;
     std::uint64_t seq_num = 0;       // monotonic — consumer dedup / gap detect
+    std::uint64_t client_id = 0;     // konto (0 = nieznane/anonim) — drop copy
 };
 
 
@@ -359,6 +360,12 @@ class FullOrderBook {
     using EventCallback = void(*)(const BookEvent&, void* ctx);
     EventCallback event_cb_  = nullptr;
     void*         event_ctx_ = nullptr;
+
+    // Drop copy — kopia eventów jednego monitorowanego konta
+    EventCallback drop_copy_cb_     = nullptr;
+    void*         drop_copy_ctx_    = nullptr;
+    std::uint64_t drop_copy_client_ = 0;       // 0 = wyłączone
+    std::uint64_t drop_copy_events_ = 0;
 
     // Helper: timestamp monotonic ns (header-local żeby uniknąć zależności).
     static std::uint64_t mono_ns_now() noexcept {
@@ -443,13 +450,20 @@ class FullOrderBook {
     // Emit event do callbacka jeśli ustawiony.
     void emit(EventType ev, std::uint64_t order_id, std::uint64_t maker_id,
               std::int32_t price_ticks, std::int32_t qty,
-              OrderStatus status, RejectReason rr) noexcept {
+              OrderStatus status, RejectReason rr,
+              std::uint64_t client_id = 0) noexcept {
         const std::uint64_t seq = ++next_event_seq_;
         last_emitted_seq_ = seq;
-        if (!event_cb_) return;
+        if (!event_cb_ && !drop_copy_cb_) return;
         BookEvent e{ev, order_id, maker_id, price_ticks, qty, status, rr,
-                    mono_ns_now(), seq};
-        event_cb_(e, event_ctx_);
+                    mono_ns_now(), seq, client_id};
+        if (event_cb_) event_cb_(e, event_ctx_);
+        // Drop copy: kopia eventów monitorowanego konta (FIX drop copy) —
+        // risk/compliance dostaje strumień niezależnie od głównego callbacku
+        if (drop_copy_cb_ && client_id != 0 && client_id == drop_copy_client_) {
+            ++drop_copy_events_;
+            drop_copy_cb_(e, drop_copy_ctx_);
+        }
     }
 
     // Zapisz Trade do tape (ring buffer) + aktualizuj last_trade_ticks_
@@ -658,6 +672,17 @@ public:
     void set_stp_policy(SelfTradePrevention p) noexcept { stp_policy_ = p; }
     SelfTradePrevention stp_policy() const noexcept { return stp_policy_; }
 
+    // Drop copy (FIX drop copy semantics): osobny strumień eventów JEDNEGO
+    // monitorowanego konta — risk desk / compliance widzi ACCEPT/FILL/CANCEL/
+    // EXPIRE klienta niezależnie od głównego callbacku. client_id = 0 wyłącza.
+    void set_drop_copy(std::uint64_t client_id, EventCallback cb,
+                        void* ctx) noexcept {
+        drop_copy_client_ = client_id;
+        drop_copy_cb_     = cb;
+        drop_copy_ctx_    = ctx;
+    }
+    std::uint64_t drop_copy_events() const noexcept { return drop_copy_events_; }
+
     void set_event_callback(EventCallback cb, void* ctx) noexcept {
         event_cb_ = cb; event_ctx_ = ctx;
     }
@@ -830,7 +855,7 @@ private:
             emit(EventType::FILL, taker->id, m->id, m->price_ticks, exec_qty,
                  taker->remaining_qty() == 0 ? OrderStatus::FILLED
                                               : OrderStatus::PARTIALLY_FILLED,
-                 RejectReason::NONE);
+                 RejectReason::NONE, taker->client_id);
 
             // Aktualizuj displayed/hidden i level total
             lvl.total_qty -= exec_qty;
@@ -885,7 +910,7 @@ private:
                 Order* next_m = m->next_at_level;
                 m->status = OrderStatus::FILLED;
                 emit(EventType::FILL, m->id, taker->id, m->price_ticks, exec_qty,
-                     OrderStatus::FILLED, RejectReason::NONE);
+                     OrderStatus::FILLED, RejectReason::NONE, m->client_id);
                 // Unlink z level (już zaktualizowaliśmy total_qty wyżej, więc
                 // unlink_from_level zrobi to ponownie. Robimy ręczny unlink.)
                 if (m->prev_at_level) m->prev_at_level->next_at_level = m->next_at_level;
@@ -1003,7 +1028,7 @@ private:
         id_index_.erase(o->id);
         if (emit_event) {
             emit(EventType::CANCEL, o->id, 0, o->price_ticks, leftover,
-                 OrderStatus::CANCELLED, RejectReason::NONE);
+                 OrderStatus::CANCELLED, RejectReason::NONE, o->client_id);
         }
         push_audit(EventType::CANCEL, o->id, o->side, o->price_ticks, leftover,
                     OrderStatus::CANCELLED);
@@ -1054,7 +1079,7 @@ public:
             const std::uint64_t rid = order_id ? order_id : 0;
             if (client_id != 0) ++client_rejections_[client_id];
             emit(EventType::REJECT, rid, 0, price_ticks, qty,
-                 OrderStatus::REJECTED, r);
+                 OrderStatus::REJECTED, r, client_id);
             push_audit(EventType::REJECT, rid, side, price_ticks, qty,
                        OrderStatus::REJECTED);
             return 0;
@@ -1154,7 +1179,7 @@ public:
         tally_accept(type, tif);
 
         emit(EventType::ACCEPT, o->id, 0, o->price_ticks, o->total_qty,
-             OrderStatus::OPEN, RejectReason::NONE);
+             OrderStatus::OPEN, RejectReason::NONE, o->client_id);
         push_audit(EventType::ACCEPT, o->id, o->side, o->price_ticks, o->total_qty,
                     OrderStatus::OPEN);
         exposure_on_submit(o->client_id, o->side, o->total_qty);
@@ -1186,7 +1211,7 @@ public:
             o->status = OrderStatus::CANCELLED;
             const std::uint64_t rid = o->id;
             emit(EventType::CANCEL, rid, 0, o->price_ticks, left,
-                 OrderStatus::CANCELLED, RejectReason::NONE);
+                 OrderStatus::CANCELLED, RejectReason::NONE, o->client_id);
             if (o->filled_qty == 0) ++completion_cancelled_unfilled_;
             else                    ++completion_cancelled_partial_;
             free_order(o);
@@ -2006,7 +2031,7 @@ public:
             }
             o->status = OrderStatus::EXPIRED;
             emit(EventType::EXPIRE, oid, 0, price, left,
-                 OrderStatus::EXPIRED, RejectReason::NONE);
+                 OrderStatus::EXPIRED, RejectReason::NONE, o->client_id);
             id_index_.erase(oid);
             if (o->filled_qty == 0) ++completion_expired_unfilled_;
             else                    ++completion_expired_partial_;
@@ -3321,7 +3346,7 @@ private:
                 o->status = OrderStatus::CANCELLED;
                 emit(EventType::CANCEL, o->id, 0, o->price_ticks,
                      o->remaining_qty(), OrderStatus::CANCELLED,
-                     RejectReason::NONE);
+                     RejectReason::NONE, o->client_id);
                 id_index_.erase(o->id);
                 oco_on_complete(o->id);
                 bracket_specs_.erase(o->id);
