@@ -5496,8 +5496,16 @@ public:
         for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
             if (!slot_used_[i]) {
                 slot_used_[i] = true;
-                std::strncpy(symbols_[i], sym, 8);
-                symbols_[i][8] = '\0';
+                // memcpy zamiast strncpy — gcc -Wstringop-truncation strzela
+                // gdy src może mieć 8 znaków bez NUL (load_snapshot podaje
+                // taki bufor). Długość przez memchr, ogon zerowany.
+                std::memset(symbols_[i], 0, 9);
+                const void* nul = std::memchr(sym, '\0', 8);
+                const std::size_t n = nul
+                    ? static_cast<std::size_t>(
+                          static_cast<const char*>(nul) - sym)
+                    : 8;
+                std::memcpy(symbols_[i], sym, n);
                 ++active_count_;
                 return true;
             }
@@ -5738,10 +5746,10 @@ public:
                 if (bid_i > ask_j) {
                     // Arb: kupić na j @ ask_j, sprzedać na i @ bid_i
                     ArbOpportunity& o = out[found++];
-                    std::strncpy(o.long_symbol,  symbols_[j], 8);
-                    o.long_symbol[8] = '\0';
-                    std::strncpy(o.short_symbol, symbols_[i], 8);
-                    o.short_symbol[8] = '\0';
+                    // symbols_ jest zero-padded do 9 B (register_symbol) —
+                    // memcpy 9 kopiuje też NUL, bez strncpy-truncation warninga
+                    std::memcpy(o.long_symbol,  symbols_[j], 9);
+                    std::memcpy(o.short_symbol, symbols_[i], 9);
                     o.buy_price_ticks  = ask_j;
                     o.sell_price_ticks = bid_i;
                     o.spread_ticks     = bid_i - ask_j;
