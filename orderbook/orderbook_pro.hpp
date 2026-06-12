@@ -1079,7 +1079,10 @@ public:
         if (luld_enabled_ && (price_ticks < luld_low_ticks_ ||
                                 price_ticks > luld_high_ticks_)) {
             ++luld_breaches_;
-            if (luld_auto_halt_) halt("LULD_BREACH");
+            // halt_to_auction: LULD-style pauza (order entry trwa, match
+            // czeka na reopen cross); auto_halt: hard halt (submity padają)
+            if (luld_halt_to_auction_)   halt_for_auction();
+            else if (luld_auto_halt_)    halt("LULD_BREACH");
             return reject(RejectReason::LULD_BAND_BREACH);
         }
 
@@ -2739,6 +2742,10 @@ private:
     bool                      halted_ = false;
     char                      halt_reason_[32]{};
 
+    // Halt z reopen przez aukcję (pauza — order entry trwa, match czeka)
+    bool                      halt_reopen_pending_  = false;
+    std::uint64_t             halt_auction_reopens_ = 0;
+
     // Audit log — opt-in chronological record wszystkich book mutations.
     // Używane do replay'u, forensics, compliance review (SEC 17a-4).
 public:
@@ -2762,7 +2769,8 @@ private:
     bool                      luld_enabled_ = false;
     std::int32_t              luld_low_ticks_  = 0;
     std::int32_t              luld_high_ticks_ = 0;
-    bool                      luld_auto_halt_  = false;   // true → breach halt'uje
+    bool                      luld_auto_halt_  = false;   // true → breach halt'uje (hard)
+    bool                      luld_halt_to_auction_ = false; // breach → pauza z reopen cross
     std::uint64_t             luld_breaches_   = 0;
 
     void push_audit(EventType ev, std::uint64_t order_id, Side side,
@@ -2793,6 +2801,35 @@ public:
     }
     void disable_luld() noexcept { luld_enabled_ = false; }
     bool luld_enabled() const noexcept { return luld_enabled_; }
+
+    // ====================================================================
+    // Trading halt z reopen przez aukcję (LULD-style pause/resume)
+    // ====================================================================
+    //
+    // Hard halt (halt()) odrzuca submity. Realny LULD halt działa inaczej:
+    // handel staje, ale order entry TRWA — zlecenia kolejkują się do
+    // reopening cross, który robi price discovery po pauzie.
+    //   halt_for_auction()     — pauza (auction mode, bez halted_)
+    //   resume_with_auction()  — reopen cross + powrót do continuous
+    // set_luld_halt_to_auction(true) podpina pauzę pod LULD breach
+    // (ma pierwszeństwo przed hard auto_halt).
+    void halt_for_auction() noexcept {
+        in_auction_mode_ = true;
+        halt_reopen_pending_ = true;
+    }
+    AuctionResult resume_with_auction() noexcept {
+        in_auction_mode_ = false;
+        halt_reopen_pending_ = false;
+        ++halt_auction_reopens_;
+        return run_auction();
+    }
+    bool halt_reopen_pending() const noexcept { return halt_reopen_pending_; }
+    std::uint64_t halt_auction_reopens() const noexcept {
+        return halt_auction_reopens_;
+    }
+    void set_luld_halt_to_auction(bool on) noexcept {
+        luld_halt_to_auction_ = on;
+    }
     std::int32_t luld_low()  const noexcept { return luld_low_ticks_; }
     std::int32_t luld_high() const noexcept { return luld_high_ticks_; }
     std::uint64_t luld_breaches() const noexcept { return luld_breaches_; }

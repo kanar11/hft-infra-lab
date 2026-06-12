@@ -3444,6 +3444,47 @@ void test_session_closed_rejects_submits() {
     ASSERT(b.cancel(resting),                        "closed_cancel_ok");
 }
 
+// ──────────────────────────────────────────────
+// Halt z reopen przez aukcję (#64)
+// ──────────────────────────────────────────────
+
+void test_halt_for_auction_queues_and_reopens() {
+    Book b;
+    b.halt_for_auction();
+    ASSERT(b.halt_reopen_pending(),                  "pause_pending");
+    b.submit(Side::BUY,  10005, 40);
+    b.submit(Side::SELL, 10005, 40);   // crossing — ale pauza → queue
+    ASSERT(b.stats().total_fills == 0,               "pause_no_match");
+    auto r = b.resume_with_auction();
+    ASSERT(r.executed && r.matched_qty == 40,        "reopen_cross_40");
+    ASSERT(!b.halt_reopen_pending(),                 "pause_cleared");
+    ASSERT(b.halt_auction_reopens() == 1,            "reopen_count_1");
+    // Continuous znów działa
+    b.submit(Side::SELL, 10000, 5);
+    b.submit(Side::BUY,  10000, 5);
+    ASSERT(b.stats().total_fills >= 2,               "continuous_after_reopen");
+    ASSERT(b.audit_book_integrity() == 0,             "reopen_audit_0");
+}
+
+void test_luld_breach_triggers_auction_pause() {
+    Book b;
+    b.submit(Side::BUY,  10000, 50);
+    b.submit(Side::SELL, 10010, 50);
+    b.set_luld_bands(9500, 10500, /*auto_halt=*/false);
+    b.set_luld_halt_to_auction(true);
+    RejectReason rr = RejectReason::NONE;
+    ASSERT(b.submit(Side::BUY, 11000, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 0, 0, &rr) == 0, "luld_breach_rej");
+    ASSERT(rr == RejectReason::LULD_BAND_BREACH,     "luld_reason");
+    ASSERT(b.halt_reopen_pending(),                  "luld_paused");
+    // Order entry trwa: in-band crossing order czeka zamiast matchować
+    b.submit(Side::BUY, 10010, 30);
+    ASSERT(b.stats().total_fills == 0,               "luld_pause_no_match");
+    auto r = b.resume_with_auction();
+    ASSERT(r.executed && r.matched_qty == 30,        "luld_reopen_30");
+    ASSERT(b.audit_book_integrity() == 0,             "luld_reopen_audit_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4044,6 +4085,8 @@ int main(int argc, char* argv[]) {
     test_cluster_snapshot_bad_magic_rejected();
     test_session_full_day_lifecycle();
     test_session_closed_rejects_submits();
+    test_halt_for_auction_queues_and_reopens();
+    test_luld_breach_triggers_auction_pause();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
