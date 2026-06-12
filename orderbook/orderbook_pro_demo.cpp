@@ -3579,6 +3579,34 @@ void test_modify_filled_resubmit_cancels_partner() {
     ASSERT(b.audit_book_integrity() == 0,         "moco2_audit_0");
 }
 
+// ──────────────────────────────────────────────
+// Bracket przeżywa modify (#69)
+// ──────────────────────────────────────────────
+
+void test_modify_preserves_bracket_spec() {
+    Book b;
+    auto e = b.submit_bracket(Side::BUY, 10000, 100, /*tp*/10200, /*sl*/9900);
+    ASSERT(b.pending_bracket_specs() == 1,        "mbr_spec_1");
+    (void)b.modify(e, 9995, 100);                  // price change — stary kod disarmował
+    ASSERT(b.pending_bracket_specs() == 1,        "mbr_spec_survives");
+    b.submit(Side::SELL, 9995, 100);               // fill entry
+    ASSERT(b.brackets_armed() == 1,               "mbr_armed");
+    ASSERT(b.stop_orders_count() == 1,            "mbr_sl_pending");
+    ASSERT(b.total_volume_at_price(10200) == 100, "mbr_tp_100");
+}
+
+void test_modify_bracket_qty_down_scales_exits() {
+    Book b;
+    auto e = b.submit_bracket(Side::BUY, 10000, 100, 10200, 9900);
+    (void)b.modify(e, 10000, 60);                  // in-place qty down
+    b.submit(Side::SELL, 10000, 60);               // full fill entry (60)
+    // Exity hedgują finalną qty 60, nie oryginalne 100
+    ASSERT(b.brackets_armed() == 1,               "mbr2_armed");
+    ASSERT(b.total_volume_at_price(10200) == 60,  "mbr2_tp_60");
+    ASSERT(b.stop_orders_count() == 1,            "mbr2_sl_1");
+    ASSERT(b.audit_book_integrity() == 0,          "mbr2_audit_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4185,6 +4213,8 @@ int main(int argc, char* argv[]) {
     test_drop_copy_sees_replace_stop_auction();
     test_modify_preserves_oco_link();
     test_modify_filled_resubmit_cancels_partner();
+    test_modify_preserves_bracket_spec();
+    test_modify_bracket_qty_down_scales_exits();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

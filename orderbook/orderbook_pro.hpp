@@ -1303,6 +1303,11 @@ public:
             o->displayed_qty -= vis_delta;
             levels_[o->price_ticks].total_qty    -= vis_delta;
             levels_[o->price_ticks].total_hidden -= (delta - vis_delta);
+            // Bracket entry: exity mają hedgować finalną (zmniejszoną) qty
+            {
+                const auto bit = bracket_specs_.find(order_id);
+                if (bit != bracket_specs_.end()) bit->second.qty = new_qty;
+            }
             ++stats_.total_orders_replaced;
             ++stats_.priority_preserved_mods;
             emit(EventType::REPLACE, o->id, 0, o->price_ticks, new_qty,
@@ -1321,6 +1326,18 @@ public:
         // partnera; restore po udanym resubmicie.
         const std::uint64_t oco_partner = oco_partner_of(order_id);
         if (oco_partner != 0) (void)unlink_oco(order_id);
+        // Bracket spec też przeżywa cancel-replace; qty spec idzie za nową
+        // qty (exity mają hedgować finalną pozycję entry)
+        BracketSpec saved_bspec{};
+        bool had_bracket = false;
+        {
+            const auto bit = bracket_specs_.find(order_id);
+            if (bit != bracket_specs_.end()) {
+                had_bracket = true;
+                saved_bspec = bit->second;
+                saved_bspec.qty = new_qty;
+            }
+        }
         cancel_internal(o, /*emit_event=*/false);
         ++stats_.total_orders_replaced;
         ++stats_.priority_lost_mods;
@@ -1338,8 +1355,17 @@ public:
                 process_oco_pending();
             }
         }
-        // nid == 0 (reject resubmitu): order przepadł, para rozwiązana —
-        // partner zostaje samodzielnym orderem
+        if (had_bracket && nid != 0) {
+            if (id_index_.find(nid) != id_index_.end()) {
+                bracket_specs_[nid] = saved_bspec;
+            } else {
+                // Entry wypełniony w trakcie resubmitu → armuj exity teraz
+                bracket_pending_.push_back(saved_bspec);
+                process_bracket_pending();
+            }
+        }
+        // nid == 0 (reject resubmitu): order przepadł, para OCO rozwiązana,
+        // bracket disarmowany — partner/spec nie wracają
         return nid;
     }
 
