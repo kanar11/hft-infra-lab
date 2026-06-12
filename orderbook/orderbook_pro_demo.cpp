@@ -3607,6 +3607,27 @@ void test_modify_bracket_qty_down_scales_exits() {
     ASSERT(b.audit_book_integrity() == 0,          "mbr2_audit_0");
 }
 
+// ──────────────────────────────────────────────
+// Histogram głębokości kolejek (#70)
+// ──────────────────────────────────────────────
+
+void test_queue_depth_histogram() {
+    Book b;
+    b.submit(Side::BUY, 9999,  10);    // 1 order  → bin 0
+    b.submit(Side::BUY, 10000, 10);    // 3 ordery → bin 2
+    b.submit(Side::BUY, 10000, 10);
+    b.submit(Side::BUY, 10000, 10);
+    b.submit(Side::SELL, 10010, 10);   // 2 ordery → bin 1
+    b.submit(Side::SELL, 10010, 10);
+    std::uint32_t bins[6];
+    const auto active = b.queue_depth_histogram(bins);
+    ASSERT(active == 3,                "qdh_active_3");
+    ASSERT(bins[0] == 1,               "qdh_bin0_1");
+    ASSERT(bins[1] == 1,               "qdh_bin1_1");
+    ASSERT(bins[2] == 1,               "qdh_bin2_1");
+    ASSERT(bins[3] == 0 && bins[4] == 0 && bins[5] == 0, "qdh_rest_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4215,6 +4236,7 @@ int main(int argc, char* argv[]) {
     test_modify_filled_resubmit_cancels_partner();
     test_modify_preserves_bracket_spec();
     test_modify_bracket_qty_down_scales_exits();
+    test_queue_depth_histogram();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

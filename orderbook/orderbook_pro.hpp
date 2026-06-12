@@ -4029,6 +4029,29 @@ public:
         return n;
     }
 
+    // Histogram głębokości kolejek: rozkład order_count po aktywnych
+    // levelach. Biny: 1, 2, 3-4, 5-8, 9-16, 17+. Dużo masy w binie 0 =
+    // rozproszona księga (cienkie levele); masa wysoko = crowded queues
+    // (konkurencja o FIFO priority). Zwraca liczbę aktywnych leveli.
+    std::int32_t queue_depth_histogram(std::uint32_t out_bins[6]) const noexcept {
+        for (int i = 0; i < 6; ++i) out_bins[i] = 0;
+        std::int32_t active = 0;
+        for (std::int32_t p = 0; p < LEVELS; ++p) {
+            const std::int32_t c = levels_[p].order_count;
+            if (c <= 0) continue;
+            ++active;
+            std::size_t bin;
+            if      (c == 1)  bin = 0;
+            else if (c == 2)  bin = 1;
+            else if (c <= 4)  bin = 2;
+            else if (c <= 8)  bin = 3;
+            else if (c <= 16) bin = 4;
+            else              bin = 5;
+            ++out_bins[bin];
+        }
+        return active;
+    }
+
     // ====================================================================
     // Mid-price ring buffer (last 16) + momentum signal
     // ====================================================================
