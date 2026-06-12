@@ -73,7 +73,16 @@ FIFO przy oversubscription, pełny incremental accounting depth/hidden.
 qty + imbalance per side BEZ egzekucji; `run_closing_auction()` — pełny
 closing cross z injection MOC/LOC; `try_run_auction(threshold)` — volatility
 extension (LSE/Xetra): surplus > próg odracza cross zamiast wykonywać go
-z dużym imbalance.
+z dużym imbalance; wash-trade surveillance flaguje klientów po obu stronach
+crossa.
+
+### Session lifecycle + halt
+Pełny dzień sesyjny: `begin_pre_open()` → `open_market()` (opening cross) →
+continuous → `begin_closing()` → `close_market()` (closing cross + CLOSED,
+submity odrzucane, cancel dozwolony). Dwa modele haltu: hard halt
+(`halt()` — submity padają) i LULD-style pauza (`halt_for_auction()` —
+order entry trwa, `resume_with_auction()` robi reopen cross;
+`set_luld_halt_to_auction(true)` podpina pauzę pod band breach).
 
 ### Compliance / market integrity
 - **LULD** circuit breaker (Limit Up / Limit Down bandy)
@@ -88,6 +97,8 @@ z dużym imbalance.
 - **Kill switch**: `mass_cancel(client_id)` — obejmuje też pending STOPy
 - **Per-account exposure** — open/filled net+gross qty per client_id
 - **Audit log** + **event seq numbers** (gap detect / dedup u konsumenta)
+- **Drop copy** — osobny strumień eventów monitorowanego konta (pełny
+  lifecycle: ACCEPT/REJECT/FILL/REPLACE/CANCEL/EXPIRE, continuous + auction)
 
 ### Analytics (mikrostruktura)
 - **Flow**: VPIN, flow imbalance, Cont-Kukanov OFI, signed-volume EMA,
@@ -144,7 +155,9 @@ b2.load_snapshot(buf.data(), written);   // rebuild + audit-clean + id continuit
 
 Wire format: 4 B magic `"OBPO"` + 4 B version (aktualna: 2) + 8 B count +
 N×packed `OrderRecord` (70 B). Zero alokacji; `next_order_id_` kontynuuje
-za max wczytanym id; iceberg refresh size przeżywa round-trip.
+za max wczytanym id; iceberg refresh size, pending STOPy (wracają do kolejki
+triggera) i PEGi (odzyskują reprice) przeżywają round-trip. `BookCluster`
+ma własny snapshot (magic `"OBCL"`) — multi-symbol recovery jednym buforem.
 
 ### L2 delta protocol
 18-bajtowy wire format (typy A/D/M/T), `enable_delta_queue(true)` + drain —
