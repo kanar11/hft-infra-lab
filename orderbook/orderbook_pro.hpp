@@ -1306,7 +1306,7 @@ public:
             ++stats_.total_orders_replaced;
             ++stats_.priority_preserved_mods;
             emit(EventType::REPLACE, o->id, 0, o->price_ticks, new_qty,
-                 o->status, RejectReason::NONE);
+                 o->status, RejectReason::NONE, o->client_id);
             return o->id;
         }
 
@@ -1663,7 +1663,7 @@ public:
         ++stats_.total_orders_added;
         tally_accept(OrderType::STOP, TimeInForce::DAY);
         emit(EventType::ACCEPT, o->id, 0, trigger_ticks, qty,
-             OrderStatus::NEW, RejectReason::NONE);
+             OrderStatus::NEW, RejectReason::NONE, client_id);
         return o->id;
     }
 
@@ -1851,7 +1851,7 @@ public:
         ++stats_.total_orders_added;
         tally_accept(OrderType::PEG, TimeInForce::DAY);
         emit(EventType::ACCEPT, o->id, 0, initial_price, qty,
-             OrderStatus::OPEN, RejectReason::NONE);
+             OrderStatus::OPEN, RejectReason::NONE, client_id);
         return o->id;
     }
 
@@ -1911,7 +1911,7 @@ public:
         ++stats_.total_orders_added;
         tally_accept(OrderType::PEG, TimeInForce::DAY);
         emit(EventType::ACCEPT, o->id, 0, initial_price, qty,
-             OrderStatus::OPEN, RejectReason::NONE);
+             OrderStatus::OPEN, RejectReason::NONE, client_id);
         return o->id;
     }
 
@@ -2285,7 +2285,8 @@ public:
                     if (o->filled_qty >= o->total_qty) {
                         o->status = OrderStatus::FILLED;
                         emit(EventType::FILL, o->id, 0, best_clearing, take,
-                             OrderStatus::FILLED, RejectReason::NONE);
+                             OrderStatus::FILLED, RejectReason::NONE,
+                             o->client_id);
                         unlink_from_level(o);
                         id_index_.erase(o->id);
                         oco_on_complete(o->id);
@@ -2294,7 +2295,8 @@ public:
                     } else {
                         o->status = OrderStatus::PARTIALLY_FILLED;
                         emit(EventType::FILL, o->id, 0, best_clearing, take,
-                             OrderStatus::PARTIALLY_FILLED, RejectReason::NONE);
+                             OrderStatus::PARTIALLY_FILLED, RejectReason::NONE,
+                             o->client_id);
                     }
                 }
                 o = next;
@@ -2321,7 +2323,8 @@ public:
                     if (o->filled_qty >= o->total_qty) {
                         o->status = OrderStatus::FILLED;
                         emit(EventType::FILL, o->id, 0, best_clearing, take,
-                             OrderStatus::FILLED, RejectReason::NONE);
+                             OrderStatus::FILLED, RejectReason::NONE,
+                             o->client_id);
                         unlink_from_level(o);
                         id_index_.erase(o->id);
                         oco_on_complete(o->id);
@@ -2330,7 +2333,8 @@ public:
                     } else {
                         o->status = OrderStatus::PARTIALLY_FILLED;
                         emit(EventType::FILL, o->id, 0, best_clearing, take,
-                             OrderStatus::PARTIALLY_FILLED, RejectReason::NONE);
+                             OrderStatus::PARTIALLY_FILLED, RejectReason::NONE,
+                             o->client_id);
                     }
                 }
                 o = next;
@@ -2471,7 +2475,7 @@ public:
         moc_queue_.push_back(MocOrder{side, qty, client_id, id});
         ++moc_submitted_;
         emit(EventType::ACCEPT, id, 0, 0, qty, OrderStatus::NEW,
-             RejectReason::NONE);
+             RejectReason::NONE, client_id);
         return id;
     }
     bool cancel_moc(std::uint64_t id) noexcept {
@@ -2575,7 +2579,7 @@ public:
         loc_queue_.push_back(LocOrder{side, price_ticks, qty, client_id, id});
         ++loc_submitted_;
         emit(EventType::ACCEPT, id, 0, price_ticks, qty, OrderStatus::NEW,
-             RejectReason::NONE);
+             RejectReason::NONE, client_id);
         return id;
     }
     bool cancel_loc(std::uint64_t id) noexcept {

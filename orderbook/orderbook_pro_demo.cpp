@@ -3518,6 +3518,33 @@ void test_drop_copy_filters_by_account() {
     ASSERT(cap.n == 5,                              "dc_cancel_reject_seen");
 }
 
+void test_drop_copy_sees_replace_stop_auction() {
+    struct Cap { int n; };
+    static Cap cap;
+    cap = Cap{0};
+    Book b;
+    b.set_drop_copy(7, [](const BookEvent&, void* ctx) {
+        ++static_cast<Cap*>(ctx)->n;
+    }, &cap);
+    auto id = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT,
+                        TimeInForce::DAY, 0, 7);     // ACCEPT → 1
+    (void)b.modify(id, 10000, 60);                    // in-place REPLACE → 2
+    b.submit_stop(Side::SELL, 9900, 0, 10, 0, 7);     // ACCEPT → 3
+    ASSERT(cap.n == 3,                          "dc2_replace_stop_3");
+    // Auction fill klienta 7 też w strumieniu
+    Book c;
+    cap = Cap{0};
+    c.set_drop_copy(7, [](const BookEvent&, void* ctx) {
+        ++static_cast<Cap*>(ctx)->n;
+    }, &cap);
+    c.enter_auction_mode();
+    c.submit(Side::BUY,  10005, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    c.submit(Side::SELL, 10005, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
+    c.exit_auction_mode();
+    (void)c.run_auction();   // ACCEPT(7)=1, FILL(7)=2; eventy "8" pominięte
+    ASSERT(cap.n == 2,                          "dc2_auction_fill_seen");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4121,6 +4148,7 @@ int main(int argc, char* argv[]) {
     test_halt_for_auction_queues_and_reopens();
     test_luld_breach_triggers_auction_pause();
     test_drop_copy_filters_by_account();
+    test_drop_copy_sees_replace_stop_auction();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
