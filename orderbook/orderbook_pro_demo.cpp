@@ -3668,6 +3668,37 @@ void test_trailing_default_ignores_mid() {
     ASSERT(b.stop_orders_count() == 1,          "tdef_pending");
 }
 
+// ──────────────────────────────────────────────
+// GTX — good-til-cross TIF (#72)
+// ──────────────────────────────────────────────
+
+void test_gtx_remainder_cancelled_after_cross() {
+    Book b;
+    b.enter_auction_mode();
+    b.submit(Side::BUY,  10005, 100, OrderType::LIMIT, TimeInForce::GTX);
+    b.submit(Side::SELL, 10005, 60);                  // DAY
+    b.submit(Side::BUY,  9990,  10);                  // DAY — spectator
+    b.exit_auction_mode();
+    auto r = b.run_auction();
+    ASSERT(r.executed && r.matched_qty == 60,    "gtx_cross_60");
+    // GTX resztka 40 skasowana; DAY spectator przeżył
+    ASSERT(b.total_volume_at_price(10005) == 0,  "gtx_remainder_gone");
+    ASSERT(b.total_volume_at_price(9990) == 10,  "gtx_day_survives");
+    ASSERT(b.gtx_cancelled_after_cross() == 1,   "gtx_counter_1");
+    ASSERT(b.audit_book_integrity() == 0,         "gtx_audit_0");
+}
+
+void test_gtx_trades_normally_in_continuous() {
+    Book b;
+    auto id = b.submit(Side::BUY, 10000, 50, OrderType::LIMIT,
+                        TimeInForce::GTX);
+    ASSERT(id != 0,                              "gtx_accepted");
+    ASSERT(b.total_volume_at_price(10000) == 50, "gtx_rests");
+    b.submit(Side::SELL, 10000, 20);             // partial fill — normalnie
+    ASSERT(b.total_volume_at_price(10000) == 30, "gtx_trades_continuous");
+    ASSERT(b.accepts_by_tif(TimeInForce::GTX) == 1, "gtx_tif_tally");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4279,6 +4310,8 @@ int main(int argc, char* argv[]) {
     test_queue_depth_histogram();
     test_trailing_mid_ratchet_without_trades();
     test_trailing_default_ignores_mid();
+    test_gtx_remainder_cancelled_after_cross();
+    test_gtx_trades_normally_in_continuous();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

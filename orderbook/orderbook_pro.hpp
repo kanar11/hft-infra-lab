@@ -93,6 +93,7 @@ enum class TimeInForce : std::uint8_t {
     IOC = 2,   // Immediate-Or-Cancel (redundancja z OrderType::IOC dla wygody)
     FOK = 3,   // Fill-Or-Kill
     GTD = 4,   // Good-Til-Date — expire_ts_ns_ pokazuje kiedy
+    GTX = 5,   // Good-Til-Cross — resztka kasowana po najbliższym crossie aukcyjnym
 };
 
 
@@ -2419,6 +2420,21 @@ public:
 
         refresh_best_bid_from(LEVELS - 1);
         refresh_best_ask_from(0);
+        // GTX (good-til-cross): resztki przeżywające cross nie restują —
+        // cross był ich deadline'em. Collect-then-cancel (unlink w pętli
+        // po levels byłby UB na trawersowanej liście).
+        {
+            std::vector<Order*> gtx_sweep;
+            for (auto& kv : id_index_) {
+                Order* go = kv.second;
+                if (go->tif == TimeInForce::GTX && go->is_active())
+                    gtx_sweep.push_back(go);
+            }
+            for (Order* go : gtx_sweep) {
+                ++gtx_cancelled_after_cross_;
+                cancel_internal(go, /*emit_event=*/true);
+            }
+        }
         process_oco_pending();
         process_bracket_pending();
         ++stats_.total_auctions_executed;
@@ -2449,6 +2465,12 @@ public:
     }
     std::uint64_t auction_extensions_count() const noexcept {
         return auction_extensions_;
+    }
+
+    // GTX (TimeInForce::GTX) — resztki skasowane po crossie aukcyjnym.
+    // Use case: liquidity oferowana tylko do opening/reopen crossu.
+    std::uint64_t gtx_cancelled_after_cross() const noexcept {
+        return gtx_cancelled_after_cross_;
     }
 
     // ====================================================================
@@ -3488,6 +3510,9 @@ private:
     // Faza sesji (lifecycle opt-in; default CONTINUOUS = backward compat)
     SessionPhase session_phase_ = SessionPhase::CONTINUOUS;
 
+    // GTX — resztki skasowane po crossie
+    std::uint64_t gtx_cancelled_after_cross_ = 0;
+
     // Wash-trade surveillance w aukcji (ten sam client po obu stronach crossa)
     std::uint64_t auction_wash_trade_flags_  = 0;   // Σ flagged clients (all crosses)
     std::uint64_t last_auction_wash_clients_ = 0;   // z ostatniego crossu
@@ -3588,7 +3613,7 @@ private:
     // Per-reason rejection counters (RejectReason::* indexed; 13 values)
     std::uint64_t rejections_by_reason_[17]{};
     // Per-TIF acceptance counters (TimeInForce::* indexed; 5 values)
-    std::uint64_t accepts_by_tif_[5]{};
+    std::uint64_t accepts_by_tif_[6]{};
     // Per-OrderType acceptance counters (10 values)
     std::uint64_t accepts_by_type_[10]{};
 
@@ -5064,7 +5089,7 @@ public:
     }
     std::uint64_t accepts_by_tif(TimeInForce tif) const noexcept {
         const auto i = static_cast<std::size_t>(tif);
-        return i < 5 ? accepts_by_tif_[i] : 0;
+        return i < 6 ? accepts_by_tif_[i] : 0;
     }
     std::uint64_t accepts_by_type(OrderType t) const noexcept {
         const auto i = static_cast<std::size_t>(t);
@@ -5099,7 +5124,7 @@ private:
         const auto ti = static_cast<std::size_t>(t);
         const auto fi = static_cast<std::size_t>(tif);
         if (ti < 10) ++accepts_by_type_[ti];
-        if (fi < 5)  ++accepts_by_tif_[fi];
+        if (fi < 6)  ++accepts_by_tif_[fi];
     }
 public:
 
