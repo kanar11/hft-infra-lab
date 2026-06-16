@@ -3699,6 +3699,50 @@ void test_gtx_trades_normally_in_continuous() {
     ASSERT(b.accepts_by_tif(TimeInForce::GTX) == 1, "gtx_tif_tally");
 }
 
+// ──────────────────────────────────────────────
+// Market Maker Protection (#73)
+// ──────────────────────────────────────────────
+
+void test_mmp_full_scenario() {
+    Book b;
+    b.set_mmp(7, 2, 1'000'000'000ULL);
+    for (int i = 0; i < 5; ++i)
+        b.submit(Side::SELL, 10100 + i, 10, OrderType::LIMIT,
+                 TimeInForce::DAY, 0, 7);
+    // Taker BUY 30 @ limit 10102 → sweep 10100/10101/10102 = 3 maker fille
+    b.submit(Side::BUY, 10102, 30);
+    ASSERT(b.mmp_tripped(7),                      "mmp_tripped");
+    ASSERT(b.mmp_trips_total() == 1,              "mmp_trips_1");
+    // Pozostałe quotes (10103, 10104) auto-skasowane
+    ASSERT(b.total_volume_at_price(10103) == 0,   "mmp_remaining_cancelled");
+    ASSERT(b.total_volume_at_price(10104) == 0,   "mmp_remaining2_cancelled");
+    // Nowy quote 7 odrzucony do resetu
+    RejectReason rr = RejectReason::NONE;
+    ASSERT(b.submit(Side::SELL, 10110, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 7, 0, &rr) == 0, "mmp_new_quote_rej");
+    ASSERT(rr == RejectReason::MMP_TRIPPED,       "mmp_reject_reason");
+    // Inne konto handluje normalnie
+    ASSERT(b.submit(Side::SELL, 10110, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 8) != 0,  "mmp_other_acct_ok");
+    // Reset → 7 znów może quote'ować
+    b.mmp_reset(7);
+    ASSERT(!b.mmp_tripped(7),                     "mmp_reset_clears");
+    ASSERT(b.submit(Side::SELL, 10111, 10, OrderType::LIMIT,
+                    TimeInForce::DAY, 0, 7) != 0,  "mmp_after_reset_ok");
+    ASSERT(b.audit_book_integrity() == 0,          "mmp_audit_0");
+}
+
+void test_mmp_under_threshold_no_trip() {
+    Book b;
+    b.set_mmp(7, 5, 1'000'000'000ULL);   // wysoki próg
+    for (int i = 0; i < 3; ++i)
+        b.submit(Side::SELL, 10100 + i, 10, OrderType::LIMIT,
+                 TimeInForce::DAY, 0, 7);
+    b.submit(Side::BUY, 10102, 30);       // 3 fille < 5
+    ASSERT(!b.mmp_tripped(7),                     "mmp_no_trip_under");
+    ASSERT(b.mmp_trips_total() == 0,              "mmp_trips_0");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4312,6 +4356,8 @@ int main(int argc, char* argv[]) {
     test_trailing_default_ignores_mid();
     test_gtx_remainder_cancelled_after_cross();
     test_gtx_trades_normally_in_continuous();
+    test_mmp_full_scenario();
+    test_mmp_under_threshold_no_trip();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

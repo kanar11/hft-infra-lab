@@ -151,6 +151,7 @@ enum class RejectReason : std::uint8_t {
     REDUCE_ONLY_NO_POSITION = 14, // reduce-only bez pozycji do zredukowania
     RATE_LIMITED          = 15,  // konto przekroczyło token bucket (msg rate)
     MARKET_CLOSED         = 16,  // sesja w fazie CLOSED — submity odrzucane
+    MMP_TRIPPED           = 17,  // market maker protection aktywna — quotes blokowane do resetu
 };
 
 
@@ -834,6 +835,7 @@ private:
             exposure_on_fill(taker->client_id, taker->side, exec_qty);
             account_vwap_on_fill(m->client_id, m->price_ticks, exec_qty);
             account_vwap_on_fill(taker->client_id, m->price_ticks, exec_qty);
+            mmp_on_maker_fill(m->client_id);
             // Implementation shortfall (per fill, signed by side).
             // BUY: cost > 0 jeśli fill_px > decision_mid; SELL: cost > 0 jeśli fill_px < decision_mid.
             if (taker->decision_mid_ticks > 0) {
@@ -1101,6 +1103,14 @@ public:
         if (rate_limiting_enabled_ && !in_internal_submit_ && client_id != 0 &&
             !consume_rate_token(client_id))
                                        return reject(RejectReason::RATE_LIMITED);
+        // MMP — gdy protekcja konta trip'nęła, nowe quotes są blokowane do
+        // jawnego mmp_reset (MM musi potwierdzić, że odświeżył wyceny).
+        // Internalne resubmity engine omijają (dotyczą starych orderów).
+        if (mmp_enabled_ && !in_internal_submit_ && client_id != 0) {
+            const auto it = mmp_.find(client_id);
+            if (it != mmp_.end() && it->second.tripped)
+                                       return reject(RejectReason::MMP_TRIPPED);
+        }
         // LULD check — quote poza band'em → REJECT (+opt-in auto-halt)
         if (luld_enabled_ && (price_ticks < luld_low_ticks_ ||
                                 price_ticks > luld_high_ticks_)) {
@@ -1194,6 +1204,7 @@ public:
             match_against(o);
             process_oco_pending();
             process_bracket_pending();
+            process_mmp_pending();
         }
 
         // Po matchu:
@@ -2535,6 +2546,37 @@ public:
     }
 
     // ====================================================================
+    // Market Maker Protection (MMP)
+    // ====================================================================
+    //
+    // Klasyka rynków opcyjnych (CBOE/Eurex MMP): gdy maker dostanie więcej
+    // niż max_fills fillów w oknie window_ns, wszystkie jego quotes są
+    // auto-kasowane (mass_cancel), a nowe quotes blokowane (MMP_TRIPPED)
+    // aż do jawnego mmp_reset. Chroni MM przed sweep'em stale quotes podczas
+    // gwałtownego ruchu, zanim zdąży je odświeżyć/wycofać.
+    //   • Liczone TYLKO fille gdzie konto jest makerem (passive side).
+    //   • Trip robi deferred mass_cancel (po pętli match — bez dangling).
+    void set_mmp(std::uint64_t client_id, std::uint32_t max_fills,
+                  std::uint64_t window_ns) noexcept {
+        if (client_id == 0 || max_fills == 0 || window_ns == 0) return;
+        mmp_[client_id] = MmpConfig{window_ns, max_fills, 0,
+                                     mono_ns_now(), false};
+        mmp_enabled_ = true;
+    }
+    void mmp_reset(std::uint64_t client_id) noexcept {
+        auto it = mmp_.find(client_id);
+        if (it == mmp_.end()) return;
+        it->second.tripped         = false;
+        it->second.fills_in_window = 0;
+        it->second.window_start_ns = mono_ns_now();
+    }
+    bool mmp_tripped(std::uint64_t client_id) const noexcept {
+        const auto it = mmp_.find(client_id);
+        return it != mmp_.end() && it->second.tripped;
+    }
+    std::uint64_t mmp_trips_total() const noexcept { return mmp_trips_total_; }
+
+    // ====================================================================
     // Market-On-Close (MOC)
     // ====================================================================
     //
@@ -3529,6 +3571,47 @@ private:
     bool          in_internal_submit_    = false;   // bypass dla resubmitów engine
     std::uint64_t rate_limited_rejects_  = 0;
 
+    // Market Maker Protection — auto-mass-cancel quotes po N fillach makera
+    // w oknie T (klasyka rynków opcyjnych: ochrona przed sweep stale quotes)
+    struct MmpConfig {
+        std::uint64_t window_ns;
+        std::uint32_t max_fills;
+        std::uint32_t fills_in_window;
+        std::uint64_t window_start_ns;
+        bool          tripped;
+    };
+    std::unordered_map<std::uint64_t, MmpConfig> mmp_;
+    std::vector<std::uint64_t> mmp_pending_trips_;   // deferred — mass_cancel
+                                                      // nie może lecieć w match loop
+    std::uint64_t mmp_trips_total_ = 0;
+    bool          mmp_enabled_     = false;
+
+    void mmp_on_maker_fill(std::uint64_t cid) noexcept {
+        if (!mmp_enabled_ || cid == 0) return;
+        auto it = mmp_.find(cid);
+        if (it == mmp_.end()) return;
+        MmpConfig& m = it->second;
+        if (m.tripped) return;
+        const std::uint64_t now = mono_ns_now();
+        if (now - m.window_start_ns > m.window_ns) {
+            m.window_start_ns = now;
+            m.fills_in_window = 0;
+        }
+        ++m.fills_in_window;
+        if (m.fills_in_window > m.max_fills) {
+            m.tripped = true;
+            mmp_pending_trips_.push_back(cid);
+        }
+    }
+    void process_mmp_pending() noexcept {
+        while (!mmp_pending_trips_.empty()) {
+            const std::uint64_t cid = mmp_pending_trips_.back();
+            mmp_pending_trips_.pop_back();
+            ++mmp_trips_total_;
+            (void)mass_cancel(cid);   // kasuje też pending stopy konta
+        }
+    }
+
     bool consume_rate_token(std::uint64_t cid) noexcept {
         auto it = rate_buckets_.find(cid);
         if (it == rate_buckets_.end()) return true;   // konto bez limitu
@@ -3611,7 +3694,7 @@ private:
     std::uint64_t iceberg_refresh_count_ = 0;
 
     // Per-reason rejection counters (RejectReason::* indexed; 13 values)
-    std::uint64_t rejections_by_reason_[17]{};
+    std::uint64_t rejections_by_reason_[18]{};
     // Per-TIF acceptance counters (TimeInForce::* indexed; 5 values)
     std::uint64_t accepts_by_tif_[6]{};
     // Per-OrderType acceptance counters (10 values)
@@ -5085,7 +5168,7 @@ public:
     // i jakie typy/TIF preferują traderzy. Acceptance ratio = added / submitted.
     std::uint64_t rejections_by_reason(RejectReason r) const noexcept {
         const auto i = static_cast<std::size_t>(r);
-        return i < 17 ? rejections_by_reason_[i] : 0;
+        return i < 18 ? rejections_by_reason_[i] : 0;
     }
     std::uint64_t accepts_by_tif(TimeInForce tif) const noexcept {
         const auto i = static_cast<std::size_t>(tif);
@@ -5106,7 +5189,7 @@ public:
     RejectReason most_common_reject_reason() const noexcept {
         std::size_t best_i = 0;
         std::uint64_t best_v = 0;
-        for (std::size_t i = 1; i < 17; ++i) {  // skip NONE=0
+        for (std::size_t i = 1; i < 18; ++i) {  // skip NONE=0
             if (rejections_by_reason_[i] > best_v) {
                 best_v = rejections_by_reason_[i];
                 best_i = i;
@@ -5118,7 +5201,7 @@ public:
 private:
     void tally_rejection(RejectReason r) noexcept {
         const auto i = static_cast<std::size_t>(r);
-        if (i < 17) ++rejections_by_reason_[i];
+        if (i < 18) ++rejections_by_reason_[i];
     }
     void tally_accept(OrderType t, TimeInForce tif) noexcept {
         const auto ti = static_cast<std::size_t>(t);
