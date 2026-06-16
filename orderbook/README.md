@@ -189,7 +189,8 @@ make build
 |------|---------|
 | `orderbook.cpp` | v1/v2 matching engine demo |
 | `orderbook_flat.hpp` + `orderbook_flat.cpp` | flat-array O(1) variant + sanity + bench |
-| `orderbook_pro.hpp` | **FullOrderBook** header-only L3 production-grade |
-| `orderbook_pro_demo.cpp` | FullOrderBook — 300+ testów (typy zleceń, STP, OCO/bracket/trailing, auction, snapshot, integrity audit, analytics) + benchmark z percentylami |
+| `orderbook_pro_types.hpp` | model danych — stałe, enumy, Order/PriceLevel/Trade/BookStats/BookEvent (samodzielny, bez silnika) |
+| `orderbook_pro.hpp` | **FullOrderBook** + BookCluster — header-only L3 production-grade (includuje `_types`) |
+| `orderbook_pro_demo.cpp` | FullOrderBook — 370+ testów (typy zleceń, STP, OCO/bracket/trailing, auction, snapshot, integrity audit, analytics) + benchmark z percentylami |
 | `benchmark_orderbook.cpp` | Throughput benchmark across order counts |
 | `latency_histogram.cpp` | Per-order latency percentiles (HFT-relevant) |
