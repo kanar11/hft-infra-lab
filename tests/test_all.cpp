@@ -1357,6 +1357,47 @@ void test_integration() {
 }
 
 
+// Router #81 — EWMA zmierzonej latencji + partiale (unfilled_qty).
+void test_router_ewma_partial() {
+    SECTION("Router EWMA + Partials (#81)");
+
+    // --- EWMA: A statycznie szybsze, ale w realu zwalnia → re-route na B ---
+    {
+        SmartOrderRouter r(RoutingStrategy::LOWEST_LATENCY);
+        r.add_venue(Venue("A", 100, 0.0));   // static mean 100ns
+        r.add_venue(Venue("B", 200, 0.0));   // static mean 200ns
+        r.update_quote("A", 10.0, 11.0, 100, 100);
+        r.update_quote("B", 10.0, 11.0, 100, 100);
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "A") == 0, "ewma_static_picks_A");
+        for (int i = 0; i < 5; ++i) { r.record_latency("A", 900); r.record_latency("B", 150); }
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "ewma_reroutes_to_B");
+    }
+
+    // --- Partial single-venue: zlecenie > top-of-book size ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("V", 100, 0.0));
+        r.update_quote("V", 10.0, 11.0, 50, 50);   // tylko 50 dostępne
+        const RouteDecision d = r.route_order("BUY", 200);
+        ASSERT(d.valid && d.quantity == 50, "partial_filled_50");
+        ASSERT(d.unfilled_qty == 150, "partial_unfilled_150");
+    }
+
+    // --- Split shortfall: Σpłynność < zlecenie ---
+    {
+        SmartOrderRouter r(RoutingStrategy::SPLIT, 100);
+        r.add_venue(Venue("X", 100, 0.0));
+        r.add_venue(Venue("Y", 100, 0.0));
+        r.update_quote("X", 10.0, 11.0, 100, 100);
+        r.update_quote("Y", 10.0, 11.0, 80, 80);
+        const RouteDecision d = r.route_order("BUY", 500);
+        ASSERT(d.quantity == 180, "split_filled_180");
+        ASSERT(d.unfilled_qty == 320, "split_unfilled_320");
+        ASSERT(d.num_venues == 2, "split_two_venues");
+    }
+}
+
+
 // Backtester #80 — rdzeń metryk wynikowych (Sharpe/DD/hit-rate/fill-rate).
 void test_backtester() {
     SECTION("Backtester (#80)");
@@ -1692,6 +1733,7 @@ int main() {
     test_risk_price_band();
     test_backtester();
     test_router();
+    test_router_ewma_partial();
     test_logger();
     test_strategy();
     test_strategy_edge_cases();

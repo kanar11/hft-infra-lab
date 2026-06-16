@@ -54,7 +54,7 @@ enum class RoutingStrategy : uint8_t {
 // i decyduje o jakości egzekucji ważniejszej niż average case.
 struct Venue {
     char    name[16];
-    int64_t latency_ns;          // średnia (mean lub p50)
+    int64_t latency_ns;          // statyczna średnia (seed z configu / SLA venue)
     int64_t latency_p99_ns;      // p99 — 0 = nie ustawione, wtedy LOWEST_LATENCY bierze mean
     double  fee_per_share;       // dodatnia = taker fee, ujemna = maker rebate
     double  best_bid;
@@ -62,24 +62,33 @@ struct Venue {
     int32_t bid_size;
     int32_t ask_size;
     bool    is_active;
+    // EWMA zmierzonej latencji round-trip (0 = brak próbek). Aktualizowana
+    // przez record_latency() z realnych egzekucji — routing adaptuje się do
+    // bieżących warunków zamiast ufać statycznym liczbom z configu.
+    double  ewma_latency_ns;
+    uint32_t latency_samples;
 
     Venue() noexcept
         : latency_ns(0), latency_p99_ns(0), fee_per_share(0),
-          best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true) {
+          best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true),
+          ewma_latency_ns(0.0), latency_samples(0) {
         name[0] = '\0';
     }
 
     Venue(const char* n, int64_t lat, double fee) noexcept
         : latency_ns(lat), latency_p99_ns(0), fee_per_share(fee),
-          best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true) {
+          best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true),
+          ewma_latency_ns(0.0), latency_samples(0) {
         std::strncpy(name, n, 15);
         name[15] = '\0';
     }
 
     // selection_latency_ns: która latencja używana przez LOWEST_LATENCY.
-    // p99 gdy ustawione (>0), inaczej mean. To jest STANDARD branżowy —
-    // decyzje pod hot path bierze się po ogonie rozkładu, nie po średniej.
+    // Priorytet: zmierzona EWMA (gdy są próbki) > p99 (gdy ustawione) > mean.
+    // Realny SOR woli OBSERWOWANĄ latencję nad deklarowaną — venue zwalnia pod
+    // obciążeniem, a my reagujemy w kolejnych decyzjach.
     int64_t selection_latency_ns() const noexcept {
+        if (latency_samples > 0) return static_cast<int64_t>(ewma_latency_ns);
         return latency_p99_ns > 0 ? latency_p99_ns : latency_ns;
     }
 };
@@ -93,14 +102,15 @@ struct RouteDecision {
     double  price;              // średnia cena egzekucji (sam quote, bez opłat)
     double  effective_price;    // all-in per share (quote ± opłata)
     double  total_fee;          // łączna opłata za całe zlecenie (może być ujemna = rebate)
-    int32_t quantity;           // ile akcji faktycznie zaroutowano
+    int32_t quantity;           // ile akcji faktycznie zaroutowano (filled)
+    int32_t unfilled_qty;       // shortfall: brak płynności na pokrycie reszty
     int32_t num_venues;         // ile venue użyto (SPLIT)
     int64_t latency_ns;         // czas decyzji routera (nie venue round-trip!)
     bool    valid;              // false = brak trasy (jak None w Pythonie)
 
     RouteDecision() noexcept
         : price(0), effective_price(0), total_fee(0), quantity(0),
-          num_venues(0), latency_ns(0), valid(false) {
+          unfilled_qty(0), num_venues(0), latency_ns(0), valid(false) {
         venue[0] = '\0';
     }
 };
@@ -140,6 +150,24 @@ public:
 
     void add_venue(const Venue& v) noexcept {
         if (venue_count_ < MAX_VENUES) venues_[venue_count_++] = v;
+    }
+
+    // record_latency: zasil EWMA zmierzoną latencją round-trip (ns) z realnej
+    // egzekucji. alpha=0.2 — świeże próbki ważą 20%, wygładza szum ale reaguje
+    // na trend. Po pierwszej próbce EWMA = ona; potem wykładnicze wygładzanie.
+    void record_latency(const char* venue_name, int64_t observed_ns) noexcept {
+        if (observed_ns <= 0) return;
+        constexpr double alpha = 0.2;
+        for (int i = 0; i < venue_count_; ++i) {
+            if (std::strcmp(venues_[i].name, venue_name) == 0) {
+                Venue& v = venues_[i];
+                v.ewma_latency_ns = (v.latency_samples == 0)
+                    ? static_cast<double>(observed_ns)
+                    : alpha * static_cast<double>(observed_ns) + (1.0 - alpha) * v.ewma_latency_ns;
+                ++v.latency_samples;
+                return;
+            }
+        }
     }
 
     // update_quote: aktualizuj top-of-book venue (na każdy market data tick).
@@ -198,14 +226,21 @@ public:
             }
         }
 
+        // Respektuj dostępną płynność na wybranym venue — duże zlecenie może
+        // przekroczyć top-of-book size. Reszta to shortfall (caller re-routuje
+        // albo czeka). Realny SOR nie obiecuje fillu ponad widoczny rozmiar.
+        const int32_t available = is_buy ? best->ask_size : best->bid_size;
+        const int32_t filled    = std::min(quantity, available);
+
         RouteDecision d;
         d.valid           = true;
         std::strncpy(d.venue, best->name, 15);
         d.venue[15]       = '\0';
         d.price           = is_buy ? best->best_ask : best->best_bid;
         d.effective_price = effective_price(*best, is_buy);
-        d.total_fee       = best->fee_per_share * quantity;
-        d.quantity        = quantity;
+        d.total_fee       = best->fee_per_share * filled;
+        d.quantity        = filled;
+        d.unfilled_qty    = quantity - filled;
         d.num_venues      = 1;
         d.latency_ns      = now_ns() - t0;
 
@@ -278,6 +313,7 @@ private:
                                    : (price_sum - fee_sum) / filled;
         d.total_fee       = fee_sum;
         d.quantity        = filled;
+        d.unfilled_qty    = quantity - filled;   // shortfall gdy Σpłynność < zlecenie
         d.num_venues      = venues_used;
         d.latency_ns      = now_ns() - t0;
 
