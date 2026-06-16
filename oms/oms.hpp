@@ -249,23 +249,7 @@ public:
         // automatycznie zachowany.
         const int32_t signed_fill = signed_qty(order.side, fill_qty);
         pos.pending_qty -= signed_fill;
-
-        if (order.side == Side::BUY) {
-            // Kupno: zwiększ koszt całkowity i ilość. Realizowany P&L
-            // pojawi się dopiero przy SELL.
-            pos.total_cost += static_cast<int64_t>(fill_qty) * fill_price;
-            pos.net_qty    += static_cast<int32_t>(fill_qty);
-        } else {
-            // Sprzedaż long'a: realize P&L = (sell - avg_cost) * qty.
-            // Dla short'a (net_qty ≤ 0) nie liczymy P&L tutaj — to wymaga
-            // znanego avg_short_price, którego dla uproszczenia nie trzymamy.
-            if (pos.net_qty > 0) {
-                pos.realized_pnl += static_cast<int64_t>(fill_qty) * (fill_price - pos.avg_price);
-                pos.total_cost   -= static_cast<int64_t>(fill_qty) * pos.avg_price;
-            }
-            pos.net_qty -= static_cast<int32_t>(fill_qty);
-        }
-        recompute_avg_price(pos);
+        apply_fill_to_position(pos, signed_fill, static_cast<int64_t>(fill_qty), fill_price);
         return fill_qty;  // ile faktycznie zaaplikowano (po clampie)
     }
 
@@ -293,6 +277,61 @@ public:
             pos_it->second.pending_qty -= signed_remaining;
         }
         order.status = OrderStatus::CANCELLED;
+    }
+
+    // replace_order: amend (cancel/replace) ceny i/lub ilości otwartego zlecenia.
+    // Mapuje na OUCH 'U' (Replace) i FIX 'G' (OrderCancelReplaceRequest).
+    //
+    // Reguły:
+    //   - tylko SENT / PARTIAL (jak cancel)
+    //   - nowa ilość ≥ filled_qty (nie można "od-wypełnić"); ==filled → FILLED
+    //   - re-walidacja pre-trade: wartość zlecenia + limit pozycji na NOWEJ
+    //     pozostałej ekspozycji; breach → amend odrzucony, zlecenie bez zmian
+    //   - pending przesuwany o (new_remaining - old_remaining)
+    //
+    // Zwraca true gdy amend zaaplikowany, false przy odrzuceniu / błędzie.
+    bool replace_order(uint64_t order_id, double new_price_f, uint32_t new_quantity) noexcept {
+        auto it = orders_.find(order_id);
+        if (it == orders_.end()) {
+            printf("[OMS] WARNING: replace for unknown order_id=%lu\n", (unsigned long)order_id);
+            return false;
+        }
+        Order& order = it->second;
+        if (order.status != OrderStatus::SENT && order.status != OrderStatus::PARTIAL) {
+            printf("[OMS] WARNING: replace for inactive order_id=%lu (status=%s)\n",
+                   (unsigned long)order_id, status_str(order.status));
+            return false;
+        }
+        const int64_t new_price = to_fixed(new_price_f);
+        if (std::isnan(new_price_f) || new_price <= 0 || new_quantity == 0
+            || new_quantity < order.filled_qty) {
+            return false;
+        }
+
+        // Pre-trade #1: wartość zlecenia na nowej cenie/ilości.
+        const int64_t order_value = (new_price / PRICE_SCALE) * static_cast<int64_t>(new_quantity);
+        if (order_value > max_order_value_) return false;
+
+        // Pre-trade #2: limit pozycji na zamienionej pozostałej ekspozycji.
+        const uint64_t sym_key       = sym_to_key(order.symbol);
+        const int32_t  old_remaining = static_cast<int32_t>(order.quantity) - static_cast<int32_t>(order.filled_qty);
+        const int32_t  new_remaining = static_cast<int32_t>(new_quantity)   - static_cast<int32_t>(order.filled_qty);
+        const int32_t  old_pend      = signed_qty(order.side, old_remaining);
+        const int32_t  new_pend      = signed_qty(order.side, new_remaining);
+        auto           pos_it        = positions_.find(sym_key);
+        const int32_t  cur_real      = (pos_it != positions_.end()) ? pos_it->second.net_qty     : 0;
+        const int32_t  cur_pend      = (pos_it != positions_.end()) ? pos_it->second.pending_qty : 0;
+        const int32_t  projected     = cur_real + (cur_pend - old_pend + new_pend);
+        if (std::abs(projected) > max_position_) return false;
+
+        // Commit: przesuń pending, podmień cenę/ilość, przelicz status.
+        if (pos_it != positions_.end()) pos_it->second.pending_qty += (new_pend - old_pend);
+        order.price    = new_price;
+        order.quantity = new_quantity;
+        order.status   = (order.filled_qty >= order.quantity) ? OrderStatus::FILLED
+                       : (order.filled_qty > 0)               ? OrderStatus::PARTIAL
+                                                              : OrderStatus::SENT;
+        return true;
     }
 
     // Accessory (read-only).
@@ -334,16 +373,44 @@ private:
         return (side == Side::BUY) ? static_cast<int32_t>(qty) : -static_cast<int32_t>(qty);
     }
 
-    // recompute_avg_price: po każdym fillu odśwież średnią cenę long'a.
-    // Round-half-up żeby zminimalizować drift fixed-point przy wielu fillach.
-    // Gdy pozycja schodzi do zera — resetuj avg i total_cost (żeby kolejny
-    // BUY zaczął od czystej średniej).
-    static void recompute_avg_price(Position& pos) noexcept {
-        if (pos.net_qty > 0) {
-            pos.avg_price = (pos.total_cost + pos.net_qty / 2) / pos.net_qty;
-        } else if (pos.net_qty == 0) {
-            pos.avg_price  = 0;
-            pos.total_cost = 0;
+    // apply_fill_to_position: jeden, symetryczny model księgowania dla long,
+    // short i FLIP (przejście long↔short jednym fillem). avg_price trzyma
+    // średnią cenę WEJŚCIA bieżącej nogi (dodatniej lub ujemnej); realized_pnl
+    // księgowany dopiero przy redukcji/zamknięciu.
+    //
+    //   - otwarcie / powiększenie tej samej strony → ważona średnia wejścia
+    //   - redukcja / zamknięcie → realize: long zamknięty sprzedażą = (sell-avg),
+    //     short zamknięty kupnem = (avg-buy), na min(|net|, fill) akcjach
+    //   - flip: resztka po zamknięciu otwiera nową nogę po cenie fillu
+    //
+    // Wszystko fixed-point (×PRICE_SCALE); realized_pnl w dolarach×PRICE_SCALE.
+    // total_cost utrzymywany jako basis bieżącej nogi (= avg×|net|) — pole
+    // wystawiane przez Python binding, więc musi pozostać spójne.
+    static void apply_fill_to_position(Position& pos, int32_t signed_fill,
+                                       int64_t fill_qty, int64_t fill_price) noexcept {
+        const int32_t old_net = pos.net_qty;
+        const int32_t new_net = old_net + signed_fill;
+
+        const bool same_dir = (old_net == 0) || ((old_net > 0) == (signed_fill > 0));
+        if (same_dir) {
+            // Ważona średnia wejścia po stronie powiększanej nogi.
+            const int64_t old_abs = std::abs(old_net);
+            const int64_t tot_abs = old_abs + fill_qty;
+            pos.avg_price = (pos.avg_price * old_abs + fill_price * fill_qty + tot_abs / 2) / tot_abs;
+            pos.net_qty   = new_net;
+        } else {
+            // Redukcja/zamknięcie/flip — realize na zamykanej części.
+            const int64_t close_qty = std::min<int64_t>(std::abs(old_net), fill_qty);
+            if (old_net > 0) pos.realized_pnl += close_qty * (fill_price - pos.avg_price);
+            else             pos.realized_pnl += close_qty * (pos.avg_price - fill_price);
+            pos.net_qty = new_net;
+            if (new_net == 0) {
+                pos.avg_price = 0;                       // płasko — czysta średnia
+            } else if ((old_net > 0) != (new_net > 0)) {
+                pos.avg_price = fill_price;              // flip — nowa noga po cenie fillu
+            }
+            // inaczej: ta sama strona, tylko zmniejszona → avg_price bez zmian
         }
+        pos.total_cost = pos.avg_price * std::abs(pos.net_qty);
     }
 };

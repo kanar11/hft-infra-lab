@@ -198,6 +198,58 @@ void test_oms() {
 }
 
 
+// OMS #77 — P&L pozycji krótkich, flip long↔short, replace_order (amend).
+void test_oms_short_and_replace() {
+    SECTION("OMS Short P&L + Replace");
+    auto close = [](double a, double b) { const double d = a - b; return (d < 0 ? -d : d) < 0.01; };
+
+    // --- Short P&L: sprzedaj wysoko, odkup nisko → zysk ---
+    {
+        OMS oms(10000, 100000000.0);
+        oms.fill_order((oms.submit_order("AAPL", Side::SELL, 50.00, 100))->order_id, 100, 50.00);
+        const Position* p = oms.get_position("AAPL");
+        ASSERT(p && p->net_qty == -100, "short_open_net_neg");
+        oms.fill_order((oms.submit_order("AAPL", Side::BUY, 48.00, 100))->order_id, 100, 48.00);
+        p = oms.get_position("AAPL");
+        ASSERT(p->net_qty == 0, "short_covered_flat");
+        ASSERT(close(to_float(p->realized_pnl), 200.0), "short_pnl_profit_200");  // (50-48)*100
+    }
+
+    // --- Flip long→short jednym fillem + dokończenie covera ---
+    {
+        OMS oms(10000, 100000000.0);
+        oms.fill_order((oms.submit_order("X", Side::BUY, 10.00, 100))->order_id, 100, 10.00);
+        // SELL 150 @ $12: zamknij 100 long (realize $200) i flip do short 50 @ $12
+        oms.fill_order((oms.submit_order("X", Side::SELL, 12.00, 150))->order_id, 150, 12.00);
+        const Position* p = oms.get_position("X");
+        ASSERT(p->net_qty == -50, "flip_to_short_50");
+        ASSERT(close(to_float(p->avg_price), 12.00), "flip_avg_is_fill_px");
+        ASSERT(close(to_float(p->realized_pnl), 200.0), "flip_realized_200");
+        // Cover short 50 @ $11 → +$50 → razem $250
+        oms.fill_order((oms.submit_order("X", Side::BUY, 11.00, 50))->order_id, 50, 11.00);
+        p = oms.get_position("X");
+        ASSERT(p->net_qty == 0, "flip_fully_closed");
+        ASSERT(close(to_float(p->realized_pnl), 250.0), "flip_total_realized_250");
+    }
+
+    // --- replace_order: amend ceny/ilości ---
+    {
+        OMS oms(1000, 1000000.0);
+        Order* o = oms.submit_order("AAPL", Side::BUY, 100.00, 50);
+        ASSERT(o != nullptr, "replace_submit_ok");
+        ASSERT(oms.replace_order(o->order_id, 101.00, 80), "replace_applied");
+        const Order* r = oms.get_order(o->order_id);
+        ASSERT(r->quantity == 80 && close(to_float(r->price), 101.00), "replace_new_px_qty");
+    }
+    {   // amend ponad limit pozycji → odrzucony, zlecenie bez zmian
+        OMS oms(100, 1000000.0);
+        Order* a = oms.submit_order("AAPL", Side::BUY, 10.00, 50);
+        ASSERT(!oms.replace_order(a->order_id, 10.00, 200), "replace_rejects_over_limit");
+        ASSERT(oms.get_order(a->order_id)->quantity == 50, "replace_unchanged_on_reject");
+    }
+}
+
+
 // =====================================================
 // Risk Manager Tests
 // =====================================================
@@ -1459,6 +1511,7 @@ int main() {
 
     test_itch_parser();
     test_oms();
+    test_oms_short_and_replace();
     test_risk();
     test_router();
     test_logger();
