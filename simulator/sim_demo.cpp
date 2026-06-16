@@ -139,6 +139,17 @@ void test_pipeline_with_book() {
     ASSERT(stats.orders_filled > 0, "book_pipeline_filled_via_engine");
 }
 
+// MarketMaker napędzany przez OMS (#76) — MM kwotuje, market flow go przecina,
+// fille idą przez OMS. Dowód że MM nie żyje już tylko we własnym demie.
+void test_pipeline_with_mm() {
+    PipelineStats stats = run_pipeline(5000, false, false, 42, nullptr, 0,
+                                       /*use_risk=*/false, /*use_book=*/false,
+                                       /*use_mm=*/true);
+    ASSERT(stats.mm_fills > 0, "mm_received_fills");
+    ASSERT(stats.orders_submitted > 0, "mm_drove_oms");
+    ASSERT(stats.orders_filled == stats.orders_submitted, "mm_fills_settle_in_oms");
+}
+
 // BookMatchEngine bezpośrednio — deterministyczny dowód że silnik FIFO realnie
 // przechodzi poziomy: małe zlecenie fill bez slippage, duże > płynności touch'a
 // walkuje w głąb (VWAP gorszy od ceny ref po właściwej stronie).
@@ -188,6 +199,7 @@ int main(int argc, char* argv[]) {
     test_pipeline_with_risk_reject();
     test_pipeline_with_book();
     test_book_match_engine();
+    test_pipeline_with_mm();
     test_rng_deterministic();
 
     printf("\n%d/%d tests passed", tests_passed, tests_total);
@@ -203,6 +215,7 @@ int main(int argc, char* argv[]) {
     bool use_router   = false;
     bool use_risk     = false;
     bool use_book     = false;
+    bool use_mm       = false;
     int  num_messages = cfg.simulator.num_messages;
     int  seed         = cfg.simulator.seed;
     int  fill_latency = 0;     // 0 = zero-latency (legacy); --latency N enables in-flight queue
@@ -212,6 +225,7 @@ int main(int argc, char* argv[]) {
         else if (std::strcmp(argv[i], "--router")   == 0) use_router   = true;
         else if (std::strcmp(argv[i], "--risk")     == 0) use_risk     = true;
         else if (std::strcmp(argv[i], "--book")     == 0) use_book     = true;
+        else if (std::strcmp(argv[i], "--mm")       == 0) use_mm       = true;
         else if (std::strcmp(argv[i], "--latency")  == 0 && i + 1 < argc) {
             fill_latency = std::atoi(argv[++i]);
         }
@@ -223,8 +237,8 @@ int main(int argc, char* argv[]) {
 
     PipelineStats stats = run_pipeline(num_messages, use_strategy, use_router,
                                        static_cast<uint64_t>(seed), &cfg, fill_latency,
-                                       use_risk, use_book);
-    print_pipeline_stats(stats, use_strategy, use_router, use_risk, use_book);
+                                       use_risk, use_book, use_mm);
+    print_pipeline_stats(stats, use_strategy, use_router, use_risk, use_book, use_mm);
 
     return (tests_failed == 0) ? 0 : 1;
 }

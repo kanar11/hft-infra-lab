@@ -40,8 +40,12 @@
 #include "../orderbook/orderbook_pro.hpp"
 #include "../config/config_loader.hpp"
 #include "../strategy/mean_reversion.hpp"
+#include "../strategy/market_maker.hpp"
 #include "../router/smart_router.hpp"
 #include "../lockfree/spsc_queue.hpp"
+
+#include <deque>
+#include <unordered_map>
 
 
 // MarketDataGenerator — generuje syntetyczne binarne wiadomości ITCH.
@@ -302,6 +306,12 @@ struct PipelineStats {
     bool    risk_kill_tripped;       // kill switch zatrzasnął się w trakcie sesji
     int     orders_book_partial;     // ile fillów z FullOrderBook było częściowych
     double  book_slippage_usd;       // łączny koszt slippage'u z realnego matchu
+    // Tryb MarketMaker (--mm): MM kwotuje, market flow go przecina, fille idą
+    // przez Risk→OMS. Statystyki agregowane po wszystkich symbolach.
+    uint64_t mm_quotes_placed;       // łączny churn kwotowań (cancel+replace)
+    uint64_t mm_fills;               // ile razy MM został przecięty (fill)
+    double   mm_pnl;                 // mark-to-market P&L MM po ostatnim mid
+    int      mm_abs_inventory;       // Σ |net inventory| po symbolach na koniec
     int     max_in_flight_orders;   // peak submittted-but-unfilled
     int     fill_latency_iters;     // iteracje symulowanego opóźnienia fill-ack (0 = zero-latency)
     double  gen_ms;
@@ -436,7 +446,8 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
                                    const HFTConfig* cfg = nullptr,
                                    int fill_latency_iters = 0,
                                    bool use_risk = false,
-                                   bool use_book = false) {
+                                   bool use_book = false,
+                                   bool use_mm = false) {
     PipelineStats stats = {};
     stats.fill_latency_iters = fill_latency_iters;
 
@@ -529,6 +540,18 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     // przepełniłby go. Tworzony tylko gdy use_book.
     std::unique_ptr<BookMatchEngine> book_engine;
     if (use_book) book_engine = std::make_unique<BookMatchEngine>(/*level_liq=*/200);
+
+    // Tryb MarketMaker (--mm): jeden MM per symbol. MarketMaker jest non-movable
+    // (usunięte copy/move), więc trzymamy w std::deque (emplace_back nie rusza
+    // istniejących elementów) + mapa sym_key→indeks + równoległy last_mid.
+    mm::MMConfig mm_cfg;
+    mm_cfg.quote_size          = 10;
+    mm_cfg.half_spread_ticks   = 2;
+    mm_cfg.max_inventory       = 200;
+    mm_cfg.risk_aversion_ticks = 0.05;
+    std::deque<mm::MarketMaker>          makers;
+    std::vector<int32_t>                 maker_last_mid;
+    std::unordered_map<uint64_t, size_t> maker_idx;
 
     // [1/4] Generowanie danych rynkowych
     auto gen_start = std::chrono::high_resolution_clock::now();
@@ -641,6 +664,64 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
 
         if (!stock || price <= 0.0) continue;
 
+        // === Tryb MarketMaker (--mm) ===
+        // MM jest makerem: kwotuje obie strony wokół mid, a przychodzący market
+        // flow (ta wiadomość = agresor) przecina jego kwotowanie. Fill MM idzie
+        // przez Risk→OMS, więc OMS śledzi pozycję i realizowany P&L, a Risk bramkuje.
+        if (use_mm) {
+            const uint64_t sym_key = sym_to_key(stock);
+            auto it = maker_idx.find(sym_key);
+            if (it == maker_idx.end()) {
+                it = maker_idx.emplace(sym_key, makers.size()).first;
+                makers.emplace_back(mm_cfg, stock);
+                maker_last_mid.push_back(0);
+            }
+            mm::MarketMaker& maker = makers[it->second];
+
+            // Mid w tickach ($0.01); referencyjny spread 1 tick wokół mid.
+            const int32_t mid_ticks = static_cast<int32_t>(price * 100.0 + 0.5);
+            maker_last_mid[it->second] = mid_ticks;
+            const mm::Quote q = maker.quote(mid_ticks - 1, mid_ticks + 1);
+
+            // Agresor: BUY market order lifuje nasz ASK (MM sprzedał),
+            // SELL hituje nasz BID (MM kupił). side_str z wiadomości = strona agresora.
+            const bool aggressor_buy = (side_str[0] == 'B');
+            Side    mm_side = Side::BUY;
+            int32_t mm_qty  = 0;
+            int32_t mm_px_ticks = 0;
+            if (aggressor_buy && q.ask_size > 0) {
+                mm_side = Side::SELL; mm_qty = q.ask_size; mm_px_ticks = q.ask_price;
+            } else if (!aggressor_buy && q.bid_size > 0) {
+                mm_side = Side::BUY;  mm_qty = q.bid_size; mm_px_ticks = q.bid_price;
+            }
+
+            if (mm_qty > 0 && mm_px_ticks > 0) {
+                const double mm_px = mm_px_ticks / 100.0;
+                bool allowed = true;
+                if (use_risk) {
+                    const RiskCheckResult rc = risk.check_order(stock, mm_side, mm_px, mm_qty);
+                    allowed = (rc.action == RiskAction::ALLOW);
+                    if (!allowed) {
+                        stats.orders_risk_rejected++;
+                        if (risk.is_kill_switch_active()) stats.risk_kill_tripped = true;
+                    }
+                }
+                if (allowed) {
+                    Order* order = oms.submit_order(stock, mm_side, mm_px, mm_qty);
+                    if (order) {
+                        stats.orders_submitted++;
+                        if (use_risk) risk.on_order_sent(stock, mm_side, mm_qty);
+                        maker.apply_fill(mm_side, mm_qty, mm_px_ticks);
+                        stats.mm_fills++;
+                        do_fill(order->order_id, mm_qty, mm_px);
+                    } else {
+                        stats.orders_rejected++;
+                    }
+                }
+            }
+            continue;  // MM jest strategią — pomijamy ścieżkę mean-reversion/router
+        }
+
         // Aktualizuj quoty routera
         if (use_router) {
             double spread = price * 0.0002;
@@ -740,6 +821,15 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
     }
 
+    // Agregacja MM po wszystkich symbolach (mark-to-market po ostatnim mid).
+    if (use_mm) {
+        for (size_t m = 0; m < makers.size(); ++m) {
+            stats.mm_quotes_placed += makers[m].quotes_placed();
+            stats.mm_pnl           += makers[m].pnl(maker_last_mid[m]);
+            stats.mm_abs_inventory += std::abs(makers[m].position());
+        }
+    }
+
     return stats;
 }
 
@@ -804,11 +894,13 @@ inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
 
 // print_pipeline_stats — wyświetla wyniki symulacji.
 inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool use_router,
-                                 bool use_risk = false, bool use_book = false) {
+                                 bool use_risk = false, bool use_book = false,
+                                 bool use_mm = false) {
     printf("\n=== HFT Market Data Simulator (C++) ===\n");
     printf("Pipeline: ITCH Generator -> Parser");
-    if (use_strategy) printf(" -> Strategy");
-    if (use_router) printf(" -> Router");
+    if (use_mm) printf(" -> MarketMaker");
+    if (use_strategy && !use_mm) printf(" -> Strategy");
+    if (use_router && !use_mm) printf(" -> Router");
     if (use_risk) printf(" -> Risk");
     printf(" -> OMS");
     if (use_book) printf(" -> FullOrderBook(match)");
@@ -840,6 +932,12 @@ inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool
     if (use_book) {
         printf("  Book partial fills: %d\n", s.orders_book_partial);
         printf("  Book slippage cost: $%.2f\n", s.book_slippage_usd);
+    }
+    if (use_mm) {
+        printf("  MM quotes placed:  %lu\n", (unsigned long)s.mm_quotes_placed);
+        printf("  MM fills:          %lu\n", (unsigned long)s.mm_fills);
+        printf("  MM abs inventory:  %d shares\n", s.mm_abs_inventory);
+        printf("  MM P&L (mark):     $%.2f\n", s.mm_pnl);
     }
     if (s.fill_latency_iters > 0) {
         printf("  Max in-flight: %d  (fill latency: %d iters)\n",

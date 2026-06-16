@@ -132,6 +132,7 @@ simulate: build
 	./simulator/sim_demo 10000 --strategy --router
 	./simulator/sim_demo 10000 --strategy --router --risk
 	./simulator/sim_demo 10000 --strategy --router --risk --book
+	./simulator/sim_demo 10000 --mm
 
 # wss_demo — opcjonalny target wymagający OpenSSL (libssl-dev / openssl-devel).
 # Nie jest w SRCS żeby domyślny build nie wymagał OpenSSL'a w CI.
