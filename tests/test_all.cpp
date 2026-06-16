@@ -41,6 +41,7 @@
 #include "../lockfree/varlen_ring.hpp"
 #include "../replay/lobster_reader.hpp"
 #include "../simulator/market_sim.hpp"
+#include "../backtest/backtest.hpp"
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -1356,6 +1357,28 @@ void test_integration() {
 }
 
 
+// Backtester #80 — rdzeń metryk wynikowych (Sharpe/DD/hit-rate/fill-rate).
+void test_backtester() {
+    SECTION("Backtester (#80)");
+    backtest::Backtester bt;
+    bt.on_order(true);  bt.on_trade(+100.0);
+    bt.on_order(true);  bt.on_trade(-40.0);
+    bt.on_order(true);  bt.on_trade(+60.0);
+    bt.on_order(false);                          // submitted, nie filled
+    const auto r = bt.compute();
+    ASSERT(r.trades == 3, "bt_trades_3");
+    ASSERT(r.wins == 2 && r.losses == 1, "bt_win_loss");
+    ASSERT(std::fabs(r.total_pnl - 120.0) < 1e-9, "bt_total_pnl_120");
+    ASSERT(std::fabs(r.hit_rate - 2.0/3.0) < 1e-9, "bt_hit_rate_2of3");
+    ASSERT(std::fabs(r.profit_factor - 4.0) < 1e-9, "bt_profit_factor_4");  // 160/40
+    ASSERT(std::fabs(r.fill_rate - 0.75) < 1e-9, "bt_fill_rate_3of4");
+
+    backtest::Backtester dd;                     // max drawdown: 100→30 = 70
+    dd.on_trade(+100.0); dd.on_trade(-70.0); dd.on_trade(+50.0);
+    ASSERT(std::fabs(dd.compute().max_drawdown - 70.0) < 1e-9, "bt_max_dd_70");
+}
+
+
 // Risk #79 — price-band (fat-finger) + atomic kill switch.
 void test_risk_price_band() {
     SECTION("Risk Price Band + Atomic Kill (#79)");
@@ -1667,6 +1690,7 @@ int main() {
     test_oms_short_and_replace();
     test_risk();
     test_risk_price_band();
+    test_backtester();
     test_router();
     test_logger();
     test_strategy();

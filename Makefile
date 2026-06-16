@@ -1,4 +1,4 @@
-.PHONY: all build test benchmark simulate clean
+.PHONY: all build test benchmark simulate backtest clean
 
 CXX      ?= g++
 CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra -Werror -pthread
@@ -34,6 +34,7 @@ SRCS := \
 	monitoring/monitor_demo.cpp \
 	multicast/multicast_demo.cpp \
 	simulator/sim_demo.cpp \
+	backtest/backtest_demo.cpp \
 	tests/test_all.cpp
 
 BINS := $(patsubst %.cpp,%,$(SRCS))
@@ -133,6 +134,10 @@ simulate: build
 	./simulator/sim_demo 10000 --strategy --router --risk
 	./simulator/sim_demo 10000 --strategy --router --risk --book
 	./simulator/sim_demo 10000 --mm
+
+# Run strategy backtest with P&L attribution (Sharpe, drawdown, hit-rate)
+backtest: backtest/backtest_demo
+	./backtest/backtest_demo 50000
 
 # wss_demo — opcjonalny target wymagający OpenSSL (libssl-dev / openssl-devel).
 # Nie jest w SRCS żeby domyślny build nie wymagał OpenSSL'a w CI.

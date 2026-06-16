@@ -107,7 +107,8 @@ Szczegóły protokołu, opcody, podłączenie do prawdziwych giełd: [`feed/READ
 | router/ | Smart Order Router — venue selection by effective price (quote ± maker/taker fee), latency, split (9.7M routes/sec) | C++ |
 | risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits, pending exposure (7.9M checks/sec) | C++ |
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
-| simulator/ | End-to-end pipeline (ITCH→Parser→Strategy→Router→OMS→P&L), sync + threaded variants | C++ |
+| simulator/ | End-to-end pipeline (ITCH→Parser→Strategy→Router→Risk→OMS→FullOrderBook match→P&L), sync + threaded; flags `--strategy/--router/--risk/--book/--mm` | C++ |
+| backtest/ | Strategy P&L attribution — Sharpe, max drawdown, hit-rate, profit factor, fill-rate over a strategy run (`make backtest`) | C++ |
 | replay/ | Real Nasdaq order replay from LOBSTER CSVs through the same OMS pipeline | C++ |
 | logger/ | Trade Logger — 3 variants: hand-rolled SPSC ring, lockfree::SPSCQueue-backed, mmap-backed | C++ |
 | network/ | Epoll-based async TCP server + self-test FIX ingestion demo | C++ |
