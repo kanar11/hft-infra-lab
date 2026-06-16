@@ -161,6 +161,47 @@ public:
         return 37;
     }
 
+    // === ENCODING (Exchange → Client) ===
+    // Symetria do enter_order/cancel_order: strona giełdy buduje raporty, które
+    // parse_response() po stronie klienta dekoduje. Domyka OUCH (encode obu
+    // stron + decode) i pozwala na pełny roundtrip przez SoupBinTCP.
+
+    // encode_accepted: Accepted (41 B) — giełda potwierdza przyjęcie zlecenia.
+    static int encode_accepted(uint8_t* buf, const char* token, char side,
+                               int32_t shares, const char* stock, double price,
+                               int64_t order_ref, char tif = 'D') noexcept {
+        buf[0] = 'A';
+        write_padded(buf + 1, token, 14);
+        buf[15] = static_cast<uint8_t>(side);
+        write_u32_be(buf + 16, shares);
+        write_padded(buf + 20, stock, 8);
+        write_u32_be(buf + 28, static_cast<uint32_t>(price * 10000));
+        buf[32] = static_cast<uint8_t>(tif);
+        write_u64_be(buf + 33, static_cast<uint64_t>(order_ref));
+        return 41;
+    }
+
+    // encode_executed: Executed (31 B) — giełda raportuje (częściowe) wykonanie.
+    static int encode_executed(uint8_t* buf, const char* token, int32_t shares,
+                               double price, int64_t match_number) noexcept {
+        buf[0] = 'E';
+        write_padded(buf + 1, token, 14);
+        write_u32_be(buf + 15, shares);
+        write_u32_be(buf + 19, static_cast<uint32_t>(price * 10000));
+        write_u64_be(buf + 23, static_cast<uint64_t>(match_number));
+        return 31;
+    }
+
+    // encode_cancelled: Cancelled (20 B) — giełda potwierdza anulowanie.
+    static int encode_cancelled(uint8_t* buf, const char* token, int32_t shares,
+                                char reason = 'U') noexcept {
+        buf[0] = 'C';
+        write_padded(buf + 1, token, 14);
+        write_u32_be(buf + 15, shares);
+        buf[19] = static_cast<uint8_t>(reason);
+        return 20;
+    }
+
     // === DECODING (Exchange → Client) ===
 
     // parse_response: decode exchange response from raw bytes

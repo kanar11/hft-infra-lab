@@ -29,7 +29,9 @@
 #include "../strategy/mean_reversion.hpp"
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
+#include "../fix-protocol/fix_session.hpp"
 #include "../ouch-protocol/ouch_protocol.hpp"
+#include "../ouch-protocol/soupbin_session.hpp"
 #include "../common/fill_simulator.hpp"
 #include "../lockfree/spsc_queue.hpp"
 #include "../lockfree/mpsc_queue.hpp"
@@ -1354,6 +1356,114 @@ void test_integration() {
 }
 
 
+// FIX session #78 — persystencja seq + buildery admin messages.
+void test_fix_session() {
+    SECTION("FIX Session (#78)");
+
+    // --- Admin builder: Logon parsuje się jako poprawny FIX z 8/9/10 ---
+    {
+        fix::FIXSession s;
+        s.set_comp_ids("TRADER1", "EXCH");
+        char buf[256];
+        const int n = s.build_logon(buf, sizeof(buf), 30, '|');  // '|' = human-readable
+        ASSERT(n > 0, "fix_logon_built");
+        FIXMessage m;
+        m.parse(buf);
+        ASSERT(m.is_valid(), "fix_logon_valid_checksum_bodylen");
+        ASSERT(m.get_msg_type()[0] == 'A', "fix_logon_msgtype_A");
+        const char* seq = m.get_field(34);
+        ASSERT(seq && std::atoi(seq) == 1, "fix_logon_seq_1");
+        ASSERT(s.peek_outbound_seq() == 2, "fix_seq_incremented");
+    }
+
+    // --- ResendRequest niesie BeginSeqNo(7)/EndSeqNo(16) i bumpuje licznik ---
+    {
+        fix::FIXSession s;
+        char buf[256];
+        const int n = s.build_resend_request(buf, sizeof(buf), 5, 0, '|');
+        ASSERT(n > 0, "fix_resend_built");
+        FIXMessage m; m.parse(buf);
+        ASSERT(m.is_valid(), "fix_resend_valid");
+        ASSERT(m.get_msg_type()[0] == '2', "fix_resend_msgtype_2");
+        ASSERT(std::atoi(m.get_field(7)) == 5, "fix_resend_begin_5");
+        ASSERT(s.resends_requested() == 1, "fix_resend_counted");
+    }
+
+    // --- SequenceReset GapFill: 36=NewSeqNo, 123=Y ---
+    {
+        fix::FIXSession s;
+        char buf[256];
+        s.build_sequence_reset(buf, sizeof(buf), 42, true, '|');
+        FIXMessage m; m.parse(buf);
+        ASSERT(m.is_valid(), "fix_seqreset_valid");
+        ASSERT(std::atoi(m.get_field(36)) == 42, "fix_seqreset_newseq_42");
+        ASSERT(m.get_field(123)[0] == 'Y', "fix_seqreset_gapfill_Y");
+    }
+
+    // --- Persystencja seq: wyślij kilka, persist, nowa sesja, load, kontynuuj ---
+    {
+        const char* path = "/tmp/fix_seq_test.dat";
+        std::remove(path);
+        fix::FIXSession s1;
+        s1.set_persist_path(path);
+        char buf[256];
+        s1.build_logon(buf, sizeof(buf), 30, '|');         // seq 1 → next 2
+        s1.build_heartbeat(buf, sizeof(buf), nullptr, '|'); // seq 2 → next 3
+        s1.observe_inbound(1, 1000);                        // expected_in → 2
+        s1.persist_seq();
+
+        fix::FIXSession s2;
+        s2.set_persist_path(path);
+        ASSERT(s2.load_persisted_seq(), "fix_persist_loaded");
+        ASSERT(s2.peek_outbound_seq() == 3, "fix_persist_out_seq_continues");
+        // Po restarcie kolejny build używa seq 3 — nie reużywa 1/2.
+        s2.build_heartbeat(buf, sizeof(buf), nullptr, '|');
+        FIXMessage m; m.parse(buf);
+        ASSERT(std::atoi(m.get_field(34)) == 3, "fix_persist_no_seq_reuse");
+        std::remove(path);
+    }
+}
+
+
+// OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
+void test_soupbin_ouch_session() {
+    SECTION("SoupBin/OUCH Session (#78)");
+    using namespace soupbin;
+
+    // Klient buduje strumień: Login Request + Enter Order ('U' z OUCH 'O').
+    uint8_t cstream[256];
+    std::size_t coff = 0;
+    coff += pack_login_request(cstream + coff, sizeof(cstream) - coff,
+                               "USER1", "PASS", "", "0");
+    uint8_t ouch[64];
+    const int olen = OUCHMessage::enter_order(ouch, "TOK0001", 'B', 100, "AAPL", 150.25);
+    coff += pack_data(cstream + coff, sizeof(cstream) - coff,
+                      ouch, static_cast<std::size_t>(olen), /*client_side=*/true);
+
+    // Mock giełda odpowiada: A (login accepted) + S(Accepted) + S(Executed).
+    uint8_t sstream[256];
+    const std::size_t slen = mock_exchange_respond(sstream, sizeof(sstream),
+                                                    cstream, coff, /*start_seq=*/1);
+    ASSERT(slen > 0, "soup_exchange_responded");
+
+    // Klient konsumuje cały strumień TCP (3 pakiety na raz).
+    OuchSessionClient client;
+    const std::size_t consumed = client.consume(sstream, slen);
+    ASSERT(consumed == slen, "soup_client_consumed_all");
+    ASSERT(client.logged_in(), "soup_client_logged_in");
+    ASSERT(client.accepts() == 1, "soup_one_accepted");
+    ASSERT(client.executes() == 1, "soup_one_executed");
+    ASSERT(client.errors() == 0, "soup_no_errors");
+
+    // Logout → End of Session.
+    uint8_t lo[8]; const std::size_t lolen = pack_logout_request(lo);
+    uint8_t resp[16];
+    const std::size_t rlen = mock_exchange_respond(resp, sizeof(resp), lo, lolen);
+    client.consume(resp, rlen);
+    ASSERT(client.session_ended(), "soup_session_ended");
+}
+
+
 // =====================================================
 // Negative / Edge-Case Tests
 // =====================================================
@@ -1519,7 +1629,9 @@ int main() {
     test_strategy_edge_cases();
     test_market_maker();
     test_fix();
+    test_fix_session();
     test_ouch();
+    test_soupbin_ouch_session();
     test_fill_simulator();
     test_spsc_queue();
     test_mpsc_queue();
