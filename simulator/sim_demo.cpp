@@ -130,6 +130,35 @@ void test_pipeline_with_risk_reject() {
     ASSERT(stats.orders_risk_rejected > 0, "risk_reject_engages");
 }
 
+// FullOrderBook jako silnik fillów (#75) — zlecenia z pipeline matchują się
+// realnie w orderbook_pro, a nie są syntetyzowane po cenie submitu.
+void test_pipeline_with_book() {
+    PipelineStats stats = run_pipeline(500, true, true, 42, nullptr, 0,
+                                       /*use_risk=*/false, /*use_book=*/true);
+    ASSERT(stats.orders_submitted > 0, "book_pipeline_submitted");
+    ASSERT(stats.orders_filled > 0, "book_pipeline_filled_via_engine");
+}
+
+// BookMatchEngine bezpośrednio — deterministyczny dowód że silnik FIFO realnie
+// przechodzi poziomy: małe zlecenie fill bez slippage, duże > płynności touch'a
+// walkuje w głąb (VWAP gorszy od ceny ref po właściwej stronie).
+void test_book_match_engine() {
+    auto eng = std::make_unique<BookMatchEngine>(/*level_liq=*/100);
+    double vwap = 0.0;
+
+    const int32_t f_small = eng->match(Side::BUY, 100.00, 50, vwap);
+    ASSERT(f_small == 50, "book_small_full_fill");
+    ASSERT(vwap == 100.00, "book_small_no_slippage");      // 50 < 100/level → touch
+
+    const int32_t f_buy = eng->match(Side::BUY, 100.00, 350, vwap);
+    ASSERT(f_buy == 350, "book_large_buy_full_fill");      // drabinka pokrywa
+    ASSERT(vwap > 100.00, "book_buy_slippage_up");          // walk w górę = drożej
+
+    const int32_t f_sell = eng->match(Side::SELL, 100.00, 350, vwap);
+    ASSERT(f_sell == 350, "book_large_sell_full_fill");
+    ASSERT(vwap < 100.00, "book_sell_slippage_down");       // walk w dół = taniej
+}
+
 void test_rng_deterministic() {
     FastRNG rng1(12345);
     FastRNG rng2(12345);
@@ -157,6 +186,8 @@ int main(int argc, char* argv[]) {
     test_pipeline_full();
     test_pipeline_with_risk_allow();
     test_pipeline_with_risk_reject();
+    test_pipeline_with_book();
+    test_book_match_engine();
     test_rng_deterministic();
 
     printf("\n%d/%d tests passed", tests_passed, tests_total);
@@ -171,6 +202,7 @@ int main(int argc, char* argv[]) {
     bool use_strategy = false;
     bool use_router   = false;
     bool use_risk     = false;
+    bool use_book     = false;
     int  num_messages = cfg.simulator.num_messages;
     int  seed         = cfg.simulator.seed;
     int  fill_latency = 0;     // 0 = zero-latency (legacy); --latency N enables in-flight queue
@@ -179,6 +211,7 @@ int main(int argc, char* argv[]) {
         if      (std::strcmp(argv[i], "--strategy") == 0) use_strategy = true;
         else if (std::strcmp(argv[i], "--router")   == 0) use_router   = true;
         else if (std::strcmp(argv[i], "--risk")     == 0) use_risk     = true;
+        else if (std::strcmp(argv[i], "--book")     == 0) use_book     = true;
         else if (std::strcmp(argv[i], "--latency")  == 0 && i + 1 < argc) {
             fill_latency = std::atoi(argv[++i]);
         }
@@ -190,8 +223,8 @@ int main(int argc, char* argv[]) {
 
     PipelineStats stats = run_pipeline(num_messages, use_strategy, use_router,
                                        static_cast<uint64_t>(seed), &cfg, fill_latency,
-                                       use_risk);
-    print_pipeline_stats(stats, use_strategy, use_router, use_risk);
+                                       use_risk, use_book);
+    print_pipeline_stats(stats, use_strategy, use_router, use_risk, use_book);
 
     return (tests_failed == 0) ? 0 : 1;
 }

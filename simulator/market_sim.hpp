@@ -37,6 +37,7 @@
 #include "../itch-parser/itch_parser.hpp"
 #include "../oms/oms.hpp"
 #include "../risk/risk_manager.hpp"
+#include "../orderbook/orderbook_pro.hpp"
 #include "../config/config_loader.hpp"
 #include "../strategy/mean_reversion.hpp"
 #include "../router/smart_router.hpp"
@@ -299,6 +300,8 @@ struct PipelineStats {
     int     orders_rejected;         // OMS odrzucił (limit pozycji / wartości w OMS)
     int     orders_risk_rejected;    // RiskManager odrzucił PRZED OMS (pre-trade)
     bool    risk_kill_tripped;       // kill switch zatrzasnął się w trakcie sesji
+    int     orders_book_partial;     // ile fillów z FullOrderBook było częściowych
+    double  book_slippage_usd;       // łączny koszt slippage'u z realnego matchu
     int     max_in_flight_orders;   // peak submittted-but-unfilled
     int     fill_latency_iters;     // iteracje symulowanego opóźnienia fill-ack (0 = zero-latency)
     double  gen_ms;
@@ -325,6 +328,106 @@ struct PendingFill {
 };
 
 
+// ============================================================================
+// BookMatchEngine — adapter spinający OMS-owe zlecenia z prawdziwym silnikiem
+// dopasowań FullOrderBook (orderbook_pro). Zastępuje syntetyczny "fill po cenie
+// submitu" realnym matchem: FIFO price-time, przejście wielu poziomów, partiale,
+// realny VWAP i slippage.
+//
+// Dlaczego znormalizowana siatka ticków, a nie absolutne ceny?
+//   FullOrderBook<LEVELS=16384> @ $0.01/tick pokrywa $0..$163.83 — za mało dla
+//   NVDA ($880). Zamiast tego pracujemy w siatce wokół MID_TICK: cena dolarowa
+//   = ref_price + (tick - MID_TICK) * TICK_USD. Działa dla DOWOLNEJ ceny symbolu,
+//   a silnik dopasowań i tak operuje wyłącznie na tickach.
+//
+// Model płynności (per match): drabinka kontr-zleceń wystawiona od touch'a w
+// głąb księgi (LEVEL_LIQ akcji na poziom). Nasze zlecenie wchodzi jako IOC i
+// przechodzi tyle poziomów, ile trzeba — im większe, tym głębszy walk = większy
+// slippage. Po matchu resztki drabinki kasujemy po id (taniej niż clear() O(LEVELS)).
+//
+// Pełna, wierna rekonstrukcja księgi ze strumienia ITCH to osobny krok (#82) —
+// tu chodzi o to, by NASZE zlecenia realnie matchowały się w klejnotowym silniku.
+class BookMatchEngine {
+    // Typy z orderbook_pro — wciągamy do scope'u klasy (bez zaśmiecania global).
+    using FullOrderBook = orderbook_pro::FullOrderBook<>;
+    using BookEvent     = orderbook_pro::BookEvent;
+    using EventType     = orderbook_pro::EventType;
+    using OrderType     = orderbook_pro::OrderType;
+    using TimeInForce   = orderbook_pro::TimeInForce;
+
+    static constexpr std::int32_t MID_TICK   = 8192;   // środek siatki 16384
+    static constexpr std::int32_t MAX_LADDER = 250;    // cap głębokości (< LEVELS/2)
+    static constexpr double       TICK_USD   = 0.01;
+
+    FullOrderBook book_;
+    std::int32_t    level_liq_;        // akcji na poziom drabinki
+    std::uint64_t   next_id_;          // wspólny licznik id (drabinka + taker)
+
+    // Stan przechwytywania fillów dla bieżącego taker'a (ustawiany per match).
+    struct Capture {
+        std::uint64_t taker_id;
+        std::int64_t  qty;             // Σ exec_qty po stronie taker'a
+        std::int64_t  notional_ticks;  // Σ price_ticks * exec_qty
+    } cap_{};
+
+    // FILL emitowany jest dla obu stron (taker i maker). Liczymy tylko taker'a
+    // (e.order_id == taker_id) — brak podwójnego liczenia.
+    static void on_event(const BookEvent& e, void* ctx) noexcept {
+        auto* c = static_cast<Capture*>(ctx);
+        if (e.type == EventType::FILL && e.order_id == c->taker_id) {
+            c->qty            += e.qty;
+            c->notional_ticks += static_cast<std::int64_t>(e.price_ticks) * e.qty;
+        }
+    }
+
+public:
+    explicit BookMatchEngine(std::int32_t level_liq = 100) noexcept
+        : level_liq_(level_liq > 0 ? level_liq : 100), next_id_(1) {
+        book_.set_event_callback(&on_event, &cap_);
+    }
+
+    // match: dopasuj zlecenie (side, qty) przy cenie referencyjnej ref_price.
+    // Zwraca faktycznie wypełnioną ilość; out_vwap_usd = średnia cena wykonania.
+    // Gdy płynność < qty → partial fill (out_filled < qty).
+    std::int32_t match(Side side, double ref_price, std::int32_t qty,
+                       double& out_vwap_usd) noexcept {
+        out_vwap_usd = ref_price;
+        if (qty <= 0 || ref_price <= 0.0) return 0;
+
+        // Głębokość drabinki: pokryj qty + poduszka, w granicach MAX_LADDER.
+        const std::int32_t levels =
+            std::min<std::int32_t>(MAX_LADDER, qty / level_liq_ + 2);
+        const bool is_buy = (side == Side::BUY);
+
+        // Wystaw kontr-płynność: BUY trafia w ASK (rosnąco od touch), SELL w BID
+        // (malejąco). Zapamiętujemy id, by skasować resztki.
+        std::uint64_t ladder_ids[MAX_LADDER];
+        const Side contra = is_buy ? Side::SELL : Side::BUY;
+        for (std::int32_t k = 0; k < levels; ++k) {
+            const std::int32_t px = is_buy ? (MID_TICK + k) : (MID_TICK - k);
+            const std::uint64_t id = next_id_++;
+            ladder_ids[k] = id;
+            book_.submit(contra, px, level_liq_, OrderType::LIMIT,
+                         TimeInForce::DAY, id, /*client_id=*/0);
+        }
+
+        // Taker jako IOC: limit ustawiony tak, by mógł przejść całą drabinkę.
+        cap_ = Capture{ next_id_++, 0, 0 };
+        const std::int32_t taker_px = is_buy ? (MID_TICK + levels) : (MID_TICK - levels);
+        book_.submit(side, taker_px, qty, OrderType::IOC,
+                     TimeInForce::IOC, cap_.taker_id, /*client_id=*/0);
+
+        // Skasuj resztki drabinki (skonsumowane id → no-op).
+        for (std::int32_t k = 0; k < levels; ++k) book_.cancel(ladder_ids[k]);
+
+        if (cap_.qty <= 0) return 0;
+        const double vwap_ticks = static_cast<double>(cap_.notional_ticks) / cap_.qty;
+        out_vwap_usd = ref_price + (vwap_ticks - MID_TICK) * TICK_USD;
+        return static_cast<std::int32_t>(cap_.qty);
+    }
+};
+
+
 // run_pipeline — pełna symulacja end-to-end, wszystko w jednym wątku.
 inline PipelineStats run_pipeline(int num_messages = 1000,
                                    bool use_strategy = false,
@@ -332,7 +435,8 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
                                    uint64_t seed = 42,
                                    const HFTConfig* cfg = nullptr,
                                    int fill_latency_iters = 0,
-                                   bool use_risk = false) {
+                                   bool use_risk = false,
+                                   bool use_book = false) {
     PipelineStats stats = {};
     stats.fill_latency_iters = fill_latency_iters;
 
@@ -418,6 +522,13 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     // breaker, drawdown) działają w pełni i to one są tu interesujące.
     rlimits.max_orders_per_second = (num_messages > 0) ? (num_messages + 16) : 1024;
     RiskManager risk(rlimits);
+
+    // Silnik dopasowań — realne matchowanie naszych zleceń w FullOrderBook
+    // (opt-in --book). 200 akcji/poziom drabinki = umiarkowany slippage.
+    // Na stercie: FullOrderBook<16384,65536> to obiekt wielkości MB — na stosie
+    // przepełniłby go. Tworzony tylko gdy use_book.
+    std::unique_ptr<BookMatchEngine> book_engine;
+    if (use_book) book_engine = std::make_unique<BookMatchEngine>(/*level_liq=*/200);
 
     // [1/4] Generowanie danych rynkowych
     auto gen_start = std::chrono::high_resolution_clock::now();
@@ -576,10 +687,31 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         if (order) {
             stats.orders_submitted++;
             if (use_risk) risk.on_order_sent(stock, oms_side, shares);  // rezerwacja pending
-            if (fill_latency_iters <= 0) {
-                do_fill(order->order_id, shares, fill_price);
+
+            // Realny match w FullOrderBook (opt-in) — wyznacza faktyczną ilość
+            // i VWAP. Płynność oceniana JEST teraz; rozliczenie w OMS może być
+            // odroczone (fill latency). Bez --book: legacy fill po cenie submitu.
+            int32_t fill_sh = shares;
+            double  fill_px = fill_price;
+            if (use_book) {
+                double vwap = fill_price;
+                const int32_t matched = book_engine->match(oms_side, fill_price, shares, vwap);
+                fill_sh = matched;
+                fill_px = vwap;
+                if (matched < shares) stats.orders_book_partial++;
+                if (matched > 0) {
+                    stats.book_slippage_usd +=
+                        (oms_side == Side::BUY ? (vwap - fill_price)
+                                               : (fill_price - vwap)) * matched;
+                }
+            }
+
+            if (fill_sh <= 0) {
+                // Brak płynności — zlecenie zostaje pending w OMS/Risk (realne).
+            } else if (fill_latency_iters <= 0) {
+                do_fill(order->order_id, fill_sh, fill_px);
             } else {
-                pending_fills.push_back({order->order_id, shares, fill_price, i + fill_latency_iters});
+                pending_fills.push_back({order->order_id, fill_sh, fill_px, i + fill_latency_iters});
                 int in_flight = static_cast<int>(pending_fills.size());
                 if (in_flight > stats.max_in_flight_orders) stats.max_in_flight_orders = in_flight;
             }
@@ -672,13 +804,15 @@ inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
 
 // print_pipeline_stats — wyświetla wyniki symulacji.
 inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool use_router,
-                                 bool use_risk = false) {
+                                 bool use_risk = false, bool use_book = false) {
     printf("\n=== HFT Market Data Simulator (C++) ===\n");
     printf("Pipeline: ITCH Generator -> Parser");
     if (use_strategy) printf(" -> Strategy");
     if (use_router) printf(" -> Router");
     if (use_risk) printf(" -> Risk");
-    printf(" -> OMS -> P&L\n\n");
+    printf(" -> OMS");
+    if (use_book) printf(" -> FullOrderBook(match)");
+    printf(" -> P&L\n\n");
 
     printf("[1/4] Generation\n");
     printf("  Messages: %d\n", s.messages_generated);
@@ -702,6 +836,10 @@ inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool
     if (use_risk) {
         printf("  Rejected (Risk pre-trade): %d\n", s.orders_risk_rejected);
         printf("  Kill switch: %s\n", s.risk_kill_tripped ? "TRIPPED" : "inactive");
+    }
+    if (use_book) {
+        printf("  Book partial fills: %d\n", s.orders_book_partial);
+        printf("  Book slippage cost: $%.2f\n", s.book_slippage_usd);
     }
     if (s.fill_latency_iters > 0) {
         printf("  Max in-flight: %d  (fill latency: %d iters)\n",
