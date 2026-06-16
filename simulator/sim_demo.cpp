@@ -112,6 +112,24 @@ void test_pipeline_full() {
     ASSERT(stats.messages_parsed > 0, "full_pipeline_parsed");
 }
 
+// Risk wpięty w pipeline (#74). Hojne limity → bramka przepuszcza, zlecenia
+// nadal się rozliczają (zero pre-trade rejectów).
+void test_pipeline_with_risk_allow() {
+    PipelineStats stats = run_pipeline(500, true, true, 42, nullptr, 0, /*use_risk=*/true);
+    ASSERT(stats.orders_submitted > 0, "risk_allow_submitted");
+    ASSERT(stats.orders_risk_rejected == 0, "risk_allow_no_rejects");
+}
+
+// Zaciśnięte limity → RiskManager odrzuca PRZED OMS. Dowód że bramka działa
+// na hot-pathie, a nie jest tylko podpięta na sucho.
+void test_pipeline_with_risk_reject() {
+    HFTConfig cfg{};
+    cfg.risk.max_position_per_symbol = 100;
+    cfg.risk.max_order_value         = 5000.0;
+    PipelineStats stats = run_pipeline(2000, true, true, 42, &cfg, 0, /*use_risk=*/true);
+    ASSERT(stats.orders_risk_rejected > 0, "risk_reject_engages");
+}
+
 void test_rng_deterministic() {
     FastRNG rng1(12345);
     FastRNG rng2(12345);
@@ -137,6 +155,8 @@ int main(int argc, char* argv[]) {
     test_pipeline_with_strategy();
     test_pipeline_with_router();
     test_pipeline_full();
+    test_pipeline_with_risk_allow();
+    test_pipeline_with_risk_reject();
     test_rng_deterministic();
 
     printf("\n%d/%d tests passed", tests_passed, tests_total);
@@ -150,6 +170,7 @@ int main(int argc, char* argv[]) {
     // CLI args override config values
     bool use_strategy = false;
     bool use_router   = false;
+    bool use_risk     = false;
     int  num_messages = cfg.simulator.num_messages;
     int  seed         = cfg.simulator.seed;
     int  fill_latency = 0;     // 0 = zero-latency (legacy); --latency N enables in-flight queue
@@ -157,6 +178,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         if      (std::strcmp(argv[i], "--strategy") == 0) use_strategy = true;
         else if (std::strcmp(argv[i], "--router")   == 0) use_router   = true;
+        else if (std::strcmp(argv[i], "--risk")     == 0) use_risk     = true;
         else if (std::strcmp(argv[i], "--latency")  == 0 && i + 1 < argc) {
             fill_latency = std::atoi(argv[++i]);
         }
@@ -167,8 +189,9 @@ int main(int argc, char* argv[]) {
     }
 
     PipelineStats stats = run_pipeline(num_messages, use_strategy, use_router,
-                                       static_cast<uint64_t>(seed), &cfg, fill_latency);
-    print_pipeline_stats(stats, use_strategy, use_router);
+                                       static_cast<uint64_t>(seed), &cfg, fill_latency,
+                                       use_risk);
+    print_pipeline_stats(stats, use_strategy, use_router, use_risk);
 
     return (tests_failed == 0) ? 0 : 1;
 }

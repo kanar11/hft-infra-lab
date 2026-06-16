@@ -7,6 +7,11 @@
  *
  * Pipeline: ITCH Generator → ITCH Parser → Strategy → Router → Risk → OMS → P&L
  *
+ * RiskManager (opt-in przez use_risk / flagę --risk) jest pre-trade bramkarzem:
+ * każde zlecenie przechodzi check_order() ZANIM trafi do OMS (SEC 15c3-5).
+ * REJECT/KILL → zlecenie nie idzie; fille zasilają pozycje i P&L w RiskManagerze
+ * (circuit breaker / drawdown). Patrz do_fill() i pętla [3/4].
+ *
  * Dwa warianty:
  *   - run_pipeline()           — wszystko w jednym wątku, sekwencyjnie.
  *   - run_pipeline_threaded()  — gen / parse-strategy / oms na osobnych
@@ -31,6 +36,7 @@
 // Wszystkie moduły pipeline'u
 #include "../itch-parser/itch_parser.hpp"
 #include "../oms/oms.hpp"
+#include "../risk/risk_manager.hpp"
 #include "../config/config_loader.hpp"
 #include "../strategy/mean_reversion.hpp"
 #include "../router/smart_router.hpp"
@@ -290,7 +296,9 @@ struct PipelineStats {
     int     messages_parsed;
     int     orders_submitted;
     int     orders_filled;
-    int     orders_rejected;
+    int     orders_rejected;         // OMS odrzucił (limit pozycji / wartości w OMS)
+    int     orders_risk_rejected;    // RiskManager odrzucił PRZED OMS (pre-trade)
+    bool    risk_kill_tripped;       // kill switch zatrzasnął się w trakcie sesji
     int     max_in_flight_orders;   // peak submittted-but-unfilled
     int     fill_latency_iters;     // iteracje symulowanego opóźnienia fill-ack (0 = zero-latency)
     double  gen_ms;
@@ -323,7 +331,8 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
                                    bool use_router = false,
                                    uint64_t seed = 42,
                                    const HFTConfig* cfg = nullptr,
-                                   int fill_latency_iters = 0) {
+                                   int fill_latency_iters = 0,
+                                   bool use_risk = false) {
     PipelineStats stats = {};
     stats.fill_latency_iters = fill_latency_iters;
 
@@ -389,6 +398,27 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
     }
 
+    // RiskManager — pre-trade bramkarz między Strategy/Router a OMS.
+    // Limity z configa (cfg->risk), fallback do RiskLimits() defaults.
+    // SEC 15c3-5: nic nie idzie do OMS bez pozytywnego check_order().
+    RiskLimits rlimits;
+    if (cfg) {
+        rlimits.max_position_per_symbol = cfg->risk.max_position_per_symbol;
+        rlimits.max_portfolio_exposure  = cfg->risk.max_portfolio_exposure;
+        rlimits.max_daily_loss          = static_cast<int64_t>(cfg->risk.max_daily_loss);
+        rlimits.max_orders_per_second   = cfg->risk.max_orders_per_second;
+        rlimits.max_order_value         = static_cast<int64_t>(cfg->risk.max_order_value);
+        rlimits.max_drawdown_pct        = cfg->risk.max_drawdown_pct;
+    }
+    // Rate-limiter mierzy zlecenia/sek po zegarze ściennym (mono_ns). Symulator
+    // kompresuje czas — wszystkie zlecenia lecą w ułamku sekundy, więc realny
+    // próg N/s odrzuciłby je masowo jako artefakt benchmarku, nie ryzyka. Dla
+    // in-process symulacji rozluźniamy TYLKO ten jeden check; pozostałe 6
+    // (kill switch, wartość, pozycja per-symbol, ekspozycja portfela, circuit
+    // breaker, drawdown) działają w pełni i to one są tu interesujące.
+    rlimits.max_orders_per_second = (num_messages > 0) ? (num_messages + 16) : 1024;
+    RiskManager risk(rlimits);
+
     // [1/4] Generowanie danych rynkowych
     auto gen_start = std::chrono::high_resolution_clock::now();
 
@@ -442,13 +472,39 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     // Kolejka FIFO fillów w locie; size() = liczba pending zleceń w OMS.
     std::vector<PendingFill> pending_fills;
 
+    // do_fill — jeden punkt rozliczenia fillu (3 miejsca wołają to samo):
+    // OMS księguje pozycję/P&L, a gdy use_risk także RiskManager (przepływ
+    // pending→realized + feed realizowanego P&L do circuit breakera/drawdown).
+    // Deltę P&L liczymy z Position OMS-a przed/po fillu (realized_pnl jest
+    // fixed-point int64, więc przez to_float na dolary dla risk.update_pnl).
+    auto do_fill = [&](uint64_t oid, int32_t sh, double px) {
+        char    sym[9]   = {0};
+        Side    fside    = Side::BUY;
+        int64_t pnl_pre  = 0;
+        const Order* o = oms.get_order(oid);
+        if (o) {
+            std::memcpy(sym, o->symbol, 9);
+            fside = o->side;
+            const Position* p = oms.get_position(sym);
+            pnl_pre = p ? p->realized_pnl : 0;
+        }
+        const uint32_t applied = oms.fill_order(oid, sh, px);
+        stats.orders_filled++;
+        if (use_risk && o && applied > 0) {
+            risk.update_position(sym, fside, static_cast<int32_t>(applied));
+            const Position* p2 = oms.get_position(sym);
+            const int64_t pnl_post = p2 ? p2->realized_pnl : 0;
+            if (pnl_post != pnl_pre) risk.update_pnl(to_float(pnl_post - pnl_pre));
+            if (risk.is_kill_switch_active()) stats.risk_kill_tripped = true;
+        }
+    };
+
     for (int i = 0; i < msg_idx; ++i) {
         // Drain fillów których ack deadline już minął.
         size_t drained = 0;
         for (; drained < pending_fills.size() && pending_fills[drained].due_iter <= i; ++drained) {
             const PendingFill& pf = pending_fills[drained];
-            oms.fill_order(pf.order_id, pf.shares, pf.price);
-            stats.orders_filled++;
+            do_fill(pf.order_id, pf.shares, pf.price);
         }
         if (drained > 0) pending_fills.erase(pending_fills.begin(), pending_fills.begin() + drained);
 
@@ -506,12 +562,22 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             if (route.valid) fill_price = route.price;
         }
 
+        // Pre-trade risk: bramkarz PRZED OMS. REJECT/KILL → zlecenie nie idzie.
+        if (use_risk) {
+            const RiskCheckResult rc = risk.check_order(stock, oms_side, fill_price, shares);
+            if (rc.action != RiskAction::ALLOW) {
+                stats.orders_risk_rejected++;
+                if (risk.is_kill_switch_active()) stats.risk_kill_tripped = true;
+                continue;
+            }
+        }
+
         Order* order = oms.submit_order(stock, oms_side, fill_price, shares);
         if (order) {
             stats.orders_submitted++;
+            if (use_risk) risk.on_order_sent(stock, oms_side, shares);  // rezerwacja pending
             if (fill_latency_iters <= 0) {
-                oms.fill_order(order->order_id, shares, fill_price);
-                stats.orders_filled++;
+                do_fill(order->order_id, shares, fill_price);
             } else {
                 pending_fills.push_back({order->order_id, shares, fill_price, i + fill_latency_iters});
                 int in_flight = static_cast<int>(pending_fills.size());
@@ -524,8 +590,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
 
     // Final drain — rozlicz zlecenia jeszcze in-flight na końcu strumienia.
     for (const auto& pf : pending_fills) {
-        oms.fill_order(pf.order_id, pf.shares, pf.price);
-        stats.orders_filled++;
+        do_fill(pf.order_id, pf.shares, pf.price);
     }
     pending_fills.clear();
 
@@ -606,11 +671,13 @@ inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
 
 
 // print_pipeline_stats — wyświetla wyniki symulacji.
-inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool use_router) {
+inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool use_router,
+                                 bool use_risk = false) {
     printf("\n=== HFT Market Data Simulator (C++) ===\n");
     printf("Pipeline: ITCH Generator -> Parser");
     if (use_strategy) printf(" -> Strategy");
     if (use_router) printf(" -> Router");
+    if (use_risk) printf(" -> Risk");
     printf(" -> OMS -> P&L\n\n");
 
     printf("[1/4] Generation\n");
@@ -631,7 +698,11 @@ inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool
     printf("[3/4] OMS Processing\n");
     printf("  Submitted: %d\n", s.orders_submitted);
     printf("  Filled:    %d\n", s.orders_filled);
-    printf("  Rejected:  %d\n", s.orders_rejected);
+    printf("  Rejected (OMS):  %d\n", s.orders_rejected);
+    if (use_risk) {
+        printf("  Rejected (Risk pre-trade): %d\n", s.orders_risk_rejected);
+        printf("  Kill switch: %s\n", s.risk_kill_tripped ? "TRIPPED" : "inactive");
+    }
     if (s.fill_latency_iters > 0) {
         printf("  Max in-flight: %d  (fill latency: %d iters)\n",
                s.max_in_flight_orders, s.fill_latency_iters);
