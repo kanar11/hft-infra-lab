@@ -524,6 +524,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         rlimits.max_orders_per_second   = cfg->risk.max_orders_per_second;
         rlimits.max_order_value         = static_cast<int64_t>(cfg->risk.max_order_value);
         rlimits.max_drawdown_pct        = cfg->risk.max_drawdown_pct;
+        rlimits.max_price_band_pct      = cfg->risk.max_price_band_pct;
     }
     // Rate-limiter mierzy zlecenia/sek po zegarze ściennym (mono_ns). Symulator
     // kompresuje czas — wszystkie zlecenia lecą w ułamku sekundy, więc realny
@@ -663,6 +664,9 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
 
         if (!stock || price <= 0.0) continue;
+
+        // Zasil cenę referencyjną Risk'a z market data (price-band / fat-finger).
+        if (use_risk) risk.update_reference_price(stock, price);
 
         // === Tryb MarketMaker (--mm) ===
         // MM jest makerem: kwotuje obie strony wokół mid, a przychodzący market

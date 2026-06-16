@@ -12,6 +12,7 @@ risk:
   max_orders_per_second: 1000      # Rate limit / Limit częstotliwości
   max_order_value: 500000.0        # Max single order notional ($) / Maks. wartość zlecenia ($)
   max_drawdown_pct: 5.0            # Max drawdown from peak (%) / Maks. drawdown od szczytu (%)
+  max_price_band_pct: 20.0         # Fat-finger band vs ref price (%, <=0 off) / Band fat-finger (%)
 
 # OMS parameters / Parametry OMS
 oms:

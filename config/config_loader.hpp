@@ -35,6 +35,7 @@ struct HFTConfig {
         int32_t max_orders_per_second   = 1000;
         double  max_order_value         = 500000.0;
         double  max_drawdown_pct        = 5.0;
+        double  max_price_band_pct      = 20.0;   // fat-finger; ≤0 = wyłączony
     } risk;
 
     struct OmsConfig {
@@ -193,6 +194,7 @@ inline HFTConfig load_config(const char* filepath = "config.yaml") {
                     else if (k == "max_orders_per_second")   cfg.risk.max_orders_per_second   = to_int(v);
                     else if (k == "max_order_value")         cfg.risk.max_order_value         = to_dbl(v);
                     else if (k == "max_drawdown_pct")        cfg.risk.max_drawdown_pct        = to_dbl(v);
+                    else if (k == "max_price_band_pct")      cfg.risk.max_price_band_pct      = to_dbl(v);
                     break;
                 case OMS:
                     if      (k == "max_position")   cfg.oms.max_position    = to_int(v);
@@ -279,6 +281,7 @@ inline HFTConfig load_config(const char* filepath = "config.yaml") {
     env_int("HFT_RISK_MAX_ORDERS_PER_SECOND",   cfg.risk.max_orders_per_second);
     env_dbl("HFT_RISK_MAX_ORDER_VALUE",         cfg.risk.max_order_value);
     env_dbl("HFT_RISK_MAX_DRAWDOWN_PCT",        cfg.risk.max_drawdown_pct);
+    env_dbl("HFT_RISK_MAX_PRICE_BAND_PCT",      cfg.risk.max_price_band_pct);
     env_int("HFT_OMS_MAX_POSITION",             cfg.oms.max_position);
     env_dbl("HFT_OMS_MAX_ORDER_VALUE",          cfg.oms.max_order_value);
     env_int("HFT_STRATEGY_WINDOW",              cfg.strategy.window);

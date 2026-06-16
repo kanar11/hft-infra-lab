@@ -1356,6 +1356,49 @@ void test_integration() {
 }
 
 
+// Risk #79 — price-band (fat-finger) + atomic kill switch.
+void test_risk_price_band() {
+    SECTION("Risk Price Band + Atomic Kill (#79)");
+
+    RiskLimits lim;
+    lim.max_price_band_pct      = 20.0;
+    lim.max_order_value         = 100000000;   // hojne — izolujemy band
+    lim.max_position_per_symbol = 1000000;
+    lim.max_portfolio_exposure  = 100000000;
+    lim.max_orders_per_second   = 1000000;
+    RiskManager r(lim);
+
+    // Bez ceny referencyjnej band jest pomijany — pierwsze zlecenie przechodzi.
+    ASSERT(r.check_order("AAPL", Side::BUY, 150.00, 10).action == RiskAction::ALLOW,
+           "band_no_ref_allows");
+
+    r.update_reference_price("AAPL", 150.00);
+    ASSERT(r.check_order("AAPL", Side::BUY, 165.00, 10).action == RiskAction::ALLOW,
+           "band_within_10pct_allows");                 // +10% < 20%
+    ASSERT(r.check_order("AAPL", Side::BUY, 1500.00, 10).action == RiskAction::REJECT,
+           "band_fat_finger_rejects");                  // +900% — gruba pomyłka
+    ASSERT(r.check_order("AAPL", Side::SELL, 100.00, 10).action == RiskAction::REJECT,
+           "band_far_below_rejects");                   // -33% < -20%
+
+    // Band wyłączony (≤0) → nawet 10× cena przechodzi.
+    RiskLimits off = lim; off.max_price_band_pct = 0.0;
+    RiskManager r2(off);
+    r2.update_reference_price("AAPL", 150.00);
+    ASSERT(r2.check_order("AAPL", Side::BUY, 1500.00, 10).action == RiskAction::ALLOW,
+           "band_disabled_allows");
+
+    // Atomic kill switch — toggling działa jak wcześniej (typ atomic<bool>).
+    RiskManager r3(lim);
+    ASSERT(!r3.is_kill_switch_active(), "kill_initially_off");
+    r3.activate_kill_switch();
+    ASSERT(r3.is_kill_switch_active(), "kill_activates");
+    ASSERT(r3.check_order("AAPL", Side::BUY, 150.0, 1).action == RiskAction::REJECT,
+           "kill_rejects_all");
+    r3.deactivate_kill_switch();
+    ASSERT(!r3.is_kill_switch_active(), "kill_deactivates");
+}
+
+
 // FIX session #78 — persystencja seq + buildery admin messages.
 void test_fix_session() {
     SECTION("FIX Session (#78)");
@@ -1623,6 +1666,7 @@ int main() {
     test_oms();
     test_oms_short_and_replace();
     test_risk();
+    test_risk_price_band();
     test_router();
     test_logger();
     test_strategy();

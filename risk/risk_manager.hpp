@@ -73,6 +73,7 @@
 #include <cstdlib>     // std::remove
 #include <cmath>
 #include <string>      // persist_path_
+#include <atomic>      // kill switch — czytany/pisany z wielu wątków (threaded pipeline)
 #include <unistd.h>    // ::fsync, ::fileno
 
 #include "../common/types.hpp"
@@ -174,6 +175,11 @@ struct RiskLimits {
     int32_t  max_orders_per_second;
     int64_t  max_order_value;
     double   max_drawdown_pct;
+    // Fat-finger / price-band: maks. % odchylenia ceny zlecenia od ceny
+    // referencyjnej symbolu (last/mid z market data). ≤ 0 = wyłączony.
+    // 20% = standardowy luźny band (NMS LULD jest ciaśniejszy per-tier, ale
+    // ten check łapie głównie grube pomyłki: 1500 zamiast 150).
+    double   max_price_band_pct;
 
     RiskLimits() noexcept
         : max_position_per_symbol(5000),
@@ -181,7 +187,8 @@ struct RiskLimits {
           max_daily_loss(100000),
           max_orders_per_second(1000),
           max_order_value(500000),
-          max_drawdown_pct(5.0) {}
+          max_drawdown_pct(5.0),
+          max_price_band_pct(20.0) {}
 };
 
 
@@ -259,8 +266,16 @@ class RiskManager {
     // --------------------------------------------------------------------
     // Stan: kill switch + opcjonalna persistencja
     // --------------------------------------------------------------------
-    bool        kill_switch_active_;
+    // atomic — w run_pipeline_threaded check_order (wątek konsumenta) czyta
+    // równolegle z zapisem przez breaker/manual. Plain bool = data race (UB);
+    // komentarz w check_order od początku zakładał "atomic bool read".
+    std::atomic<bool> kill_switch_active_;
     std::string persist_path_;     // pusty = persistencja wyłączona
+
+    // Ceny referencyjne per symbol (last/mid z market data) dla price-bandu.
+    // Aktualizowane przez update_reference_price(); puste = check pominięty
+    // dla symboli bez znanej ceny.
+    std::unordered_map<uint64_t, double> ref_price_;
 
     // --------------------------------------------------------------------
     // Stan: rate limit
@@ -336,6 +351,18 @@ public:
         const int64_t order_value = static_cast<int64_t>(price * quantity);
         if (order_value > limits_.max_order_value)
             return make_reject("Order value exceeds limit", t0);
+
+        // 2b. Price band (fat-finger) — cena zbyt daleko od referencyjnej.
+        //     Łapie grube pomyłki (np. 1500.00 zamiast 150.00) zanim trafią na
+        //     rynek. Pomijany gdy band wyłączony albo brak ceny ref dla symbolu.
+        if (limits_.max_price_band_pct > 0.0) {
+            const auto rp = ref_price_.find(sym_to_key(symbol));
+            if (rp != ref_price_.end() && rp->second > 0.0) {
+                const double dev_pct = std::fabs(price - rp->second) / rp->second * 100.0;
+                if (dev_pct > limits_.max_price_band_pct)
+                    return make_reject("Price band breach (fat-finger)", t0);
+            }
+        }
 
         // 3 + 4. Limity pozycji (per-symbol i portfolio) — wspólny lookup
         const uint64_t key       = sym_to_key(symbol);
@@ -433,6 +460,20 @@ public:
     void update_pnl(double pnl_change) noexcept {
         daily_pnl_ += pnl_change;
         if (daily_pnl_ > peak_pnl_) peak_pnl_ = daily_pnl_;
+    }
+
+
+    // ====================================================================
+    // Mutator: update_reference_price
+    // ====================================================================
+    //
+    // Wywoływany z market data (last trade / mid) dla price-bandu. Bez znanej
+    // ceny referencyjnej fat-finger check dla danego symbolu jest pomijany —
+    // pierwsze zlecenie na świeży symbol przechodzi, kolejne są walidowane
+    // względem ostatniej ceny.
+    // ====================================================================
+    void update_reference_price(const char* symbol, double price) noexcept {
+        if (price > 0.0) ref_price_[sym_to_key(symbol)] = price;
     }
 
 
