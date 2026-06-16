@@ -18,6 +18,7 @@
  *          orderbook_pro_demo.cpp
  */
 #include "orderbook_pro.hpp"
+#include "orderbook_pro_cluster.hpp"   // BookCluster<N> — wielo-symbol
 
 #include <algorithm>
 #include <chrono>
