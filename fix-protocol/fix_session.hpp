@@ -46,7 +46,8 @@
 #include <string>
 #include <unistd.h>      // ::fsync, ::fileno — durable persist seq
 
-#include "fix_parser.hpp" // FIXMessage::build_message do admin messages
+#include "fix_parser.hpp"          // FIXMessage::build_message
+#include "../common/types.hpp"     // Side (order-entry builders, #90)
 
 
 namespace fix {
@@ -334,6 +335,55 @@ public:
         if (n < 0 || n >= (int)sizeof(body)) return 0;
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
+
+    // === Buildery order-entry (35=D/F/G) — strona aplikacyjna (#90) ===
+    // Admin messages (#78) utrzymuja sesje; te skladaja faktyczne zlecenia.
+    // Mapuja 1:1 na OMS: D=submit, F=cancel, G=replace. Side: BUY→'1', SELL→'2'.
+
+    // NewOrderSingle (35=D): 11=ClOrdID, 55=Symbol, 54=Side, 38=Qty, 44=Price,
+    // 40=OrdType (2=Limit).
+    int build_new_order(char* out, int cap, const char* cl_ord_id, const char* symbol,
+                        Side side, int32_t qty, double price,
+                        char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=D%c49=%s%c56=%s%c34=%u%c11=%s%c55=%s%c54=%c%c38=%d%c44=%.2f%c40=2%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            cl_ord_id, delim, symbol, delim, fix_side(side), delim, qty, delim, price, delim, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
+    // OrderCancelRequest (35=F): 41=OrigClOrdID identyfikuje zlecenie do anulowania.
+    int build_cancel_order(char* out, int cap, const char* cl_ord_id,
+                           const char* orig_cl_ord_id, const char* symbol,
+                           Side side, int32_t qty, char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=F%c49=%s%c56=%s%c34=%u%c11=%s%c41=%s%c55=%s%c54=%c%c38=%d%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            cl_ord_id, delim, orig_cl_ord_id, delim, symbol, delim, fix_side(side), delim, qty, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
+    // OrderCancelReplaceRequest (35=G): amend ceny/ilosci (mapuje na OMS replace).
+    int build_cancel_replace(char* out, int cap, const char* cl_ord_id,
+                             const char* orig_cl_ord_id, const char* symbol,
+                             Side side, int32_t qty, double price,
+                             char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=G%c49=%s%c56=%s%c34=%u%c11=%s%c41=%s%c55=%s%c54=%c%c38=%d%c44=%.2f%c40=2%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            cl_ord_id, delim, orig_cl_ord_id, delim, symbol, delim, fix_side(side), delim,
+            qty, delim, price, delim, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
+    // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
+    static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 
     // === Stats ===
     uint64_t gaps_detected()     const noexcept { return gaps_detected_; }

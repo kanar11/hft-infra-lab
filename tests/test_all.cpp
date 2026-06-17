@@ -1670,6 +1670,24 @@ void test_fix_session() {
         ASSERT(std::atoi(m.get_field(34)) == 3, "fix_persist_no_seq_reuse");
         std::remove(path);
     }
+
+    // --- #90 order-entry builders (35=D/F/G) ---
+    {
+        fix::FIXSession s; s.set_comp_ids("ME", "EX");
+        char buf[256];
+        int n = s.build_new_order(buf, sizeof(buf), "ORD1", "AAPL", Side::BUY, 100, 150.25, '|');
+        ASSERT(n > 0, "fix_neworder_built");
+        FIXMessage m; m.parse(buf);
+        ASSERT(m.is_valid() && m.get_msg_type()[0] == 'D', "fix_neworder_D_valid");
+        ASSERT(std::strcmp(m.get_symbol(), "AAPL") == 0, "fix_neworder_symbol");
+        ASSERT(std::strcmp(m.get_side(), "BUY") == 0, "fix_neworder_side_buy");
+        ASSERT(m.get_quantity() == 100, "fix_neworder_qty_100");
+
+        s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
+        FIXMessage g; g.parse(buf);
+        ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
+        ASSERT(std::strcmp(g.get_field(41), "ORD1") == 0, "fix_replace_origclordid");
+    }
 }
 
 
