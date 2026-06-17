@@ -1443,6 +1443,18 @@ void test_multicast_gap_recovery() {
     gr.observe(8);                               // luka: brak 6,7
     gr.observe(6);                               // spóźniony primary wypełnia 6
     ASSERT(gr.missing_count() == 1 && gr.recovered == 3, "gaprec_late_primary_recovers");
+
+    // #91 A/B line arbitration — pierwsza linia wygrywa, druga dedup; B łata lukę A.
+    multicast::ABLineArbitrator arb;
+    ASSERT(arb.on_packet(1, true),  "ab_a1_new");
+    ASSERT(!arb.on_packet(1, false), "ab_b1_dup");        // B's 1 = duplikat
+    ASSERT(arb.on_packet(2, true),  "ab_a2_new");
+    ASSERT(arb.on_packet(4, true),  "ab_a4_gap");          // A skoczyło → brak 3
+    ASSERT(arb.has_gaps() && arb.missing_count() == 1, "ab_gap_3_pending");
+    ASSERT(arb.on_packet(3, false), "ab_b3_fills_gap");    // B dostarcza 3
+    ASSERT(!arb.has_gaps(), "ab_self_healed");
+    ASSERT(!arb.on_packet(4, false), "ab_b4_dup");
+    ASSERT(arb.a_first == 3 && arb.b_first == 1, "ab_first_counts");
 }
 
 // Momentum #85 — trend-following; znak decyzji odwrotny do mean-reversion.

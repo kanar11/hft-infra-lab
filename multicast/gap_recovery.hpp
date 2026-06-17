@@ -69,4 +69,38 @@ struct GapRecovery {
     void reset() noexcept { *this = GapRecovery{}; }
 };
 
+
+// ABLineArbitrator — arbitraż dwóch redundantnych linii feedu (expansion #91).
+//
+// Giełdy wysyłają market data DWIEMA identycznymi liniami (A i B) tym samym
+// UDP multicastem. Odbiorca bierze pakiet z TEJ linii, która dotarła pierwsza
+// dla danego sequence, a duplikat z drugiej odrzuca. Jeśli linia A zgubi
+// pakiet, linia B zwykle go dostarcza — luka się "samonaprawia" bez gap-fill
+// requestu. To standardowa odporność feedu (NASDAQ/CME itp.).
+//
+// on_packet(seq, from_line_a) → true gdy pakiet NOWY (przekazany dalej),
+// false gdy duplikat (druga linia już dostarczyła ten seq). Pod spodem
+// GapRecovery daje zunifikowany obraz luk PO arbitrażu.
+struct ABLineArbitrator {
+    GapRecovery rec;          // stan po połączeniu obu linii
+    uint64_t a_first = 0;     // ile razy linia A dostarczyła seq pierwsza
+    uint64_t b_first = 0;     // ile razy linia B
+    uint64_t dups    = 0;     // odrzucone duplikaty (druga linia)
+
+    bool on_packet(uint64_t seq, bool from_line_a) noexcept {
+        // Nowy = jeszcze nie skonsumowany: na/przed expected albo wypełnia lukę.
+        const bool is_new = !rec.initialized
+                          || seq >= rec.expected
+                          || rec.missing.count(seq) != 0;
+        if (!is_new) { ++dups; return false; }
+        rec.observe(seq);                 // advance / recover (wspólna logika)
+        if (from_line_a) ++a_first; else ++b_first;
+        return true;
+    }
+
+    bool   has_gaps()      const noexcept { return rec.has_gaps(); }
+    size_t missing_count() const noexcept { return rec.missing_count(); }
+    void   reset()         noexcept { *this = ABLineArbitrator{}; }
+};
+
 }  // namespace multicast
