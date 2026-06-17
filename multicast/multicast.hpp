@@ -36,6 +36,8 @@
 #include <chrono>
 #include <algorithm>
 
+#include "gap_recovery.hpp"   // multicast::GapRecovery (recovery nad SequenceTracker)
+
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -289,6 +291,10 @@ struct SequenceTracker {
 
     void reset() noexcept { *this = SequenceTracker{}; }
 };
+
+// GapRecovery (recovery nad detekcją) wydzielony do osobnego nagłówka, by był
+// używalny/testowalny bez nagłówków gniazd i globalnego MsgType z tego pliku.
+// (Include na końcu pliku — patrz dół namespace.)
 
 
 // MoldUDP64 — przemysłowy standard transportu market data over UDP (NASDAQ).

@@ -1,0 +1,72 @@
+/*
+ * GapRecovery — warstwa RECOVERY nad detekcją luk sekwencji (expansion #82).
+ *
+ * Wydzielona z multicast.hpp do osobnego, lekkiego nagłówka: multicast.hpp
+ * ciągnie nagłówki gniazd (sys/socket) i globalny MsgType — a recovery to
+ * czysta logika, którą chcemy testować/używać bez transportu. multicast.hpp
+ * include'uje ten plik, więc multicast_demo nadal dostaje GapRecovery.
+ *
+ * SequenceTracker (multicast.hpp) tylko WYKRYWA luki. To pierwszy krok; realny
+ * feed handler musi jeszcze ODZYSKAĆ braki: zapamiętać KTÓRE seq zgubił, wysłać
+ * gap-fill request do serwera retransmisji (MoldUDP64 request / A-B arbitration)
+ * i pogodzić retransmitowane pakiety z primary feedem.
+ *
+ * Model:
+ *   observe(seq)        — primary feed; luka → wpis brakujących seq do `missing`
+ *   on_retransmit(seq)  — pakiet z serwera recovery / linii B; usuwa z `missing`
+ *   next_request(lo,hi) — zakres do gap-fill request (najniższy..najwyższy brak)
+ *   has_gaps()/missing()— czy księga jest jeszcze niepewna
+ */
+#pragma once
+
+#include <cstdint>
+#include <set>
+
+namespace multicast {
+
+struct GapRecovery {
+    std::set<uint64_t> missing;          // znane braki, czekają na retransmisję
+    uint64_t expected    = 0;
+    bool     initialized = false;
+    uint64_t gap_events  = 0;            // ile osobnych zdarzeń luki
+    uint64_t recovered   = 0;            // ile braków odzyskanych
+    uint64_t duplicates  = 0;            // seq < expected i NIE był brakiem
+
+    // observe: primary feed. W kolejności → OK; do przodu → wpisz lukę; do tyłu
+    // → albo wypełnia znany brak (recovered), albo czysty duplikat.
+    void observe(uint64_t seq) noexcept {
+        if (!initialized) { initialized = true; expected = seq + 1; return; }
+        if (seq == expected) { ++expected; return; }
+        if (seq > expected) {
+            for (uint64_t s = expected; s < seq; ++s) missing.insert(s);
+            ++gap_events;
+            expected = seq + 1;
+            return;
+        }
+        if (missing.erase(seq)) ++recovered;   // spóźniony pakiet wypełnia lukę
+        else                    ++duplicates;
+    }
+
+    // on_retransmit: pakiet z serwera recovery / linii B. Liczy się tylko gdy
+    // realnie wypełnia znaną lukę. Zwraca true gdy coś odzyskano.
+    bool on_retransmit(uint64_t seq) noexcept {
+        if (missing.erase(seq)) { ++recovered; return true; }
+        return false;
+    }
+
+    // next_request: zakres [lo,hi] do gap-fill request pokrywający aktualne
+    // braki. Zwraca false gdy nie ma luk (księga znów pewna).
+    bool next_request(uint64_t& lo, uint64_t& hi) const noexcept {
+        if (missing.empty()) return false;
+        lo = *missing.begin();
+        hi = *missing.rbegin();
+        return true;
+    }
+
+    bool   has_gaps()      const noexcept { return !missing.empty(); }
+    size_t missing_count() const noexcept { return missing.size(); }
+
+    void reset() noexcept { *this = GapRecovery{}; }
+};
+
+}  // namespace multicast

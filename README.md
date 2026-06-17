@@ -92,10 +92,10 @@ Szczegóły protokołu, opcody, podłączenie do prawdziwych giełd: [`feed/READ
 | kernel-config/ | Hugepages, CPU isolation, sysctl, IRQ affinity | Bash |
 | linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
 | network-latency/ | Network latency and jitter measurement | Bash |
-| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec) | C++ |
+| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec), sequence gap detection + **recovery** (retransmit request/reconcile) | C++ |
 | orderbook/ | Matching engine: 4 variants — std::map basic, std::map + cancel/modify, flat-array O(1), **FullOrderBook L3** (FIFO, 10 order types + OCO/bracket/trailing, auction cross, STP, LULD/MIFID II, snapshot/delta recovery, integrity audit, microstructure analytics) | C++ |
 | fix-protocol/ | FIX 4.2 parser + session validation (CheckSum tag 10, BodyLength tag 9, SOH delimiter) + message builder (5.5M msg/sec) | C++ |
-| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types, 60M msg/sec) | C++ |
+| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types, 60M msg/sec) + **L3 book reconstructor** (`itch_book.hpp`: Add/Exec/Cancel/Delete/Replace → best bid/ask, depth, resting orders) | C++ |
 | ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | C++ |
 | dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | C++ |
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |

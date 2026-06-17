@@ -20,6 +20,8 @@
 
 // All module headers
 #include "../itch-parser/itch_parser.hpp"
+#include "../itch-parser/itch_book.hpp"
+#include "../multicast/gap_recovery.hpp"
 #include "../oms/oms.hpp"
 #include "../risk/risk_manager.hpp"
 #include "../router/smart_router.hpp"
@@ -1357,6 +1359,57 @@ void test_integration() {
 }
 
 
+// ITCH→Book #82 — rekonstrukcja ksiegi L3 ze strumienia ITCH.
+void test_itch_book() {
+    SECTION("ITCH Book Reconstructor (#82)");
+    auto close = [](double a, double b) { const double d = a - b; return (d < 0 ? -d : d) < 1e-6; };
+    itch::ITCHOrderBook book;
+
+    book.on_add(1, 'B', 150.00, 100);
+    book.on_add(2, 'B', 149.99, 200);
+    book.on_add(3, 'S', 150.05, 150);
+    book.on_add(4, 'S', 150.10, 300);
+    ASSERT(close(book.best_bid(), 150.00), "itchbook_best_bid");
+    ASSERT(close(book.best_ask(), 150.05), "itchbook_best_ask");
+    ASSERT(book.resting_orders() == 4, "itchbook_resting_4");
+    ASSERT(book.total_bid_qty() == 300, "itchbook_total_bid_qty");
+
+    book.on_execute(1, 60);                       // 150.00: 100 → 40
+    ASSERT(book.qty_at('B', 150.00) == 40, "itchbook_execute_reduces");
+    book.on_cancel(2, 40);                        // 149.99: 200 → 160
+    ASSERT(book.qty_at('B', 149.99) == 160, "itchbook_cancel_reduces");
+    book.on_delete(3);                            // ask 150.05 znika
+    ASSERT(close(book.best_ask(), 150.10), "itchbook_delete_lifts_ask");
+
+    book.on_replace(1, 5, 150.01, 80);            // order1(40) → ref5 @150.01 x80
+    ASSERT(book.qty_at('B', 150.00) == 0, "itchbook_replace_clears_old");
+    ASSERT(close(book.best_bid(), 150.01), "itchbook_replace_new_best_bid");
+
+    book.on_execute(999, 10);                     // nieznany ref → orphan
+    ASSERT(book.orphans() == 1, "itchbook_orphan_counted");
+}
+
+// Multicast gap-recovery #82 — detekcja luk + retransmisja + rekoncyliacja.
+void test_multicast_gap_recovery() {
+    SECTION("Multicast Gap Recovery (#82)");
+    multicast::GapRecovery gr;
+    gr.observe(1); gr.observe(2);
+    gr.observe(5);                                // luka: brak 3,4
+    ASSERT(gr.has_gaps() && gr.missing_count() == 2, "gaprec_two_missing");
+    uint64_t lo = 0, hi = 0;
+    ASSERT(gr.next_request(lo, hi) && lo == 3 && hi == 4, "gaprec_request_range");
+
+    ASSERT(gr.on_retransmit(3), "gaprec_recover_3");
+    ASSERT(gr.on_retransmit(4), "gaprec_recover_4");
+    ASSERT(!gr.has_gaps(), "gaprec_fully_recovered");
+    ASSERT(gr.recovered == 2, "gaprec_recovered_count");
+    ASSERT(!gr.on_retransmit(99), "gaprec_unknown_retransmit_false");
+
+    gr.observe(8);                               // luka: brak 6,7
+    gr.observe(6);                               // spóźniony primary wypełnia 6
+    ASSERT(gr.missing_count() == 1 && gr.recovered == 3, "gaprec_late_primary_recovers");
+}
+
 // Router #81 — EWMA zmierzonej latencji + partiale (unfilled_qty).
 void test_router_ewma_partial() {
     SECTION("Router EWMA + Partials (#81)");
@@ -1727,6 +1780,8 @@ int main() {
     printf("=== HFT Infrastructure Lab — Integration Tests ===\n");
 
     test_itch_parser();
+    test_itch_book();
+    test_multicast_gap_recovery();
     test_oms();
     test_oms_short_and_replace();
     test_risk();
