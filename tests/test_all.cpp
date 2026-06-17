@@ -1698,6 +1698,15 @@ void test_backtester() {
     ASSERT(std::fabs(t.pnl_for_tag("ghost")) < 1e-9, "bt_tag_unknown_zero");
     ASSERT(t.tag_count() == 2, "bt_tag_count");
     ASSERT(std::fabs(t.compute().total_pnl - 120.0) < 1e-9, "bt_tag_total_aggregates");
+
+    // #108 krzywa equity: skumulowany P&L po kazdej transakcji.
+    backtest::Backtester ec;
+    ec.on_trade(100.0); ec.on_trade(-40.0); ec.on_trade(60.0);
+    const auto& curve = ec.equity_curve();
+    ASSERT(curve.size() == 3, "bt_equity_curve_len");
+    ASSERT(std::fabs(curve[0] - 100.0) < 1e-9, "bt_equity_p0");
+    ASSERT(std::fabs(curve[1] - 60.0) < 1e-9, "bt_equity_p1");   // 100-40
+    ASSERT(std::fabs(curve[2] - 120.0) < 1e-9, "bt_equity_p2"); // 60+60
 }
 
 

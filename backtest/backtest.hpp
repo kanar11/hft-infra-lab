@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace backtest {
 
@@ -76,6 +77,10 @@ class Backtester {
     // Atrybucja P&L per-tag (#102) — np. per strategia/symbol/venue.
     std::unordered_map<std::string, double> pnl_by_tag_;
 
+    // Krzywa equity (#108) — skumulowany P&L po kazdej transakcji (do wykresu
+    // / analizy ksztaltu drawdownu, nie tylko jego maksimum).
+    std::vector<double> equity_curve_;
+
 public:
     // on_order: zarejestruj zlecenie do fill-rate. filled=true gdy doszlo do
     // jakiegokolwiek wykonania.
@@ -87,7 +92,7 @@ public:
     // on_trade: zarejestruj zrealizowana noge (delta realized P&L, w dolarach).
     // pnl == 0 liczony jako "nie-strata" (win) — flat round-trip nie psuje
     // hit-rate w dol; rzadki przypadek przy fixed-point.
-    void on_trade(double pnl) noexcept {
+    void on_trade(double pnl) {   // niezarezerwowane: equity_curve_ moze realokowac
         ++trades_;
         sum_pnl_ += pnl;
         sum_sq_  += pnl * pnl;
@@ -107,6 +112,7 @@ public:
         if (equity_ > peak_) peak_ = equity_;
         const double dd = peak_ - equity_;
         if (dd > max_dd_) max_dd_ = dd;
+        equity_curve_.push_back(equity_);
     }
 
     // on_trade z tagiem (#102): jak on_trade, ale dodatkowo przypisuje P&L do
@@ -122,6 +128,10 @@ public:
         return (it != pnl_by_tag_.end()) ? it->second : 0.0;
     }
     size_t tag_count() const noexcept { return pnl_by_tag_.size(); }
+
+    // equity_curve: skumulowany P&L po kazdej transakcji (i-ty element = equity
+    // po i+1 transakcjach). Ostatni element == total_pnl.
+    const std::vector<double>& equity_curve() const noexcept { return equity_curve_; }
 
     Report compute() const noexcept {
         Report r{};
