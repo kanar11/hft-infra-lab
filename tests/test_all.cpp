@@ -1670,6 +1670,17 @@ void test_backtester() {
     ASSERT(std::fabs(er.largest_win - 20.0) < 1e-9, "bt_largest_win");
     ASSERT(std::fabs(er.largest_loss + 5.0) < 1e-9, "bt_largest_loss");
     ASSERT(std::fabs(er.expectancy - 6.0) < 1e-9, "bt_expectancy");  // 30/5
+
+    // #102 atrybucja per-tag (np. per strategia).
+    backtest::Backtester t;
+    t.on_trade(100.0, "momentum");
+    t.on_trade(-30.0, "meanrev");
+    t.on_trade(50.0,  "momentum");
+    ASSERT(std::fabs(t.pnl_for_tag("momentum") - 150.0) < 1e-9, "bt_tag_momentum");
+    ASSERT(std::fabs(t.pnl_for_tag("meanrev") + 30.0) < 1e-9, "bt_tag_meanrev");
+    ASSERT(std::fabs(t.pnl_for_tag("ghost")) < 1e-9, "bt_tag_unknown_zero");
+    ASSERT(t.tag_count() == 2, "bt_tag_count");
+    ASSERT(std::fabs(t.compute().total_pnl - 120.0) < 1e-9, "bt_tag_total_aggregates");
 }
 
 

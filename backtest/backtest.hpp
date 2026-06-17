@@ -26,6 +26,8 @@
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
+#include <string>
+#include <unordered_map>
 
 namespace backtest {
 
@@ -71,6 +73,9 @@ class Backtester {
     std::uint64_t cur_win_streak_  = 0, max_win_streak_  = 0;
     std::uint64_t cur_loss_streak_ = 0, max_loss_streak_ = 0;
 
+    // Atrybucja P&L per-tag (#102) — np. per strategia/symbol/venue.
+    std::unordered_map<std::string, double> pnl_by_tag_;
+
 public:
     // on_order: zarejestruj zlecenie do fill-rate. filled=true gdy doszlo do
     // jakiegokolwiek wykonania.
@@ -103,6 +108,20 @@ public:
         const double dd = peak_ - equity_;
         if (dd > max_dd_) max_dd_ = dd;
     }
+
+    // on_trade z tagiem (#102): jak on_trade, ale dodatkowo przypisuje P&L do
+    // kubełka `tag` (strategia/symbol/venue). Globalne metryki bez zmian.
+    void on_trade(double pnl, const char* tag) {
+        on_trade(pnl);
+        if (tag && *tag) pnl_by_tag_[tag] += pnl;
+    }
+
+    // pnl_for_tag: skumulowany P&L danego tagu (0 gdy nieznany).
+    double pnl_for_tag(const char* tag) const {
+        const auto it = pnl_by_tag_.find(tag);
+        return (it != pnl_by_tag_.end()) ? it->second : 0.0;
+    }
+    size_t tag_count() const noexcept { return pnl_by_tag_.size(); }
 
     Report compute() const noexcept {
         Report r{};
