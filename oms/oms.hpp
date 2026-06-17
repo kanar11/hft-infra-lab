@@ -158,6 +158,18 @@ struct Position {
 
     // net_pnl: P&L po odjęciu prowizji (to co realnie zostaje w kieszeni).
     int64_t net_pnl() const noexcept { return realized_pnl - fees; }
+
+    // unrealized_pnl: mark-to-market otwartej pozycji przy cenie mark (#96).
+    // Signed: long (net>0) zarabia gdy mark>avg; short (net<0) gdy mark<avg —
+    // oba pokrywa net_qty * (mark - avg). Fixed-point (×PRICE_SCALE).
+    int64_t unrealized_pnl(int64_t mark_price) const noexcept {
+        return static_cast<int64_t>(net_qty) * (mark_price - avg_price);
+    }
+
+    // total_pnl: realized (brutto) + unrealized - fees przy danej cenie mark.
+    int64_t total_pnl(int64_t mark_price) const noexcept {
+        return realized_pnl + unrealized_pnl(mark_price) - fees;
+    }
 };
 
 

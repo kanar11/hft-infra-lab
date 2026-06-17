@@ -267,6 +267,19 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(oms.total_fees()), 2.0), "fee_oms_total_2");
     }
 
+    {   // #96 unrealized P&L (mark-to-market) dla long i short.
+        OMS oms(10000, 100000000.0);
+        oms.fill_order(oms.submit_order("AAPL", Side::BUY, 50.00, 100)->order_id, 100, 50.00);
+        const Position* lp = oms.get_position("AAPL");
+        ASSERT(close(to_float(lp->unrealized_pnl(to_fixed(52.00))), 200.0), "mtm_long_up");   // (52-50)*100
+        ASSERT(close(to_float(lp->unrealized_pnl(to_fixed(48.00))), -200.0), "mtm_long_down");
+        OMS oms2(10000, 100000000.0);
+        oms2.fill_order(oms2.submit_order("AAPL", Side::SELL, 50.00, 100)->order_id, 100, 50.00);
+        const Position* sp = oms2.get_position("AAPL");
+        ASSERT(close(to_float(sp->unrealized_pnl(to_fixed(48.00))), 200.0), "mtm_short_profit"); // short zyskuje gdy spada
+        ASSERT(close(to_float(sp->total_pnl(to_fixed(48.00))), 200.0), "mtm_total_short");       // realized 0 + unrl 200
+    }
+
     {   // #88 reject reasons — caller rozróżnia DLACZEGO odrzucono.
         OMS oms(/*max_pos=*/100, /*max_val=*/1000.0);
         OMSReject why = OMSReject::NONE;
