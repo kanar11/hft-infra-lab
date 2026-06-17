@@ -30,6 +30,7 @@
 #include "../logger/mmap_logger.hpp"
 #include "../strategy/mean_reversion.hpp"
 #include "../strategy/momentum.hpp"
+#include "../strategy/bollinger.hpp"
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../fix-protocol/fix_session.hpp"
@@ -1479,6 +1480,28 @@ void test_momentum() {
     ASSERT(mrdn.valid && mrdn.side == Side::BUY, "meanrev_opposite_side");
 }
 
+// Bollinger #93 — mean-reversion adaptacyjny do zmienności (pasma ±k·σ).
+void test_bollinger() {
+    SECTION("Bollinger Strategy (#93)");
+    // window=2, k=0.5: dla 2 punktów b-mean == σ, więc b>a o cokolwiek przebija
+    // pasmo (k<1) → deterministyczny sygnał.
+    BollingerStrategy up(2, 0.5, 100);
+    up.on_market_data("X", 100.0);
+    const Signal su = up.on_market_data("X", 102.0);
+    ASSERT(su.valid && su.side == Side::SELL, "bollinger_above_band_sells");
+
+    BollingerStrategy dn(2, 0.5, 100);
+    dn.on_market_data("Y", 100.0);
+    const Signal sd = dn.on_market_data("Y", 98.0);
+    ASSERT(sd.valid && sd.side == Side::BUY, "bollinger_below_band_buys");
+
+    // Zero zmienności (σ=0) → brak sygnału (adaptacja: spokojny rynek = cisza).
+    BollingerStrategy flat(2, 0.5, 100);
+    flat.on_market_data("Z", 100.0);
+    const Signal sf = flat.on_market_data("Z", 100.0);
+    ASSERT(!sf.valid, "bollinger_zero_vol_no_signal");
+}
+
 // Router #81 — EWMA zmierzonej latencji + partiale (unfilled_qty).
 void test_router_ewma_partial() {
     SECTION("Router EWMA + Partials (#81)");
@@ -1954,6 +1977,7 @@ int main() {
     test_strategy();
     test_strategy_edge_cases();
     test_momentum();
+    test_bollinger();
     test_market_maker();
     test_fix();
     test_fix_session();
