@@ -1423,6 +1423,18 @@ void test_itch_book() {
     ASSERT(close(mb.mid_price(), 100.01), "itchbook_mid_price");
     ASSERT(mb.best_bid_qty() == 300 && mb.best_ask_qty() == 100, "itchbook_tob_qty");
     ASSERT(close(mb.imbalance(), 0.5), "itchbook_imbalance");   // (300-100)/400
+
+    // #95 pre-trade impact: walk księgi → VWAP marketowego zlecenia.
+    itch::ITCHOrderBook fb;
+    fb.on_add(1, 'S', 100.00, 100);
+    fb.on_add(2, 'S', 100.01, 200);
+    fb.on_add(3, 'S', 100.02, 300);
+    double v = 0.0;
+    int64_t f = fb.expected_fill('B', 250, v);                  // 100@100.00 + 150@100.01
+    ASSERT(f == 250, "itchbook_fill_qty_250");
+    ASSERT(close(v, 100.006), "itchbook_fill_vwap");            // (100*100.00+150*100.01)/250
+    int64_t f2 = fb.expected_fill('B', 1000, v);                // tylko 600 płynności
+    ASSERT(f2 == 600, "itchbook_fill_partial_600");
 }
 
 // Multicast gap-recovery #82 — detekcja luk + retransmisja + rekoncyliacja.

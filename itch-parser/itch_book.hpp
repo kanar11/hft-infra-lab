@@ -31,6 +31,7 @@
 #include <map>
 #include <unordered_map>
 #include <cmath>
+#include <algorithm>
 
 namespace itch {
 
@@ -155,6 +156,32 @@ public:
         const auto it = book.find(to_ticks(price));
         return (it != book.end()) ? it->second : 0;
     }
+    // expected_fill: pre-trade impact — przejdź odtworzoną księgę i policz VWAP
+    // jaki osiągnęłoby marketowe zlecenie `shares` po danej stronie (BUY bierze
+    // asks rosnąco, SELL bids malejąco). Zwraca ile akcji wykonalne (≤ shares
+    // gdy płynność niewystarczająca); out_vwap = średnia cena (0 gdy 0 fill).
+    int64_t expected_fill(char side, int64_t shares, double& out_vwap) const noexcept {
+        out_vwap = 0.0;
+        if (shares <= 0) return 0;
+        int64_t remaining = shares, filled = 0;
+        double  notional_ticks = 0.0;
+        if (side == 'B') {
+            for (auto it = asks_.begin(); it != asks_.end() && remaining > 0; ++it) {
+                const int64_t take = std::min<int64_t>(remaining, it->second);
+                notional_ticks += static_cast<double>(it->first) * take;
+                filled += take; remaining -= take;
+            }
+        } else {
+            for (auto it = bids_.rbegin(); it != bids_.rend() && remaining > 0; ++it) {
+                const int64_t take = std::min<int64_t>(remaining, it->second);
+                notional_ticks += static_cast<double>(it->first) * take;
+                filled += take; remaining -= take;
+            }
+        }
+        if (filled > 0) out_vwap = notional_ticks / static_cast<double>(filled) / 100.0;
+        return filled;
+    }
+
     size_t  bid_levels()     const noexcept { return bids_.size(); }
     size_t  ask_levels()     const noexcept { return asks_.size(); }
     size_t  resting_orders() const noexcept { return orders_.size(); }
