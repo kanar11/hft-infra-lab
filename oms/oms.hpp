@@ -396,6 +396,37 @@ public:
         return true;
     }
 
+    // cancel_all: masowe anulowanie wszystkich AKTYWNYCH zleceń (#100). Risk-off
+    // / panic button — przy kill switchu albo końcu sesji zdejmujemy wszystkie
+    // otwarte zlecenia (zwalnia pending). Zwraca ile anulowano. Iteracja po
+    // orders_ jest bezpieczna: cancel_order zmienia tylko status + pending_,
+    // nie strukturę mapy orders_.
+    size_t cancel_all() noexcept {
+        size_t n = 0;
+        for (auto& [id, o] : orders_) {
+            if (o.status == OrderStatus::SENT || o.status == OrderStatus::PARTIAL) {
+                cancel_order(id);
+                ++n;
+            }
+        }
+        return n;
+    }
+
+    // cancel_all_symbol: jak cancel_all, ale tylko dla jednego tickera (np. po
+    // halt'cie konkretnego symbolu).
+    size_t cancel_all_symbol(const char* symbol) noexcept {
+        const uint64_t key = sym_to_key(symbol);
+        size_t n = 0;
+        for (auto& [id, o] : orders_) {
+            if ((o.status == OrderStatus::SENT || o.status == OrderStatus::PARTIAL)
+                && sym_to_key(o.symbol) == key) {
+                cancel_order(id);
+                ++n;
+            }
+        }
+        return n;
+    }
+
     // Accessory (read-only).
     const Order*    get_order(uint64_t id)         const noexcept {
         auto it = orders_.find(id);

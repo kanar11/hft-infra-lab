@@ -268,6 +268,21 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(oms.total_fees()), 2.0), "fee_oms_total_2");
     }
 
+    {   // #100 cancel_all / cancel_all_symbol — risk-off masowe anulowanie.
+        OMS oms(1000000, 1000000000.0);
+        oms.submit_order("AAA", Side::BUY,  10.00, 100);   // SENT
+        oms.submit_order("BBB", Side::SELL, 20.00, 50);    // SENT
+        Order* f = oms.submit_order("AAA", Side::BUY, 10.00, 100);
+        oms.fill_order(f->order_id, 100, 10.00);           // FILLED — nie anulowalne
+        ASSERT(oms.cancel_all() == 2, "cancelall_two_open");
+        ASSERT(oms.get_position("AAA")->pending_qty == 0, "cancelall_releases_pending");
+        // per-symbol
+        OMS o2(1000000, 1000000000.0);
+        o2.submit_order("AAA", Side::BUY, 10.00, 100);
+        o2.submit_order("BBB", Side::BUY, 10.00, 100);
+        ASSERT(o2.cancel_all_symbol("AAA") == 1, "cancelall_symbol_one");
+    }
+
     {   // #96 unrealized P&L (mark-to-market) dla long i short.
         OMS oms(10000, 100000000.0);
         oms.fill_order(oms.submit_order("AAPL", Side::BUY, 50.00, 100)->order_id, 100, 50.00);
