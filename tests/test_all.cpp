@@ -34,6 +34,7 @@
 #include "../fix-protocol/fix_parser.hpp"
 #include "../fix-protocol/fix_session.hpp"
 #include "../ouch-protocol/ouch_protocol.hpp"
+#include "../ouch-protocol/ouch_order_state.hpp"
 #include "../ouch-protocol/soupbin_session.hpp"
 #include "../common/fill_simulator.hpp"
 #include "../lockfree/spsc_queue.hpp"
@@ -1672,6 +1673,39 @@ void test_fix_session() {
 }
 
 
+// OUCH order state #89 — kliencka maszyna stanu (token → live/partial/filled).
+void test_ouch_order_state() {
+    SECTION("OUCH Order State (#89)");
+    ouch::OUCHOrderTracker t;
+    uint8_t buf[64];
+
+    t.on_new("TOK1", 100);
+    ASSERT(t.state("TOK1") == ouch::OrderState::NEW, "ouchstate_new");
+
+    int n = OUCHMessage::encode_accepted(buf, "TOK1", 'B', 100, "AAPL", 150.0, 555);
+    t.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(t.state("TOK1") == ouch::OrderState::LIVE, "ouchstate_live");
+
+    n = OUCHMessage::encode_executed(buf, "TOK1", 40, 150.0, 9001);
+    t.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(t.state("TOK1") == ouch::OrderState::PARTIAL, "ouchstate_partial");
+    ASSERT(t.remaining("TOK1") == 60 && t.filled("TOK1") == 40, "ouchstate_remaining_60");
+
+    n = OUCHMessage::encode_executed(buf, "TOK1", 60, 150.0, 9002);
+    t.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(t.state("TOK1") == ouch::OrderState::FILLED, "ouchstate_filled");
+    ASSERT(t.fills() == 1, "ouchstate_fill_count");
+
+    t.on_new("TOK2", 50);
+    n = OUCHMessage::encode_cancelled(buf, "TOK2", 50, 'U');
+    t.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(t.state("TOK2") == ouch::OrderState::CANCELLED, "ouchstate_cancelled");
+
+    n = OUCHMessage::encode_accepted(buf, "GHOST", 'B', 10, "X", 1.0, 1);
+    ASSERT(t.on_response(OUCHMessage::parse_response(buf, n)) == ouch::OrderState::REJECTED,
+           "ouchstate_unknown_rejected");
+}
+
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
 void test_soupbin_ouch_session() {
     SECTION("SoupBin/OUCH Session (#78)");
@@ -1884,6 +1918,7 @@ int main() {
     test_fix();
     test_fix_session();
     test_ouch();
+    test_ouch_order_state();
     test_soupbin_ouch_session();
     test_fill_simulator();
     test_spsc_queue();
