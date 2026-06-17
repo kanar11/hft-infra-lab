@@ -31,6 +31,7 @@
 #include "../strategy/mean_reversion.hpp"
 #include "../strategy/momentum.hpp"
 #include "../strategy/bollinger.hpp"
+#include "../strategy/pov_algo.hpp"
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../fix-protocol/fix_session.hpp"
@@ -1515,6 +1516,21 @@ void test_momentum() {
     ASSERT(mrdn.valid && mrdn.side == Side::BUY, "meanrev_opposite_side");
 }
 
+// POV #99 — Percentage-of-Volume execution algo (slicing adaptacyjny do wolumenu).
+void test_pov_algo() {
+    SECTION("POV Execution Algo (#99)");
+    POVExecutor pov(1000, 0.10);                       // rodzic 1000, 10% wolumenu
+    ASSERT(pov.on_market_volume(2000) == 200, "pov_slice_10pct_200");
+    ASSERT(pov.remaining() == 800, "pov_remaining_800");
+    ASSERT(pov.on_market_volume(10000) == 800, "pov_capped_to_remaining");  // 1000→800
+    ASSERT(pov.done(), "pov_done");
+    ASSERT(pov.on_market_volume(5000) == 0, "pov_zero_after_done");
+    ASSERT(pov.slices() == 2, "pov_slice_count");
+
+    POVExecutor low(1000, 0.10);
+    ASSERT(low.on_market_volume(4) == 0, "pov_tiny_vol_no_slice");   // 0.4 < 0.5
+}
+
 // Bollinger #93 — mean-reversion adaptacyjny do zmienności (pasma ±k·σ).
 void test_bollinger() {
     SECTION("Bollinger Strategy (#93)");
@@ -2042,6 +2058,7 @@ int main() {
     test_strategy_edge_cases();
     test_momentum();
     test_bollinger();
+    test_pov_algo();
     test_market_maker();
     test_fix();
     test_fix_session();
