@@ -1556,6 +1556,16 @@ void test_backtester() {
     backtest::Backtester dd;                     // max drawdown: 100→30 = 70
     dd.on_trade(+100.0); dd.on_trade(-70.0); dd.on_trade(+50.0);
     ASSERT(std::fabs(dd.compute().max_drawdown - 70.0) < 1e-9, "bt_max_dd_70");
+
+    // #92 streaki, largest, expectancy: +10,+20,-5,-3,+8
+    backtest::Backtester e;
+    e.on_trade(10); e.on_trade(20); e.on_trade(-5); e.on_trade(-3); e.on_trade(8);
+    const auto er = e.compute();
+    ASSERT(er.max_consecutive_wins == 2, "bt_max_win_streak");      // 10,20
+    ASSERT(er.max_consecutive_losses == 2, "bt_max_loss_streak");   // -5,-3
+    ASSERT(std::fabs(er.largest_win - 20.0) < 1e-9, "bt_largest_win");
+    ASSERT(std::fabs(er.largest_loss + 5.0) < 1e-9, "bt_largest_loss");
+    ASSERT(std::fabs(er.expectancy - 6.0) < 1e-9, "bt_expectancy");  // 30/5
 }
 
 

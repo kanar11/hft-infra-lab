@@ -43,6 +43,11 @@ struct Report {
     double sharpe;            // per-trade, * sqrt(trades)
     double max_drawdown;      // peak-to-trough na skumulowanym P&L (>= 0)
     double fill_rate;         // filled / submitted [0..1]
+    double expectancy;        // sredni P&L na transakcje (total_pnl / trades)
+    double largest_win;       // najwieksza pojedyncza wygrana
+    double largest_loss;      // najwieksza pojedyncza strata (<= 0)
+    std::uint64_t max_consecutive_wins;
+    std::uint64_t max_consecutive_losses;
 };
 
 class Backtester {
@@ -61,6 +66,11 @@ class Backtester {
     double peak_     = 0.0;   // high-water mark
     double max_dd_   = 0.0;   // najwiekszy spadek od peak
 
+    double largest_win_  = 0.0;
+    double largest_loss_ = 0.0;
+    std::uint64_t cur_win_streak_  = 0, max_win_streak_  = 0;
+    std::uint64_t cur_loss_streak_ = 0, max_loss_streak_ = 0;
+
 public:
     // on_order: zarejestruj zlecenie do fill-rate. filled=true gdy doszlo do
     // jakiegokolwiek wykonania.
@@ -76,8 +86,17 @@ public:
         ++trades_;
         sum_pnl_ += pnl;
         sum_sq_  += pnl * pnl;
-        if (pnl >= 0.0) { ++wins_;   sum_win_  += pnl; }
-        else            { ++losses_; sum_loss_ += pnl; }
+        if (pnl >= 0.0) {
+            ++wins_; sum_win_ += pnl;
+            if (pnl > largest_win_) largest_win_ = pnl;
+            cur_loss_streak_ = 0;
+            if (++cur_win_streak_ > max_win_streak_) max_win_streak_ = cur_win_streak_;
+        } else {
+            ++losses_; sum_loss_ += pnl;
+            if (pnl < largest_loss_) largest_loss_ = pnl;
+            cur_win_streak_ = 0;
+            if (++cur_loss_streak_ > max_loss_streak_) max_loss_streak_ = cur_loss_streak_;
+        }
 
         equity_ += pnl;
         if (equity_ > peak_) peak_ = equity_;
@@ -108,6 +127,11 @@ public:
         }
         r.max_drawdown = max_dd_;
         r.fill_rate    = submitted_ ? static_cast<double>(filled_) / static_cast<double>(submitted_) : 0.0;
+        r.expectancy   = trades_ ? sum_pnl_ / static_cast<double>(trades_) : 0.0;
+        r.largest_win  = largest_win_;
+        r.largest_loss = largest_loss_;
+        r.max_consecutive_wins   = max_win_streak_;
+        r.max_consecutive_losses = max_loss_streak_;
         return r;
     }
 
@@ -123,6 +147,10 @@ public:
         std::printf("  Total P&L        : $%.2f\n",    r.total_pnl);
         std::printf("  Avg win / loss   : $%.2f / $%.2f\n", r.avg_win, r.avg_loss);
         std::printf("  Profit factor    : %.2f\n",     r.profit_factor);
+        std::printf("  Expectancy/trade : $%.2f\n",    r.expectancy);
+        std::printf("  Largest win/loss : $%.2f / $%.2f\n", r.largest_win, r.largest_loss);
+        std::printf("  Max win/loss streak: %lu / %lu\n",
+                    (unsigned long)r.max_consecutive_wins, (unsigned long)r.max_consecutive_losses);
         std::printf("  Sharpe (per-trade): %.2f\n",    r.sharpe);
         std::printf("  Max drawdown     : $%.2f\n",    r.max_drawdown);
     }
