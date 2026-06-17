@@ -151,6 +151,18 @@ public:
         const int64_t tot = b + a;
         return tot > 0 ? static_cast<double>(b - a) / static_cast<double>(tot) : 0.0;
     }
+    // microprice: fair-value wazony rozmiarami (Stoikov). Przy przewadze bidu
+    // (Q_bid > Q_ask) ciazy ku ASK (spodziewany ruch w gore) i odwrotnie —
+    // lepszy estymator "prawdziwej" ceny niz prosty mid. 0 gdy ksiega jednostronna.
+    //   microprice = (P_ask*Q_bid + P_bid*Q_ask) / (Q_bid + Q_ask)
+    double  microprice() const noexcept {
+        if (bids_.empty() || asks_.empty()) return 0.0;
+        const int64_t qb = best_bid_qty(), qa = best_ask_qty();
+        const int64_t tot = qb + qa;
+        if (tot <= 0) return 0.0;
+        return (best_ask() * static_cast<double>(qb) + best_bid() * static_cast<double>(qa))
+               / static_cast<double>(tot);
+    }
     int64_t qty_at(char side, double price) const noexcept {
         const auto& book = (side == 'B') ? bids_ : asks_;
         const auto it = book.find(to_ticks(price));

@@ -1454,6 +1454,8 @@ void test_itch_book() {
     ASSERT(close(mb.mid_price(), 100.01), "itchbook_mid_price");
     ASSERT(mb.best_bid_qty() == 300 && mb.best_ask_qty() == 100, "itchbook_tob_qty");
     ASSERT(close(mb.imbalance(), 0.5), "itchbook_imbalance");   // (300-100)/400
+    // microprice: (100.02*300 + 100.00*100)/400 = 100.015 (>mid 100.01, bid-heavy)
+    ASSERT(close(mb.microprice(), 100.015), "itchbook_microprice");
 
     // #95 pre-trade impact: walk księgi → VWAP marketowego zlecenia.
     itch::ITCHOrderBook fb;
