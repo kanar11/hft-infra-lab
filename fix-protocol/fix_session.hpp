@@ -382,6 +382,27 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
+    // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
+    // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.
+    //   exec_type/ord_status: '0'=New, '1'=Partial, '2'=Fill, '4'=Canceled, '8'=Rejected
+    int build_exec_report(char* out, int cap, const char* cl_ord_id, const char* order_id,
+                          const char* exec_id, char exec_type, char ord_status,
+                          const char* symbol, Side side, int32_t last_qty, double last_px,
+                          int32_t cum_qty, int32_t leaves_qty,
+                          char delim = FIXMessage::SOH) noexcept {
+        char body[320];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=8%c49=%s%c56=%s%c34=%u%c11=%s%c37=%s%c17=%s%c150=%c%c39=%c%c"
+            "55=%s%c54=%c%c32=%d%c31=%.2f%c14=%d%c151=%d%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            cl_ord_id, delim, order_id, delim, exec_id, delim, exec_type, delim, ord_status, delim,
+            symbol, delim, fix_side(side), delim, last_qty, delim, last_px, delim,
+            cum_qty, delim, leaves_qty, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

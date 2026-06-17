@@ -1827,6 +1827,15 @@ void test_fix_session() {
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
         ASSERT(std::strcmp(g.get_field(41), "ORD1") == 0, "fix_replace_origclordid");
+
+        // #101 ExecutionReport (35=8) — partial fill: 40 z 100, leaves 60.
+        s.build_exec_report(buf, sizeof(buf), "ORD1", "EXG-1", "E-1", '1', '1',
+                            "AAPL", Side::BUY, 40, 150.25, 40, 60, '|');
+        FIXMessage er; er.parse(buf);
+        ASSERT(er.is_valid() && er.get_msg_type()[0] == '8', "fix_exec_report_valid");
+        ASSERT(er.get_field(150)[0] == '1', "fix_exec_type_partial");   // ExecType=Partial
+        ASSERT(std::atoi(er.get_field(32)) == 40, "fix_exec_last_qty");  // LastQty
+        ASSERT(std::atoi(er.get_field(151)) == 60, "fix_exec_leaves_qty"); // LeavesQty
     }
 }
 
