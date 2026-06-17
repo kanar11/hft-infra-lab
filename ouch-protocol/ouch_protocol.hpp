@@ -202,6 +202,15 @@ public:
         return 20;
     }
 
+    // encode_rejected: Order Rejected (16 B) — giełda odrzuca zlecenie (np. zly
+    // symbol, zamkniety rynek). reason: kod 1-znakowy.
+    static int encode_rejected(uint8_t* buf, const char* token, char reason) noexcept {
+        buf[0] = 'J';
+        write_padded(buf + 1, token, 14);
+        buf[15] = static_cast<uint8_t>(reason);
+        return 16;
+    }
+
     // === DECODING (Exchange → Client) ===
 
     // parse_response: decode exchange response from raw bytes
@@ -259,6 +268,18 @@ public:
             resp.shares = read_u32_be(data + 15);
             resp.price = read_u32_be(data + 19) / 10000.0;
             resp.match_number = read_u64_be(data + 23);
+
+        } else if (msg_type == 'J') {  // Order Rejected
+            if (len < 16) {
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "REJECTED too short: %d < 16 bytes", len);
+                return resp;
+            }
+            safe_copy(resp.type, "REJECTED");
+            strip_padding(resp.token, data + 1, 14);
+            resp.reason[0] = static_cast<char>(data[15]);
+            resp.reason[1] = '\0';
 
         } else {
             safe_copy(resp.type, "UNKNOWN");

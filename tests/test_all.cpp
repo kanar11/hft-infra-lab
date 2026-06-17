@@ -1882,6 +1882,14 @@ void test_ouch_order_state() {
     n = OUCHMessage::encode_accepted(buf, "GHOST", 'B', 10, "X", 1.0, 1);
     ASSERT(t.on_response(OUCHMessage::parse_response(buf, n)) == ouch::OrderState::REJECTED,
            "ouchstate_unknown_rejected");
+
+    // #103 Order Rejected ('J'): encode → decode → tracker REJECTED.
+    t.on_new("TOK3", 100);
+    n = OUCHMessage::encode_rejected(buf, "TOK3", 'X');
+    const OUCHResponse rr = OUCHMessage::parse_response(buf, n);
+    ASSERT(std::strcmp(rr.type, "REJECTED") == 0, "ouch_rejected_parsed");
+    ASSERT(rr.reason[0] == 'X', "ouch_rejected_reason");
+    ASSERT(t.on_response(rr) == ouch::OrderState::REJECTED, "ouchstate_J_rejected");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
