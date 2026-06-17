@@ -1754,6 +1754,24 @@ void test_risk_price_band() {
     ASSERT(r4.check_order("TSLA", Side::BUY, 250.0, 1).action == RiskAction::ALLOW,
            "restrict_lifted_allows");
 
+    // #106 asymetryczne limity: long 1000, short tylko 300.
+    RiskLimits al;
+    al.max_position_per_symbol = 1000;
+    al.max_short_per_symbol    = 300;
+    al.max_portfolio_exposure  = 100000000;
+    al.max_order_value         = 100000000;
+    al.max_orders_per_second   = 1000000;
+    al.max_price_band_pct      = 0.0;
+    RiskManager r6(al);
+    ASSERT(r6.check_order("AAPL", Side::BUY,  10.0, 1000).action == RiskAction::ALLOW,
+           "asym_long_at_cap_ok");                          // long 1000 == cap
+    ASSERT(r6.check_order("AAPL", Side::SELL, 10.0, 300).action == RiskAction::ALLOW,
+           "asym_short_at_cap_ok");                          // short 300 == short cap
+    ASSERT(r6.check_order("AAPL", Side::SELL, 10.0, 301).action == RiskAction::REJECT,
+           "asym_short_over_cap_rejects");                   // 301 > 300 short cap
+    ASSERT(r6.check_order("AAPL", Side::BUY,  10.0, 500).action == RiskAction::ALLOW,
+           "asym_long_500_ok");                              // long pod 1000 OK mimo short-capu
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

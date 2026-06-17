@@ -185,6 +185,9 @@ struct RiskLimits {
     // (notional moze byc maly przy taniej akcji, a 10M szt. to nadal pomylka).
     // 0 = wylaczony.
     int32_t  max_shares_per_order;
+    // Osobny (ciaśniejszy) limit pozycji KROTKIEJ per symbol. 0 = symetria
+    // (uzyj max_position_per_symbol po obu stronach).
+    int32_t  max_short_per_symbol;
 
     RiskLimits() noexcept
         : max_position_per_symbol(5000),
@@ -194,7 +197,8 @@ struct RiskLimits {
           max_order_value(500000),
           max_drawdown_pct(5.0),
           max_price_band_pct(20.0),
-          max_shares_per_order(100000) {}
+          max_shares_per_order(100000),
+          max_short_per_symbol(0) {}
 };
 
 
@@ -389,8 +393,18 @@ public:
         const int32_t  cur_pos   = lookup(positions_, key);
         const int32_t  cur_pend  = lookup(pending_,   key);
         const int32_t  projected = cur_pos + cur_pend + signed_n;
-        if (std::abs(projected) > limits_.max_position_per_symbol)
-            return make_reject("Position limit exceeded", t0);
+        // Asymetryczne limity (#106): long sprawdzany max_position_per_symbol,
+        // short osobnym max_short_per_symbol (0 = symetria, fallback do long-capu).
+        // Firmy czesto limituja shorty ciaśniej (koszt/ryzyko locate, squeeze).
+        if (projected >= 0) {
+            if (projected > limits_.max_position_per_symbol)
+                return make_reject("Position limit exceeded", t0);
+        } else {
+            const int32_t short_cap = (limits_.max_short_per_symbol > 0)
+                ? limits_.max_short_per_symbol : limits_.max_position_per_symbol;
+            if (-projected > short_cap)
+                return make_reject("Short position limit exceeded", t0);
+        }
 
         // Ekspozycja portfela: O(1) dzięki niezmiennikowi total_abs_exposure_
         const int32_t old_contrib = std::abs(cur_pos + cur_pend);
