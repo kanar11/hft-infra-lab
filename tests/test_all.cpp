@@ -1646,6 +1646,20 @@ void test_risk_price_band() {
     r4.allow_symbol("TSLA");
     ASSERT(r4.check_order("TSLA", Side::BUY, 250.0, 1).action == RiskAction::ALLOW,
            "restrict_lifted_allows");
+
+    // #94 fat-finger na ilość — qty cap niezależny od notional.
+    RiskLimits ql;
+    ql.max_shares_per_order = 1000;
+    ql.max_order_value = 100000000;  // hojny notional, izolujemy qty
+    ql.max_position_per_symbol = 100000000;
+    ql.max_portfolio_exposure  = 100000000;
+    ql.max_orders_per_second   = 1000000;
+    ql.max_price_band_pct      = 0.0;
+    RiskManager r5(ql);
+    ASSERT(r5.check_order("PENY", Side::BUY, 0.01, 1000).action == RiskAction::ALLOW,
+           "qtycap_at_limit_ok");
+    ASSERT(r5.check_order("PENY", Side::BUY, 0.01, 1001).action == RiskAction::REJECT,
+           "qtycap_over_rejects");   // tani notional ($10), ale 1001 szt. > limit
 }
 
 

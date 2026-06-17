@@ -181,6 +181,10 @@ struct RiskLimits {
     // 20% = standardowy luźny band (NMS LULD jest ciaśniejszy per-tier, ale
     // ten check łapie głównie grube pomyłki: 1500 zamiast 150).
     double   max_price_band_pct;
+    // Fat-finger na ILOSC: max akcji w JEDNYM zleceniu, niezaleznie od ceny
+    // (notional moze byc maly przy taniej akcji, a 10M szt. to nadal pomylka).
+    // 0 = wylaczony.
+    int32_t  max_shares_per_order;
 
     RiskLimits() noexcept
         : max_position_per_symbol(5000),
@@ -189,7 +193,8 @@ struct RiskLimits {
           max_orders_per_second(1000),
           max_order_value(500000),
           max_drawdown_pct(5.0),
-          max_price_band_pct(20.0) {}
+          max_price_band_pct(20.0),
+          max_shares_per_order(100000) {}
 };
 
 
@@ -361,6 +366,10 @@ public:
         const int64_t order_value = static_cast<int64_t>(price * quantity);
         if (order_value > limits_.max_order_value)
             return make_reject("Order value exceeds limit", t0);
+
+        // 2a. Fat-finger na ilość — qty jednego zlecenia ponad limit.
+        if (limits_.max_shares_per_order > 0 && quantity > limits_.max_shares_per_order)
+            return make_reject("Order quantity exceeds limit", t0);
 
         // 2b. Price band (fat-finger) — cena zbyt daleko od referencyjnej.
         //     Łapie grube pomyłki (np. 1500.00 zamiast 150.00) zanim trafią na
