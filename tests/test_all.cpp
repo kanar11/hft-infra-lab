@@ -247,6 +247,7 @@ void test_oms_short_and_replace() {
         OMS oms(1000, 1000000.0);
         Order* o = oms.submit_order("AAPL", Side::BUY, 100.00, 50);
         ASSERT(o != nullptr, "replace_submit_ok");
+        if (!o) return;
         ASSERT(oms.replace_order(o->order_id, 101.00, 80), "replace_applied");
         const Order* r = oms.get_order(o->order_id);
         ASSERT(r->quantity == 80 && close(to_float(r->price), 101.00), "replace_new_px_qty");

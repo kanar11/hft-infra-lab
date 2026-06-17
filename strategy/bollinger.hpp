@@ -70,7 +70,8 @@ class BollingerStrategy {
 
 public:
     BollingerStrategy(int window = 20, double num_std = 2.0, int32_t order_size = 100) noexcept
-        : stock_count_(0),
+        : windows_{},                                              // value-init slotow (active=false)
+          stock_count_(0),
           window_size_(std::max(2, std::min(window, MAX_WINDOW))),  // >=2 do wariancji
           num_std_(num_std > 0.0 ? num_std : 2.0),
           order_size_(order_size) {}

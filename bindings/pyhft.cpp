@@ -76,7 +76,12 @@ PYBIND11_MODULE(pyhft, m) {
         .def(py::init<int32_t, double>(),
              py::arg("max_position") = 1000,
              py::arg("max_order_value") = 100000.0)
-        .def("submit_order", &OMS::submit_order,
+        // Lambda owija 4-arg wariant — submit_order ma teraz dodatkowy
+        // OMSReject* out_reason (#88), ktorego nie wystawiamy do Pythona.
+        .def("submit_order",
+             [](OMS& self, const char* symbol, Side side, double price, uint32_t quantity) {
+                 return self.submit_order(symbol, side, price, quantity);
+             },
              py::return_value_policy::reference_internal,
              py::arg("symbol"), py::arg("side"), py::arg("price"), py::arg("quantity"))
         .def("fill_order",   &OMS::fill_order,
