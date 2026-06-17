@@ -29,6 +29,7 @@
 #include "../logger/lockfree_logger.hpp"
 #include "../logger/mmap_logger.hpp"
 #include "../strategy/mean_reversion.hpp"
+#include "../strategy/momentum.hpp"
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../fix-protocol/fix_session.hpp"
@@ -1421,6 +1422,28 @@ void test_multicast_gap_recovery() {
     ASSERT(gr.missing_count() == 1 && gr.recovered == 3, "gaprec_late_primary_recovers");
 }
 
+// Momentum #85 — trend-following; znak decyzji odwrotny do mean-reversion.
+void test_momentum() {
+    SECTION("Momentum Strategy (#85)");
+    MomentumStrategy m(/*window=*/3, /*threshold_pct=*/0.1, /*order_size=*/100);
+    m.on_market_data("AAPL", 100.0);
+    m.on_market_data("AAPL", 100.0);
+    m.on_market_data("AAPL", 100.0);                 // okno pełne, SMA=100
+    const Signal up = m.on_market_data("AAPL", 105.0);
+    ASSERT(up.valid && up.side == Side::BUY, "momentum_breakout_buys");
+
+    MomentumStrategy md(3, 0.1, 100);
+    md.on_market_data("X", 100.0); md.on_market_data("X", 100.0); md.on_market_data("X", 100.0);
+    const Signal dn = md.on_market_data("X", 95.0);
+    ASSERT(dn.valid && dn.side == Side::SELL, "momentum_breakdown_sells");
+
+    // Kontrast: mean-reversion na tym samym dolku gra PRZECIWNIE (BUY).
+    MeanReversionStrategy mr(3, 0.1, 100);
+    mr.on_market_data("X", 100.0); mr.on_market_data("X", 100.0); mr.on_market_data("X", 100.0);
+    const Signal mrdn = mr.on_market_data("X", 95.0);
+    ASSERT(mrdn.valid && mrdn.side == Side::BUY, "meanrev_opposite_side");
+}
+
 // Router #81 — EWMA zmierzonej latencji + partiale (unfilled_qty).
 void test_router_ewma_partial() {
     SECTION("Router EWMA + Partials (#81)");
@@ -1817,6 +1840,7 @@ int main() {
     test_logger();
     test_strategy();
     test_strategy_edge_cases();
+    test_momentum();
     test_market_maker();
     test_fix();
     test_fix_session();
