@@ -67,18 +67,19 @@ struct Venue {
     // bieżących warunków zamiast ufać statycznym liczbom z configu.
     double  ewma_latency_ns;
     uint32_t latency_samples;
+    uint32_t consecutive_failures;  // health (#86): seria odrzuceń/timeoutów
 
     Venue() noexcept
         : latency_ns(0), latency_p99_ns(0), fee_per_share(0),
           best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true),
-          ewma_latency_ns(0.0), latency_samples(0) {
+          ewma_latency_ns(0.0), latency_samples(0), consecutive_failures(0) {
         name[0] = '\0';
     }
 
     Venue(const char* n, int64_t lat, double fee) noexcept
         : latency_ns(lat), latency_p99_ns(0), fee_per_share(fee),
           best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true),
-          ewma_latency_ns(0.0), latency_samples(0) {
+          ewma_latency_ns(0.0), latency_samples(0), consecutive_failures(0) {
         std::strncpy(name, n, 15);
         name[15] = '\0';
     }
@@ -121,6 +122,7 @@ class SmartOrderRouter {
     int             venue_count_;
     RoutingStrategy default_strategy_;
     int32_t         split_threshold_;
+    uint32_t        max_failures_ = 3;   // health (#86): próg auto-wyłączenia venue
 
     uint64_t total_routes_;
     uint64_t total_rejected_;
@@ -165,9 +167,41 @@ public:
                     ? static_cast<double>(observed_ns)
                     : alpha * static_cast<double>(observed_ns) + (1.0 - alpha) * v.ewma_latency_ns;
                 ++v.latency_samples;
+                v.consecutive_failures = 0;   // udany round-trip = zdrowe venue
+                v.is_active = true;
                 return;
             }
         }
+    }
+
+    // === Venue health (#86) ===
+    // Realny SOR przestaje routować na venue, które odrzuca/timeoutuje, i wraca
+    // gdy znów odpowiada. record_reject zlicza serię porażek (≥ próg → wyłącz);
+    // record_success / record_latency zerują serię i reaktywują.
+    void set_failure_threshold(uint32_t n) noexcept { if (n > 0) max_failures_ = n; }
+
+    void record_reject(const char* venue_name) noexcept {
+        for (int i = 0; i < venue_count_; ++i) {
+            if (std::strcmp(venues_[i].name, venue_name) == 0) {
+                if (++venues_[i].consecutive_failures >= max_failures_)
+                    venues_[i].is_active = false;     // wypadł z puli kandydatów
+                return;
+            }
+        }
+    }
+    void record_success(const char* venue_name) noexcept {
+        for (int i = 0; i < venue_count_; ++i) {
+            if (std::strcmp(venues_[i].name, venue_name) == 0) {
+                venues_[i].consecutive_failures = 0;
+                venues_[i].is_active = true;
+                return;
+            }
+        }
+    }
+    bool venue_active(const char* venue_name) const noexcept {
+        for (int i = 0; i < venue_count_; ++i)
+            if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].is_active;
+        return false;
     }
 
     // update_quote: aktualizuj top-of-book venue (na każdy market data tick).

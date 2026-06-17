@@ -1482,6 +1482,23 @@ void test_router_ewma_partial() {
         ASSERT(d.unfilled_qty == 320, "split_unfilled_320");
         ASSERT(d.num_venues == 2, "split_two_venues");
     }
+
+    // --- #86 venue health: seria odrzuceń wyłącza venue, sukces reaktywuje ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.set_failure_threshold(3);
+        r.add_venue(Venue("A", 100, 0.0));     // lepszy fee
+        r.add_venue(Venue("B", 100, 0.001));
+        r.update_quote("A", 10.0, 11.0, 100, 100);
+        r.update_quote("B", 10.0, 11.0, 100, 100);
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "A") == 0, "health_default_A");
+        r.record_reject("A"); r.record_reject("A"); r.record_reject("A");
+        ASSERT(!r.venue_active("A"), "health_A_disabled");
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "health_reroute_B");
+        r.record_success("A");
+        ASSERT(r.venue_active("A"), "health_A_recovered");
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "A") == 0, "health_A_back");
+    }
 }
 
 
