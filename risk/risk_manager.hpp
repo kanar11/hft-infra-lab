@@ -68,6 +68,7 @@
 #include <cstdint>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 #include <deque>
 #include <cstdio>
 #include <cstdlib>     // std::remove
@@ -277,6 +278,11 @@ class RiskManager {
     // dla symboli bez znanej ceny.
     std::unordered_map<uint64_t, double> ref_price_;
 
+    // Lista zakazanych symboli (#84) — halt giełdowy, Reg SHO restriction,
+    // brak locate na short, compliance freeze. Każde zlecenie na symbol z tej
+    // listy jest odrzucane przed pozostałymi checkami pozycji.
+    std::unordered_set<uint64_t> restricted_;
+
     // --------------------------------------------------------------------
     // Stan: rate limit
     //
@@ -346,6 +352,10 @@ public:
 
         // 1. Kill switch — odrzuć wszystko jeśli aktywny
         if (kill_switch_active_) return make_reject("Kill switch active", t0);
+
+        // 1b. Restricted symbol — halt / Reg SHO / brak locate / freeze.
+        if (!restricted_.empty() && restricted_.count(sym_to_key(symbol)))
+            return make_reject("Symbol restricted", t0);
 
         // 2. Wartość pojedynczego zlecenia
         const int64_t order_value = static_cast<int64_t>(price * quantity);
@@ -475,6 +485,23 @@ public:
     void update_reference_price(const char* symbol, double price) noexcept {
         if (price > 0.0) ref_price_[sym_to_key(symbol)] = price;
     }
+
+
+    // ====================================================================
+    // Restricted-symbol list (#84)
+    // ====================================================================
+    //
+    // restrict_symbol  — wpisz symbol na listę zakazanych (halt/Reg SHO/freeze)
+    // allow_symbol     — zdejmij z listy (np. wznowienie po halt'cie)
+    // is_restricted    — czy symbol jest aktualnie zakazany
+    // clear_restricted — wyczyść całą listę (np. nowa sesja)
+    // ====================================================================
+    void restrict_symbol(const char* symbol) noexcept { restricted_.insert(sym_to_key(symbol)); }
+    void allow_symbol(const char* symbol)    noexcept { restricted_.erase(sym_to_key(symbol)); }
+    bool is_restricted(const char* symbol) const noexcept {
+        return restricted_.count(sym_to_key(symbol)) != 0;
+    }
+    void clear_restricted() noexcept { restricted_.clear(); }
 
 
     // ====================================================================

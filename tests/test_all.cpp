@@ -1524,6 +1524,20 @@ void test_risk_price_band() {
            "kill_rejects_all");
     r3.deactivate_kill_switch();
     ASSERT(!r3.is_kill_switch_active(), "kill_deactivates");
+
+    // #84 restricted symbol — halt/Reg SHO/freeze.
+    RiskManager r4(lim);
+    ASSERT(r4.check_order("TSLA", Side::BUY, 250.0, 1).action == RiskAction::ALLOW,
+           "restrict_allows_before");
+    r4.restrict_symbol("TSLA");
+    ASSERT(r4.is_restricted("TSLA"), "restrict_flag_set");
+    ASSERT(r4.check_order("TSLA", Side::BUY, 250.0, 1).action == RiskAction::REJECT,
+           "restrict_rejects");
+    ASSERT(r4.check_order("AAPL", Side::BUY, 150.0, 1).action == RiskAction::ALLOW,
+           "restrict_other_symbol_ok");
+    r4.allow_symbol("TSLA");
+    ASSERT(r4.check_order("TSLA", Side::BUY, 250.0, 1).action == RiskAction::ALLOW,
+           "restrict_lifted_allows");
 }
 
 
