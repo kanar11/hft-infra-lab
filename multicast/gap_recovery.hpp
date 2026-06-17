@@ -103,4 +103,37 @@ struct ABLineArbitrator {
     void   reset()         noexcept { *this = ABLineArbitrator{}; }
 };
 
+// FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
+//
+// Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
+// "spokojny rynek" od "linia padła" (NAT/firewall ucina idle UDP, switch pada).
+// Brak JAKIEGOKOLWIEK pakietu (dane LUB heartbeat) przez > timeout = stale →
+// feed handler powinien przełączyć na linię zapasową / re-subscribe.
+//
+//   on_packet(now_ns)         — wołaj na każdy odebrany pakiet (reset zegara)
+//   check(now_ns, timeout_ns) — true gdy feed stale; liczy zdarzenia (zbocze)
+struct FeedStalenessMonitor {
+    int64_t  last_ns      = 0;
+    bool     seen         = false;   // czy widzieliśmy pierwszy pakiet
+    bool     stale_       = false;
+    uint64_t stale_events = 0;       // ile razy feed wpadł w stan stale (zbocza)
+
+    void on_packet(int64_t now_ns) noexcept {
+        last_ns = now_ns;
+        seen    = true;
+        stale_  = false;             // świeży pakiet ożywia feed
+    }
+
+    bool check(int64_t now_ns, int64_t timeout_ns) noexcept {
+        if (!seen) return false;     // jeszcze nie wystartował — nie "stale"
+        const bool now_stale = (now_ns - last_ns) > timeout_ns;
+        if (now_stale && !stale_) ++stale_events;   // wejście w stan stale
+        stale_ = now_stale;
+        return stale_;
+    }
+
+    bool is_stale() const noexcept { return stale_; }
+    void reset()    noexcept { *this = FeedStalenessMonitor{}; }
+};
+
 }  // namespace multicast

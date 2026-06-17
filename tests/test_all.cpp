@@ -1481,6 +1481,16 @@ void test_multicast_gap_recovery() {
     ASSERT(!arb.has_gaps(), "ab_self_healed");
     ASSERT(!arb.on_packet(4, false), "ab_b4_dup");
     ASSERT(arb.a_first == 3 && arb.b_first == 1, "ab_first_counts");
+
+    // #98 staleness: brak pakietu > timeout = martwy feed.
+    multicast::FeedStalenessMonitor sm;
+    ASSERT(!sm.check(1000, 500), "stale_not_started");   // brak pierwszego pakietu
+    sm.on_packet(1000);
+    ASSERT(!sm.check(1400, 500), "stale_fresh");          // 400 <= 500
+    ASSERT(sm.check(1600, 500), "stale_after_timeout");   // 600 > 500
+    ASSERT(sm.is_stale() && sm.stale_events == 1, "stale_event_counted");
+    sm.on_packet(1700);
+    ASSERT(!sm.check(1800, 500), "stale_recovered");
 }
 
 // Momentum #85 — trend-following; znak decyzji odwrotny do mean-reversion.
