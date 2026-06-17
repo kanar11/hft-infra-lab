@@ -32,6 +32,7 @@
 #include "../strategy/momentum.hpp"
 #include "../strategy/bollinger.hpp"
 #include "../strategy/pov_algo.hpp"
+#include "../strategy/signal_throttle.hpp"
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../fix-protocol/fix_session.hpp"
@@ -1546,6 +1547,19 @@ void test_pov_algo() {
     ASSERT(low.on_market_volume(4) == 0, "pov_tiny_vol_no_slice");   // 0.4 < 0.5
 }
 
+// SignalThrottle #104 — minimalny odstep miedzy sygnalami per symbol.
+void test_signal_throttle() {
+    SECTION("Signal Throttle (#104)");
+    SignalThrottle th(5);                                  // min 5 sekwencji
+    ASSERT(th.allow("AAPL", 0), "throttle_first_passes");  // pierwszy zawsze
+    ASSERT(!th.allow("AAPL", 3), "throttle_too_soon");      // 3 < 5 -> stlumiony
+    ASSERT(th.allow("AAPL", 5), "throttle_after_cooldown"); // 5 >= 5
+    ASSERT(th.allow("MSFT", 1), "throttle_per_symbol_indep"); // inny symbol niezalezny
+    ASSERT(th.suppressed() == 1, "throttle_suppressed_count");
+    th.reset_symbol("AAPL");
+    ASSERT(th.allow("AAPL", 6), "throttle_reset_symbol");   // po resecie znow przechodzi
+}
+
 // Bollinger #93 — mean-reversion adaptacyjny do zmienności (pasma ±k·σ).
 void test_bollinger() {
     SECTION("Bollinger Strategy (#93)");
@@ -2102,6 +2116,7 @@ int main() {
     test_momentum();
     test_bollinger();
     test_pov_algo();
+    test_signal_throttle();
     test_market_maker();
     test_fix();
     test_fix_session();
