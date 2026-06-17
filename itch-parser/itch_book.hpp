@@ -135,6 +135,21 @@ public:
         if (bids_.empty() || asks_.empty()) return 0.0;
         return best_ask() - best_bid();
     }
+    // mid_price: średnia best bid/ask; 0 gdy księga jednostronna.
+    double  mid_price() const noexcept {
+        if (bids_.empty() || asks_.empty()) return 0.0;
+        return (best_bid() + best_ask()) / 2.0;
+    }
+    int64_t best_bid_qty() const noexcept { return bids_.empty() ? 0 : bids_.rbegin()->second; }
+    int64_t best_ask_qty() const noexcept { return asks_.empty() ? 0 : asks_.begin()->second; }
+    // imbalance: order-book imbalance top-of-book = (bidQ-askQ)/(bidQ+askQ),
+    // zakres [-1,1]. >0 = przewaga kupna (presja w górę), <0 = sprzedaży.
+    // Klasyczny krótkoterminowy predyktor kierunku w mikrostrukturze.
+    double  imbalance() const noexcept {
+        const int64_t b = best_bid_qty(), a = best_ask_qty();
+        const int64_t tot = b + a;
+        return tot > 0 ? static_cast<double>(b - a) / static_cast<double>(tot) : 0.0;
+    }
     int64_t qty_at(char side, double price) const noexcept {
         const auto& book = (side == 'B') ? bids_ : asks_;
         const auto it = book.find(to_ticks(price));

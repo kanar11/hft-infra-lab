@@ -1399,6 +1399,14 @@ void test_itch_book() {
 
     book.on_execute(999, 10);                     // nieznany ref → orphan
     ASSERT(book.orphans() == 1, "itchbook_orphan_counted");
+
+    // #87 mikrostruktura: mid + top-of-book imbalance.
+    itch::ITCHOrderBook mb;
+    mb.on_add(10, 'B', 100.00, 300);              // best bid 300
+    mb.on_add(11, 'S', 100.02, 100);              // best ask 100
+    ASSERT(close(mb.mid_price(), 100.01), "itchbook_mid_price");
+    ASSERT(mb.best_bid_qty() == 300 && mb.best_ask_qty() == 100, "itchbook_tob_qty");
+    ASSERT(close(mb.imbalance(), 0.5), "itchbook_imbalance");   // (300-100)/400
 }
 
 // Multicast gap-recovery #82 — detekcja luk + retransmisja + rekoncyliacja.
