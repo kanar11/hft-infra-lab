@@ -264,6 +264,20 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(p->net_pnl()), 198.0), "fee_net_pnl_198");
         ASSERT(close(to_float(oms.total_fees()), 2.0), "fee_oms_total_2");
     }
+
+    {   // #88 reject reasons — caller rozróżnia DLACZEGO odrzucono.
+        OMS oms(/*max_pos=*/100, /*max_val=*/1000.0);
+        OMSReject why = OMSReject::NONE;
+        ASSERT(oms.submit_order("AAPL", Side::BUY, -1.0, 10, &why) == nullptr
+               && why == OMSReject::INVALID_INPUT, "rej_invalid_input");
+        ASSERT(oms.submit_order("AAPL", Side::BUY, 100.0, 50, &why) == nullptr
+               && why == OMSReject::ORDER_VALUE, "rej_order_value");        // 5000>1000
+        ASSERT(oms.submit_order("AAPL", Side::BUY, 1.0, 200, &why) == nullptr
+               && why == OMSReject::POSITION_LIMIT, "rej_position_limit");  // qty 200>100
+        Order* ok = oms.submit_order("AAPL", Side::BUY, 1.0, 10, &why);
+        ASSERT(ok && why == OMSReject::NONE && oms.last_reject() == OMSReject::NONE,
+               "rej_none_on_success");
+    }
 }
 
 

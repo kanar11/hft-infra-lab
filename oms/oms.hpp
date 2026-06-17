@@ -76,6 +76,27 @@ inline const char* status_str(OrderStatus s) noexcept {
 // (Side enum + side_str są w common/types.hpp.)
 
 
+// OMSReject — powód odrzucenia w submit_order (#88). Wcześniej submit zwracał
+// tylko nullptr bez informacji DLACZEGO — caller nie mógł rozróżnić błędu inputu
+// od limitu wartości czy pozycji. Mirror RejectReason z orderbook_pro.
+enum class OMSReject : uint8_t {
+    NONE           = 0,   // brak odrzucenia (sukces)
+    INVALID_INPUT  = 1,   // NaN / cena≤0 / qty=0 / pusty symbol
+    ORDER_VALUE    = 2,   // price × qty > max_order_value
+    POSITION_LIMIT = 3,   // |realized + pending + new| > max_position
+};
+
+inline const char* oms_reject_str(OMSReject r) noexcept {
+    switch (r) {
+        case OMSReject::NONE:           return "NONE";
+        case OMSReject::INVALID_INPUT:  return "INVALID_INPUT";
+        case OMSReject::ORDER_VALUE:    return "ORDER_VALUE";
+        case OMSReject::POSITION_LIMIT: return "POSITION_LIMIT";
+        default:                        return "UNKNOWN";
+    }
+}
+
+
 // Order — pojedyncze zlecenie. Trzymane w OMS::orders_ pod kluczem order_id.
 //
 // Wszystkie czasy w nanosekundach z CLOCK_MONOTONIC (mono_ns). Pomiar
@@ -155,6 +176,7 @@ class OMS {
     int64_t  max_order_value_;  // limit price × qty na jedno zlecenie (w dolarach)
     int64_t  commission_fp_;    // prowizja per akcja, fixed-point (×PRICE_SCALE)
     int64_t  total_fees_;       // skumulowane prowizje całego OMS, fixed-point
+    OMSReject last_reject_ = OMSReject::NONE;  // powód ostatniego odrzucenia (#88)
 
 public:
     // commission_per_share: np. 0.0035 = $0.0035/akcja (typowy taker fee).
@@ -169,21 +191,27 @@ public:
     // submit_order: walidacja inputów, dwa pre-trade checki, utworzenie
     // Order'a, rezerwacja pending w Position. Zwraca pointer do zlecenia
     // w mapie (stabilny dopóki OMS żyje) lub nullptr przy odrzuceniu.
+    // out_reason (opcjonalny, #88): przy nullptr dostaje powód odrzucenia.
     Order* submit_order(const char* symbol, Side side, double price_f,
-                        uint32_t quantity) noexcept {
+                        uint32_t quantity, OMSReject* out_reason = nullptr) noexcept {
         const int64_t t0    = mono_ns();
         const int64_t price = to_fixed(price_f);
+        auto fail = [&](OMSReject r) -> Order* {
+            last_reject_ = r;
+            if (out_reason) *out_reason = r;
+            return nullptr;
+        };
 
         // Walidacja inputów. NaN, ujemna/zerowa cena, zero shares,
         // pusty/null symbol — odrzuć od razu.
         if (std::isnan(price_f) || price <= 0 || quantity == 0
             || symbol == nullptr || symbol[0] == '\0') {
-            return nullptr;
+            return fail(OMSReject::INVALID_INPUT);
         }
 
         // Pre-trade check #1: wartość zlecenia w dolarach.
         const int64_t order_value = (price / PRICE_SCALE) * static_cast<int64_t>(quantity);
-        if (order_value > max_order_value_) return nullptr;
+        if (order_value > max_order_value_) return fail(OMSReject::ORDER_VALUE);
 
         // Pre-trade check #2: limit pozycji (realized + pending + new).
         const uint64_t sym_key  = sym_to_key(symbol);
@@ -191,7 +219,11 @@ public:
         auto           pos_it   = positions_.find(sym_key);
         const int32_t  cur_real = (pos_it != positions_.end()) ? pos_it->second.net_qty     : 0;
         const int32_t  cur_pend = (pos_it != positions_.end()) ? pos_it->second.pending_qty : 0;
-        if (std::abs(cur_real + cur_pend + signed_n) > max_position_) return nullptr;
+        if (std::abs(cur_real + cur_pend + signed_n) > max_position_)
+            return fail(OMSReject::POSITION_LIMIT);
+
+        last_reject_ = OMSReject::NONE;
+        if (out_reason) *out_reason = OMSReject::NONE;
 
         // Utwórz Order, ustaw status SENT, zapisz w mapie.
         const uint64_t id = next_id_++;
@@ -365,6 +397,8 @@ public:
     size_t position_count() const noexcept { return positions_.size(); }
     // total_fees: skumulowane prowizje całego OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
+    // last_reject: powód ostatniego odrzucenia submit_order (#88).
+    OMSReject last_reject() const noexcept { return last_reject_; }
 
     void print_orders() const {
         printf("\n=== ORDERS ===\n");
