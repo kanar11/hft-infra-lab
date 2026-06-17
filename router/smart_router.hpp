@@ -288,6 +288,33 @@ public:
         return route_order(side, quantity, default_strategy_);
     }
 
+    // === NBBO (National Best Bid/Offer) — #97 ===
+    // Najlepsza cena AGREGOWANA po wszystkich aktywnych venue z płynnością.
+    // Referencja do trade-through / best-execution; surowy quote (bez opłat).
+    // Zwraca 0 gdy brak płynności po danej stronie.
+    double national_best_bid() const noexcept {
+        double best = 0.0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (v.is_active && v.bid_size > 0 && v.best_bid > best) best = v.best_bid;
+        }
+        return best;
+    }
+    double national_best_ask() const noexcept {
+        double best = 0.0; bool found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (v.is_active && v.ask_size > 0 && (!found || v.best_ask < best)) {
+                best = v.best_ask; found = true;
+            }
+        }
+        return found ? best : 0.0;
+    }
+    double nbbo_mid() const noexcept {
+        const double b = national_best_bid(), a = national_best_ask();
+        return (b > 0.0 && a > 0.0) ? (b + a) / 2.0 : 0.0;
+    }
+
     uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
 

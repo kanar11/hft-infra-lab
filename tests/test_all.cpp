@@ -1582,6 +1582,21 @@ void test_router_ewma_partial() {
         ASSERT(r.venue_active("A"), "health_A_recovered");
         ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "A") == 0, "health_A_back");
     }
+
+    // --- #97 NBBO: best bid/ask/mid agregowane po venue ---
+    {
+        auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        r.add_venue(Venue("C", 100, 0.0));
+        r.update_quote("A", 99.98, 100.04, 100, 100);
+        r.update_quote("B", 100.00, 100.03, 100, 100);   // best bid
+        r.update_quote("C", 99.99, 100.02, 100, 100);    // best ask
+        ASSERT(close(r.national_best_bid(), 100.00), "nbbo_best_bid");
+        ASSERT(close(r.national_best_ask(), 100.02), "nbbo_best_ask");
+        ASSERT(close(r.nbbo_mid(), 100.01), "nbbo_mid");
+    }
 }
 
 
