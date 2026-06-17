@@ -252,6 +252,17 @@ void test_oms_short_and_replace() {
         ASSERT(!oms.replace_order(a->order_id, 10.00, 200), "replace_rejects_over_limit");
         ASSERT(oms.get_order(a->order_id)->quantity == 50, "replace_unchanged_on_reject");
     }
+
+    {   // #83 prowizje: brutto vs netto. $0.01/akcja, round-trip 100 akcji.
+        OMS oms(10000, 100000000.0, /*commission_per_share=*/0.01);
+        oms.fill_order(oms.submit_order("AAPL", Side::BUY,  10.00, 100)->order_id, 100, 10.00);
+        oms.fill_order(oms.submit_order("AAPL", Side::SELL, 12.00, 100)->order_id, 100, 12.00);
+        const Position* p = oms.get_position("AAPL");
+        ASSERT(close(to_float(p->realized_pnl), 200.0), "fee_gross_pnl_200");   // (12-10)*100
+        ASSERT(close(to_float(p->fees), 2.0), "fee_total_2");                   // 200 akcji * $0.01
+        ASSERT(close(to_float(p->net_pnl()), 198.0), "fee_net_pnl_198");
+        ASSERT(close(to_float(oms.total_fees()), 2.0), "fee_oms_total_2");
+    }
 }
 
 

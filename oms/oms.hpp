@@ -120,19 +120,23 @@ struct Position {
     int32_t net_qty;         // zrealizowane (dodatnie = long, ujemne = short)
     int32_t pending_qty;     // w locie (BUY+, SELL-)
     int64_t avg_price;       // średnia cena zrealizowanego long'a, fixed-point
-    int64_t realized_pnl;    // skumulowany P&L × PRICE_SCALE
+    int64_t realized_pnl;    // skumulowany P&L (brutto) × PRICE_SCALE
     int64_t total_cost;      // suma qty × cena dla aktualnego long'a
+    int64_t fees;            // skumulowane prowizje × PRICE_SCALE (#83)
 
     Position() noexcept
-        : net_qty(0), pending_qty(0), avg_price(0), realized_pnl(0), total_cost(0) {
+        : net_qty(0), pending_qty(0), avg_price(0), realized_pnl(0), total_cost(0), fees(0) {
         symbol[0] = '\0';
     }
 
     explicit Position(const char* sym) noexcept
-        : net_qty(0), pending_qty(0), avg_price(0), realized_pnl(0), total_cost(0) {
+        : net_qty(0), pending_qty(0), avg_price(0), realized_pnl(0), total_cost(0), fees(0) {
         std::strncpy(symbol, sym, 8);
         symbol[8] = '\0';
     }
+
+    // net_pnl: P&L po odjęciu prowizji (to co realnie zostaje w kieszeni).
+    int64_t net_pnl() const noexcept { return realized_pnl - fees; }
 };
 
 
@@ -149,12 +153,18 @@ class OMS {
     uint64_t next_id_;
     int32_t  max_position_;     // limit |net + pending + new| per symbol
     int64_t  max_order_value_;  // limit price × qty na jedno zlecenie (w dolarach)
+    int64_t  commission_fp_;    // prowizja per akcja, fixed-point (×PRICE_SCALE)
+    int64_t  total_fees_;       // skumulowane prowizje całego OMS, fixed-point
 
 public:
-    OMS(int32_t max_pos = 1000, double max_val = 100000.0) noexcept
+    // commission_per_share: np. 0.0035 = $0.0035/akcja (typowy taker fee).
+    OMS(int32_t max_pos = 1000, double max_val = 100000.0,
+        double commission_per_share = 0.0) noexcept
         : next_id_(1),
           max_position_(max_pos),
-          max_order_value_(static_cast<int64_t>(max_val)) {}
+          max_order_value_(static_cast<int64_t>(max_val)),
+          commission_fp_(static_cast<int64_t>(commission_per_share * PRICE_SCALE + 0.5)),
+          total_fees_(0) {}
 
     // submit_order: walidacja inputów, dwa pre-trade checki, utworzenie
     // Order'a, rezerwacja pending w Position. Zwraca pointer do zlecenia
@@ -250,6 +260,14 @@ public:
         const int32_t signed_fill = signed_qty(order.side, fill_qty);
         pos.pending_qty -= signed_fill;
         apply_fill_to_position(pos, signed_fill, static_cast<int64_t>(fill_qty), fill_price);
+
+        // Prowizja: naliczana od każdej zrealizowanej akcji (taker fee). Zmniejsza
+        // P&L netto, nie brutto — realized_pnl pozostaje "czysty" do atrybucji.
+        if (commission_fp_ != 0) {
+            const int64_t fee = static_cast<int64_t>(fill_qty) * commission_fp_;
+            pos.fees    += fee;
+            total_fees_ += fee;
+        }
         return fill_qty;  // ile faktycznie zaaplikowano (po clampie)
     }
 
@@ -345,6 +363,8 @@ public:
     }
     size_t order_count()    const noexcept { return orders_.size(); }
     size_t position_count() const noexcept { return positions_.size(); }
+    // total_fees: skumulowane prowizje całego OMS (fixed-point ×PRICE_SCALE).
+    int64_t total_fees() const noexcept { return total_fees_; }
 
     void print_orders() const {
         printf("\n=== ORDERS ===\n");

@@ -66,6 +66,8 @@ PYBIND11_MODULE(pyhft, m) {
         .def_readonly("avg_price",    &Position::avg_price)
         .def_readonly("realized_pnl", &Position::realized_pnl)
         .def_readonly("total_cost",   &Position::total_cost)
+        .def_readonly("fees",         &Position::fees)
+        .def_property_readonly("net_pnl", &Position::net_pnl)
         .def_property_readonly("symbol",
             [](const Position& p) { return std::string(p.symbol); });
 
