@@ -1506,6 +1506,15 @@ void test_multicast_gap_recovery() {
     rb.push(2, 99);                              // < expected -> duplikat
     ASSERT(rb.duplicates == 1 && rb.out.size() == 4, "reorder_drops_duplicate");
 
+    // #115 snapshot vs retransmisja: duza luka -> snapshot resync.
+    multicast::GapRecovery sr;
+    sr.observe(1); sr.observe(10);               // brak 2..9 (8 pakietow)
+    ASSERT(sr.missing_count() == 8, "snap_big_gap");
+    ASSERT(sr.recommend_snapshot(5), "snap_recommend_over_threshold");   // 8>=5
+    ASSERT(!sr.recommend_snapshot(20), "snap_no_recommend_under");
+    sr.snapshot_resync(10);                      // snapshot pokrywa do seq 10
+    ASSERT(!sr.has_gaps() && sr.expected == 11, "snap_resync_clears_gaps");
+
     // #91 A/B line arbitration — pierwsza linia wygrywa, druga dedup; B łata lukę A.
     multicast::ABLineArbitrator arb;
     ASSERT(arb.on_packet(1, true),  "ab_a1_new");

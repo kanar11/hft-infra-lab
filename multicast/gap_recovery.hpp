@@ -68,6 +68,24 @@ struct GapRecovery {
     bool   has_gaps()      const noexcept { return !missing.empty(); }
     size_t missing_count() const noexcept { return missing.size(); }
 
+    // recommend_snapshot (#115): gdy braki przekrocza prog, retransmisja per-pakiet
+    // jest nieoplacalna — realny feed handler prosi o pelny SNAPSHOT i resynca.
+    bool recommend_snapshot(std::size_t threshold) const noexcept {
+        return threshold > 0 && missing.size() >= threshold;
+    }
+
+    // snapshot_resync: po odebraniu snapshotu na seq `snapshot_seq` wszystko
+    // do niego wlacznie jest znane — czysci luki <= snapshot_seq i ustawia
+    // expected. Braki powyzej snapshotu zostaja (przyjda normalnym strumieniem).
+    void snapshot_resync(std::uint64_t snapshot_seq) noexcept {
+        for (auto it = missing.begin(); it != missing.end(); ) {
+            if (*it <= snapshot_seq) { it = missing.erase(it); ++recovered; }
+            else break;   // set posortowany rosnaco — reszta jest > snapshot_seq
+        }
+        if (snapshot_seq + 1 > expected) expected = snapshot_seq + 1;
+        initialized = true;
+    }
+
     void reset() noexcept { *this = GapRecovery{}; }
 };
 
