@@ -1990,6 +1990,14 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(rr.type, "REJECTED") == 0, "ouch_rejected_parsed");
     ASSERT(rr.reason[0] == 'X', "ouch_rejected_reason");
     ASSERT(t.on_response(rr) == ouch::OrderState::REJECTED, "ouchstate_J_rejected");
+
+    // #112 Order Replaced ('U'): encode → decode (nowy + poprzedni token).
+    n = OUCHMessage::encode_replaced(buf, "NEWTOK", "TOK1", 80, 151.00, 4242);
+    const OUCHResponse rp = OUCHMessage::parse_response(buf, n);
+    ASSERT(std::strcmp(rp.type, "REPLACED") == 0, "ouch_replaced_parsed");
+    ASSERT(std::strcmp(rp.token, "NEWTOK") == 0, "ouch_replaced_new_token");
+    ASSERT(std::strcmp(rp.prev_token, "TOK1") == 0, "ouch_replaced_prev_token");
+    ASSERT(rp.shares == 80 && rp.order_ref == 4242, "ouch_replaced_fields");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.

@@ -82,6 +82,7 @@ struct OUCHResponse {
     int64_t match_number;   // match number (Executed only)
     char    reason[2];      // cancel reason (Cancelled only)
     char    error_msg[64];  // error description (Error only)
+    char    prev_token[15]; // poprzedni token (Replaced only) — token, ktory zostal zastapiony
 
     OUCHResponse() noexcept
         : shares(0), price(0), order_ref(0), match_number(0) {
@@ -91,6 +92,7 @@ struct OUCHResponse {
         stock[0] = '\0';
         reason[0] = '\0';
         error_msg[0] = '\0';
+        prev_token[0] = '\0';
     }
 };
 
@@ -211,6 +213,19 @@ public:
         return 16;
     }
 
+    // encode_replaced: Order Replaced (45 B) — giełda potwierdza Replace ('U').
+    // Niesie NOWY token (replacement) + POPRZEDNI (zastapiony) + nowe parametry.
+    static int encode_replaced(uint8_t* buf, const char* repl_token, const char* prev_token,
+                               int32_t shares, double price, int64_t order_ref) noexcept {
+        buf[0] = 'U';
+        write_padded(buf + 1,  repl_token, 14);
+        write_padded(buf + 15, prev_token, 14);
+        write_u32_be(buf + 29, shares);
+        write_u32_be(buf + 33, static_cast<uint32_t>(price * 10000));
+        write_u64_be(buf + 37, static_cast<uint64_t>(order_ref));
+        return 45;
+    }
+
     // === DECODING (Exchange → Client) ===
 
     // parse_response: decode exchange response from raw bytes
@@ -280,6 +295,20 @@ public:
             strip_padding(resp.token, data + 1, 14);
             resp.reason[0] = static_cast<char>(data[15]);
             resp.reason[1] = '\0';
+
+        } else if (msg_type == 'U') {  // Order Replaced
+            if (len < 45) {
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "REPLACED too short: %d < 45 bytes", len);
+                return resp;
+            }
+            safe_copy(resp.type, "REPLACED");
+            strip_padding(resp.token,      data + 1,  14);  // nowy (replacement)
+            strip_padding(resp.prev_token, data + 15, 14);  // zastapiony
+            resp.shares    = read_u32_be(data + 29);
+            resp.price     = read_u32_be(data + 33) / 10000.0;
+            resp.order_ref = read_u64_be(data + 37);
 
         } else {
             safe_copy(resp.type, "UNKNOWN");
