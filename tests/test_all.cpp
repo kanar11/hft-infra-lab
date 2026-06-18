@@ -2112,6 +2112,14 @@ void test_soupbin_ouch_session() {
     const std::size_t rlen = mock_exchange_respond(resp, sizeof(resp), lo, lolen);
     client.consume(resp, rlen);
     ASSERT(client.session_ended(), "soup_session_ended");
+
+    // #118 HeartbeatTimer — bidirekcyjne heartbeaty SoupBin.
+    soupbin::HeartbeatTimer hb;
+    hb.on_tx(1000); hb.on_rx(1000);
+    ASSERT(!hb.need_send(1500, 1000), "hb_not_due");          // 500 < 1000
+    ASSERT(hb.need_send(2000, 1000), "hb_due");               // 1000 >= 1000
+    ASSERT(!hb.peer_timed_out(5000, 15000), "hb_peer_alive"); // 4000 <= 15000
+    ASSERT(hb.peer_timed_out(20000, 15000), "hb_peer_dead");  // 19000 > 15000
 }
 
 

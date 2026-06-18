@@ -109,6 +109,23 @@ class FullOrderBook {
     // STP policy (default NONE — testy mogą się wash-trade'ować swobodnie)
     SelfTradePrevention stp_policy_ = SelfTradePrevention::NONE;
 
+    // Anti-internalization: mapa client_id → firm_id (MPID). STP normalnie
+    // łapie tylko ten sam client_id; firma ma wiele desków/kont, które też
+    // nie powinny ze sobą handlować. Gdy oba ordery należą do tej samej firmy,
+    // STP odpala tak jakby to był ten sam podmiot.
+    std::unordered_map<std::uint64_t, std::uint64_t> client_to_firm_;
+    std::uint64_t firm_self_trade_blocks_ = 0;
+
+    // Czy a i b to ten sam podmiot handlowy (ten sam client albo ta sama firma)?
+    bool same_trading_entity(std::uint64_t a, std::uint64_t b) const noexcept {
+        if (a == 0 || b == 0) return false;   // anonim nigdy nie blokowany
+        if (a == b) return true;              // ten sam client_id
+        const auto ia = client_to_firm_.find(a);
+        const auto ib = client_to_firm_.find(b);
+        return ia != client_to_firm_.end() && ib != client_to_firm_.end() &&
+               ia->second == ib->second;      // ta sama firma (MPID)
+    }
+
     // Callback na eventy (opcjonalnie ustawiany przez set_event_callback)
     using EventCallback = void(*)(const BookEvent&, void* ctx);
     EventCallback event_cb_  = nullptr;
@@ -425,6 +442,23 @@ public:
     void set_stp_policy(SelfTradePrevention p) noexcept { stp_policy_ = p; }
     SelfTradePrevention stp_policy() const noexcept { return stp_policy_; }
 
+    // Anti-internalization — przypisz client_id do firmy (MPID). Po przypisaniu
+    // STP traktuje wszystkie konta tej samej firmy jak jeden podmiot.
+    // firm_id = 0 usuwa przypisanie. Wymaga stp_policy_ != NONE by działać.
+    void set_client_firm(std::uint64_t client_id, std::uint64_t firm_id) noexcept {
+        if (client_id == 0) return;
+        if (firm_id == 0) client_to_firm_.erase(client_id);
+        else              client_to_firm_[client_id] = firm_id;
+    }
+    std::uint64_t client_firm(std::uint64_t client_id) const noexcept {
+        const auto it = client_to_firm_.find(client_id);
+        return it == client_to_firm_.end() ? 0 : it->second;
+    }
+    // Bloki STP złapane na poziomie firmy (różne konta, ta sama firma).
+    std::uint64_t firm_self_trade_blocks() const noexcept {
+        return firm_self_trade_blocks_;
+    }
+
     // Drop copy (FIX drop copy semantics): osobny strumień eventów JEDNEGO
     // monitorowanego konta — risk desk / compliance widzi ACCEPT/FILL/CANCEL/
     // EXPIRE klienta niezależnie od głównego callbacku. client_id = 0 wyłącza.
@@ -546,10 +580,13 @@ private:
                         std::int32_t& qty_remaining, std::uint64_t ts_ns) noexcept {
         Order* m = lvl.head;
         while (m && qty_remaining > 0) {
-            // STP check: czy maker i taker to ten sam client?
-            if (m->client_id != 0 && m->client_id == taker->client_id &&
-                stp_policy_ != SelfTradePrevention::NONE) {
+            // STP check: czy maker i taker to ten sam podmiot (client albo
+            // firma — anti-internalization)?
+            if (stp_policy_ != SelfTradePrevention::NONE &&
+                same_trading_entity(m->client_id, taker->client_id)) {
                 ++stats_.total_self_trade_blocks;
+                if (m->client_id != taker->client_id)
+                    ++firm_self_trade_blocks_;   // złapane na poziomie firmy
                 if (stp_policy_ == SelfTradePrevention::CANCEL_NEWEST) {
                     // Taker pada — abort completely
                     qty_remaining = 0;

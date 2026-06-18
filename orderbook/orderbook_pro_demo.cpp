@@ -3744,6 +3744,57 @@ void test_mmp_under_threshold_no_trip() {
     ASSERT(b.mmp_trips_total() == 0,              "mmp_trips_0");
 }
 
+// ──────────────────────────────────────────────
+// Anti-internalization — STP na poziomie firmy (#74)
+// ──────────────────────────────────────────────
+
+void test_anti_internalization_blocks_same_firm() {
+    Book b;
+    b.set_stp_policy(SelfTradePrevention::CANCEL_OLDEST);
+    b.set_client_firm(7, 100);
+    b.set_client_firm(8, 100);    // oba konta w firmie 100
+    // Konto 8 maker SELL, konto 7 taker BUY — różne konta, ta sama firma
+    b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
+    b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    ASSERT(b.stats().total_self_trade_blocks == 1, "antiint_blocked");
+    ASSERT(b.firm_self_trade_blocks() == 1,        "antiint_firm_counter");
+    ASSERT(b.stats().total_fills == 0,             "antiint_no_fill");
+    // CANCEL_OLDEST skasował makera 8; taker 7 restuje jako bid
+    ASSERT(b.total_volume_at_price(10100) == 50,   "antiint_taker_rests");
+}
+
+void test_anti_internalization_allows_different_firm() {
+    Book b;
+    b.set_stp_policy(SelfTradePrevention::CANCEL_OLDEST);
+    b.set_client_firm(7, 100);
+    b.set_client_firm(8, 200);    // różne firmy
+    b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
+    b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    ASSERT(b.stats().total_self_trade_blocks == 0, "antiint_diff_firm_ok");
+    ASSERT(b.stats().total_fills == 1,             "antiint_diff_firm_fills");
+}
+
+void test_anti_internalization_account_level_still_works() {
+    Book b;
+    b.set_stp_policy(SelfTradePrevention::CANCEL_NEWEST);
+    // Brak przypisania firm — ten sam client_id nadal blokowany
+    b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    ASSERT(b.stats().total_self_trade_blocks == 1, "antiint_acct_blocked");
+    ASSERT(b.firm_self_trade_blocks() == 0,        "antiint_acct_not_firm");
+    ASSERT(b.stats().total_fills == 0,             "antiint_acct_no_fill");
+}
+
+void test_anti_internalization_off_when_stp_none() {
+    Book b;   // stp NONE — firmy ignorowane
+    b.set_client_firm(7, 100);
+    b.set_client_firm(8, 100);
+    b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
+    b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
+    ASSERT(b.stats().total_fills == 1,             "antiint_none_trades");
+    ASSERT(b.firm_self_trade_blocks() == 0,        "antiint_none_no_block");
+}
+
 void test_reject_qty_zero() {
     Book b;
     RejectReason rr = RejectReason::NONE;
@@ -4359,6 +4410,10 @@ int main(int argc, char* argv[]) {
     test_gtx_trades_normally_in_continuous();
     test_mmp_full_scenario();
     test_mmp_under_threshold_no_trip();
+    test_anti_internalization_blocks_same_firm();
+    test_anti_internalization_allows_different_firm();
+    test_anti_internalization_account_level_still_works();
+    test_anti_internalization_off_when_stp_none();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);

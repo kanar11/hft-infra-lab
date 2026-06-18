@@ -48,6 +48,33 @@ inline void strip_field(char* dst, const uint8_t* src, int n) noexcept {
 }
 
 
+// HeartbeatTimer — timer heartbeatow SoupBinTCP (expansion #118).
+//
+// SoupBin wymaga heartbeatow w OBIE strony: server wysyla 'H', klient 'R' co ~1s
+// gdy idle — tak wykrywa sie half-open connection (NAT/firewall ucina idle TCP).
+// Brak heartbeatu/danych od drugiej strony przez ~15s => zerwij i reconnect.
+//   on_tx(now) — wywolaj po KAZDEJ wyslanej ramce (reset naszego idle)
+//   on_rx(now) — wywolaj po KAZDEJ odebranej ramce (reset zegara peera)
+//   need_send(now, interval) — czy czas wyslac nasz heartbeat
+//   peer_timed_out(now, timeout) — czy druga strona milczy za dlugo
+struct HeartbeatTimer {
+    int64_t last_tx = 0;
+    int64_t last_rx = 0;
+    bool    started = false;
+
+    void on_tx(int64_t now) noexcept { last_tx = now; started = true; }
+    void on_rx(int64_t now) noexcept { last_rx = now; started = true; }
+
+    bool need_send(int64_t now, int64_t interval) const noexcept {
+        return started && (now - last_tx) >= interval;
+    }
+    bool peer_timed_out(int64_t now, int64_t timeout) const noexcept {
+        return started && (now - last_rx) > timeout;
+    }
+    void reset() noexcept { *this = HeartbeatTimer{}; }
+};
+
+
 // OuchSessionClient — stan sesji po stronie klienta. Karmiony strumieniem
 // bajtów z TCP; rozbija na pakiety SoupBin i dekoduje OUCH z 'S'.
 class OuchSessionClient {
