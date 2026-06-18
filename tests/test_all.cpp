@@ -1910,6 +1910,19 @@ void test_fix_session() {
         ASSERT(s.peek_outbound_seq() == 2, "fix_seq_incremented");
     }
 
+    // --- #119 inbound SequenceReset: ustaw oczekiwany seq, ignoruj wsteczny ---
+    {
+        fix::FIXSession si;
+        si.observe_inbound(1, 100);
+        ASSERT(si.expected_inbound_seq() == 2, "seqreset_expected_2");
+        const auto g = si.observe_inbound(5, 200);                 // luka 2..4
+        ASSERT(g.valid && si.expected_inbound_seq() == 6, "seqreset_after_gap_6");
+        si.apply_inbound_sequence_reset(10);                       // NewSeqNo=10
+        ASSERT(si.expected_inbound_seq() == 10, "seqreset_applied_10");
+        si.apply_inbound_sequence_reset(3);                        // wsteczny -> ignoruj
+        ASSERT(si.expected_inbound_seq() == 10, "seqreset_ignores_backwards");
+    }
+
     // --- ResendRequest niesie BeginSeqNo(7)/EndSeqNo(16) i bumpuje licznik ---
     {
         fix::FIXSession s;

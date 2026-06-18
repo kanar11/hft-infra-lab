@@ -142,6 +142,18 @@ public:
     // (35=2) i woła to żeby zaktualizować staty.
     void mark_resend_requested() noexcept { ++resends_requested_; }
 
+    // expected_inbound_seq: nastepny oczekiwany MsgSeqNum (tag 34) przychodzacy.
+    uint32_t expected_inbound_seq() const noexcept { return expected_in_seq_; }
+
+    // apply_inbound_sequence_reset: po odebraniu SequenceReset (35=4) z NewSeqNo
+    // (tag 36) ustaw oczekiwany inbound seq — druga strona przeskakuje numeracje
+    // (GapFill administracyjnych albo twardy Reset). Domyka recovery po stronie
+    // inbound (parze do build_sequence_reset, ktory go wysyla). Ignoruje numer
+    // wsteczny (< expected) — SequenceReset nie cofa numeracji w trybie GapFill.
+    void apply_inbound_sequence_reset(uint32_t new_seq_no) noexcept {
+        if (new_seq_no >= expected_in_seq_) expected_in_seq_ = new_seq_no;
+    }
+
     // === Transitions ===
     // mark_logon_sent: wywołaj po wysłaniu Logon (35=A). State → LOGON_SENT.
     void mark_logon_sent(int64_t now_ms) noexcept {
