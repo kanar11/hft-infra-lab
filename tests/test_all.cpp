@@ -1655,6 +1655,19 @@ void test_router_ewma_partial() {
         ASSERT(close(r.national_best_ask(), 100.02), "nbbo_best_ask");
         ASSERT(close(r.nbbo_mid(), 100.01), "nbbo_mid");
     }
+
+    // --- #109 available_liquidity: suma top-of-book po aktywnych venue ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        r.update_quote("A", 10.0, 11.0, 200, 150);   // bid 200, ask 150
+        r.update_quote("B", 10.0, 11.0, 300, 250);
+        ASSERT(r.available_liquidity(true) == 400, "liq_buy_sum_asks");   // 150+250
+        ASSERT(r.available_liquidity(false) == 500, "liq_sell_sum_bids"); // 200+300
+        r.record_reject("A"); r.record_reject("A"); r.record_reject("A"); // A wyłączone
+        ASSERT(r.available_liquidity(true) == 250, "liq_excludes_inactive");
+    }
 }
 
 

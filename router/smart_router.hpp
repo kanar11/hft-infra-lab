@@ -315,6 +315,21 @@ public:
         return (b > 0.0 && a > 0.0) ? (b + a) / 2.0 : 0.0;
     }
 
+    // available_liquidity: laczny displayed size top-of-book po stronie zlecenia
+    // (is_buy → asks, sprzedaz → bids), tylko aktywne venue z dodatnim quote.
+    // Pre-route sizing: czy w ogole jest plynnosc na pokrycie zlecenia (#109).
+    int32_t available_liquidity(bool is_buy) const noexcept {
+        int32_t total = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (is_buy) { if (v.best_ask > 0 && v.ask_size > 0) total += v.ask_size; }
+            else        { if (v.best_bid > 0 && v.bid_size > 0) total += v.bid_size; }
+        }
+        return total;
+    }
+    int venue_count() const noexcept { return venue_count_; }
+
     uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
 
