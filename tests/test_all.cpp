@@ -1709,6 +1709,28 @@ void test_router_ewma_partial() {
         r.record_reject("A"); r.record_reject("A"); r.record_reject("A"); // A wyłączone
         ASSERT(r.available_liquidity(true) == 250, "liq_excludes_inactive");
     }
+
+    // --- #117 TCA: routed-volume per venue ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.001));   // gorszy fee
+        r.update_quote("A", 10.0, 11.0, 1000, 1000);
+        r.update_quote("B", 10.0, 11.0, 1000, 1000);
+        r.route_order("BUY", 100);             // A lepszy -> 100 na A
+        r.route_order("BUY", 50);              // A -> +50
+        ASSERT(r.venue_routed_shares("A") == 150, "tca_routed_A_150");
+        ASSERT(r.venue_routed_shares("B") == 0, "tca_routed_B_0");
+        // SPLIT rozbija miedzy oba (prog 100)
+        SmartOrderRouter rs(RoutingStrategy::SPLIT, 100);
+        rs.add_venue(Venue("X", 100, 0.0));
+        rs.add_venue(Venue("Y", 100, 0.0));
+        rs.update_quote("X", 10.0, 11.0, 60, 60);
+        rs.update_quote("Y", 10.0, 11.0, 100, 100);
+        rs.route_order("BUY", 120);            // 60 z X + 60 z Y
+        ASSERT(rs.venue_routed_shares("X") == 60, "tca_split_X_60");
+        ASSERT(rs.venue_routed_shares("Y") == 60, "tca_split_Y_60");
+    }
 }
 
 

@@ -68,18 +68,22 @@ struct Venue {
     double  ewma_latency_ns;
     uint32_t latency_samples;
     uint32_t consecutive_failures;  // health (#86): seria odrzuceń/timeoutów
+    int64_t  routed_shares;         // TCA (#117): laczny zaroutowany wolumen
+    uint64_t routes_count;          // ile razy zlecenie trafilo na to venue
 
     Venue() noexcept
         : latency_ns(0), latency_p99_ns(0), fee_per_share(0),
           best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true),
-          ewma_latency_ns(0.0), latency_samples(0), consecutive_failures(0) {
+          ewma_latency_ns(0.0), latency_samples(0), consecutive_failures(0),
+          routed_shares(0), routes_count(0) {
         name[0] = '\0';
     }
 
     Venue(const char* n, int64_t lat, double fee) noexcept
         : latency_ns(lat), latency_p99_ns(0), fee_per_share(fee),
           best_bid(0), best_ask(0), bid_size(0), ask_size(0), is_active(true),
-          ewma_latency_ns(0.0), latency_samples(0), consecutive_failures(0) {
+          ewma_latency_ns(0.0), latency_samples(0), consecutive_failures(0),
+          routed_shares(0), routes_count(0) {
         std::strncpy(name, n, 15);
         name[15] = '\0';
     }
@@ -278,6 +282,8 @@ public:
         d.num_venues      = 1;
         d.latency_ns      = now_ns() - t0;
 
+        best->routed_shares += filled;   // TCA per venue (#117)
+        ++best->routes_count;
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
         return d;
@@ -329,6 +335,12 @@ public:
         return total;
     }
     int venue_count() const noexcept { return venue_count_; }
+    // venue_routed_shares: laczny zaroutowany wolumen na dane venue (TCA, #117).
+    int64_t venue_routed_shares(const char* venue_name) const noexcept {
+        for (int i = 0; i < venue_count_; ++i)
+            if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].routed_shares;
+        return 0;
+    }
 
     uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
@@ -374,6 +386,8 @@ private:
             fee_sum   += candidates[i]->fee_per_share * alloc;
             filled    += alloc;
             remaining -= alloc;
+            candidates[i]->routed_shares += alloc;   // TCA per venue (#117)
+            ++candidates[i]->routes_count;
             ++venues_used;
         }
 
