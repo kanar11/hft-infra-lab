@@ -33,6 +33,7 @@
 #include "../strategy/bollinger.hpp"
 #include "../strategy/pov_algo.hpp"
 #include "../strategy/signal_throttle.hpp"
+#include "../strategy/vwap_tracker.hpp"
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../fix-protocol/fix_session.hpp"
@@ -1578,6 +1579,22 @@ void test_signal_throttle() {
     ASSERT(th.allow("AAPL", 6), "throttle_reset_symbol");   // po resecie znow przechodzi
 }
 
+// VWAPTracker #113 — rynkowy VWAP + slippage egzekucji w bps.
+void test_vwap_tracker() {
+    SECTION("VWAP Tracker (#113)");
+    auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-3; };
+    VWAPTracker v;
+    v.on_trade(100.0, 100);
+    v.on_trade(102.0, 100);                       // VWAP = (10000+10200)/200 = 101
+    ASSERT(close(v.vwap(), 101.0), "vwap_value");
+    ASSERT(v.volume() == 200, "vwap_volume");
+    // BUY @102 vs VWAP 101 -> (102-101)/101*1e4 = +99.01 bps (gorzej)
+    ASSERT(close(v.slippage_bps(102.0, true), 99.0099), "vwap_buy_slippage_positive");
+    // SELL @102 vs VWAP 101 -> pobilismy VWAP -> ujemne
+    ASSERT(v.slippage_bps(102.0, false) < 0.0, "vwap_sell_beats_negative");
+    ASSERT(close(v.slippage_bps(101.0, true), 0.0), "vwap_at_vwap_zero");
+}
+
 // Bollinger #93 — mean-reversion adaptacyjny do zmienności (pasma ±k·σ).
 void test_bollinger() {
     SECTION("Bollinger Strategy (#93)");
@@ -2211,6 +2228,7 @@ int main() {
     test_bollinger();
     test_pov_algo();
     test_signal_throttle();
+    test_vwap_tracker();
     test_market_maker();
     test_fix();
     test_fix_session();
