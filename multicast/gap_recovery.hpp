@@ -21,6 +21,8 @@
 
 #include <cstdint>
 #include <set>
+#include <map>
+#include <vector>
 
 namespace multicast {
 
@@ -134,6 +136,46 @@ struct FeedStalenessMonitor {
 
     bool is_stale() const noexcept { return stale_; }
     void reset()    noexcept { *this = FeedStalenessMonitor{}; }
+};
+
+// ReorderBuffer — bufor zmiany kolejnosci pakietow (expansion #110).
+//
+// GapRecovery WYKRYWA i godzi luki, ale nie ODTWARZA KOLEJNOSCI danych — pakiet,
+// ktory przyszedl za wczesnie (seq > expected), trzeba przytrzymac az dotra
+// brakujace przed nim, inaczej konsument (np. rekonstruktor ksiegi) zobaczyl by
+// zdarzenia nie po kolei. ReorderBuffer buforuje "przyszle" pakiety i dostarcza
+// je dopiero gdy luka sie zasklepi — strumien wychodzacy jest ZAWSZE w kolejnosci.
+//
+//   push(seq, val): seq==expected -> dostarcz + opróznij kolejne ciagle z bufora
+//                   seq> expected -> zbuforuj (czeka na brakujace)
+//                   seq< expected -> duplikat, odrzuc
+// Dostarczone w kolejnosci ladowane do `out` (caller drainuje i czysci).
+template <typename T>
+struct ReorderBuffer {
+    std::uint64_t        expected = 0;
+    bool                 initialized = false;
+    std::map<std::uint64_t, T> pending;   // seq > expected, czekaja
+    std::vector<T>       out;             // dostarczone w kolejnosci
+    std::uint64_t        duplicates = 0;
+
+    void push(std::uint64_t seq, const T& val) {
+        if (!initialized) { expected = seq; initialized = true; }
+        if (seq < expected) { ++duplicates; return; }    // juz dostarczony
+        pending[seq] = val;
+        // Opróznij wszystkie ciagle od expected.
+        auto it = pending.find(expected);
+        while (it != pending.end()) {
+            out.push_back(it->second);
+            pending.erase(it);
+            ++expected;
+            it = pending.find(expected);
+        }
+    }
+
+    bool   has_gap()       const noexcept { return !pending.empty(); }
+    size_t buffered()      const noexcept { return pending.size(); }
+    void   clear_out()     noexcept { out.clear(); }
+    void   reset()         { *this = ReorderBuffer{}; }
 };
 
 }  // namespace multicast

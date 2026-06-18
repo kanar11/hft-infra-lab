@@ -1490,6 +1490,20 @@ void test_multicast_gap_recovery() {
     gr.observe(6);                               // spóźniony primary wypełnia 6
     ASSERT(gr.missing_count() == 1 && gr.recovered == 3, "gaprec_late_primary_recovers");
 
+    // #110 ReorderBuffer — dostarcza zawsze w kolejnosci, trzyma "przyszle".
+    multicast::ReorderBuffer<int> rb;
+    rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2
+    ASSERT(rb.out.size() == 1 && rb.out[0] == 10, "reorder_inorder_deliver");
+    rb.push(3, 30);                              // luka przy 2 -> buforuj
+    rb.push(4, 40);                              // buforuj
+    ASSERT(rb.out.size() == 1 && rb.buffered() == 2, "reorder_holds_future");
+    rb.push(2, 20);                              // wypelnia luke -> drain 2,3,4
+    ASSERT(rb.buffered() == 0, "reorder_drained");
+    ASSERT(rb.out.size() == 4 && rb.out[1] == 20 && rb.out[2] == 30 && rb.out[3] == 40,
+           "reorder_delivered_in_order");
+    rb.push(2, 99);                              // < expected -> duplikat
+    ASSERT(rb.duplicates == 1 && rb.out.size() == 4, "reorder_drops_duplicate");
+
     // #91 A/B line arbitration — pierwsza linia wygrywa, druga dedup; B łata lukę A.
     multicast::ABLineArbitrator arb;
     ASSERT(arb.on_packet(1, true),  "ab_a1_new");
