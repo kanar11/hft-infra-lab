@@ -188,6 +188,10 @@ struct RiskLimits {
     // Osobny (ciaśniejszy) limit pozycji KROTKIEJ per symbol. 0 = symetria
     // (uzyj max_position_per_symbol po obu stronach).
     int32_t  max_short_per_symbol;
+    // Bezpiecznik serii strat: N kolejnych stratnych fillow (update_pnl<0) z
+    // rzedu trip'uje kill switch. Lapie "death spiral" zanim drawdown urosnie.
+    // 0 = wylaczony.
+    int32_t  max_consecutive_losses;
 
     RiskLimits() noexcept
         : max_position_per_symbol(5000),
@@ -198,7 +202,8 @@ struct RiskLimits {
           max_drawdown_pct(5.0),
           max_price_band_pct(20.0),
           max_shares_per_order(100000),
-          max_short_per_symbol(0) {}
+          max_short_per_symbol(0),
+          max_consecutive_losses(0) {}
 };
 
 
@@ -272,6 +277,7 @@ class RiskManager {
     // --------------------------------------------------------------------
     double daily_pnl_;
     double peak_pnl_;
+    int32_t consec_losses_ = 0;   // seria stratnych update_pnl (#114)
 
     // --------------------------------------------------------------------
     // Stan: kill switch + opcjonalna persistencja
@@ -493,6 +499,17 @@ public:
     void update_pnl(double pnl_change) noexcept {
         daily_pnl_ += pnl_change;
         if (daily_pnl_ > peak_pnl_) peak_pnl_ = daily_pnl_;
+        // Bezpiecznik serii strat (#114): N stratnych z rzedu -> kill switch.
+        if (pnl_change < 0.0) {
+            ++consec_losses_;
+            if (limits_.max_consecutive_losses > 0
+                && consec_losses_ >= limits_.max_consecutive_losses) {
+                kill_switch_active_ = true;
+                persist_state();
+            }
+        } else if (pnl_change > 0.0) {
+            consec_losses_ = 0;   // zysk zeruje serie
+        }
     }
 
 
@@ -597,6 +614,7 @@ public:
     void reset_daily() noexcept {
         daily_pnl_ = 0.0;
         peak_pnl_  = 0.0;
+        consec_losses_ = 0;
         order_timestamps_.clear();
         pending_.clear();
         kill_switch_active_ = false;
@@ -612,6 +630,7 @@ public:
     int32_t  get_position(const char* symbol) const noexcept { return lookup(positions_, sym_to_key(symbol)); }
     int32_t  get_pending(const char* symbol)  const noexcept { return lookup(pending_,   sym_to_key(symbol)); }
     double   get_daily_pnl()                  const noexcept { return daily_pnl_; }
+    int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }
     uint64_t get_total_rejects()              const noexcept { return total_rejects_; }
 

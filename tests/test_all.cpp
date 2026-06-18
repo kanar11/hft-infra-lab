@@ -1828,6 +1828,21 @@ void test_risk_price_band() {
     ASSERT(r6.check_order("AAPL", Side::BUY,  10.0, 500).action == RiskAction::ALLOW,
            "asym_long_500_ok");                              // long pod 1000 OK mimo short-capu
 
+    // #114 bezpiecznik serii strat: 3 stratne z rzedu -> kill switch.
+    RiskLimits cl;
+    cl.max_consecutive_losses = 3;
+    RiskManager r7(cl);
+    r7.update_pnl(-10.0); r7.update_pnl(-10.0);
+    ASSERT(!r7.is_kill_switch_active() && r7.get_consecutive_losses() == 2, "consec_2_ok");
+    r7.update_pnl(-10.0);                                    // 3. -> trip
+    ASSERT(r7.is_kill_switch_active(), "consec_3_trips_kill");
+    // zysk w srodku zeruje serie
+    RiskManager r8(cl);
+    r8.update_pnl(-10.0); r8.update_pnl(-10.0); r8.update_pnl(+5.0);
+    ASSERT(r8.get_consecutive_losses() == 0, "consec_win_resets");
+    r8.update_pnl(-10.0); r8.update_pnl(-10.0);
+    ASSERT(!r8.is_kill_switch_active(), "consec_no_trip_after_reset");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

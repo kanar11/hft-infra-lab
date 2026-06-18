@@ -38,6 +38,7 @@ struct HFTConfig {
         double  max_price_band_pct      = 20.0;   // fat-finger cena; ≤0 = wyłączony
         int32_t max_shares_per_order    = 100000; // fat-finger qty; 0 = wyłączony
         int32_t max_short_per_symbol    = 0;       // ciaśniejszy cap short; 0 = symetria
+        int32_t max_consecutive_losses  = 0;       // breaker serii strat; 0 = wyłączony
     } risk;
 
     struct OmsConfig {
@@ -199,6 +200,7 @@ inline HFTConfig load_config(const char* filepath = "config.yaml") {
                     else if (k == "max_price_band_pct")      cfg.risk.max_price_band_pct      = to_dbl(v);
                     else if (k == "max_shares_per_order")     cfg.risk.max_shares_per_order    = to_int(v);
                     else if (k == "max_short_per_symbol")      cfg.risk.max_short_per_symbol    = to_int(v);
+                    else if (k == "max_consecutive_losses")    cfg.risk.max_consecutive_losses  = to_int(v);
                     break;
                 case OMS:
                     if      (k == "max_position")   cfg.oms.max_position    = to_int(v);
@@ -288,6 +290,7 @@ inline HFTConfig load_config(const char* filepath = "config.yaml") {
     env_dbl("HFT_RISK_MAX_PRICE_BAND_PCT",      cfg.risk.max_price_band_pct);
     env_int("HFT_RISK_MAX_SHARES_PER_ORDER",    cfg.risk.max_shares_per_order);
     env_int("HFT_RISK_MAX_SHORT_PER_SYMBOL",     cfg.risk.max_short_per_symbol);
+    env_int("HFT_RISK_MAX_CONSECUTIVE_LOSSES",   cfg.risk.max_consecutive_losses);
     env_int("HFT_OMS_MAX_POSITION",             cfg.oms.max_position);
     env_dbl("HFT_OMS_MAX_ORDER_VALUE",          cfg.oms.max_order_value);
     env_int("HFT_STRATEGY_WINDOW",              cfg.strategy.window);

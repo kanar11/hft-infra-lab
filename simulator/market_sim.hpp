@@ -527,6 +527,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         rlimits.max_price_band_pct      = cfg->risk.max_price_band_pct;
         rlimits.max_shares_per_order    = cfg->risk.max_shares_per_order;
         rlimits.max_short_per_symbol    = cfg->risk.max_short_per_symbol;
+        rlimits.max_consecutive_losses  = cfg->risk.max_consecutive_losses;
     }
     // Rate-limiter mierzy zlecenia/sek po zegarze ściennym (mono_ns). Symulator
     // kompresuje czas — wszystkie zlecenia lecą w ułamku sekundy, więc realny
