@@ -247,6 +247,30 @@ public:
         return off;
     }
 
+    // validate_new_order: walidacja NewOrderSingle (35=D) po stronie acceptora
+    // (#116). Sprawdza obecnosc wymaganych tagow i sensownosc wartosci. Zwraca
+    // nullptr gdy OK, albo string z powodem odrzucenia. Nie wymaga CheckSum —
+    // to walidacja warstwy aplikacyjnej, nie transportu.
+    const char* validate_new_order() const noexcept {
+        const FIXField* mt = find_field(35);
+        if (!mt || mt->value[0] != 'D')   return "not a NewOrderSingle (35!=D)";
+        if (!find_field(11))              return "missing ClOrdID (11)";
+        if (!find_field(55))              return "missing Symbol (55)";
+        const FIXField* sd = find_field(54);
+        if (!sd)                          return "missing Side (54)";
+        if (sd->value[0] != '1' && sd->value[0] != '2') return "invalid Side (54)";
+        const FIXField* q = find_field(38);
+        if (!q)                           return "missing OrderQty (38)";
+        if (std::atoi(q->value) <= 0)     return "non-positive OrderQty (38)";
+        // Limit (40=2) musi miec dodatnia cene (44).
+        const FIXField* ot = find_field(40);
+        if (ot && ot->value[0] == '2') {
+            const FIXField* px = find_field(44);
+            if (!px || std::atof(px->value) <= 0.0) return "limit order requires positive Price (44)";
+        }
+        return nullptr;
+    }
+
     // print: wyświetl wiadomość (debug).
     void print() const {
         const char* mt = get_msg_type();

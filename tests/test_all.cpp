@@ -1952,6 +1952,19 @@ void test_fix_session() {
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
         ASSERT(std::strcmp(g.get_field(41), "ORD1") == 0, "fix_replace_origclordid");
 
+        // #116 walidacja NewOrderSingle (acceptor-side).
+        s.build_new_order(buf, sizeof(buf), "X", "AAPL", Side::BUY, 100, 150.0, '|');
+        FIXMessage ok; ok.parse(buf);
+        ASSERT(ok.validate_new_order() == nullptr, "fixval_valid_ok");
+        FIXMessage hb; hb.parse("35=0|49=A|56=B|34=1|");
+        ASSERT(hb.validate_new_order() != nullptr, "fixval_not_D");
+        FIXMessage bad; bad.parse("35=D|11=X|55=AAPL|54=9|38=100|40=2|44=10|");
+        ASSERT(std::strcmp(bad.validate_new_order(), "invalid Side (54)") == 0, "fixval_bad_side");
+        FIXMessage q0; q0.parse("35=D|11=X|55=AAPL|54=1|38=0|40=2|44=10|");
+        ASSERT(q0.validate_new_order() != nullptr, "fixval_qty_zero");
+        FIXMessage np; np.parse("35=D|11=X|55=AAPL|54=1|38=100|40=2|44=0|");
+        ASSERT(np.validate_new_order() != nullptr, "fixval_limit_no_price");
+
         // #101 ExecutionReport (35=8) — partial fill: 40 z 100, leaves 60.
         s.build_exec_report(buf, sizeof(buf), "ORD1", "EXG-1", "E-1", '1', '1',
                             "AAPL", Side::BUY, 40, 150.25, 40, 60, '|');
