@@ -36,6 +36,7 @@
 #include "../strategy/market_maker.hpp"
 #include "../fix-protocol/fix_parser.hpp"
 #include "../fix-protocol/fix_session.hpp"
+#include "../fix-protocol/fix_order_state.hpp"
 #include "../ouch-protocol/ouch_protocol.hpp"
 #include "../ouch-protocol/ouch_order_state.hpp"
 #include "../ouch-protocol/soupbin_session.hpp"
@@ -1922,6 +1923,34 @@ void test_fix_session() {
 }
 
 
+// FIX order state #111 — kliencka maszyna stanu z ExecutionReportow (35=8).
+void test_fix_order_state() {
+    SECTION("FIX Order State (#111)");
+    fix::FIXSession s; s.set_comp_ids("ME", "EX");
+    fix::FIXOrderTracker tr;
+    char buf[256];
+
+    tr.on_new("ORD1", 100);
+    ASSERT(tr.state("ORD1") == fix::OrdState::NEW, "fixstate_new");
+
+    s.build_exec_report(buf, sizeof(buf), "ORD1", "EXG", "E1", '1', '1',
+                        "AAPL", Side::BUY, 40, 150.0, 40, 60, '|');
+    FIXMessage m1; m1.parse(buf);
+    ASSERT(tr.on_exec_report(m1) == fix::OrdState::PARTIAL, "fixstate_partial");
+    ASSERT(tr.cum_qty("ORD1") == 40 && tr.leaves_qty("ORD1") == 60, "fixstate_cum_leaves");
+
+    s.build_exec_report(buf, sizeof(buf), "ORD1", "EXG", "E2", '2', '2',
+                        "AAPL", Side::BUY, 60, 150.0, 100, 0, '|');
+    FIXMessage m2; m2.parse(buf);
+    ASSERT(tr.on_exec_report(m2) == fix::OrdState::FILLED, "fixstate_filled");
+    ASSERT(tr.fills() == 1, "fixstate_fill_count");
+
+    s.build_exec_report(buf, sizeof(buf), "GHOST", "EXG", "E3", '2', '2',
+                        "AAPL", Side::BUY, 10, 1.0, 10, 0, '|');
+    FIXMessage m3; m3.parse(buf);
+    ASSERT(tr.on_exec_report(m3) == fix::OrdState::UNKNOWN, "fixstate_unknown_clordid");
+}
+
 // OUCH order state #89 — kliencka maszyna stanu (token → live/partial/filled).
 void test_ouch_order_state() {
     SECTION("OUCH Order State (#89)");
@@ -2177,6 +2206,7 @@ int main() {
     test_market_maker();
     test_fix();
     test_fix_session();
+    test_fix_order_state();
     test_ouch();
     test_ouch_order_state();
     test_soupbin_ouch_session();
