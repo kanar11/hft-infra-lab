@@ -53,7 +53,7 @@ class OUCHOrderTracker {
         int64_t    order_ref;    // z Accepted (0 dopoki nieznane)
     };
     std::unordered_map<std::string, Record> orders_;
-    uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0;
+    uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -86,6 +86,14 @@ public:
             rec->state     = OrderState::CANCELLED;
             rec->remaining = 0;
             ++cancelled_;
+        } else if (std::strcmp(r.type, "BROKEN") == 0) {
+            // Broken Trade (#134): gielda uniewaznia wczesniejszy fill -> odwroc
+            // ksiegowanie (akcje wracaja do "otwarte"). Stan z FILLED -> LIVE/PARTIAL.
+            const int32_t back = (r.shares < rec->filled) ? r.shares : rec->filled;
+            rec->filled    -= back;
+            rec->remaining += back;
+            rec->state = (rec->filled > 0) ? OrderState::PARTIAL : OrderState::LIVE;
+            ++broken_;
         } else {  // ERROR / UNKNOWN
             rec->state = OrderState::REJECTED;
             ++rejected_;
@@ -111,6 +119,7 @@ public:
     uint64_t fills()       const noexcept { return filled_; }
     uint64_t cancels()     const noexcept { return cancelled_; }
     uint64_t rejects()     const noexcept { return rejected_; }
+    uint64_t brokens()     const noexcept { return broken_; }
 };
 
 }  // namespace ouch

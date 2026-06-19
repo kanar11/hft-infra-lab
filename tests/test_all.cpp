@@ -2221,6 +2221,13 @@ void test_ouch_order_state() {
     ASSERT(rr.reason[0] == 'X', "ouch_rejected_reason");
     ASSERT(t.on_response(rr) == ouch::OrderState::REJECTED, "ouchstate_J_rejected");
 
+    // #134 Broken Trade odwraca fill: TOK1 byl FILLED (100) -> bust 100 -> LIVE.
+    n = OUCHMessage::encode_broken_trade(buf, "TOK1", 100, 99005, 'E');
+    ASSERT(t.on_response(OUCHMessage::parse_response(buf, n)) == ouch::OrderState::LIVE,
+           "ouchstate_broken_reverts_to_live");
+    ASSERT(t.remaining("TOK1") == 100 && t.filled("TOK1") == 0, "ouchstate_broken_unfilled");
+    ASSERT(t.brokens() == 1, "ouchstate_broken_count");
+
     // #112 Order Replaced ('U'): encode → decode (nowy + poprzedni token).
     n = OUCHMessage::encode_replaced(buf, "NEWTOK", "TOK1", 80, 151.00, 4242);
     const OUCHResponse rp = OUCHMessage::parse_response(buf, n);
