@@ -31,6 +31,7 @@
 #include "../strategy/mean_reversion.hpp"
 #include "../strategy/momentum.hpp"
 #include "../strategy/bollinger.hpp"
+#include "../strategy/donchian.hpp"
 #include "../strategy/pov_algo.hpp"
 #include "../strategy/signal_throttle.hpp"
 #include "../strategy/vwap_tracker.hpp"
@@ -1592,6 +1593,31 @@ void test_momentum() {
     ASSERT(mrdn.valid && mrdn.side == Side::BUY, "meanrev_opposite_side");
 }
 
+// Donchian #124 — wybicie z kanalu (przebicie N-okresowego max/min).
+void test_donchian() {
+    SECTION("Donchian Breakout (#124)");
+    DonchianBreakout up(3, 100);                  // kanal z 3 poprzednich
+    up.on_market_data("X", 100.0);
+    up.on_market_data("X", 101.0);
+    up.on_market_data("X", 99.0);                 // okno pełne: hi=101, lo=99
+    const Signal su = up.on_market_data("X", 102.0);
+    ASSERT(su.valid && su.side == Side::BUY, "donchian_break_high_buys");
+
+    DonchianBreakout dn(3, 100);
+    dn.on_market_data("Y", 100.0);
+    dn.on_market_data("Y", 101.0);
+    dn.on_market_data("Y", 99.0);
+    const Signal sd = dn.on_market_data("Y", 98.0);
+    ASSERT(sd.valid && sd.side == Side::SELL, "donchian_break_low_sells");
+
+    DonchianBreakout fl(3, 100);
+    fl.on_market_data("Z", 100.0);
+    fl.on_market_data("Z", 101.0);
+    fl.on_market_data("Z", 99.0);
+    const Signal sf = fl.on_market_data("Z", 100.0);  // wewnatrz [99,101]
+    ASSERT(!sf.valid, "donchian_inside_channel_holds");
+}
+
 // POV #99 — Percentage-of-Volume execution algo (slicing adaptacyjny do wolumenu).
 void test_pov_algo() {
     SECTION("POV Execution Algo (#99)");
@@ -2355,6 +2381,7 @@ int main() {
     test_strategy_edge_cases();
     test_momentum();
     test_bollinger();
+    test_donchian();
     test_pov_algo();
     test_signal_throttle();
     test_vwap_tracker();
