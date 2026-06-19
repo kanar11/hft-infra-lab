@@ -662,6 +662,13 @@ public:
     // ====================================================================
     int32_t  get_position(const char* symbol) const noexcept { return lookup(positions_, sym_to_key(symbol)); }
     int32_t  get_pending(const char* symbol)  const noexcept { return lookup(pending_,   sym_to_key(symbol)); }
+    // get_exposure: |pozycja + pending| dla symbolu (#137) — to co liczy check #3.
+    int32_t  get_exposure(const char* symbol) const noexcept {
+        const uint64_t k = sym_to_key(symbol);
+        return std::abs(lookup(positions_, k) + lookup(pending_, k));
+    }
+    // get_total_exposure: laczna ekspozycja portfela — utrzymywany niezmiennik O(1).
+    int64_t  get_total_exposure() const noexcept { return total_abs_exposure_; }
     double   get_daily_pnl()                  const noexcept { return daily_pnl_; }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }

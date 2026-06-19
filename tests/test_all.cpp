@@ -2024,6 +2024,17 @@ void test_risk_price_band() {
     ASSERT(rl.check_order("AAPL", Side::BUY, 1.0, 500).action == RiskAction::REJECT,
            "setlim_after_rejects");                    // 500 > 100 teraz
 
+    // #137 zapytania o ekspozycje (|pos+pend|, total = niezmiennik O(1)).
+    RiskManager re(lim);
+    re.on_order_sent("AAPL", Side::BUY, 100);          // pending +100
+    re.on_order_sent("MSFT", Side::SELL, 50);          // pending -50
+    ASSERT(re.get_exposure("AAPL") == 100, "exp_aapl_100");
+    ASSERT(re.get_exposure("MSFT") == 50, "exp_msft_50");
+    ASSERT(re.get_total_exposure() == 150, "exp_total_150");
+    re.update_position("AAPL", Side::BUY, 60);          // pos+60 pend-60 -> bez zmian
+    ASSERT(re.get_exposure("AAPL") == 100 && re.get_total_exposure() == 150,
+           "exp_invariant_after_fill");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;
