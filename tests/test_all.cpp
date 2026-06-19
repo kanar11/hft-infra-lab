@@ -2092,6 +2092,14 @@ void test_fix_session() {
         ASSERT(er.get_field(150)[0] == '1', "fix_exec_type_partial");   // ExecType=Partial
         ASSERT(std::atoi(er.get_field(32)) == 40, "fix_exec_last_qty");  // LastQty
         ASSERT(std::atoi(er.get_field(151)) == 60, "fix_exec_leaves_qty"); // LeavesQty
+
+        // #126 Session-level Reject (35=3) — np. po negatywnym validate_new_order.
+        s.build_reject(buf, sizeof(buf), 42, "D", 1, "Required tag missing", '|');
+        FIXMessage rj; rj.parse(buf);
+        ASSERT(rj.is_valid() && rj.get_msg_type()[0] == '3', "fix_reject_valid");
+        ASSERT(std::atoi(rj.get_field(45)) == 42, "fix_reject_refseqnum");
+        ASSERT(std::atoi(rj.get_field(373)) == 1, "fix_reject_reason_code");
+        ASSERT(std::strcmp(rj.get_field(372), "D") == 0, "fix_reject_refmsgtype");
     }
 }
 

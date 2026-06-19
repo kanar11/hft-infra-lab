@@ -415,6 +415,24 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // build_reject (35=3) — Session-level Reject (#126). Acceptor odsyla gdy
+    // przychodzaca wiadomosc lamie regule sesji (brak tagu, zla wartosc, zly
+    // typ) — np. po negatywnym validate_new_order. Rozni sie od business reject
+    // (ExecutionReport 150=8): to odrzucenie na poziomie PROTOKOLU.
+    //   45=RefSeqNum, 372=RefMsgType, 373=SessionRejectReason, 58=Text
+    int build_reject(char* out, int cap, uint32_t ref_seq_num, const char* ref_msg_type,
+                     int reject_reason, const char* text,
+                     char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=3%c49=%s%c56=%s%c34=%u%c45=%u%c372=%s%c373=%d%c58=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            ref_seq_num, delim, ref_msg_type ? ref_msg_type : "", delim,
+            reject_reason, delim, text ? text : "", delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 
