@@ -1853,6 +1853,17 @@ void test_router_ewma_partial() {
         rs.reset_routing_stats();
         ASSERT(rs.total_routed_shares() == 0, "tca_reset_zero");
     }
+
+    // --- #138 kumulatywny koszt oplat ---
+    {
+        auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.002));         // taker fee 0.002/akcja
+        r.update_quote("A", 10.0, 11.0, 1000, 1000);
+        r.route_order("BUY", 100);                    // fee 0.2
+        r.route_order("BUY", 50);                     // fee 0.1
+        ASSERT(close(r.total_fees_paid(), 0.3), "fees_paid_cumulative");
+    }
 }
 
 

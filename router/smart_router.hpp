@@ -151,6 +151,7 @@ class SmartOrderRouter {
     uint64_t total_routes_;
     uint64_t total_rejected_;
     uint64_t total_latency_ns_;
+    double   total_fees_paid_ = 0.0;   // suma fee/rebate po trasach (#138; <0 = net rebate)
 
     static int64_t now_ns() noexcept {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -312,6 +313,7 @@ public:
         ++best->routes_count;
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
+        total_fees_paid_  += d.total_fee;   // #138 kumulatywny koszt
         return d;
     }
 
@@ -380,6 +382,10 @@ public:
             venues_[i].routes_count  = 0;
         }
     }
+
+    // total_fees_paid: suma oplat/rebate po wszystkich trasach (#138). Ujemne =
+    // net rebate (maker). Podstawa analizy kosztow egzekucji.
+    double   total_fees_paid()    const noexcept { return total_fees_paid_; }
 
     uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
@@ -453,6 +459,7 @@ private:
 
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
+        total_fees_paid_  += d.total_fee;   // #138 kumulatywny koszt
         return d;
     }
 };
