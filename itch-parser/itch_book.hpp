@@ -136,6 +136,18 @@ public:
         if (bids_.empty() || asks_.empty()) return 0.0;
         return best_ask() - best_bid();
     }
+    // spread_bps: spread względem mid w punktach bazowych (#131) — miara
+    // jakości/płynności rynku niezależna od poziomu ceny.
+    double  spread_bps() const noexcept {
+        const double m = mid_price();
+        return m > 0.0 ? spread() / m * 10000.0 : 0.0;
+    }
+    // clear: zresetuj reconstructora do pustego (np. start nowej sesji / re-sync
+    // po snapshot recovery). Statystyki feed handlera też zerowane.
+    void clear() noexcept {
+        orders_.clear(); bids_.clear(); asks_.clear();
+        adds_ = executes_ = cancels_ = deletes_ = replaces_ = orphans_ = 0;
+    }
     // mid_price: średnia best bid/ask; 0 gdy księga jednostronna.
     double  mid_price() const noexcept {
         if (bids_.empty() || asks_.empty()) return 0.0;

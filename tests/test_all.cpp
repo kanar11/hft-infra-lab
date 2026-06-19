@@ -1515,6 +1515,14 @@ void test_itch_book() {
     ASSERT(nl == 2, "itchbook_top_levels_count");
     ASSERT(close(px[0], 100.00) && q[0] == 100, "itchbook_top_lvl0_best");
     ASSERT(close(px[1],  99.99) && q[1] == 200, "itchbook_top_lvl1_next");
+
+    // #131 spread_bps + clear
+    itch::ITCHOrderBook sb;
+    sb.on_add(1, 'B', 100.00, 100);
+    sb.on_add(2, 'S', 100.02, 100);                       // mid 100.01, spread 0.02
+    ASSERT(close(sb.spread_bps(), 1.99980), "itchbook_spread_bps");
+    sb.clear();
+    ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }
 
 // Multicast gap-recovery #82 — detekcja luk + retransmisja + rekoncyliacja.
