@@ -592,6 +592,11 @@ public:
     bool       is_kill_switch_active() const noexcept { return kill_switch_active_; }
     KillReason get_kill_reason()       const noexcept { return kill_reason_; }   // #121
 
+    // Runtime update limitow (#129) — ryzyko czesto zaostrza limity intraday
+    // (np. po stracie) bez restartu. get_limits do inspekcji/dashboardu.
+    const RiskLimits& get_limits() const noexcept { return limits_; }
+    void set_limits(const RiskLimits& l) noexcept { limits_ = l; }
+
     // set_persist_path: opcjonalny plik do persistencji stanu kill switcha.
     // Wywołaj raz po konstrukcji. Bez tego persistencja jest no-op (zachowanie
     // wstecz kompatybilne).

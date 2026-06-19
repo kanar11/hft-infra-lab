@@ -1970,6 +1970,17 @@ void test_risk_price_band() {
     rbk.check_order("AAPL", Side::BUY, 10.0, 1);              // circuit breaker w check
     ASSERT(rbk.get_kill_reason() == KillReason::CIRCUIT_BREAKER, "killreason_circuit");
 
+    // #129 runtime update limitow — zaostrz pozycje intraday.
+    RiskManager rl(lim);
+    ASSERT(rl.check_order("AAPL", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
+           "setlim_before_ok");                       // 500 < lim (1000000)
+    RiskLimits tighter = rl.get_limits();
+    tighter.max_position_per_symbol = 100;
+    rl.set_limits(tighter);
+    ASSERT(rl.get_limits().max_position_per_symbol == 100, "setlim_applied");
+    ASSERT(rl.check_order("AAPL", Side::BUY, 1.0, 500).action == RiskAction::REJECT,
+           "setlim_after_rejects");                    // 500 > 100 teraz
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;
