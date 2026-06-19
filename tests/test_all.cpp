@@ -338,6 +338,11 @@ void test_oms_short_and_replace() {
         Order* ok = oms.submit_order("AAPL", Side::BUY, 1.0, 10, &why);
         ASSERT(ok && why == OMSReject::NONE && oms.last_reject() == OMSReject::NONE,
                "rej_none_on_success");
+        // #136 statystyki odrzucen per powod (powyzej: 1x kazdy typ).
+        ASSERT(oms.reject_count(OMSReject::INVALID_INPUT) == 1, "rejcnt_invalid");
+        ASSERT(oms.reject_count(OMSReject::ORDER_VALUE) == 1, "rejcnt_value");
+        ASSERT(oms.reject_count(OMSReject::POSITION_LIMIT) == 1, "rejcnt_position");
+        ASSERT(oms.reject_count(OMSReject::NONE) == 0, "rejcnt_none_zero");
     }
 }
 

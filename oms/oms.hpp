@@ -189,6 +189,7 @@ class OMS {
     int64_t  commission_fp_;    // prowizja per akcja, fixed-point (×PRICE_SCALE)
     int64_t  total_fees_;       // skumulowane prowizje całego OMS, fixed-point
     OMSReject last_reject_ = OMSReject::NONE;  // powód ostatniego odrzucenia (#88)
+    uint64_t  reject_counts_[4] = {0, 0, 0, 0}; // licznik odrzuceń per OMSReject (#136)
 
 public:
     // commission_per_share: np. 0.0035 = $0.0035/akcja (typowy taker fee).
@@ -210,6 +211,7 @@ public:
         const int64_t price = to_fixed(price_f);
         auto fail = [&](OMSReject r) -> Order* {
             last_reject_ = r;
+            ++reject_counts_[static_cast<int>(r)];   // #136 statystyki per powód
             if (out_reason) *out_reason = r;
             return nullptr;
         };
@@ -463,6 +465,8 @@ public:
     }
     // last_reject: powód ostatniego odrzucenia submit_order (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
+    // reject_count: ile zlecen odrzucono z danego powodu (#136, observability).
+    uint64_t reject_count(OMSReject r) const noexcept { return reject_counts_[static_cast<int>(r)]; }
 
     void print_orders() const {
         printf("\n=== ORDERS ===\n");
