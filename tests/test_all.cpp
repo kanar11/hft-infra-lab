@@ -32,6 +32,7 @@
 #include "../strategy/momentum.hpp"
 #include "../strategy/bollinger.hpp"
 #include "../strategy/donchian.hpp"
+#include "../strategy/rsi.hpp"
 #include "../strategy/pov_algo.hpp"
 #include "../strategy/signal_throttle.hpp"
 #include "../strategy/vwap_tracker.hpp"
@@ -1654,6 +1655,24 @@ void test_donchian() {
     ASSERT(!sf.valid, "donchian_inside_channel_holds");
 }
 
+// RSI #135 — oscylator pedu; rosnaca seria -> RSI 100 -> SELL, malejaca -> BUY.
+void test_rsi() {
+    SECTION("RSI Strategy (#135)");
+    RSIStrategy up(3, 70.0, 30.0, 100);
+    up.on_market_data("X", 100.0);                // baseline
+    up.on_market_data("X", 101.0);
+    up.on_market_data("X", 102.0);
+    const Signal su = up.on_market_data("X", 103.0);  // okno pelne: same zyski -> RSI=100
+    ASSERT(su.valid && su.side == Side::SELL, "rsi_overbought_sells");
+
+    RSIStrategy dn(3, 70.0, 30.0, 100);
+    dn.on_market_data("Y", 100.0);
+    dn.on_market_data("Y", 99.0);
+    dn.on_market_data("Y", 98.0);
+    const Signal sd = dn.on_market_data("Y", 97.0);   // same straty -> RSI=0
+    ASSERT(sd.valid && sd.side == Side::BUY, "rsi_oversold_buys");
+}
+
 // POV #99 — Percentage-of-Volume execution algo (slicing adaptacyjny do wolumenu).
 void test_pov_algo() {
     SECTION("POV Execution Algo (#99)");
@@ -2463,6 +2482,7 @@ int main() {
     test_momentum();
     test_bollinger();
     test_donchian();
+    test_rsi();
     test_pov_algo();
     test_signal_throttle();
     test_vwap_tracker();
