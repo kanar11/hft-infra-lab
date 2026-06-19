@@ -438,6 +438,13 @@ public:
     }
     size_t order_count()    const noexcept { return orders_.size(); }
     size_t position_count() const noexcept { return positions_.size(); }
+    // count_by_status: ile zlecen w danym stanie (#128) — observability/monitoring
+    // (np. ile aktywnych SENT/PARTIAL, ile odrzuconych).
+    size_t count_by_status(OrderStatus st) const noexcept {
+        size_t n = 0;
+        for (const auto& kv : orders_) if (kv.second.status == st) ++n;
+        return n;
+    }
     // total_fees: skumulowane prowizje całego OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
 

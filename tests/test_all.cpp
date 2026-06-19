@@ -288,6 +288,18 @@ void test_oms_short_and_replace() {
         ASSERT(o2.cancel_all_symbol("AAA") == 1, "cancelall_symbol_one");
     }
 
+    {   // #128 count_by_status — observability stanu zlecen.
+        OMS oms(1000000, 1000000000.0);
+        oms.submit_order("AAA", Side::BUY, 10.0, 100);                      // SENT
+        Order* f = oms.submit_order("BBB", Side::BUY, 10.0, 100);
+        oms.fill_order(f->order_id, 100, 10.0);                            // FILLED
+        Order* p = oms.submit_order("CCC", Side::BUY, 10.0, 100);
+        oms.fill_order(p->order_id, 40, 10.0);                             // PARTIAL
+        ASSERT(oms.count_by_status(OrderStatus::SENT) == 1, "cbs_sent_1");
+        ASSERT(oms.count_by_status(OrderStatus::FILLED) == 1, "cbs_filled_1");
+        ASSERT(oms.count_by_status(OrderStatus::PARTIAL) == 1, "cbs_partial_1");
+    }
+
     {   // #120 agregaty P&L portfela (realized/net po wszystkich pozycjach).
         OMS oms(100000, 100000000.0, /*commission_per_share=*/0.01);
         // AAPL: buy 100@50, sell 100@52 -> realized +200, fees 2
