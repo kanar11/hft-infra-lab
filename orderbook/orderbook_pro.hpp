@@ -202,7 +202,19 @@ class FullOrderBook {
     }
 
     // Po dodaniu/wyjęciu z księgi — odśwież best_bid/best_ask gdy trzeba.
+    //
+    // Guard zakresu start_ticks: callery wołają to z best_bid_ticks_-1 /
+    // best_ask_ticks_+1. Gdy best_*_ticks_ było już sentinelem (NO_BID=-1,
+    // NO_ASK=INT32_MAX) — np. po tym jak STP CANCEL_OLDEST skasował JEDYNY level
+    // w match_at_level i cancel_internal sam zrefreshował best na sentinel —
+    // arytmetyka daje start poza [0,LEVELS) (a NO_ASK+1 to wrecz przepełnienie
+    // do INT32_MIN). Bez guardu pętla indeksuje levels_[ujemne] → OOB/SEGV.
+    // Poprawnie: start poza siatką oznacza "brak quote po tej stronie".
     void refresh_best_bid_from(std::int32_t start_ticks) noexcept {
+        if (start_ticks < PRICE_MIN_TICKS || start_ticks >= LEVELS) {
+            best_bid_ticks_ = NO_BID_TICKS;
+            return;
+        }
         // Skanuj w dół zaczynając od start_ticks aż znajdziesz niepusty level
         // (lub spadniesz poniżej 0 → brak bidów).
         for (std::int32_t p = start_ticks; p >= PRICE_MIN_TICKS; --p) {
@@ -211,6 +223,10 @@ class FullOrderBook {
         best_bid_ticks_ = NO_BID_TICKS;
     }
     void refresh_best_ask_from(std::int32_t start_ticks) noexcept {
+        if (start_ticks < PRICE_MIN_TICKS || start_ticks >= LEVELS) {
+            best_ask_ticks_ = NO_ASK_TICKS;
+            return;
+        }
         for (std::int32_t p = start_ticks; p < LEVELS; ++p) {
             if (levels_[p].total_qty > 0) { best_ask_ticks_ = p; return; }
         }

@@ -462,7 +462,7 @@ void test_liquidity_snapshot() {
 // ──────────────────────────────────────────────
 
 void test_book_cluster_basic() {
-    orderbook_pro::BookCluster<8, 16384, 4096> cluster;
+    static orderbook_pro::BookCluster<8, 16384, 4096> cluster;  // static: 8 ksiag > stos
     ASSERT(cluster.register_symbol("AAPL"),     "cluster_register_AAPL");
     ASSERT(cluster.register_symbol("MSFT"),     "cluster_register_MSFT");
     ASSERT(!cluster.register_symbol("AAPL"),    "cluster_no_duplicate");
@@ -486,7 +486,7 @@ void test_book_cluster_basic() {
 }
 
 void test_book_cluster_unknown_symbol() {
-    orderbook_pro::BookCluster<4> cluster;
+    static orderbook_pro::BookCluster<4> cluster;  // static: za duze na stos
     cluster.register_symbol("AAPL");
     ASSERT(cluster.book("GOOG") == nullptr,     "cluster_unknown_nullptr");
 }
@@ -894,7 +894,7 @@ void test_tob_counter_increments() {
 // ──────────────────────────────────────────────
 
 void test_cross_arb_detected() {
-    orderbook_pro::BookCluster<8, 16384, 4096> cluster;
+    static orderbook_pro::BookCluster<8, 16384, 4096> cluster;  // static: 8 ksiag > stos
     cluster.register_symbol("SPY");
     cluster.register_symbol("IVV");
     auto* spy = cluster.book("SPY");
@@ -918,7 +918,7 @@ void test_cross_arb_detected() {
 }
 
 void test_cross_arb_none_when_aligned() {
-    orderbook_pro::BookCluster<8, 16384, 4096> cluster;
+    static orderbook_pro::BookCluster<8, 16384, 4096> cluster;  // static: 8 ksiag > stos
     cluster.register_symbol("XYZ");
     cluster.register_symbol("ABC");
     auto* xyz = cluster.book("XYZ");
@@ -1508,7 +1508,7 @@ void test_latency_arb_detected_same_side_back_to_back() {
 
 void test_cluster_aggregations() {
     using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
-    Cluster cluster;
+    static Cluster cluster;  // static: za duze na stos
     cluster.register_symbol("AAPL");
     cluster.register_symbol("MSFT");
     auto* a = cluster.book("AAPL");
@@ -1865,7 +1865,7 @@ void test_toxicity_composite_after_activity() {
 
 void test_cluster_volume_weighted_spread() {
     using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
-    Cluster cluster;
+    static Cluster cluster;  // static: za duze na stos
     cluster.register_symbol("AAPL");
     cluster.register_symbol("MSFT");
     auto* a = cluster.book("AAPL");
@@ -2104,7 +2104,7 @@ void test_mean_fill_notional() {
 
 void test_cluster_flow_imbalance() {
     using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
-    Cluster cluster;
+    static Cluster cluster;  // static: za duze na stos
     cluster.register_symbol("AAPL");
     cluster.register_symbol("MSFT");
     auto* a = cluster.book("AAPL");
