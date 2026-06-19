@@ -2179,6 +2179,14 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(rp.token, "NEWTOK") == 0, "ouch_replaced_new_token");
     ASSERT(std::strcmp(rp.prev_token, "TOK1") == 0, "ouch_replaced_prev_token");
     ASSERT(rp.shares == 80 && rp.order_ref == 4242, "ouch_replaced_fields");
+
+    // #127 Broken Trade ('B'): encode -> decode (bust wczesniejszego fillu).
+    n = OUCHMessage::encode_broken_trade(buf, "TOK1", 50, 99001, 'E');
+    const OUCHResponse rb = OUCHMessage::parse_response(buf, n);
+    ASSERT(std::strcmp(rb.type, "BROKEN") == 0, "ouch_broken_parsed");
+    ASSERT(std::strcmp(rb.token, "TOK1") == 0, "ouch_broken_token");
+    ASSERT(rb.shares == 50 && rb.match_number == 99001, "ouch_broken_fields");
+    ASSERT(rb.reason[0] == 'E', "ouch_broken_reason");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.

@@ -226,6 +226,18 @@ public:
         return 45;
     }
 
+    // encode_broken_trade: Broken Trade (28 B) — gielda UNIEWAZNIA wczesniej
+    // wykonany trade (bust/DK). Klient musi odwrocic fill po swojej stronie.
+    static int encode_broken_trade(uint8_t* buf, const char* token, int32_t shares,
+                                   int64_t match_number, char reason = 'E') noexcept {
+        buf[0] = 'B';
+        write_padded(buf + 1, token, 14);
+        write_u32_be(buf + 15, shares);
+        write_u64_be(buf + 19, static_cast<uint64_t>(match_number));
+        buf[27] = static_cast<uint8_t>(reason);
+        return 28;
+    }
+
     // === DECODING (Exchange → Client) ===
 
     // parse_response: decode exchange response from raw bytes
@@ -283,6 +295,20 @@ public:
             resp.shares = read_u32_be(data + 15);
             resp.price = read_u32_be(data + 19) / 10000.0;
             resp.match_number = read_u64_be(data + 23);
+
+        } else if (msg_type == 'B') {  // Broken Trade
+            if (len < 28) {
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "BROKEN too short: %d < 28 bytes", len);
+                return resp;
+            }
+            safe_copy(resp.type, "BROKEN");
+            strip_padding(resp.token, data + 1, 14);
+            resp.shares       = read_u32_be(data + 15);
+            resp.match_number = read_u64_be(data + 19);
+            resp.reason[0]    = static_cast<char>(data[27]);
+            resp.reason[1]    = '\0';
 
         } else if (msg_type == 'J') {  // Order Rejected
             if (len < 16) {
