@@ -33,6 +33,7 @@
 #include "../strategy/bollinger.hpp"
 #include "../strategy/donchian.hpp"
 #include "../strategy/rsi.hpp"
+#include "../strategy/ensemble.hpp"
 #include "../strategy/pov_algo.hpp"
 #include "../strategy/signal_throttle.hpp"
 #include "../strategy/vwap_tracker.hpp"
@@ -1678,6 +1679,24 @@ void test_rsi() {
     ASSERT(sd.valid && sd.side == Side::BUY, "rsi_oversold_buys");
 }
 
+// Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
+void test_ensemble() {
+    SECTION("Signal Ensemble (#140)");
+    auto mk = [](Side s, int32_t q) {
+        Signal sig; sig.valid = true; sig.side = s; sig.quantity = q; sig.price = 100.0;
+        std::strncpy(sig.stock, "X", 8); return sig;
+    };
+    // 2 BUY vs 1 SELL, min_agree 2 -> BUY z suma qty 150
+    Signal arr[3] = { mk(Side::BUY, 100), mk(Side::BUY, 50), mk(Side::SELL, 80) };
+    const Signal r = combine_signals(arr, 3, 2);
+    ASSERT(r.valid && r.side == Side::BUY && r.quantity == 150, "ensemble_majority_buy");
+    // 1 vs 1, min_agree 2 -> brak zgody -> HOLD
+    Signal tie[2] = { mk(Side::BUY, 100), mk(Side::SELL, 100) };
+    ASSERT(!combine_signals(tie, 2, 2).valid, "ensemble_tie_holds");
+    // min_agree 3 ale tylko 2 BUY -> HOLD
+    ASSERT(!combine_signals(arr, 3, 3).valid, "ensemble_below_threshold_holds");
+}
+
 // POV #99 — Percentage-of-Volume execution algo (slicing adaptacyjny do wolumenu).
 void test_pov_algo() {
     SECTION("POV Execution Algo (#99)");
@@ -2518,6 +2537,7 @@ int main() {
     test_bollinger();
     test_donchian();
     test_rsi();
+    test_ensemble();
     test_pov_algo();
     test_signal_throttle();
     test_vwap_tracker();
