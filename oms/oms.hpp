@@ -197,6 +197,9 @@ class OMS {
     int64_t  total_fees_;       // skumulowane prowizje całego OMS, fixed-point
     OMSReject last_reject_ = OMSReject::NONE;  // powód ostatniego odrzucenia (#88)
     uint64_t  reject_counts_[4] = {0, 0, 0, 0}; // licznik odrzuceń per OMSReject (#136)
+    uint64_t  total_fills_    = 0;   // liczniki operacji cyklu zycia (#151)
+    uint64_t  total_cancels_  = 0;
+    uint64_t  total_replaces_ = 0;
 
 public:
     // commission_per_share: np. 0.0035 = $0.0035/akcja (typowy taker fee).
@@ -293,6 +296,7 @@ public:
 
         order.filled_qty    += fill_qty;
         order.fill_notional += static_cast<int64_t>(fill_qty) * fill_price;  // #141
+        ++total_fills_;   // #151
         order.status      = (order.filled_qty >= order.quantity)
                             ? OrderStatus::FILLED
                             : OrderStatus::PARTIAL;
@@ -349,6 +353,7 @@ public:
             pos_it->second.pending_qty -= signed_remaining;
         }
         order.status = OrderStatus::CANCELLED;
+        ++total_cancels_;   // #151
     }
 
     // replace_order: amend (cancel/replace) ceny i/lub ilości otwartego zlecenia.
@@ -403,6 +408,7 @@ public:
         order.status   = (order.filled_qty >= order.quantity) ? OrderStatus::FILLED
                        : (order.filled_qty > 0)               ? OrderStatus::PARTIAL
                                                               : OrderStatus::SENT;
+        ++total_replaces_;   // #151
         return true;
     }
 
@@ -475,6 +481,10 @@ public:
     OMSReject last_reject() const noexcept { return last_reject_; }
     // reject_count: ile zlecen odrzucono z danego powodu (#136, observability).
     uint64_t reject_count(OMSReject r) const noexcept { return reject_counts_[static_cast<int>(r)]; }
+    // Liczniki operacji cyklu zycia (#151, observability/dashboard).
+    uint64_t total_fills()    const noexcept { return total_fills_; }
+    uint64_t total_cancels()  const noexcept { return total_cancels_; }
+    uint64_t total_replaces() const noexcept { return total_replaces_; }
 
     void print_orders() const {
         printf("\n=== ORDERS ===\n");

@@ -291,6 +291,19 @@ void test_oms_short_and_replace() {
         ASSERT(o2.cancel_all_symbol("AAA") == 1, "cancelall_symbol_one");
     }
 
+    {   // #151 liczniki operacji cyklu zycia (fills/cancels/replaces).
+        OMS oms(100000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(a->order_id, 50, 10.0);            // fill 1
+        oms.fill_order(a->order_id, 50, 10.0);            // fill 2
+        Order* b = oms.submit_order("BBB", Side::BUY, 10.0, 100);
+        oms.replace_order(b->order_id, 11.0, 80);         // replace 1
+        oms.cancel_order(b->order_id);                    // cancel 1
+        ASSERT(oms.total_fills() == 2, "ops_fills_2");
+        ASSERT(oms.total_replaces() == 1, "ops_replaces_1");
+        ASSERT(oms.total_cancels() == 1, "ops_cancels_1");
+    }
+
     {   // #141 avg_fill_price — zlecenie wypelniane po dwoch cenach.
         OMS oms(100000, 1000000000.0);
         Order* o = oms.submit_order("AAPL", Side::BUY, 100.00, 100);
