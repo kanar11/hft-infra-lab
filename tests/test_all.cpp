@@ -1901,6 +1901,25 @@ void test_router_ewma_partial() {
         r.route_order("BUY", 50);                     // fee 0.1
         ASSERT(close(r.total_fees_paid(), 0.3), "fees_paid_cumulative");
     }
+
+    // --- #146 manualne wlacz/wylacz venue + EWMA getter ---
+    {
+        auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.001));
+        r.update_quote("A", 10.0, 11.0, 100, 100);
+        r.update_quote("B", 10.0, 11.0, 100, 100);
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "A") == 0, "setactive_default_A");
+        ASSERT(r.set_venue_active("A", false), "setactive_disable_A");
+        ASSERT(!r.venue_active("A"), "setactive_A_off");
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "setactive_reroute_B");
+        r.set_venue_active("A", true);
+        ASSERT(r.venue_active("A"), "setactive_reenable_A");
+        ASSERT(!r.set_venue_active("GHOST", true), "setactive_unknown_false");
+        r.record_latency("A", 500);
+        ASSERT(close(r.venue_ewma_latency("A"), 500.0), "venue_ewma_getter");
+    }
 }
 
 

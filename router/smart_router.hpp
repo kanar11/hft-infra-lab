@@ -228,6 +228,25 @@ public:
             if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].is_active;
         return false;
     }
+    // set_venue_active: manualne wlaczenie/wylaczenie venue (#146) — admin control
+    // (maintenance, regulatory halt) niezalezny od auto-health. Wlaczenie zeruje
+    // serie porazek. Zwraca false gdy nieznane venue.
+    bool set_venue_active(const char* venue_name, bool active) noexcept {
+        for (int i = 0; i < venue_count_; ++i) {
+            if (std::strcmp(venues_[i].name, venue_name) == 0) {
+                venues_[i].is_active = active;
+                if (active) venues_[i].consecutive_failures = 0;
+                return true;
+            }
+        }
+        return false;
+    }
+    // venue_ewma_latency: zmierzona EWMA latencji venue w ns (#146; 0 = brak probek).
+    double venue_ewma_latency(const char* venue_name) const noexcept {
+        for (int i = 0; i < venue_count_; ++i)
+            if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].ewma_latency_ns;
+        return 0.0;
+    }
 
     // update_quote: aktualizuj top-of-book venue (na każdy market data tick).
     void update_quote(const char* venue_name, double bid, double ask,
