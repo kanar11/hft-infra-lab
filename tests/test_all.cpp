@@ -2267,6 +2267,23 @@ void test_fix_session() {
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
         ASSERT(std::strcmp(g.get_field(41), "ORD1") == 0, "fix_replace_origclordid");
 
+        // #150 process_inbound — dispatcher Logon/SeqReset/Logout.
+        fix::FIXSession ps; ps.set_comp_ids("ME", "EX");
+        char pb[256];
+        ps.build_logon(pb, sizeof(pb), 45, '|');         // 34=1, 108=45
+        FIXMessage lm; lm.parse(pb);
+        ps.process_inbound(lm, 1000);
+        ASSERT(ps.is_logged_in() && ps.heartbeat_interval_sec() == 45, "fix_pi_logon_logged_in");
+        ASSERT(ps.expected_inbound_seq() == 2, "fix_pi_seq_advanced");
+        ps.build_sequence_reset(pb, sizeof(pb), 100, true, '|');
+        FIXMessage sr; sr.parse(pb);
+        ps.process_inbound(sr, 2000);
+        ASSERT(ps.expected_inbound_seq() == 100, "fix_pi_seqreset_applied");
+        ps.build_logout(pb, sizeof(pb), nullptr, '|');
+        FIXMessage lo; lo.parse(pb);
+        ps.process_inbound(lo, 3000);
+        ASSERT(ps.state() == fix::SessionState::LOGOUT, "fix_pi_logout_state");
+
         // #116 walidacja NewOrderSingle (acceptor-side).
         s.build_new_order(buf, sizeof(buf), "X", "AAPL", Side::BUY, 100, 150.0, '|');
         FIXMessage ok; ok.parse(buf);

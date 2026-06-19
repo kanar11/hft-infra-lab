@@ -154,6 +154,34 @@ public:
         if (new_seq_no >= expected_in_seq_) expected_in_seq_ = new_seq_no;
     }
 
+    // process_inbound (#150): jednolity dispatcher przychodzacej wiadomosci —
+    // spina parser (FIXMessage) z sesja. SequenceReset (35=4) -> reset oczekiwanego
+    // seq (tag 36). Inne: obserwuj MsgSeqNum (34) -> wykryj luke; potem side-effect
+    // wg typu: Logon (A) -> LOGGED_IN + HeartBtInt (108), Logout (5) -> LOGOUT.
+    // Zwraca GapDetected (valid=true -> caller wysyla ResendRequest).
+    GapDetected process_inbound(const FIXMessage& m, int64_t now_ms) noexcept {
+        const char* mt = m.get_msg_type();
+        if (mt[0] == '4') {                              // SequenceReset
+            if (const char* ns = m.get_field(36)) apply_inbound_sequence_reset(
+                static_cast<uint32_t>(std::atoi(ns)));
+            last_inbound_ms_ = now_ms;
+            return GapDetected{0, 0, false};
+        }
+        GapDetected gap{0, 0, false};
+        if (const char* seq = m.get_field(34))
+            gap = observe_inbound(static_cast<uint32_t>(std::atoi(seq)), now_ms);
+        else
+            last_inbound_ms_ = now_ms;
+
+        if (mt[0] == 'A') {                              // Logon
+            const char* hb = m.get_field(108);
+            mark_logon_received(hb ? std::atoi(hb) : 30, now_ms);
+        } else if (mt[0] == '5') {                       // Logout
+            mark_logout(now_ms);
+        }
+        return gap;
+    }
+
     // === Transitions ===
     // mark_logon_sent: wywołaj po wysłaniu Logon (35=A). State → LOGON_SENT.
     void mark_logon_sent(int64_t now_ms) noexcept {
