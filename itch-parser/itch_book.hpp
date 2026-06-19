@@ -194,6 +194,25 @@ public:
         return filled;
     }
 
+    // top_levels: skopiuj do n NAJLEPSZYCH poziomow po danej stronie (BUY: bids
+    // malejaco od best; SELL: asks rosnaco) — cena + zagregowana qty. Zwraca ile
+    // poziomow faktycznie wypelniono (<= n). L2 depth dla strategii/wyswietlania.
+    int top_levels(char side, int n, double* out_px, int64_t* out_qty) const noexcept {
+        int c = 0;
+        if (side == 'B') {
+            for (auto it = bids_.rbegin(); it != bids_.rend() && c < n; ++it, ++c) {
+                out_px[c]  = it->first / 100.0;
+                out_qty[c] = it->second;
+            }
+        } else {
+            for (auto it = asks_.begin(); it != asks_.end() && c < n; ++it, ++c) {
+                out_px[c]  = it->first / 100.0;
+                out_qty[c] = it->second;
+            }
+        }
+        return c;
+    }
+
     size_t  bid_levels()     const noexcept { return bids_.size(); }
     size_t  ask_levels()     const noexcept { return asks_.size(); }
     size_t  resting_orders() const noexcept { return orders_.size(); }

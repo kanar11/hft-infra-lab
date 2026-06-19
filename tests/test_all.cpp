@@ -1482,6 +1482,17 @@ void test_itch_book() {
     ASSERT(close(v, 100.006), "itchbook_fill_vwap");            // (100*100.00+150*100.01)/250
     int64_t f2 = fb.expected_fill('B', 1000, v);                // tylko 600 płynności
     ASSERT(f2 == 600, "itchbook_fill_partial_600");
+
+    // #123 top_levels: top N poziomow po stronie.
+    itch::ITCHOrderBook tb;
+    tb.on_add(1, 'B', 100.00, 100);
+    tb.on_add(2, 'B',  99.99, 200);
+    tb.on_add(3, 'B',  99.98, 300);
+    double px[2]; int64_t q[2];
+    const int nl = tb.top_levels('B', 2, px, q);
+    ASSERT(nl == 2, "itchbook_top_levels_count");
+    ASSERT(close(px[0], 100.00) && q[0] == 100, "itchbook_top_lvl0_best");
+    ASSERT(close(px[1],  99.99) && q[1] == 200, "itchbook_top_lvl1_next");
 }
 
 // Multicast gap-recovery #82 — detekcja luk + retransmisja + rekoncyliacja.
