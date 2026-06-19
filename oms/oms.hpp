@@ -440,6 +440,20 @@ public:
     size_t position_count() const noexcept { return positions_.size(); }
     // total_fees: skumulowane prowizje całego OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
+
+    // Agregaty P&L portfela (#120) — suma po wszystkich pozycjach. Fixed-point
+    // (×PRICE_SCALE); to_float dla dolarow. Zastepuje reczne petle po stronie
+    // wolajacego (sim/backtest sumowal pozycje sam).
+    int64_t total_realized_pnl() const noexcept {
+        int64_t s = 0;
+        for (const auto& kv : positions_) s += kv.second.realized_pnl;
+        return s;
+    }
+    int64_t total_net_pnl() const noexcept {     // realized - fees po portfelu
+        int64_t s = 0;
+        for (const auto& kv : positions_) s += kv.second.net_pnl();
+        return s;
+    }
     // last_reject: powód ostatniego odrzucenia submit_order (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
 

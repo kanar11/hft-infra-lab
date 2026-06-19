@@ -287,6 +287,18 @@ void test_oms_short_and_replace() {
         ASSERT(o2.cancel_all_symbol("AAA") == 1, "cancelall_symbol_one");
     }
 
+    {   // #120 agregaty P&L portfela (realized/net po wszystkich pozycjach).
+        OMS oms(100000, 100000000.0, /*commission=*/0.01);
+        // AAPL: buy 100@50, sell 100@52 -> realized +200, fees 2
+        oms.fill_order(oms.submit_order("AAPL", Side::BUY,  50.00, 100)->order_id, 100, 50.00);
+        oms.fill_order(oms.submit_order("AAPL", Side::SELL, 52.00, 100)->order_id, 100, 52.00);
+        // MSFT: buy 50@10, sell 50@9 -> realized -50, fees 1
+        oms.fill_order(oms.submit_order("MSFT", Side::BUY,  10.00, 50)->order_id, 50, 10.00);
+        oms.fill_order(oms.submit_order("MSFT", Side::SELL,  9.00, 50)->order_id, 50,  9.00);
+        ASSERT(close(to_float(oms.total_realized_pnl()), 150.0), "agg_realized_150");  // 200-50
+        ASSERT(close(to_float(oms.total_net_pnl()), 147.0), "agg_net_147");            // 150 - 3 fees
+    }
+
     {   // #96 unrealized P&L (mark-to-market) dla long i short.
         OMS oms(10000, 100000000.0);
         oms.fill_order(oms.submit_order("AAPL", Side::BUY, 50.00, 100)->order_id, 100, 50.00);
