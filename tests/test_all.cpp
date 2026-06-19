@@ -1539,6 +1539,14 @@ void test_itch_book() {
     sb.on_add(1, 'B', 100.00, 100);
     sb.on_add(2, 'S', 100.02, 100);                       // mid 100.01, spread 0.02
     ASSERT(close(sb.spread_bps(), 1.99980), "itchbook_spread_bps");
+
+    // #148 wielopoziomowa nierownowaga (depth_imbalance)
+    itch::ITCHOrderBook di;
+    di.on_add(1, 'B', 100.00, 100); di.on_add(2, 'B', 99.99, 200);  // bids 100,200
+    di.on_add(3, 'S', 100.02, 50);  di.on_add(4, 'S', 100.03, 50);  // asks 50,50
+    ASSERT(close(di.depth_imbalance(1), 1.0/3.0), "itchbook_depth_imb_1");  // (100-50)/150
+    ASSERT(close(di.depth_imbalance(2), 0.5), "itchbook_depth_imb_2");      // (300-100)/400
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

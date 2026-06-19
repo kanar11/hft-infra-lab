@@ -167,6 +167,18 @@ public:
     // (Q_bid > Q_ask) ciazy ku ASK (spodziewany ruch w gore) i odwrotnie —
     // lepszy estymator "prawdziwej" ceny niz prosty mid. 0 gdy ksiega jednostronna.
     //   microprice = (P_ask*Q_bid + P_bid*Q_ask) / (Q_bid + Q_ask)
+    // depth_imbalance: order-book imbalance po TOP-N poziomach (#148), uogolnienie
+    // top-of-book imbalance (#87, n=1). (Σbid - Σask)/(Σbid+Σask) z n najlepszych
+    // poziomow kazdej strony. Glebszy obraz presji niz sam touch.
+    double  depth_imbalance(int n) const noexcept {
+        if (n <= 0) return 0.0;
+        int64_t b = 0, a = 0; int c = 0;
+        for (auto it = bids_.rbegin(); it != bids_.rend() && c < n; ++it, ++c) b += it->second;
+        c = 0;
+        for (auto it = asks_.begin(); it != asks_.end() && c < n; ++it, ++c) a += it->second;
+        const int64_t tot = b + a;
+        return tot > 0 ? static_cast<double>(b - a) / static_cast<double>(tot) : 0.0;
+    }
     double  microprice() const noexcept {
         if (bids_.empty() || asks_.empty()) return 0.0;
         const int64_t qb = best_bid_qty(), qa = best_ask_qty();
