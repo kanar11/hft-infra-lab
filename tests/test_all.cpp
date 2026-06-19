@@ -34,6 +34,7 @@
 #include "../strategy/donchian.hpp"
 #include "../strategy/rsi.hpp"
 #include "../strategy/ensemble.hpp"
+#include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
 #include "../strategy/signal_throttle.hpp"
 #include "../strategy/vwap_tracker.hpp"
@@ -1715,6 +1716,29 @@ void test_ensemble() {
     ASSERT(!combine_signals(arr, 3, 3).valid, "ensemble_below_threshold_holds");
 }
 
+// TrailingStop #147 — stop kroczacy (ratchet + wyjscie przy odwroceniu).
+void test_trailing_stop() {
+    SECTION("Trailing Stop (#147)");
+    auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+    // long, entry 100, trail 5 -> stop 95
+    TrailingStop ts(true, 100.0, 5.0);
+    ASSERT(close(ts.stop(), 95.0), "ts_initial_stop");
+    ASSERT(!ts.update(110.0), "ts_no_stop_on_rise");     // stop ratchet -> 105
+    ASSERT(close(ts.stop(), 105.0), "ts_ratchets_up");
+    ASSERT(!ts.update(108.0), "ts_stop_holds");          // 108-5=103 < 105 -> stop 105
+    ASSERT(close(ts.stop(), 105.0), "ts_no_loosen");
+    ASSERT(ts.update(105.0), "ts_stopped_out");          // 105 <= 105 -> exit
+    ASSERT(!ts.active(), "ts_inactive_after");
+    ASSERT(!ts.update(90.0), "ts_no_retrigger");
+
+    // short, entry 100, trail 5 -> stop 105; spadek zaciska, wzrost wybija
+    TrailingStop ss(false, 100.0, 5.0);
+    ASSERT(close(ss.stop(), 105.0), "ts_short_initial");
+    ASSERT(!ss.update(90.0), "ts_short_ratchet");        // stop -> 95
+    ASSERT(close(ss.stop(), 95.0), "ts_short_ratchets_down");
+    ASSERT(ss.update(95.0), "ts_short_stopped");         // 95 >= 95 -> exit
+}
+
 // POV #99 — Percentage-of-Volume execution algo (slicing adaptacyjny do wolumenu).
 void test_pov_algo() {
     SECTION("POV Execution Algo (#99)");
@@ -2608,6 +2632,7 @@ int main() {
     test_donchian();
     test_rsi();
     test_ensemble();
+    test_trailing_stop();
     test_pov_algo();
     test_signal_throttle();
     test_vwap_tracker();
