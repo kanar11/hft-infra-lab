@@ -288,7 +288,7 @@ void test_oms_short_and_replace() {
     }
 
     {   // #120 agregaty P&L portfela (realized/net po wszystkich pozycjach).
-        OMS oms(100000, 100000000.0, /*commission=*/0.01);
+        OMS oms(100000, 100000000.0, /*commission_per_share=*/0.01);
         // AAPL: buy 100@50, sell 100@52 -> realized +200, fees 2
         oms.fill_order(oms.submit_order("AAPL", Side::BUY,  50.00, 100)->order_id, 100, 50.00);
         oms.fill_order(oms.submit_order("AAPL", Side::SELL, 52.00, 100)->order_id, 100, 52.00);
