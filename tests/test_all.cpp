@@ -1577,6 +1577,13 @@ void test_multicast_gap_recovery() {
     ASSERT(mc.on_retransmit(1, 2), "mcr_recover_ch1");
     ASSERT(!mc.any_gaps() && mc.total_recovered() == 1, "mcr_all_recovered");
 
+    // #132 FeedRateMeter — sliding-window rate.
+    multicast::FeedRateMeter fr(1000);                    // okno 1000 ns
+    fr.on_message(100); fr.on_message(200); fr.on_message(300);
+    ASSERT(fr.count(300) == 3, "rate_3_in_window");
+    ASSERT(std::fabs(fr.rate_per_sec(300) - 3e6) < 1.0, "rate_per_sec_3M");  // 3*1e9/1000
+    ASSERT(fr.count(1301) == 0, "rate_window_expired");   // wszystkie starsze niz okno
+
     // #91 A/B line arbitration — pierwsza linia wygrywa, druga dedup; B łata lukę A.
     multicast::ABLineArbitrator arb;
     ASSERT(arb.on_packet(1, true),  "ab_a1_new");

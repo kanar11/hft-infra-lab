@@ -24,8 +24,42 @@
 #include <map>
 #include <vector>
 #include <unordered_map>
+#include <deque>
 
 namespace multicast {
+
+
+// FeedRateMeter — przepustowosc feedu w oknie czasu (expansion #132).
+//
+// Feed handler musi widziec biezacy rate (msgs/sec) by wykryc burst (ryzyko
+// przeladowania / drop) albo cisze. Sliding-window licznik znacznikow czasu:
+// przy kazdym pomiarze wyrzuca starsze niz okno, rozmiar = liczba w oknie.
+struct FeedRateMeter {
+    std::int64_t      window_ns;
+    std::deque<std::int64_t> ts;
+
+    explicit FeedRateMeter(std::int64_t window_ns_ = 1'000'000'000) noexcept
+        : window_ns(window_ns_ > 0 ? window_ns_ : 1) {}
+
+    void on_message(std::int64_t now_ns) {
+        ts.push_back(now_ns);
+        evict(now_ns);
+    }
+    std::size_t count(std::int64_t now_ns) {
+        evict(now_ns);
+        return ts.size();
+    }
+    double rate_per_sec(std::int64_t now_ns) {
+        return static_cast<double>(count(now_ns)) * 1e9 / static_cast<double>(window_ns);
+    }
+    void reset() noexcept { ts.clear(); }
+
+private:
+    void evict(std::int64_t now_ns) {
+        const std::int64_t cutoff = now_ns - window_ns;
+        while (!ts.empty() && ts.front() <= cutoff) ts.pop_front();
+    }
+};
 
 struct GapRecovery {
     std::set<uint64_t> missing;          // znane braki, czekają na retransmisję
