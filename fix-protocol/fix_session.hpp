@@ -433,6 +433,25 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // build_business_reject (35=j) — BusinessMessageReject (#133). Odrzucenie na
+    // poziomie BIZNESOWYM (np. nieznany symbol, konto bez uprawnien, rynek
+    // zamkniety) — wiadomosc byla POPRAWNA skladniowo, ale aplikacja jej nie
+    // przyjmuje. Odrebne od session-level Reject 35=3 (#126: zlamana regula sesji).
+    //   372=RefMsgType, 379=BusinessRejectRefID, 380=BusinessRejectReason, 58=Text
+    int build_business_reject(char* out, int cap, const char* ref_msg_type,
+                              const char* business_reject_ref_id, int reject_reason,
+                              const char* text, char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=j%c49=%s%c56=%s%c34=%u%c372=%s%c379=%s%c380=%d%c58=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            ref_msg_type ? ref_msg_type : "", delim,
+            business_reject_ref_id ? business_reject_ref_id : "", delim,
+            reject_reason, delim, text ? text : "", delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

@@ -2142,6 +2142,13 @@ void test_fix_session() {
         ASSERT(std::atoi(rj.get_field(45)) == 42, "fix_reject_refseqnum");
         ASSERT(std::atoi(rj.get_field(373)) == 1, "fix_reject_reason_code");
         ASSERT(std::strcmp(rj.get_field(372), "D") == 0, "fix_reject_refmsgtype");
+
+        // #133 Business Message Reject (35=j) — np. nieznany symbol.
+        s.build_business_reject(buf, sizeof(buf), "D", "ORD9", 2, "Unknown symbol", '|');
+        FIXMessage bj; bj.parse(buf);
+        ASSERT(bj.is_valid() && bj.get_msg_type()[0] == 'j', "fix_busreject_valid");
+        ASSERT(std::strcmp(bj.get_field(379), "ORD9") == 0, "fix_busreject_refid");
+        ASSERT(std::atoi(bj.get_field(380)) == 2, "fix_busreject_reason");
     }
 }
 
