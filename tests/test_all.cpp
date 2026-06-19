@@ -2232,6 +2232,15 @@ void test_fix_session() {
         ASSERT(bj.is_valid() && bj.get_msg_type()[0] == 'j', "fix_busreject_valid");
         ASSERT(std::strcmp(bj.get_field(379), "ORD9") == 0, "fix_busreject_refid");
         ASSERT(std::atoi(bj.get_field(380)) == 2, "fix_busreject_reason");
+
+        // #143 OrderCancelReject (35=9) — odrzucenie cancel/replace (np. za pozno).
+        s.build_cancel_reject(buf, sizeof(buf), "CXL1", "ORD1", "EXG1", '2', '2', 0,
+                              "Too late to cancel", '|');
+        FIXMessage cr; cr.parse(buf);
+        ASSERT(cr.is_valid() && cr.get_msg_type()[0] == '9', "fix_cxlreject_valid");
+        ASSERT(cr.get_field(434)[0] == '2', "fix_cxlreject_response_to");  // wobec Replace
+        ASSERT(std::atoi(cr.get_field(102)) == 0, "fix_cxlreject_reason_too_late");
+        ASSERT(std::strcmp(cr.get_field(41), "ORD1") == 0, "fix_cxlreject_origclordid");
     }
 }
 

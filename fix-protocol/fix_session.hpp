@@ -452,6 +452,26 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // build_cancel_reject (35=9) — OrderCancelReject (#143). Gielda odrzuca
+    // KONKRETNIE request Cancel (F) lub Replace (G) — np. za pozno (zlecenie juz
+    // wypelnione), nieznane OrigClOrdID. Odrebne od session (35=3) / business
+    // (35=j) reject. 434=CxlRejResponseTo ('1'=Cancel, '2'=Replace),
+    // 102=CxlRejReason (0=too late, 1=unknown order, ...).
+    int build_cancel_reject(char* out, int cap, const char* cl_ord_id,
+                            const char* orig_cl_ord_id, const char* order_id,
+                            char ord_status, char cxl_rej_response_to, int cxl_rej_reason,
+                            const char* text, char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=9%c49=%s%c56=%s%c34=%u%c11=%s%c41=%s%c37=%s%c39=%c%c434=%c%c102=%d%c58=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            cl_ord_id, delim, orig_cl_ord_id ? orig_cl_ord_id : "", delim,
+            order_id ? order_id : "", delim, ord_status, delim,
+            cxl_rej_response_to, delim, cxl_rej_reason, delim, text ? text : "", delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 
