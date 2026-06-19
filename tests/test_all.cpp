@@ -1601,6 +1601,14 @@ void test_multicast_gap_recovery() {
     ASSERT(std::fabs(fr.rate_per_sec(300) - 3e6) < 1.0, "rate_per_sec_3M");  // 3*1e9/1000
     ASSERT(fr.count(1301) == 0, "rate_window_expired");   // wszystkie starsze niz okno
 
+    // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
+    multicast::InterArrivalMeter im;
+    im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
+    ASSERT(im.min_gap_ns() == 50, "iam_min_50");          // gaps: 100,50,250
+    ASSERT(im.max_gap_ns() == 250, "iam_max_250");
+    ASSERT(im.jitter_ns() == 200, "iam_jitter_200");      // 250-50
+    ASSERT(std::fabs(im.avg_gap_ns() - 400.0/3.0) < 1e-6, "iam_avg");
+
     // #91 A/B line arbitration — pierwsza linia wygrywa, druga dedup; B łata lukę A.
     multicast::ABLineArbitrator arb;
     ASSERT(arb.on_packet(1, true),  "ab_a1_new");

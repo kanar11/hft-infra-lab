@@ -192,6 +192,40 @@ struct MultiChannelRecovery {
 };
 
 
+// InterArrivalMeter — statystyki odstepow miedzy wiadomosciami (expansion #142).
+//
+// Sam rate (FeedRateMeter, #132) nie pokazuje JITTERA — feed moze miec srednio
+// 1M/s, ale z burstami i dziurami. Ten miernik sledzi min/max/avg gap miedzy
+// kolejnymi wiadomosciami: duzy max przy malym min = nierowny feed (ryzyko
+// kolejkowania / drop), istotne dla latency-sensitive konsumenta.
+struct InterArrivalMeter {
+    std::int64_t  last_ns = 0;
+    bool          started = false;
+    std::int64_t  min_gap = INT64_MAX;
+    std::int64_t  max_gap = 0;
+    std::int64_t  sum_gap = 0;
+    std::uint64_t gaps    = 0;
+
+    void on_message(std::int64_t now_ns) noexcept {
+        if (started) {
+            const std::int64_t g = now_ns - last_ns;
+            if (g < min_gap) min_gap = g;
+            if (g > max_gap) max_gap = g;
+            sum_gap += g;
+            ++gaps;
+        }
+        last_ns = now_ns;
+        started = true;
+    }
+
+    double       avg_gap_ns() const noexcept { return gaps ? static_cast<double>(sum_gap) / gaps : 0.0; }
+    std::int64_t min_gap_ns() const noexcept { return gaps ? min_gap : 0; }
+    std::int64_t max_gap_ns() const noexcept { return max_gap; }
+    std::int64_t jitter_ns()  const noexcept { return gaps ? (max_gap - min_gap) : 0; }  // span
+    void reset() noexcept { *this = InterArrivalMeter{}; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
