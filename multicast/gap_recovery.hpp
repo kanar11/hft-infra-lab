@@ -23,6 +23,7 @@
 #include <set>
 #include <map>
 #include <vector>
+#include <unordered_map>
 
 namespace multicast {
 
@@ -122,6 +123,40 @@ struct ABLineArbitrator {
     size_t missing_count() const noexcept { return rec.missing_count(); }
     void   reset()         noexcept { *this = ABLineArbitrator{}; }
 };
+
+// MultiChannelRecovery — gap-recovery po WIELU kanalach feedu (expansion #122).
+//
+// Realne giełdy dziela market data na osobne kanaly multicast (np. NASDAQ po
+// zakresie symboli), kazdy z WLASNA numeracja sekwencji. Pojedynczy GapRecovery
+// sledzi jeden kanal; ten agregator trzyma po jednym per channel_id i daje
+// zbiorczy obraz: czy gdziekolwiek jest luka, ile lacznie brakuje/odzyskano.
+struct MultiChannelRecovery {
+    std::unordered_map<std::uint32_t, GapRecovery> channels;
+
+    void observe(std::uint32_t channel_id, std::uint64_t seq) {
+        channels[channel_id].observe(seq);
+    }
+    bool on_retransmit(std::uint32_t channel_id, std::uint64_t seq) {
+        return channels[channel_id].on_retransmit(seq);
+    }
+
+    bool any_gaps() const {
+        for (const auto& kv : channels) if (kv.second.has_gaps()) return true;
+        return false;
+    }
+    std::size_t total_missing() const {
+        std::size_t n = 0;
+        for (const auto& kv : channels) n += kv.second.missing_count();
+        return n;
+    }
+    std::uint64_t total_recovered() const {
+        std::uint64_t n = 0;
+        for (const auto& kv : channels) n += kv.second.recovered;
+        return n;
+    }
+    std::size_t channel_count() const noexcept { return channels.size(); }
+};
+
 
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //

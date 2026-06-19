@@ -1527,6 +1527,15 @@ void test_multicast_gap_recovery() {
     sr.snapshot_resync(10);                      // snapshot pokrywa do seq 10
     ASSERT(!sr.has_gaps() && sr.expected == 11, "snap_resync_clears_gaps");
 
+    // #122 MultiChannelRecovery — agregacja po kanalach feedu.
+    multicast::MultiChannelRecovery mc;
+    mc.observe(1, 1); mc.observe(1, 3);          // kanal 1: luka (brak 2)
+    mc.observe(2, 5); mc.observe(2, 6);          // kanal 2: w kolejnosci
+    ASSERT(mc.channel_count() == 2, "mcr_two_channels");
+    ASSERT(mc.any_gaps() && mc.total_missing() == 1, "mcr_gap_in_ch1");
+    ASSERT(mc.on_retransmit(1, 2), "mcr_recover_ch1");
+    ASSERT(!mc.any_gaps() && mc.total_recovered() == 1, "mcr_all_recovered");
+
     // #91 A/B line arbitration — pierwsza linia wygrywa, druga dedup; B łata lukę A.
     multicast::ABLineArbitrator arb;
     ASSERT(arb.on_packet(1, true),  "ab_a1_new");
