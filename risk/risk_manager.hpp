@@ -214,6 +214,9 @@ struct RiskLimits {
     // rzedu trip'uje kill switch. Lapie "death spiral" zanim drawdown urosnie.
     // 0 = wylaczony.
     int32_t  max_consecutive_losses;
+    // Dzienny limit OBROTU (suma nominalna zrealizowanych transakcji, $).
+    // Lapie nadmierna aktywnosc/churn niezaleznie od pozycji. 0 = wylaczony.
+    double   max_daily_traded_notional;
 
     RiskLimits() noexcept
         : max_position_per_symbol(5000),
@@ -225,7 +228,8 @@ struct RiskLimits {
           max_price_band_pct(20.0),
           max_shares_per_order(100000),
           max_short_per_symbol(0),
-          max_consecutive_losses(0) {}
+          max_consecutive_losses(0),
+          max_daily_traded_notional(0.0) {}
 };
 
 
@@ -300,6 +304,7 @@ class RiskManager {
     double daily_pnl_;
     double peak_pnl_;
     int32_t consec_losses_ = 0;   // seria stratnych update_pnl (#114)
+    double  traded_notional_ = 0.0;  // dzienny obrot nominalny (#144)
 
     // --------------------------------------------------------------------
     // Stan: kill switch + opcjonalna persistencja
@@ -415,6 +420,11 @@ public:
                     return make_reject("Price band breach (fat-finger)", t0);
             }
         }
+
+        // 2c. Dzienny limit obrotu — nadmierna aktywnosc/churn (#144).
+        if (limits_.max_daily_traded_notional > 0.0
+            && traded_notional_ >= limits_.max_daily_traded_notional)
+            return make_reject("Daily traded notional limit", t0);
 
         // 3 + 4. Limity pozycji (per-symbol i portfolio) — wspólny lookup
         const uint64_t key       = sym_to_key(symbol);
@@ -550,6 +560,11 @@ public:
         if (price > 0.0) ref_price_[sym_to_key(symbol)] = price;
     }
 
+    // add_traded_notional: dolicz nominal zrealizowanej transakcji ($) do
+    // dziennego obrotu (#144). Wolaj po fillu (price*qty). get do monitoringu.
+    void   add_traded_notional(double notional) noexcept { if (notional > 0.0) traded_notional_ += notional; }
+    double get_traded_notional() const noexcept { return traded_notional_; }
+
 
     // ====================================================================
     // Restricted-symbol list (#84)
@@ -647,6 +662,7 @@ public:
         daily_pnl_ = 0.0;
         peak_pnl_  = 0.0;
         consec_losses_ = 0;
+        traded_notional_ = 0.0;
         order_timestamps_.clear();
         pending_.clear();
         kill_switch_active_ = false;

@@ -2083,6 +2083,17 @@ void test_risk_price_band() {
     ASSERT(re.get_exposure("AAPL") == 100 && re.get_total_exposure() == 150,
            "exp_invariant_after_fill");
 
+    // #144 dzienny limit obrotu (turnover).
+    RiskLimits tl;
+    tl.max_daily_traded_notional = 1000.0;
+    RiskManager rt(tl);
+    ASSERT(rt.check_order("AAPL", Side::BUY, 10.0, 10).action == RiskAction::ALLOW,
+           "turnover_under_ok");
+    rt.add_traded_notional(1500.0);                     // przekroczony obrot
+    ASSERT(std::fabs(rt.get_traded_notional() - 1500.0) < 1e-9, "turnover_tracked");
+    ASSERT(rt.check_order("AAPL", Side::BUY, 10.0, 10).action == RiskAction::REJECT,
+           "turnover_over_rejects");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;
