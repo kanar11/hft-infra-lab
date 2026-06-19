@@ -2436,6 +2436,21 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(rb.token, "TOK1") == 0, "ouch_broken_token");
     ASSERT(rb.shares == 50 && rb.match_number == 99001, "ouch_broken_fields");
     ASSERT(rb.reason[0] == 'E', "ouch_broken_reason");
+
+    // #152 parse_order — strona gieldy dekoduje zlecenia klienta O/X/U.
+    auto closep = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
+    n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);
+    const OUCHOrder eo = OUCHMessage::parse_order(buf, n);
+    ASSERT(eo.valid && eo.type == 'O' && std::strcmp(eo.token, "TOK1") == 0, "ouch_parse_enter");
+    ASSERT(eo.side == 'B' && eo.shares == 100 && std::strcmp(eo.stock, "AAPL") == 0
+           && closep(eo.price, 150.25) && eo.tif == 'D', "ouch_parse_enter_fields");
+    n = OUCHMessage::cancel_order(buf, "TOK1", 30);
+    const OUCHOrder co = OUCHMessage::parse_order(buf, n);
+    ASSERT(co.valid && co.type == 'X' && co.shares == 30, "ouch_parse_cancel");
+    n = OUCHMessage::replace_order(buf, "TOK1", "TOK2", 80, 151.0);
+    const OUCHOrder ro = OUCHMessage::parse_order(buf, n);
+    ASSERT(ro.valid && ro.type == 'U' && std::strcmp(ro.token, "TOK1") == 0
+           && std::strcmp(ro.new_token, "TOK2") == 0 && ro.shares == 80, "ouch_parse_replace");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.

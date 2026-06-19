@@ -97,7 +97,25 @@ struct OUCHResponse {
 };
 
 
-// OUCHMessage — encoder klienta + decoder odpowiedzi giełdy.
+// OUCHOrder — zdekodowane zlecenie KLIENTA (strona giełdy parsuje O/X/U). (#152)
+struct OUCHOrder {
+    char    type;           // 'O'=Enter, 'X'=Cancel, 'U'=Replace, 'E'=error
+    char    token[15];      // Enter/Cancel: token; Replace: EXISTING token
+    char    new_token[15];  // Replace: replacement token
+    char    side;           // Enter: 'B'/'S'
+    int32_t shares;
+    char    stock[9];       // Enter: symbol
+    double  price;          // Enter/Replace
+    char    tif;            // Enter: time-in-force
+    bool    valid;
+
+    OUCHOrder() noexcept : type('E'), side(' '), shares(0), price(0), tif(' '), valid(false) {
+        token[0] = '\0'; new_token[0] = '\0'; stock[0] = '\0';
+    }
+};
+
+
+// OUCHMessage — encoder klienta + decoder odpowiedzi giełdy + decoder zleceń.
 
 class OUCHMessage {
     static int64_t now_ns() noexcept {
@@ -341,5 +359,41 @@ public:
         }
 
         return resp;
+    }
+
+    // === DECODING zlecen KLIENTA (Client → Exchange) — strona gieldy (#152) ===
+    // Symetria do enter_order/cancel_order/replace_order: gateway gieldy parsuje
+    // surowe bajty 'O'/'X'/'U' z recv() na strukture. valid=false przy za krotkim
+    // buforze / nieznanym typie.
+    static OUCHOrder parse_order(const uint8_t* data, int len) noexcept {
+        OUCHOrder o;
+        if (!data || len < 1) return o;
+        const char t = static_cast<char>(data[0]);
+        if (t == 'O') {                         // Enter Order (33 B)
+            if (len < 33) return o;
+            o.type = 'O';
+            strip_padding(o.token, data + 1, 14);
+            o.side   = static_cast<char>(data[15]);
+            o.shares = static_cast<int32_t>(read_u32_be(data + 16));
+            strip_padding(o.stock, data + 20, 8);
+            o.price  = read_u32_be(data + 28) / 10000.0;
+            o.tif    = static_cast<char>(data[32]);
+            o.valid  = true;
+        } else if (t == 'X') {                  // Cancel Order (19 B)
+            if (len < 19) return o;
+            o.type = 'X';
+            strip_padding(o.token, data + 1, 14);
+            o.shares = static_cast<int32_t>(read_u32_be(data + 15));
+            o.valid  = true;
+        } else if (t == 'U') {                  // Replace Order (37 B)
+            if (len < 37) return o;
+            o.type = 'U';
+            strip_padding(o.token,     data + 1,  14);   // existing
+            strip_padding(o.new_token, data + 15, 14);   // replacement
+            o.shares = static_cast<int32_t>(read_u32_be(data + 29));
+            o.price  = read_u32_be(data + 33) / 10000.0;
+            o.valid  = true;
+        }
+        return o;
     }
 };
