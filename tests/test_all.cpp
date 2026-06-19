@@ -1886,6 +1886,23 @@ void test_risk_price_band() {
     r8.update_pnl(-10.0); r8.update_pnl(-10.0);
     ASSERT(!r8.is_kill_switch_active(), "consec_no_trip_after_reset");
 
+    // #121 powod zatrzasniecia kill switcha.
+    RiskManager rk(lim);
+    ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");
+    rk.activate_kill_switch();
+    ASSERT(rk.get_kill_reason() == KillReason::MANUAL, "killreason_manual");
+    rk.deactivate_kill_switch();
+    ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_cleared");
+    RiskLimits cl2; cl2.max_consecutive_losses = 2;
+    RiskManager rcr(cl2);
+    rcr.update_pnl(-10.0); rcr.update_pnl(-10.0);
+    ASSERT(rcr.get_kill_reason() == KillReason::CONSECUTIVE_LOSSES, "killreason_consec");
+    RiskLimits cb; cb.max_daily_loss = 100;
+    RiskManager rbk(cb);
+    rbk.update_pnl(-200.0);                                   // ponad dzienny limit
+    rbk.check_order("AAPL", Side::BUY, 10.0, 1);              // circuit breaker w check
+    ASSERT(rbk.get_kill_reason() == KillReason::CIRCUIT_BREAKER, "killreason_circuit");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

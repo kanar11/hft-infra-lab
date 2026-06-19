@@ -113,6 +113,28 @@ inline const char* action_str(RiskAction a) noexcept {
 }
 
 
+// KillReason — DLACZEGO kill switch się zatrzasnął (#121). Do post-mortem/ops:
+// odrozni manualny halt od automatycznego breakera i ktory limit go odpalil.
+enum class KillReason : uint8_t {
+    NONE                = 0,   // kill switch nieaktywny
+    MANUAL              = 1,   // activate_kill_switch() (admin)
+    CIRCUIT_BREAKER     = 2,   // dzienna strata > max_daily_loss
+    DRAWDOWN            = 3,   // spadek od peak > max_drawdown_pct
+    CONSECUTIVE_LOSSES  = 4,   // seria stratnych fillow > limit
+};
+
+inline const char* kill_reason_str(KillReason r) noexcept {
+    switch (r) {
+        case KillReason::NONE:               return "NONE";
+        case KillReason::MANUAL:             return "MANUAL";
+        case KillReason::CIRCUIT_BREAKER:    return "CIRCUIT_BREAKER";
+        case KillReason::DRAWDOWN:           return "DRAWDOWN";
+        case KillReason::CONSECUTIVE_LOSSES: return "CONSECUTIVE_LOSSES";
+        default:                             return "UNKNOWN";
+    }
+}
+
+
 // ============================================================================
 // RiskCheckResult — co `check_order()` zwraca
 // ============================================================================
@@ -286,6 +308,7 @@ class RiskManager {
     // równolegle z zapisem przez breaker/manual. Plain bool = data race (UB);
     // komentarz w check_order od początku zakładał "atomic bool read".
     std::atomic<bool> kill_switch_active_;
+    KillReason  kill_reason_ = KillReason::NONE;   // dlaczego ostatnio trip (#121)
     std::string persist_path_;     // pusty = persistencja wyłączona
 
     // Ceny referencyjne per symbol (last/mid z market data) dla price-bandu.
@@ -505,6 +528,7 @@ public:
             if (limits_.max_consecutive_losses > 0
                 && consec_losses_ >= limits_.max_consecutive_losses) {
                 kill_switch_active_ = true;
+                kill_reason_        = KillReason::CONSECUTIVE_LOSSES;
                 persist_state();
             }
         } else if (pnl_change > 0.0) {
@@ -557,13 +581,16 @@ public:
     // Po manualnym deactivate trzeba dodatkowo wywołać clear_persisted_state().
     void activate_kill_switch() noexcept {
         kill_switch_active_ = true;
+        kill_reason_        = KillReason::MANUAL;
         persist_state();
     }
     void deactivate_kill_switch() noexcept {
         kill_switch_active_ = false;
+        kill_reason_        = KillReason::NONE;
         persist_state();   // persistuj też "wyłączony" żeby restart widział aktualny stan
     }
-    bool is_kill_switch_active() const noexcept { return kill_switch_active_; }
+    bool       is_kill_switch_active() const noexcept { return kill_switch_active_; }
+    KillReason get_kill_reason()       const noexcept { return kill_reason_; }   // #121
 
     // set_persist_path: opcjonalny plik do persistencji stanu kill switcha.
     // Wywołaj raz po konstrukcji. Bez tego persistencja jest no-op (zachowanie
@@ -618,6 +645,7 @@ public:
         order_timestamps_.clear();
         pending_.clear();
         kill_switch_active_ = false;
+        kill_reason_        = KillReason::NONE;
         total_abs_exposure_ = 0;
         for (const auto& kv : positions_) total_abs_exposure_ += std::abs(kv.second);
         clear_persisted_state();   // nowy dzień = czyste konto, plik nieaktualny
@@ -702,6 +730,7 @@ private:
         // 5. Circuit breaker — przekroczona dzienna strata
         if (daily_pnl_ < -static_cast<double>(limits_.max_daily_loss)) {
             kill_switch_active_ = true;
+            kill_reason_        = KillReason::CIRCUIT_BREAKER;
             persist_state();   // restart procesu nie może obejść trip'a
             return "Circuit breaker: daily loss limit";
         }
@@ -710,6 +739,7 @@ private:
             const double drawdown_pct = (peak_pnl_ - daily_pnl_) / peak_pnl_ * 100.0;
             if (drawdown_pct > limits_.max_drawdown_pct) {
                 kill_switch_active_ = true;
+                kill_reason_        = KillReason::DRAWDOWN;
                 persist_state();
                 return "Drawdown limit exceeded";
             }
