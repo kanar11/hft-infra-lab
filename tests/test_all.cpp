@@ -290,6 +290,16 @@ void test_oms_short_and_replace() {
         ASSERT(o2.cancel_all_symbol("AAA") == 1, "cancelall_symbol_one");
     }
 
+    {   // #141 avg_fill_price — zlecenie wypelniane po dwoch cenach.
+        OMS oms(100000, 1000000000.0);
+        Order* o = oms.submit_order("AAPL", Side::BUY, 100.00, 100);
+        oms.fill_order(o->order_id, 40, 100.00);                  // 40 @ 100.00
+        oms.fill_order(o->order_id, 60, 101.00);                  // 60 @ 101.00
+        const Order* r = oms.get_order(o->order_id);
+        // avg = (40*100 + 60*101)/100 = 100.60
+        ASSERT(close(to_float(r->avg_fill_price()), 100.60), "avg_fill_price_blended");
+    }
+
     {   // #128 count_by_status — observability stanu zlecen.
         OMS oms(1000000, 1000000000.0);
         oms.submit_order("AAA", Side::BUY, 10.0, 100);                      // SENT

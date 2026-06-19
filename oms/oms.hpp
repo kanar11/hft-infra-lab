@@ -112,20 +112,27 @@ struct Order {
     int64_t     created_ns;     // moment przyjęcia w submit_order
     int64_t     sent_ns;        // moment wysłania (status → SENT)
     int64_t     filled_ns;      // moment ostatniego fillu
+    int64_t     fill_notional;  // Σ fill_qty × fill_price (#141) — do avg fill price
 
     Order() noexcept
         : order_id(0), side(Side::BUY), price(0), quantity(0),
           filled_qty(0), status(OrderStatus::NEW),
-          created_ns(0), sent_ns(0), filled_ns(0) {
+          created_ns(0), sent_ns(0), filled_ns(0), fill_notional(0) {
         symbol[0] = '\0';
     }
 
     Order(uint64_t id, const char* sym, Side s, int64_t px, uint32_t qty) noexcept
         : order_id(id), side(s), price(px), quantity(qty),
           filled_qty(0), status(OrderStatus::NEW),
-          created_ns(0), sent_ns(0), filled_ns(0) {
+          created_ns(0), sent_ns(0), filled_ns(0), fill_notional(0) {
         std::strncpy(symbol, sym, 8);
         symbol[8] = '\0';
+    }
+
+    // avg_fill_price: srednia cena wykonania (fixed-point) — zlecenie moze byc
+    // wypelniane po roznych cenach; 0 gdy brak fillu. (#141)
+    int64_t avg_fill_price() const noexcept {
+        return filled_qty > 0 ? fill_notional / static_cast<int64_t>(filled_qty) : 0;
     }
 };
 
@@ -284,7 +291,8 @@ public:
             if (fill_qty == 0) return 0;  // już całkowicie wypełnione
         }
 
-        order.filled_qty += fill_qty;
+        order.filled_qty    += fill_qty;
+        order.fill_notional += static_cast<int64_t>(fill_qty) * fill_price;  // #141
         order.status      = (order.filled_qty >= order.quantity)
                             ? OrderStatus::FILLED
                             : OrderStatus::PARTIAL;
