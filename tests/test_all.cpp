@@ -1809,6 +1809,10 @@ void test_router_ewma_partial() {
         rs.route_order("BUY", 120);            // 60 z X + 60 z Y
         ASSERT(rs.venue_routed_shares("X") == 60, "tca_split_X_60");
         ASSERT(rs.venue_routed_shares("Y") == 60, "tca_split_Y_60");
+        // #130 agregat + reset
+        ASSERT(rs.total_routed_shares() == 120, "tca_total_120");
+        rs.reset_routing_stats();
+        ASSERT(rs.total_routed_shares() == 0, "tca_reset_zero");
     }
 }
 

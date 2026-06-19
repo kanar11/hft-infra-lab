@@ -367,6 +367,19 @@ public:
             if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].routed_shares;
         return 0;
     }
+    // total_routed_shares: laczny wolumen zaroutowany po wszystkich venue (#130).
+    int64_t total_routed_shares() const noexcept {
+        int64_t s = 0;
+        for (int i = 0; i < venue_count_; ++i) s += venues_[i].routed_shares;
+        return s;
+    }
+    // reset_routing_stats: wyzeruj liczniki TCA per venue (nowa sesja/okno).
+    void reset_routing_stats() noexcept {
+        for (int i = 0; i < venue_count_; ++i) {
+            venues_[i].routed_shares = 0;
+            venues_[i].routes_count  = 0;
+        }
+    }
 
     uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
