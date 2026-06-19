@@ -48,6 +48,30 @@ inline void strip_field(char* dst, const uint8_t* src, int n) noexcept {
 }
 
 
+// Wrappery wychodzace klienta (expansion #145): encode OUCH + framing w pakiet
+// 'U' (Unsequenced Data) jednym wywolaniem. Bez nich caller musi recznie zlozyc
+// enter_order + pack_data (jak w #78). Zwracaja laczny rozmiar pakietu lub 0.
+inline std::size_t pack_enter_order(uint8_t* out, std::size_t cap, const char* token,
+                                    char side, int32_t shares, const char* stock,
+                                    double price, char tif = 'D') noexcept {
+    uint8_t ouch[64];
+    const int n = OUCHMessage::enter_order(ouch, token, side, shares, stock, price, tif);
+    return pack_data(out, cap, ouch, static_cast<std::size_t>(n), /*client_side=*/true);
+}
+inline std::size_t pack_cancel_order(uint8_t* out, std::size_t cap, const char* token,
+                                     int32_t shares = 0) noexcept {
+    uint8_t ouch[32];
+    const int n = OUCHMessage::cancel_order(ouch, token, shares);
+    return pack_data(out, cap, ouch, static_cast<std::size_t>(n), /*client_side=*/true);
+}
+inline std::size_t pack_replace_order(uint8_t* out, std::size_t cap, const char* existing_token,
+                                      const char* new_token, int32_t shares, double price) noexcept {
+    uint8_t ouch[64];
+    const int n = OUCHMessage::replace_order(ouch, existing_token, new_token, shares, price);
+    return pack_data(out, cap, ouch, static_cast<std::size_t>(n), /*client_side=*/true);
+}
+
+
 // HeartbeatTimer — timer heartbeatow SoupBinTCP (expansion #118).
 //
 // SoupBin wymaga heartbeatow w OBIE strony: server wysyla 'H', klient 'R' co ~1s

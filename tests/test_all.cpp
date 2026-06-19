@@ -2385,6 +2385,19 @@ void test_soupbin_ouch_session() {
     client.consume(resp, rlen);
     ASSERT(client.session_ended(), "soup_session_ended");
 
+    // #145 wrappery klienta — pack_enter_order (OUCH 'O' w pakiecie 'U') + roundtrip.
+    uint8_t opkt[64];
+    const std::size_t oplen = pack_enter_order(opkt, sizeof(opkt), "TOK1", 'B', 100, "AAPL", 150.25);
+    ASSERT(oplen > 0, "pack_enter_order_built");
+    const ParsedPacket op = parse_packet(opkt, oplen);
+    ASSERT(op.valid && op.type == PacketType::UNSEQUENCED_DATA && op.payload[0] == 'O',
+           "pack_enter_order_is_U_O");
+    uint8_t oresp[256];
+    const std::size_t orlen = mock_exchange_respond(oresp, sizeof(oresp), opkt, oplen);
+    OuchSessionClient oc;
+    oc.consume(oresp, orlen);
+    ASSERT(oc.accepts() == 1 && oc.executes() == 1, "pack_enter_order_roundtrip");
+
     // #139 Login Rejected — parsuj powod odmowy.
     OuchSessionClient cr;
     uint8_t jpkt[8];
