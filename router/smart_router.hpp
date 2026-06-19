@@ -46,6 +46,24 @@ enum class RoutingStrategy : uint8_t {
 };
 
 
+// RouteReject — DLACZEGO route_order nie zwrócił trasy (#125). Caller (OMS /
+// strategia) odróżnia "nie ma gdzie routować" od "brak płynności teraz".
+enum class RouteReject : uint8_t {
+    NONE          = 0,   // trasa znaleziona (valid=true)
+    NO_VENUES     = 1,   // zero aktywnych venue w ogóle
+    NO_LIQUIDITY  = 2,   // venue są, ale brak płynności po stronie zlecenia
+};
+
+inline const char* route_reject_str(RouteReject r) noexcept {
+    switch (r) {
+        case RouteReject::NONE:         return "NONE";
+        case RouteReject::NO_VENUES:    return "NO_VENUES";
+        case RouteReject::NO_LIQUIDITY: return "NO_LIQUIDITY";
+        default:                        return "UNKNOWN";
+    }
+}
+
+
 // Venue — pojedyncza giełda z jej top-of-book quote, opłatą i latencją.
 //
 // latency_ns (mean): średnia latencja round-trip. Jeśli latency_p99_ns > 0
@@ -112,10 +130,12 @@ struct RouteDecision {
     int32_t num_venues;         // ile venue użyto (SPLIT)
     int64_t latency_ns;         // czas decyzji routera (nie venue round-trip!)
     bool    valid;              // false = brak trasy (jak None w Pythonie)
+    RouteReject reject_reason;  // dlaczego brak trasy (#125; NONE gdy valid)
 
     RouteDecision() noexcept
         : price(0), effective_price(0), total_fee(0), quantity(0),
-          unfilled_qty(0), num_venues(0), latency_ns(0), valid(false) {
+          unfilled_qty(0), num_venues(0), latency_ns(0), valid(false),
+          reject_reason(RouteReject::NONE) {
         venue[0] = '\0';
     }
 };
@@ -238,7 +258,13 @@ public:
                 : (venues_[i].best_bid > 0 && venues_[i].bid_size > 0);
             if (has_liq) candidates[num_candidates++] = &venues_[i];
         }
-        if (num_candidates == 0) { ++total_rejected_; return RouteDecision(); }
+        if (num_candidates == 0) {
+            ++total_rejected_;
+            RouteDecision d;
+            d.reject_reason = (venue_count_ == 0) ? RouteReject::NO_VENUES
+                                                  : RouteReject::NO_LIQUIDITY;
+            return d;
+        }
 
         if (strat == RoutingStrategy::SPLIT && quantity >= split_threshold_) {
             return split_order(candidates, num_candidates, is_buy, quantity, t0);
@@ -391,7 +417,12 @@ private:
             ++venues_used;
         }
 
-        if (filled == 0) { ++total_rejected_; return RouteDecision(); }
+        if (filled == 0) {
+            ++total_rejected_;
+            RouteDecision d;
+            d.reject_reason = RouteReject::NO_LIQUIDITY;
+            return d;
+        }
 
         RouteDecision d;
         d.valid           = true;

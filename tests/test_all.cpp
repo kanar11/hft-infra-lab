@@ -416,6 +416,15 @@ void test_router() {
     SmartOrderRouter empty_router;
     rd = empty_router.route_order("BUY", 100);
     ASSERT(!rd.valid, "router_no_venues_invalid");
+    // #125 reject reason: brak venue vs brak plynnosci
+    ASSERT(rd.reject_reason == RouteReject::NO_VENUES, "router_reject_no_venues");
+    SmartOrderRouter dry(RoutingStrategy::BEST_PRICE);
+    dry.add_venue(Venue("A", 100, 0.0));         // venue jest, ale bez quote
+    const RouteDecision rdl = dry.route_order("BUY", 100);
+    ASSERT(!rdl.valid && rdl.reject_reason == RouteReject::NO_LIQUIDITY,
+           "router_reject_no_liquidity");
+    rd = router.route_order("BUY", 100);          // udana trasa
+    ASSERT(rd.valid && rd.reject_reason == RouteReject::NONE, "router_reject_none_on_ok");
 
     printf("  Router: %d assertions\n", 7);
 }
