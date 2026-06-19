@@ -1571,6 +1571,15 @@ void test_multicast_gap_recovery() {
     gr.observe(6);                               // spóźniony primary wypełnia 6
     ASSERT(gr.missing_count() == 1 && gr.recovered == 3, "gaprec_late_primary_recovers");
 
+    // #149 lista zakresow luk (ciagle przedzialy).
+    multicast::GapRecovery mr2;
+    mr2.observe(1); mr2.observe(5);                      // brak 2,3,4 -> [2,4]
+    mr2.observe(10);                                     // brak 6,7,8,9 -> [6,9]
+    const auto rngs = mr2.missing_ranges();
+    ASSERT(rngs.size() == 2, "gaprec_two_ranges");
+    ASSERT(rngs[0].first == 2 && rngs[0].second == 4, "gaprec_range_2_4");
+    ASSERT(rngs[1].first == 6 && rngs[1].second == 9, "gaprec_range_6_9");
+
     // #110 ReorderBuffer — dostarcza zawsze w kolejnosci, trzyma "przyszle".
     multicast::ReorderBuffer<int> rb;
     rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2

@@ -25,6 +25,8 @@
 #include <vector>
 #include <unordered_map>
 #include <deque>
+#include <iterator>
+#include <utility>
 
 namespace multicast {
 
@@ -102,6 +104,21 @@ struct GapRecovery {
 
     bool   has_gaps()      const noexcept { return !missing.empty(); }
     size_t missing_count() const noexcept { return missing.size(); }
+
+    // missing_ranges (#149): braki zgrupowane w CIAGLE przedzialy [begin,end].
+    // next_request daje tylko min..max (moze obejmowac juz-odebrane); to daje
+    // dokladne zakresy do gap-fill request (efektywniejsza retransmisja).
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> missing_ranges() const {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> out;
+        if (missing.empty()) return out;
+        std::uint64_t start = *missing.begin(), prev = start;
+        for (auto it = std::next(missing.begin()); it != missing.end(); ++it) {
+            if (*it == prev + 1) { prev = *it; }
+            else { out.emplace_back(start, prev); start = *it; prev = *it; }
+        }
+        out.emplace_back(start, prev);
+        return out;
+    }
 
     // recommend_snapshot (#115): gdy braki przekrocza prog, retransmisja per-pakiet
     // jest nieoplacalna — realny feed handler prosi o pelny SNAPSHOT i resynca.
