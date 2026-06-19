@@ -2328,6 +2328,14 @@ void test_soupbin_ouch_session() {
     client.consume(resp, rlen);
     ASSERT(client.session_ended(), "soup_session_ended");
 
+    // #139 Login Rejected — parsuj powod odmowy.
+    OuchSessionClient cr;
+    uint8_t jpkt[8];
+    pack_header(jpkt, PacketType::LOGIN_REJECTED, 1);
+    jpkt[HEADER_SIZE] = 'A';                         // 'A' = not authorized
+    cr.consume(jpkt, HEADER_SIZE + 1);
+    ASSERT(!cr.logged_in() && cr.login_reject_reason() == 'A', "soup_login_rejected_reason");
+
     // #118 HeartbeatTimer — bidirekcyjne heartbeaty SoupBin.
     soupbin::HeartbeatTimer hb;
     hb.on_tx(1000); hb.on_rx(1000);

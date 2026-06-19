@@ -80,6 +80,7 @@ struct HeartbeatTimer {
 class OuchSessionClient {
     bool            logged_in_     = false;
     bool            session_ended_ = false;
+    char            login_reject_reason_ = '\0';   // #139: 'A'=not auth, 'S'=no session
     SequenceTracker seq_;
     std::uint64_t   accepts_    = 0;
     std::uint64_t   executes_   = 0;
@@ -102,6 +103,8 @@ public:
                 break;
             case PacketType::LOGIN_REJECTED:
                 logged_in_ = false; ++errors_;
+                if (p.payload_len >= 1)              // #139: powod odmowy logowania
+                    login_reject_reason_ = static_cast<char>(p.payload[0]);
                 break;
             case PacketType::SEQUENCED_DATA: {
                 seq_.observe_sequenced();
@@ -137,6 +140,7 @@ public:
 
     bool          logged_in()     const noexcept { return logged_in_; }
     bool          session_ended() const noexcept { return session_ended_; }
+    char          login_reject_reason() const noexcept { return login_reject_reason_; }  // #139
     std::uint64_t accepts()       const noexcept { return accepts_; }
     std::uint64_t executes()      const noexcept { return executes_; }
     std::uint64_t cancels()       const noexcept { return cancels_; }
