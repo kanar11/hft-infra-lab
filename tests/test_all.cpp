@@ -1601,6 +1601,16 @@ void test_multicast_gap_recovery() {
     ASSERT(rngs[0].first == 2 && rngs[0].second == 4, "gaprec_range_2_4");
     ASSERT(rngs[1].first == 6 && rngs[1].second == 9, "gaprec_range_6_9");
 
+    // #156 recovery_completeness.
+    multicast::GapRecovery rc2;
+    ASSERT(std::fabs(rc2.recovery_completeness() - 1.0) < 1e-9, "gaprec_complete_when_empty");
+    rc2.observe(1); rc2.observe(4);                     // brak 2,3
+    ASSERT(std::fabs(rc2.recovery_completeness() - 0.0) < 1e-9, "gaprec_complete_0");
+    rc2.on_retransmit(2);                               // recovered 1, missing 1
+    ASSERT(std::fabs(rc2.recovery_completeness() - 0.5) < 1e-9, "gaprec_complete_half");
+    rc2.on_retransmit(3);                               // recovered 2, missing 0
+    ASSERT(std::fabs(rc2.recovery_completeness() - 1.0) < 1e-9, "gaprec_complete_full");
+
     // #110 ReorderBuffer — dostarcza zawsze w kolejnosci, trzyma "przyszle".
     multicast::ReorderBuffer<int> rb;
     rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2

@@ -105,6 +105,14 @@ struct GapRecovery {
     bool   has_gaps()      const noexcept { return !missing.empty(); }
     size_t missing_count() const noexcept { return missing.size(); }
 
+    // recovery_completeness (#156): ulamek wykrytych brakow ktore juz odzyskano
+    // = recovered / (recovered + jeszcze_brakuje). 1.0 = nic nie zalega (ksiega
+    // pewna), <1.0 = czesc luk wciaz otwarta. Metryka zdrowia recovery.
+    double recovery_completeness() const noexcept {
+        const std::uint64_t total = recovered + missing.size();
+        return total > 0 ? static_cast<double>(recovered) / static_cast<double>(total) : 1.0;
+    }
+
     // missing_ranges (#149): braki zgrupowane w CIAGLE przedzialy [begin,end].
     // next_request daje tylko min..max (moze obejmowac juz-odebrane); to daje
     // dokladne zakresy do gap-fill request (efektywniejsza retransmisja).
