@@ -81,6 +81,7 @@ class FIXSession {
     // Tożsamość sesji (tag 49/56) — wstawiana w wychodzące admin messages.
     char sender_comp_[32] = "SENDER";
     char target_comp_[32] = "TARGET";
+    char pending_test_req_id_[32] = {0};   // niepusty = otrzymano TestRequest (#158)
 
     // Persistencja sequence numbers. Pusty = wyłączona (zachowanie wstecz
     // kompatybilne). Production MUSI to mieć — restart procesu nie może
@@ -178,9 +179,21 @@ public:
             mark_logon_received(hb ? std::atoi(hb) : 30, now_ms);
         } else if (mt[0] == '5') {                       // Logout
             mark_logout(now_ms);
+        } else if (mt[0] == '1') {                       // TestRequest (#158)
+            // Counterparty zada dowodu zycia — zapamietaj TestReqID, caller
+            // odpowie Heartbeatem (35=0) z tym samym 112.
+            if (const char* tri = m.get_field(112)) {
+                std::strncpy(pending_test_req_id_, tri, sizeof(pending_test_req_id_) - 1);
+                pending_test_req_id_[sizeof(pending_test_req_id_) - 1] = '\0';
+            }
         }
         return gap;
     }
+
+    // pending_test_req_id: niepusty -> przyszedl TestRequest, odpowiedz
+    // build_heartbeat(pending_test_req_id()) i wywolaj clear_pending_test_req (#158).
+    const char* pending_test_req_id() const noexcept { return pending_test_req_id_; }
+    void clear_pending_test_req() noexcept { pending_test_req_id_[0] = '\0'; }
 
     // === Transitions ===
     // mark_logon_sent: wywołaj po wysłaniu Logon (35=A). State → LOGON_SENT.

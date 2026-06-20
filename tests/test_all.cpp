@@ -2353,6 +2353,19 @@ void test_fix_session() {
         ps.process_inbound(lo, 3000);
         ASSERT(ps.state() == fix::SessionState::LOGOUT, "fix_pi_logout_state");
 
+        // #158 inbound TestRequest -> zapamietaj 112, odpowiedz Heartbeatem.
+        fix::FIXSession ts; ts.set_comp_ids("ME", "EX");
+        char tb[256];
+        ts.build_test_request(tb, sizeof(tb), "TR123", '|');
+        FIXMessage trm; trm.parse(tb);
+        ts.process_inbound(trm, 4000);
+        ASSERT(std::strcmp(ts.pending_test_req_id(), "TR123") == 0, "fix_pi_testreq_captured");
+        ts.build_heartbeat(tb, sizeof(tb), ts.pending_test_req_id(), '|');
+        FIXMessage hbm; hbm.parse(tb);
+        ASSERT(std::strcmp(hbm.get_field(112), "TR123") == 0, "fix_pi_hb_echoes_112");
+        ts.clear_pending_test_req();
+        ASSERT(ts.pending_test_req_id()[0] == '\0', "fix_pi_testreq_cleared");
+
         // #116 walidacja NewOrderSingle (acceptor-side).
         s.build_new_order(buf, sizeof(buf), "X", "AAPL", Side::BUY, 100, 150.0, '|');
         FIXMessage ok; ok.parse(buf);
