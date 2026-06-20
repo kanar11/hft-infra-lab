@@ -303,6 +303,7 @@ void test_oms_short_and_replace() {
         ASSERT(oms.total_fills() == 2, "ops_fills_2");
         ASSERT(oms.total_replaces() == 1, "ops_replaces_1");
         ASSERT(oms.total_cancels() == 1, "ops_cancels_1");
+        ASSERT(oms.total_submitted() == 2, "ops_submitted_2");   // #160 (AAA, BBB)
     }
 
     {   // #141 avg_fill_price — zlecenie wypelniane po dwoch cenach.

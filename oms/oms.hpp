@@ -197,6 +197,7 @@ class OMS {
     int64_t  total_fees_;       // skumulowane prowizje całego OMS, fixed-point
     OMSReject last_reject_ = OMSReject::NONE;  // powód ostatniego odrzucenia (#88)
     uint64_t  reject_counts_[4] = {0, 0, 0, 0}; // licznik odrzuceń per OMSReject (#136)
+    uint64_t  total_submitted_ = 0;  // przyjete submity (#160)
     uint64_t  total_fills_    = 0;   // liczniki operacji cyklu zycia (#151)
     uint64_t  total_cancels_  = 0;
     uint64_t  total_replaces_ = 0;
@@ -264,6 +265,7 @@ public:
             pos_it = positions_.emplace(sym_key, Position(symbol)).first;
         }
         pos_it->second.pending_qty += signed_n;
+        ++total_submitted_;   // #160
         return &it->second;
     }
 
@@ -481,7 +483,8 @@ public:
     OMSReject last_reject() const noexcept { return last_reject_; }
     // reject_count: ile zlecen odrzucono z danego powodu (#136, observability).
     uint64_t reject_count(OMSReject r) const noexcept { return reject_counts_[static_cast<int>(r)]; }
-    // Liczniki operacji cyklu zycia (#151, observability/dashboard).
+    // Liczniki operacji cyklu zycia (#151/#160, observability/dashboard).
+    uint64_t total_submitted() const noexcept { return total_submitted_; }
     uint64_t total_fills()    const noexcept { return total_fills_; }
     uint64_t total_cancels()  const noexcept { return total_cancels_; }
     uint64_t total_replaces() const noexcept { return total_replaces_; }
