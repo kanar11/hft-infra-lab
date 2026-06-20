@@ -367,6 +367,28 @@ public:
         const double b = national_best_bid(), a = national_best_ask();
         return (b > 0.0 && a > 0.0) ? (b + a) / 2.0 : 0.0;
     }
+    // active_venue_count: ile venue jest aktywnych (po health/manual) (#154).
+    int active_venue_count() const noexcept {
+        int n = 0;
+        for (int i = 0; i < venue_count_; ++i) if (venues_[i].is_active) ++n;
+        return n;
+    }
+    // best_effective_price: najlepsza cena ALL-IN (quote ± fee) dostepna teraz po
+    // danej stronie, bez routowania (#154). BUY: minimalna; SELL: maksymalna.
+    // 0 gdy brak plynnosci. Inspekcja "ile bym zaplacil" przed decyzja.
+    double best_effective_price(bool is_buy) const noexcept {
+        double best = 0.0; bool found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            if (!has_liq) continue;
+            const double eff = effective_price(v, is_buy);
+            if (!found || (is_buy ? (eff < best) : (eff > best))) { best = eff; found = true; }
+        }
+        return found ? best : 0.0;
+    }
 
     // available_liquidity: laczny displayed size top-of-book po stronie zlecenia
     // (is_buy → asks, sprzedaz → bids), tylko aktywne venue z dodatnim quote.
