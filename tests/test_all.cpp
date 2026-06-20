@@ -2224,6 +2224,20 @@ void test_risk_price_band() {
     ASSERT(std::fabs(rn.get_position_notional("AAPL") - 15000.0) < 1e-6, "notional_15000");
     ASSERT(rn.get_position_notional("MSFT") == 0.0, "notional_no_ref_zero");
 
+    // #161 per-symbol override limitu pozycji.
+    RiskLimits pl; pl.max_position_per_symbol = 1000;
+    RiskManager rp(pl);
+    ASSERT(rp.check_order("TSLA", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
+           "symlim_global_ok");                       // 500 < 1000
+    rp.set_symbol_position_limit("TSLA", 100);        // ciaśniej dla TSLA
+    ASSERT(rp.check_order("TSLA", Side::BUY, 1.0, 500).action == RiskAction::REJECT,
+           "symlim_override_rejects");                 // 500 > 100
+    ASSERT(rp.check_order("AAPL", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
+           "symlim_other_uses_global");                // AAPL: globalny 1000
+    rp.set_symbol_position_limit("TSLA", 0);          // zdejmij override
+    ASSERT(rp.check_order("TSLA", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
+           "symlim_override_removed");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

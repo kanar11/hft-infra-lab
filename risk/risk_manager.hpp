@@ -326,6 +326,11 @@ class RiskManager {
     // listy jest odrzucane przed pozostałymi checkami pozycji.
     std::unordered_set<uint64_t> restricted_;
 
+    // Per-symbol override limitu pozycji (#161). Symbole zmienne/niepłynne czesto
+    // dostaja ciaśniejszy cap niz globalny max_position_per_symbol. Pusty wpis =
+    // uzyj globalnego.
+    std::unordered_map<uint64_t, int32_t> symbol_pos_limit_;
+
     // --------------------------------------------------------------------
     // Stan: rate limit
     //
@@ -432,15 +437,17 @@ public:
         const int32_t  cur_pos   = lookup(positions_, key);
         const int32_t  cur_pend  = lookup(pending_,   key);
         const int32_t  projected = cur_pos + cur_pend + signed_n;
-        // Asymetryczne limity (#106): long sprawdzany max_position_per_symbol,
-        // short osobnym max_short_per_symbol (0 = symetria, fallback do long-capu).
-        // Firmy czesto limituja shorty ciaśniej (koszt/ryzyko locate, squeeze).
+        // Limit long: per-symbol override (#161) albo globalny.
+        int32_t long_cap = limits_.max_position_per_symbol;
+        if (const auto ov = symbol_pos_limit_.find(key); ov != symbol_pos_limit_.end())
+            long_cap = ov->second;
+        // Asymetryczne limity (#106): long vs short (short osobnym capem; 0 = symetria).
         if (projected >= 0) {
-            if (projected > limits_.max_position_per_symbol)
+            if (projected > long_cap)
                 return make_reject("Position limit exceeded", t0);
         } else {
             const int32_t short_cap = (limits_.max_short_per_symbol > 0)
-                ? limits_.max_short_per_symbol : limits_.max_position_per_symbol;
+                ? limits_.max_short_per_symbol : long_cap;
             if (-projected > short_cap)
                 return make_reject("Short position limit exceeded", t0);
         }
@@ -575,6 +582,14 @@ public:
     // is_restricted    — czy symbol jest aktualnie zakazany
     // clear_restricted — wyczyść całą listę (np. nowa sesja)
     // ====================================================================
+    // set_symbol_position_limit: per-symbol override limitu pozycji (#161);
+    // limit<=0 usuwa override (powrot do globalnego).
+    void set_symbol_position_limit(const char* symbol, int32_t limit) noexcept {
+        const uint64_t k = sym_to_key(symbol);
+        if (limit > 0) symbol_pos_limit_[k] = limit;
+        else           symbol_pos_limit_.erase(k);
+    }
+
     void restrict_symbol(const char* symbol) noexcept { restricted_.insert(sym_to_key(symbol)); }
     void allow_symbol(const char* symbol)    noexcept { restricted_.erase(sym_to_key(symbol)); }
     bool is_restricted(const char* symbol) const noexcept {
