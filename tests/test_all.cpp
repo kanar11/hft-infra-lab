@@ -2024,6 +2024,20 @@ void test_router_ewma_partial() {
         ASSERT(r.active_venue_count() == 1, "best_eff_active_1_after_disable");
         ASSERT(close(r.best_effective_price(true), 11.005), "best_eff_buy_A_only");
     }
+
+    // --- #162 reject_rate + avg_routing_latency ---
+    {
+        auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.update_quote("A", 10.0, 11.0, 100, 100);
+        r.route_order("BUY", 10); r.route_order("BUY", 10);   // 2 udane
+        ASSERT(close(r.reject_rate(), 0.0), "rejrate_all_ok");
+        ASSERT(r.avg_routing_latency_ns() >= 0.0, "rejrate_avg_lat_nonneg");
+        SmartOrderRouter e;                                    // brak venue -> reject
+        e.route_order("BUY", 10);
+        ASSERT(close(e.reject_rate(), 1.0), "rejrate_all_rejected");
+    }
 }
 
 

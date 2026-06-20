@@ -430,6 +430,17 @@ public:
 
     uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
+    // reject_rate: odsetek prob routingu zakonczonych odrzuceniem (#162) =
+    // rejected / (routes + rejected). 0 gdy brak prob.
+    double reject_rate() const noexcept {
+        const uint64_t total = total_routes_ + total_rejected_;
+        return total > 0 ? static_cast<double>(total_rejected_) / static_cast<double>(total) : 0.0;
+    }
+    // avg_routing_latency_ns: srednia latencja DECYZJI routera (nie round-trip
+    // venue) na udana trase (#162).
+    double avg_routing_latency_ns() const noexcept {
+        return total_routes_ > 0 ? static_cast<double>(total_latency_ns_) / static_cast<double>(total_routes_) : 0.0;
+    }
 
     void print_stats() const {
         printf("\n=== Router Statistics ===\n");
