@@ -199,6 +199,17 @@ public:
         return f ? f->value : nullptr;
     }
 
+    // get_int / get_double: typowane odczyty dowolnego taga (#168). 0 gdy brak
+    // taga — wygodne dla pol numerycznych (qty, seq, ceny, kody) bez recznego atoi.
+    int32_t get_int(int tag) const noexcept {
+        const FIXField* f = find_field(tag);
+        return f ? std::atoi(f->value) : 0;
+    }
+    double get_double(int tag) const noexcept {
+        const FIXField* f = find_field(tag);
+        return f ? std::atof(f->value) : 0.0;
+    }
+
     int field_count() const noexcept { return field_count_; }
 
     // Walidacja sesji FIX.

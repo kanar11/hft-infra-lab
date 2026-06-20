@@ -2407,6 +2407,10 @@ void test_fix_session() {
         ASSERT(std::strcmp(m.get_symbol(), "AAPL") == 0, "fix_neworder_symbol");
         ASSERT(std::strcmp(m.get_side(), "BUY") == 0, "fix_neworder_side_buy");
         ASSERT(m.get_quantity() == 100, "fix_neworder_qty_100");
+        // #168 typowane akcesory
+        ASSERT(m.get_int(38) == 100, "fix_get_int_qty");
+        ASSERT(std::fabs(m.get_double(44) - 150.25) < 1e-6, "fix_get_double_price");
+        ASSERT(m.get_int(99999) == 0, "fix_get_int_missing_zero");
 
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
