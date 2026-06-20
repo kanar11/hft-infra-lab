@@ -46,6 +46,7 @@ struct FeedRateMeter {
     void on_message(std::int64_t now_ns) {
         ts.push_back(now_ns);
         evict(now_ns);
+        if (ts.size() > peak_count_) peak_count_ = ts.size();   // #163 burst peak
     }
     std::size_t count(std::int64_t now_ns) {
         evict(now_ns);
@@ -54,7 +55,18 @@ struct FeedRateMeter {
     double rate_per_sec(std::int64_t now_ns) {
         return static_cast<double>(count(now_ns)) * 1e9 / static_cast<double>(window_ns);
     }
-    void reset() noexcept { ts.clear(); }
+    // peak_count / peak_rate_per_sec (#163): najwyzsza liczba/rate w oknie kiedy-
+    // kolwiek zaobserwowana — wykrywa burst (ryzyko przeladowania) nawet jesli
+    // chwilowy rate jest niski.
+    std::size_t peak_count()        const noexcept { return peak_count_; }
+    double      peak_rate_per_sec() const noexcept {
+        return static_cast<double>(peak_count_) * 1e9 / static_cast<double>(window_ns);
+    }
+    void reset() noexcept { ts.clear(); peak_count_ = 0; }
+
+private:
+    std::size_t peak_count_ = 0;
+public:
 
 private:
     void evict(std::int64_t now_ns) {

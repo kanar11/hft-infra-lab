@@ -1652,6 +1652,14 @@ void test_multicast_gap_recovery() {
     ASSERT(std::fabs(fr.rate_per_sec(300) - 3e6) < 1.0, "rate_per_sec_3M");  // 3*1e9/1000
     ASSERT(fr.count(1301) == 0, "rate_window_expired");   // wszystkie starsze niz okno
 
+    // #163 peak rate (burst).
+    multicast::FeedRateMeter pm(1000);
+    pm.on_message(0); pm.on_message(100); pm.on_message(200);  // 3 w oknie -> peak 3
+    ASSERT(pm.peak_count() == 3, "rate_peak_3");
+    pm.on_message(1300);                                       // stare wyrzucone, count 1
+    ASSERT(pm.count(1300) == 1 && pm.peak_count() == 3, "rate_peak_holds");
+    ASSERT(std::fabs(pm.peak_rate_per_sec() - 3e6) < 1.0, "rate_peak_rate_3M");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
