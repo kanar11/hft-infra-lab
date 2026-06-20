@@ -465,6 +465,14 @@ public:
     }
     // total_fees: skumulowane prowizje całego OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
+    // Runtime zmiana prowizji (#166) — harmonogram oplat moze sie zmienic w sesji
+    // (tier po wolumenie, promocja). Kolejne fille uzywaja nowej stawki.
+    void   set_commission(double per_share) noexcept {
+        commission_fp_ = static_cast<int64_t>(per_share * PRICE_SCALE + 0.5);
+    }
+    double commission_per_share() const noexcept {
+        return static_cast<double>(commission_fp_) / PRICE_SCALE;
+    }
 
     // Agregaty P&L portfela (#120) — suma po wszystkich pozycjach. Fixed-point
     // (×PRICE_SCALE); to_float dla dolarow. Zastepuje reczne petle po stronie
