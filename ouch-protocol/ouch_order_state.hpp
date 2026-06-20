@@ -51,6 +51,7 @@ class OUCHOrderTracker {
         int32_t    remaining;    // ile jeszcze otwarte
         int32_t    filled;       // ile wypelnione
         int64_t    order_ref;    // z Accepted (0 dopoki nieznane)
+        bool       pending_cancel; // wyslano Cancel, czekamy na potwierdzenie (#159)
     };
     std::unordered_map<std::string, Record> orders_;
     uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
@@ -63,7 +64,19 @@ class OUCHOrderTracker {
 public:
     // on_new: zarejestruj wyslane Enter Order (token + zlecona ilosc).
     void on_new(const char* token, int32_t shares) noexcept {
-        orders_[token] = Record{OrderState::NEW, shares, shares, 0, 0};
+        orders_[token] = Record{OrderState::NEW, shares, shares, 0, 0, false};
+    }
+
+    // on_cancel_sent: klient wyslal Cancel Order ('X') — oznacz pending cancel
+    // (#159). Potwierdzenie 'C' (Cancelled) wyczysci flage. Tylko dla aktywnych.
+    void on_cancel_sent(const char* token) noexcept {
+        Record* rec = find(token);
+        if (rec && (rec->state == OrderState::LIVE || rec->state == OrderState::PARTIAL))
+            rec->pending_cancel = true;
+    }
+    bool is_pending_cancel(const char* token) const noexcept {
+        const auto it = orders_.find(token);
+        return (it != orders_.end()) && it->second.pending_cancel;
     }
 
     // on_response: zaaplikuj raport gieldy. Zwraca nowy stan (lub REJECTED gdy
@@ -83,8 +96,9 @@ public:
             if (rec->remaining <= 0) { rec->state = OrderState::FILLED; ++filled_; }
             else                       rec->state = OrderState::PARTIAL;
         } else if (std::strcmp(r.type, "CANCELLED") == 0) {
-            rec->state     = OrderState::CANCELLED;
-            rec->remaining = 0;
+            rec->state          = OrderState::CANCELLED;
+            rec->remaining      = 0;
+            rec->pending_cancel = false;   // #159: request potwierdzony
             ++cancelled_;
         } else if (std::strcmp(r.type, "BROKEN") == 0) {
             // Broken Trade (#134): gielda uniewaznia wczesniejszy fill -> odwroc

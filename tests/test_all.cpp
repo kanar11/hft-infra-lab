@@ -2467,9 +2467,15 @@ void test_ouch_order_state() {
     ASSERT(t.fills() == 1, "ouchstate_fill_count");
 
     t.on_new("TOK2", 50);
+    // #159 pending-cancel: Accept -> LIVE, on_cancel_sent -> pending, 'C' -> clear.
+    n = OUCHMessage::encode_accepted(buf, "TOK2", 'B', 50, "AAPL", 100.0, 777);
+    t.on_response(OUCHMessage::parse_response(buf, n));
+    t.on_cancel_sent("TOK2");
+    ASSERT(t.is_pending_cancel("TOK2"), "ouchstate_pending_cancel");
     n = OUCHMessage::encode_cancelled(buf, "TOK2", 50, 'U');
     t.on_response(OUCHMessage::parse_response(buf, n));
     ASSERT(t.state("TOK2") == ouch::OrderState::CANCELLED, "ouchstate_cancelled");
+    ASSERT(!t.is_pending_cancel("TOK2"), "ouchstate_pending_cancel_cleared");
 
     n = OUCHMessage::encode_accepted(buf, "GHOST", 'B', 10, "X", 1.0, 1);
     ASSERT(t.on_response(OUCHMessage::parse_response(buf, n)) == ouch::OrderState::REJECTED,
