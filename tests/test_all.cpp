@@ -1570,6 +1570,12 @@ void test_itch_book() {
     ASSERT(close(vd.vwap_depth('S', 2), 100.015), "itchbook_vwap_depth");
     ASSERT(close(vd.vwap_depth('S', 1), 100.00), "itchbook_vwap_depth_top1");
 
+    // #164 liquidity_within (N ticks od best).
+    itch::ITCHOrderBook lw;
+    lw.on_add(1, 'S', 100.00, 100); lw.on_add(2, 'S', 100.01, 200); lw.on_add(3, 'S', 100.05, 300);
+    ASSERT(lw.liquidity_within('S', 1) == 300, "itchbook_liq_within_1");  // 10000+10001
+    ASSERT(lw.liquidity_within('S', 5) == 600, "itchbook_liq_within_5");  // + 10005
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

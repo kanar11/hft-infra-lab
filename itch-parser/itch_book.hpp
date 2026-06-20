@@ -167,6 +167,25 @@ public:
     // (Q_bid > Q_ask) ciazy ku ASK (spodziewany ruch w gore) i odwrotnie —
     // lepszy estymator "prawdziwej" ceny niz prosty mid. 0 gdy ksiega jednostronna.
     //   microprice = (P_ask*Q_bid + P_bid*Q_ask) / (Q_bid + Q_ask)
+    // liquidity_within: laczna qty w N TICKACH od best po danej stronie (#164).
+    // Miara gestosci plynnosci przy szczycie (ile zrealizuje sie blisko touch'a)
+    // niezalezna od liczby poziomow. BUY: bidy >= best_bid - ticks; SELL: aski
+    // <= best_ask + ticks.
+    int64_t liquidity_within(char side, int ticks) const noexcept {
+        if (ticks < 0) return 0;
+        int64_t sum = 0;
+        if (side == 'B') {
+            if (bids_.empty()) return 0;
+            const int64_t floor = bids_.rbegin()->first - ticks;
+            for (auto it = bids_.rbegin(); it != bids_.rend() && it->first >= floor; ++it) sum += it->second;
+        } else {
+            if (asks_.empty()) return 0;
+            const int64_t ceil = asks_.begin()->first + ticks;
+            for (auto it = asks_.begin(); it != asks_.end() && it->first <= ceil; ++it) sum += it->second;
+        }
+        return sum;
+    }
+
     // vwap_depth: volume-weighted cena top-N poziomow po danej stronie (#155).
     // Fair-value uwzgledniajacy GLEBOKOSC (nie tylko touch); im glebiej, tym
     // bardziej odzwierciedla cene realizacji wiekszego zlecenia.
