@@ -685,6 +685,15 @@ public:
     }
     // get_total_exposure: laczna ekspozycja portfela — utrzymywany niezmiennik O(1).
     int64_t  get_total_exposure() const noexcept { return total_abs_exposure_; }
+    // get_position_notional: ekspozycja symbolu w DOLARACH (#153) = |pos+pending|
+    // * cena referencyjna. 0 gdy brak ceny ref. Risk w sztukach nie pokazuje
+    // realnego ryzyka $ przy roznych cenach symboli.
+    double   get_position_notional(const char* symbol) const noexcept {
+        const uint64_t k = sym_to_key(symbol);
+        const auto rp = ref_price_.find(k);
+        if (rp == ref_price_.end() || rp->second <= 0.0) return 0.0;
+        return std::abs(lookup(positions_, k) + lookup(pending_, k)) * rp->second;
+    }
     double   get_daily_pnl()                  const noexcept { return daily_pnl_; }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }

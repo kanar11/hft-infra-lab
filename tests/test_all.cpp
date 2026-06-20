@@ -2167,6 +2167,13 @@ void test_risk_price_band() {
     ASSERT(rt.check_order("AAPL", Side::BUY, 10.0, 10).action == RiskAction::REJECT,
            "turnover_over_rejects");
 
+    // #153 ekspozycja nominalna w $.
+    RiskManager rn(lim);
+    rn.update_reference_price("AAPL", 150.0);
+    rn.on_order_sent("AAPL", Side::BUY, 100);          // 100 sztuk
+    ASSERT(std::fabs(rn.get_position_notional("AAPL") - 15000.0) < 1e-6, "notional_15000");
+    ASSERT(rn.get_position_notional("MSFT") == 0.0, "notional_no_ref_zero");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;
