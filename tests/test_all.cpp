@@ -2294,6 +2294,12 @@ void test_risk_price_band() {
     ASSERT(rp.check_order("TSLA", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
            "symlim_override_removed");
 
+    // #167 wczesne ostrzezenie limitu (cap 1000).
+    RiskManager rw(pl);
+    rw.on_order_sent("AAPL", Side::BUY, 700);          // ekspozycja 700 = 70%
+    ASSERT(!rw.is_near_position_limit("AAPL", 80.0), "warn_below_80pct");   // 700 < 800
+    ASSERT(rw.is_near_position_limit("AAPL", 60.0), "warn_above_60pct");    // 700 >= 600
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

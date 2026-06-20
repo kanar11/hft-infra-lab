@@ -700,6 +700,17 @@ public:
     }
     // get_total_exposure: laczna ekspozycja portfela — utrzymywany niezmiennik O(1).
     int64_t  get_total_exposure() const noexcept { return total_abs_exposure_; }
+    // is_near_position_limit: czy ekspozycja symbolu osiagnela warn_pct% capu
+    // (#167) — wczesne ostrzezenie ZANIM check_order twardo odrzuci. Respektuje
+    // per-symbol override (#161). false gdy cap wylaczony.
+    bool is_near_position_limit(const char* symbol, double warn_pct) const noexcept {
+        const uint64_t k = sym_to_key(symbol);
+        int32_t cap = limits_.max_position_per_symbol;
+        if (const auto ov = symbol_pos_limit_.find(k); ov != symbol_pos_limit_.end()) cap = ov->second;
+        if (cap <= 0) return false;
+        const int32_t exposure = std::abs(lookup(positions_, k) + lookup(pending_, k));
+        return static_cast<double>(exposure) >= static_cast<double>(cap) * warn_pct / 100.0;
+    }
     // get_position_notional: ekspozycja symbolu w DOLARACH (#153) = |pos+pending|
     // * cena referencyjna. 0 gdy brak ceny ref. Risk w sztukach nie pokazuje
     // realnego ryzyka $ przy roznych cenach symboli.
