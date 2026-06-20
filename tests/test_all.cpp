@@ -1560,6 +1560,14 @@ void test_itch_book() {
     ASSERT(close(di.depth_imbalance(1), 1.0/3.0), "itchbook_depth_imb_1");  // (100-50)/150
     ASSERT(close(di.depth_imbalance(2), 0.5), "itchbook_depth_imb_2");      // (300-100)/400
 
+    // #155 vwap_depth: VWAP top-N poziomow.
+    itch::ITCHOrderBook vd;
+    vd.on_add(1, 'S', 100.00, 100);
+    vd.on_add(2, 'S', 100.02, 300);
+    // (100.00*100 + 100.02*300)/400 = 100.015
+    ASSERT(close(vd.vwap_depth('S', 2), 100.015), "itchbook_vwap_depth");
+    ASSERT(close(vd.vwap_depth('S', 1), 100.00), "itchbook_vwap_depth_top1");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

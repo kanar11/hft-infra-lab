@@ -167,6 +167,26 @@ public:
     // (Q_bid > Q_ask) ciazy ku ASK (spodziewany ruch w gore) i odwrotnie —
     // lepszy estymator "prawdziwej" ceny niz prosty mid. 0 gdy ksiega jednostronna.
     //   microprice = (P_ask*Q_bid + P_bid*Q_ask) / (Q_bid + Q_ask)
+    // vwap_depth: volume-weighted cena top-N poziomow po danej stronie (#155).
+    // Fair-value uwzgledniajacy GLEBOKOSC (nie tylko touch); im glebiej, tym
+    // bardziej odzwierciedla cene realizacji wiekszego zlecenia.
+    double  vwap_depth(char side, int n) const noexcept {
+        if (n <= 0) return 0.0;
+        double notional = 0.0; int64_t qty = 0; int c = 0;
+        if (side == 'B') {
+            for (auto it = bids_.rbegin(); it != bids_.rend() && c < n; ++it, ++c) {
+                notional += (it->first / 100.0) * static_cast<double>(it->second);
+                qty += it->second;
+            }
+        } else {
+            for (auto it = asks_.begin(); it != asks_.end() && c < n; ++it, ++c) {
+                notional += (it->first / 100.0) * static_cast<double>(it->second);
+                qty += it->second;
+            }
+        }
+        return qty > 0 ? notional / static_cast<double>(qty) : 0.0;
+    }
+
     // depth_imbalance: order-book imbalance po TOP-N poziomach (#148), uogolnienie
     // top-of-book imbalance (#87, n=1). (Σbid - Σask)/(Σbid+Σask) z n najlepszych
     // poziomow kazdej strony. Glebszy obraz presji niz sam touch.
