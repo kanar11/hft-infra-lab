@@ -33,6 +33,7 @@
 #include "../strategy/bollinger.hpp"
 #include "../strategy/donchian.hpp"
 #include "../strategy/rsi.hpp"
+#include "../strategy/ma_crossover.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -1746,6 +1747,19 @@ void test_rsi() {
     ASSERT(sd.valid && sd.side == Side::BUY, "rsi_oversold_buys");
 }
 
+// MA Crossover #157 — golden/death cross (przeciecie szybkiej i wolnej SMA).
+void test_ma_crossover() {
+    SECTION("MA Crossover (#157)");
+    MACrossover x(2, 3, 100);                          // fast=2, slow=3
+    x.on_market_data("X", 100.0);
+    x.on_market_data("X", 100.0);
+    x.on_market_data("X", 100.0);                      // setup, fast==slow, brak sygnalu
+    const Signal up = x.on_market_data("X", 110.0);    // fast 105 > slow 103.3 -> golden cross
+    ASSERT(up.valid && up.side == Side::BUY, "macross_golden_buys");
+    const Signal dn = x.on_market_data("X", 90.0);     // fast 100 == slow 100 -> nie above -> death cross
+    ASSERT(dn.valid && dn.side == Side::SELL, "macross_death_sells");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -2735,6 +2749,7 @@ int main() {
     test_bollinger();
     test_donchian();
     test_rsi();
+    test_ma_crossover();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
