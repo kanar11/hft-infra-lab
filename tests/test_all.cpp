@@ -34,6 +34,7 @@
 #include "../strategy/donchian.hpp"
 #include "../strategy/rsi.hpp"
 #include "../strategy/ma_crossover.hpp"
+#include "../strategy/volatility.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -1775,6 +1776,23 @@ void test_ma_crossover() {
     ASSERT(dn.valid && dn.side == Side::SELL, "macross_death_sells");
 }
 
+// Volatility #165 — kroczaca zmiennosc zwrotow + vol-targeting sizing.
+void test_volatility() {
+    SECTION("Volatility Estimator (#165)");
+    VolatilityEstimator c(4);
+    for (int i = 0; i < 5; ++i) c.on_price(100.0);          // stala cena -> zero vol
+    ASSERT(c.volatility() == 0.0, "vol_constant_zero");
+
+    VolatilityEstimator v(4);
+    v.on_price(100.0); v.on_price(110.0); v.on_price(100.0); v.on_price(110.0); v.on_price(100.0);
+    ASSERT(v.volatility() > 0.0, "vol_varying_positive");
+    ASSERT(v.samples() == 4, "vol_samples");
+    // vol-targeting: duza zmiennosc (~10%) vs cel 1% -> mniejsza pozycja
+    ASSERT(v.target_size(1000, 0.01) < 1000, "vol_target_size_smaller");
+    // brak zmiennosci -> base_size
+    ASSERT(c.target_size(1000, 0.01) == 1000, "vol_target_size_base_when_calm");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -2812,6 +2830,7 @@ int main() {
     test_donchian();
     test_rsi();
     test_ma_crossover();
+    test_volatility();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
