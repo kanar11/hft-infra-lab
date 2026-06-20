@@ -4662,7 +4662,12 @@ public:
     // Pozytywne = trended timing; ujemne = alternating; ≈0 = uncorrelated.
     double inter_trade_gap_autocorr_lag1() const noexcept {
         if (gap_autocorr_xx_sum_ <= 0.0) return 0.0;
-        return gap_autocorr_xy_sum_ / gap_autocorr_xx_sum_;
+        // Clamp do [-1,1]: autokorelacja z definicji tam zyje. Niecentrowany
+        // estymator na danych zaleznych od zegara (inter-trade gaps) potrafi
+        // chwilowo przekroczyc 1 (rozne float-ordering g++/clang -> flaky test
+        // acf_bounded). Clamp = poprawny zakres ACF, deterministyczny wynik.
+        const double acf = gap_autocorr_xy_sum_ / gap_autocorr_xx_sum_;
+        return acf < -1.0 ? -1.0 : (acf > 1.0 ? 1.0 : acf);
     }
 
     // ====================================================================
