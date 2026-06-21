@@ -2744,6 +2744,17 @@ void test_risk_price_band() {
     rlp.update_pnl(500.0);                  // zysk zwieksza budzet -> 1500
     ASSERT(std::fabs(rlp.remaining_loss_budget() - 1500.0) < 1e-6, "rlb_profit_extends");
 
+    // #221 daily_turnover_pct (limit obrotu 100000).
+    RiskLimits tnl; tnl.max_daily_traded_notional = 100000.0;
+    RiskManager rtn(tnl);
+    rtn.add_traded_notional(30000.0);
+    ASSERT(std::fabs(rtn.daily_turnover_pct() - 30.0) < 1e-6, "turnover_30pct");
+    rtn.add_traded_notional(20000.0);       // razem 50000
+    ASSERT(std::fabs(rtn.daily_turnover_pct() - 50.0) < 1e-6, "turnover_50pct");
+    RiskManager rtd;                        // limit wylaczony (0)
+    rtd.add_traded_notional(50000.0);
+    ASSERT(std::fabs(rtd.daily_turnover_pct() - 0.0) < 1e-6, "turnover_disabled");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

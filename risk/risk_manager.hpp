@@ -590,6 +590,13 @@ public:
     // dziennego obrotu (#144). Wolaj po fillu (price*qty). get do monitoringu.
     void   add_traded_notional(double notional) noexcept { if (notional > 0.0) traded_notional_ += notional; }
     double get_traded_notional() const noexcept { return traded_notional_; }
+    // daily_turnover_pct: dzienny obrot jako % limitu max_daily_traded_notional
+    // (#221) — ile budzetu obrotu zuzyte (lustro exposure_utilization_pct #181 dla
+    // churn/aktywnosci). 0 gdy limit wylaczony.
+    double daily_turnover_pct() const noexcept {
+        if (limits_.max_daily_traded_notional <= 0.0) return 0.0;
+        return traded_notional_ / limits_.max_daily_traded_notional * 100.0;
+    }
 
 
     // ====================================================================
