@@ -45,6 +45,7 @@
 #include "../strategy/trix.hpp"
 #include "../strategy/cci.hpp"
 #include "../strategy/bollinger_pctb.hpp"
+#include "../strategy/roc.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -2269,6 +2270,21 @@ void test_bollinger_pctb() {
     ASSERT(up.value() > 0.5, "pctb_above_mean_on_uptrend");
 }
 
+// ROC #253 — Rate of Change momentum.
+void test_roc() {
+    SECTION("ROC (#253)");
+    ROC r(3);
+    r.update(100.0); r.update(101.0); r.update(102.0); r.update(110.0);  // 110 vs 100
+    ASSERT(r.ready(), "roc_ready");
+    ASSERT(std::fabs(r.value() - 10.0) < 1e-9, "roc_up_10pct");          // (110-100)/100*100
+    ROC d(2);
+    d.update(100.0); d.update(90.0); d.update(81.0);                      // 81 vs 100
+    ASSERT(std::fabs(d.value() - (-19.0)) < 1e-9, "roc_down_neg19");
+    ROC n(5);
+    n.update(100.0);
+    ASSERT(!n.ready() && n.value() == 0.0, "roc_not_ready_zero");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3782,6 +3798,7 @@ int main() {
     test_trix();
     test_cci();
     test_bollinger_pctb();
+    test_roc();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
