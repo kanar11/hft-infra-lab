@@ -1917,6 +1917,16 @@ void test_multicast_gap_recovery() {
     cb.drain();
     ASSERT(cb.pending() == 0, "conflate_drain");
 
+    // #235 LatencyTracker — EWMA + szczyt opoznienia.
+    multicast::LatencyTracker lt(0.5);
+    lt.sample(100);                  // ewma 100, max 100
+    ASSERT(std::fabs(lt.avg_ns() - 100.0) < 1e-9 && lt.peak_ns() == 100, "lat_first");
+    lt.sample(200);                  // ewma 0.5*200+0.5*100 = 150, max 200
+    ASSERT(std::fabs(lt.avg_ns() - 150.0) < 1e-9 && lt.peak_ns() == 200, "lat_blend_peak");
+    lt.sample(50);                   // ewma 0.5*50+0.5*150 = 100, max 200 (peak zostaje)
+    ASSERT(std::fabs(lt.avg_ns() - 100.0) < 1e-9 && lt.peak_ns() == 200, "lat_peak_retained");
+    ASSERT(lt.count == 3, "lat_count");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

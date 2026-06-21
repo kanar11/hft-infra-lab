@@ -499,6 +499,32 @@ struct ConflationBuffer {
 };
 
 
+// LatencyTracker — EWMA + szczyt opoznienia przetwarzania (expansion #235).
+//
+// Feed handler chce wiedziec ile zajmuje OBSLUGA pakietu (parse + update ksiazki).
+// LatencyTracker laczy dwie miary: wygladzona srednia EWMA (trend, odporna na
+// pojedyncze skoki) i max_ns (najgorszy przypadek — to on lamie SLA). Rozni sie
+// od InterArrivalMeter (odstepy MIEDZY pakietami): tu mierzymy KOSZT obslugi.
+struct LatencyTracker {
+    double        alpha;
+    double        ewma = 0.0;
+    std::int64_t  max_ns = 0;
+    std::uint64_t count = 0;
+
+    explicit LatencyTracker(double alpha_ = 0.1) noexcept : alpha(alpha_) {}
+
+    void sample(std::int64_t latency_ns) noexcept {
+        if (count == 0) ewma = static_cast<double>(latency_ns);
+        else            ewma = alpha * static_cast<double>(latency_ns) + (1.0 - alpha) * ewma;
+        if (latency_ns > max_ns) max_ns = latency_ns;
+        ++count;
+    }
+    double       avg_ns()  const noexcept { return ewma; }     // wygladzona srednia
+    std::int64_t peak_ns() const noexcept { return max_ns; }   // najgorszy przypadek
+    void reset() noexcept { ewma = 0.0; max_ns = 0; count = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
