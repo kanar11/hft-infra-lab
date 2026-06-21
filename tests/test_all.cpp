@@ -3490,6 +3490,9 @@ void test_ouch_order_state() {
     tt.on_response(OUCHMessage::parse_response(buf, n));     // TOKA: filled 60, remaining 40
     ASSERT(tt.total_filled_shares() == 60, "tracker_total_filled");
     ASSERT(tt.total_remaining_shares() == 240, "tracker_total_remaining");  // 40 + 200
+    // #250 fill_rate = filled / ordered
+    ASSERT(tt.total_ordered_shares() == 300, "tracker_total_ordered");      // 100 + 200
+    ASSERT(std::fabs(tt.fill_rate() - 60.0/300.0) < 1e-9, "tracker_fill_rate"); // 60/300 = 0.2
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.

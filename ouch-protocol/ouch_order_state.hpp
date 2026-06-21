@@ -55,6 +55,7 @@ class OUCHOrderTracker {
     };
     std::unordered_map<std::string, Record> orders_;
     uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
+    int64_t  ordered_shares_ = 0;   // cumulative shares ever ordered (#250)
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -65,6 +66,7 @@ public:
     // on_new: zarejestruj wyslane Enter Order (token + zlecona ilosc).
     void on_new(const char* token, int32_t shares) noexcept {
         orders_[token] = Record{OrderState::NEW, shares, shares, 0, 0, false};
+        ordered_shares_ += shares;   // #250
     }
 
     // on_cancel_sent: klient wyslal Cancel Order ('X') — oznacz pending cancel
@@ -142,6 +144,16 @@ public:
         int32_t s = 0;
         for (const auto& [tok, rec] : orders_) s += rec.remaining;
         return s;
+    }
+    // total_ordered_shares / fill_rate: cumulative shares ordered (sum of on_new)
+    // and executed/ordered ratio (#250) — client-side execution quality. Low =
+    // many orders went unfilled (bad limit prices, thin liquidity). 0 when nothing
+    // was ordered.
+    int64_t total_ordered_shares() const noexcept { return ordered_shares_; }
+    double  fill_rate() const noexcept {
+        return ordered_shares_ > 0
+            ? static_cast<double>(total_filled_shares()) / static_cast<double>(ordered_shares_)
+            : 0.0;
     }
     uint64_t live()        const noexcept { return live_; }
     uint64_t fills()       const noexcept { return filled_; }
