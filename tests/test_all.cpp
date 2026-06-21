@@ -399,6 +399,19 @@ void test_oms_short_and_replace() {
         ASSERT(empt.avg_commission_per_share() == 0.0, "avgcomm_empty_zero");
     }
 
+    {   // #244 winning_symbols / losing_symbols (atrybucja P&L).
+        OMS oms(1000000, 1000000000.0);
+        // A: long 100@10, zamknij @12 -> +200; B: @9 -> -100; C: @10 -> 0
+        Order* a1 = oms.submit_order("AAA", Side::BUY, 10.0, 100); oms.fill_order(a1->order_id, 100, 10.0);
+        Order* a2 = oms.submit_order("AAA", Side::SELL, 12.0, 100); oms.fill_order(a2->order_id, 100, 12.0);
+        Order* b1 = oms.submit_order("BBB", Side::BUY, 10.0, 100); oms.fill_order(b1->order_id, 100, 10.0);
+        Order* b2 = oms.submit_order("BBB", Side::SELL, 9.0, 100);  oms.fill_order(b2->order_id, 100, 9.0);
+        Order* c1 = oms.submit_order("CCC", Side::BUY, 10.0, 100); oms.fill_order(c1->order_id, 100, 10.0);
+        Order* c2 = oms.submit_order("CCC", Side::SELL, 10.0, 100); oms.fill_order(c2->order_id, 100, 10.0);
+        ASSERT(oms.winning_symbols() == 1, "winsym_one");   // AAA
+        ASSERT(oms.losing_symbols() == 1, "losesym_one");   // BBB (CCC = 0, pominiety)
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

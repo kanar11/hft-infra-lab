@@ -586,6 +586,19 @@ public:
         for (const auto& kv : positions_) s += kv.second.net_pnl();
         return s;
     }
+    // winning_symbols / losing_symbols: liczba symboli z dodatnim / ujemnym
+    // zrealizowanym P&L (#244) — hit-rate na poziomie instrumentu (atrybucja:
+    // ile nazw zarabia vs traci). Symbole na zero pomijane w obu.
+    size_t winning_symbols() const noexcept {
+        size_t c = 0;
+        for (const auto& [key, p] : positions_) if (p.realized_pnl > 0) ++c;
+        return c;
+    }
+    size_t losing_symbols() const noexcept {
+        size_t c = 0;
+        for (const auto& [key, p] : positions_) if (p.realized_pnl < 0) ++c;
+        return c;
+    }
     // last_reject: powód ostatniego odrzucenia submit_order (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
     // reject_count: ile zlecen odrzucono z danego powodu (#136, observability).
