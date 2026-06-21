@@ -193,6 +193,24 @@ public:
         return sum;
     }
 
+    // fillable_shares: ile akcji da sie wykonac do CENY LIMIT (#223). BUY: suma
+    // qty asks o cenie <= limit; SELL: suma qty bids o cenie >= limit. Inaczej niz
+    // liquidity_within (ticki od best) — tu prog to konkretna cena zlecenia. Sizing
+    // zlecenia z limitem: ile sie wykona od reki bez przebicia limitu.
+    int64_t fillable_shares(char side, double limit_price) const noexcept {
+        const int64_t lim = to_ticks(limit_price);
+        int64_t sum = 0;
+        if (side == 'B') {                       // kupno: aski rosnaco, bierz <= limit
+            for (const auto& [px, qty] : asks_) { if (px > lim) break; sum += qty; }
+        } else {                                 // sprzedaz: bidy malejaco od best, bierz >= limit
+            for (auto it = bids_.rbegin(); it != bids_.rend(); ++it) {
+                if (it->first < lim) break;
+                sum += it->second;
+            }
+        }
+        return sum;
+    }
+
     // total_shares: laczna spoczywajaca liczba akcji po danej stronie (#174).
     // Caly rozmiar ksiazki na jednej stronie — surowa miara dostepnej plynnosci
     // (w odroznieniu od liquidity_within, bez ograniczenia do okolic touch'a).

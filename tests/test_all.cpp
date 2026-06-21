@@ -1671,6 +1671,16 @@ void test_itch_book() {
     ASSERT(lw.liquidity_within('S', 5) == 600, "itchbook_liq_within_5");  // + 10005
 
     // #174 total_shares + level_count (rozmiar i grubosc ksiazki).
+    // #223 fillable_shares (do ceny limit).
+    // lw aski: 100.00(100), 100.01(200), 100.05(300)
+    ASSERT(lw.fillable_shares('B', 100.01) == 300, "itchbook_fillable_buy_mid");  // <=100.01
+    ASSERT(lw.fillable_shares('B', 100.05) == 600, "itchbook_fillable_buy_all");
+    ASSERT(lw.fillable_shares('B', 99.99) == 0, "itchbook_fillable_buy_none");    // < best ask
+    itch::ITCHOrderBook fs;                                                       // osobna ksiega na bidy
+    fs.on_add(10, 'B', 99.99, 150); fs.on_add(11, 'B', 99.98, 250);
+    ASSERT(fs.fillable_shares('S', 99.98) == 400, "itchbook_fillable_sell_both"); // >=99.98
+    ASSERT(fs.fillable_shares('S', 99.99) == 150, "itchbook_fillable_sell_top");  // >=99.99
+
     ASSERT(lw.total_shares('S') == 600, "itchbook_total_shares_ask");     // 100+200+300
     ASSERT(lw.level_count('S') == 3, "itchbook_level_count_ask");
     ASSERT(lw.total_shares('B') == 0 && lw.level_count('B') == 0, "itchbook_empty_bid_side");
