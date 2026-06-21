@@ -3385,6 +3385,20 @@ void test_soupbin_ouch_session() {
     cr.consume(jpkt, HEADER_SIZE + 1);
     ASSERT(!cr.logged_in() && cr.login_reject_reason() == 'A', "soup_login_rejected_reason");
 
+    // #234 session client rozpoznaje REJECTED i REPLACED w SEQUENCED_DATA.
+    OuchSessionClient rc;
+    uint8_t omsg[64], spkt[96];
+    int ol = OUCHMessage::encode_rejected(omsg, "TOK1", 'X');         // J -> "REJECTED"
+    pack_header(spkt, PacketType::SEQUENCED_DATA, static_cast<uint16_t>(ol));
+    std::memcpy(spkt + HEADER_SIZE, omsg, static_cast<size_t>(ol));
+    rc.consume(spkt, HEADER_SIZE + ol);
+    ASSERT(rc.rejects() == 1 && rc.errors() == 0, "soup_rejected_counted");
+    ol = OUCHMessage::encode_replaced(omsg, "NEW", "OLD", 80, 151.0, 4242);  // U -> "REPLACED"
+    pack_header(spkt, PacketType::SEQUENCED_DATA, static_cast<uint16_t>(ol));
+    std::memcpy(spkt + HEADER_SIZE, omsg, static_cast<size_t>(ol));
+    rc.consume(spkt, HEADER_SIZE + ol);
+    ASSERT(rc.replaces() == 1 && rc.errors() == 0, "soup_replaced_counted");
+
     // #118 HeartbeatTimer — bidirekcyjne heartbeaty SoupBin.
     soupbin::HeartbeatTimer hb;
     hb.on_tx(1000); hb.on_rx(1000);

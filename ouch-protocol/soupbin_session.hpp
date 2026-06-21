@@ -109,6 +109,8 @@ class OuchSessionClient {
     std::uint64_t   accepts_    = 0;
     std::uint64_t   executes_   = 0;
     std::uint64_t   cancels_    = 0;
+    std::uint64_t   rejects_    = 0;   // #234
+    std::uint64_t   replaces_   = 0;   // #234
     std::uint64_t   heartbeats_ = 0;
     std::uint64_t   errors_     = 0;
 
@@ -137,6 +139,8 @@ public:
                 if      (std::strcmp(r.type, "ACCEPTED")  == 0) ++accepts_;
                 else if (std::strcmp(r.type, "EXECUTED")  == 0) ++executes_;
                 else if (std::strcmp(r.type, "CANCELLED") == 0) ++cancels_;
+                else if (std::strcmp(r.type, "REJECTED")  == 0) ++rejects_;   // #234
+                else if (std::strcmp(r.type, "REPLACED")  == 0) ++replaces_;  // #234
                 else                                            ++errors_;
                 break;
             }
@@ -168,6 +172,8 @@ public:
     std::uint64_t accepts()       const noexcept { return accepts_; }
     std::uint64_t executes()      const noexcept { return executes_; }
     std::uint64_t cancels()       const noexcept { return cancels_; }
+    std::uint64_t rejects()       const noexcept { return rejects_; }     // #234
+    std::uint64_t replaces()      const noexcept { return replaces_; }    // #234
     std::uint64_t heartbeats()    const noexcept { return heartbeats_; }
     std::uint64_t errors()        const noexcept { return errors_; }
     std::uint64_t expected_seq()  const noexcept { return seq_.expected; }
