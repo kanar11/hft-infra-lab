@@ -404,6 +404,17 @@ public:
         return found ? best : 0.0;
     }
 
+    // is_marketable: czy zlecenie z limitem moglo by sie wykonac OD RAZU (#184) —
+    // istnieje aktywne venue, ktorego cena all-in (quote ± fee) jest po wlasciwej
+    // stronie limitu. BUY: najlepszy all-in ask <= limit; SELL: najlepszy all-in
+    // bid >= limit. false gdy brak plynnosci. Pre-route guard dla limit orderow:
+    // niemarketowalne -> odloz do ksiazki zamiast routowac w prozne.
+    bool is_marketable(bool is_buy, double limit_price) const noexcept {
+        const double best = best_effective_price(is_buy);
+        if (best <= 0.0) return false;
+        return is_buy ? (best <= limit_price) : (best >= limit_price);
+    }
+
     // available_liquidity: laczny displayed size top-of-book po stronie zlecenia
     // (is_buy → asks, sprzedaz → bids), tylko aktywne venue z dodatnim quote.
     // Pre-route sizing: czy w ogole jest plynnosc na pokrycie zlecenia (#109).

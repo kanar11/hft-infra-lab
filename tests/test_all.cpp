@@ -2192,6 +2192,19 @@ void test_router_ewma_partial() {
         ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "A") == 0, "fee_reroute_A");
         ASSERT(!r.set_venue_fee("GHOST", 0.0), "fee_unknown_false");
     }
+
+    // --- #184 is_marketable (pre-route guard dla limit orderow) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.01));
+        r.update_quote("A", 10.0, 11.0, 100, 100);     // bid 10, ask 11, fee 0.01
+        ASSERT(r.is_marketable(true, 11.50), "mkt_buy_inside");    // all-in 11.01 <= 11.50
+        ASSERT(!r.is_marketable(true, 11.00), "mkt_buy_outside");  // 11.01 > 11.00
+        ASSERT(r.is_marketable(false, 9.50), "mkt_sell_inside");   // all-in 9.99 >= 9.50
+        ASSERT(!r.is_marketable(false, 10.50), "mkt_sell_outside");// 9.99 < 10.50
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(!empt.is_marketable(true, 100.0), "mkt_no_liquidity_false");
+    }
 }
 
 
