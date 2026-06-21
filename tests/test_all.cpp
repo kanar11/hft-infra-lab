@@ -47,6 +47,7 @@
 #include "../strategy/bollinger_pctb.hpp"
 #include "../strategy/roc.hpp"
 #include "../strategy/aroon.hpp"
+#include "../strategy/cmo.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2406,6 +2407,24 @@ void test_aroon() {
     ASSERT(std::fabs(dn.down() - 100.0) < 1e-9, "aroon_down_100_on_downtrend");
 }
 
+// CMO #268 — Chande Momentum Oscillator.
+void test_cmo() {
+    SECTION("CMO (#268)");
+    CMO up(4);
+    for (int i = 1; i <= 5; ++i) up.update(static_cast<double>(i));   // all up moves
+    ASSERT(up.ready(), "cmo_ready");
+    ASSERT(std::fabs(up.value() - 100.0) < 1e-9, "cmo_all_up_100");
+    ASSERT(up.overbought(), "cmo_overbought");
+    CMO dn(4);
+    for (int i = 0; i < 5; ++i) dn.update(5.0 - i);                   // all down moves
+    ASSERT(std::fabs(dn.value() - (-100.0)) < 1e-9, "cmo_all_down_neg100");
+    ASSERT(dn.oversold(), "cmo_oversold");
+    CMO mix(4);
+    mix.update(100); mix.update(110); mix.update(105); mix.update(115); mix.update(110);
+    // changes +10,-5,+10,-5 -> up=20 down=10 -> (20-10)/30*100 = 33.33
+    ASSERT(std::fabs(mix.value() - 100.0/3.0) < 1e-9, "cmo_mixed");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4000,6 +4019,7 @@ int main() {
     test_bollinger_pctb();
     test_roc();
     test_aroon();
+    test_cmo();
     test_backtest();
     test_ensemble();
     test_trailing_stop();
