@@ -354,6 +354,16 @@ void test_oms_short_and_replace() {
         ASSERT(oms.order_count() >= 1 && oms.open_position_count() == 1, "rsc_state_kept");
     }
 
+    {   // #212 submit_reject_rate (maly max_order_value -> czesc odrzucona).
+        OMS oms(100000, 500.0);                                 // max_order_value 500
+        OMSReject why = OMSReject::NONE;
+        oms.submit_order("AAA", Side::BUY, 10.0, 10, &why);     // value 100 <= 500 ok
+        oms.submit_order("AAA", Side::BUY, 10.0, 100, &why);    // value 1000 > 500 reject
+        oms.submit_order("AAA", Side::BUY, 10.0, 100, &why);    // reject
+        ASSERT(oms.total_rejects() == 2, "srr_two_rejects");
+        ASSERT(close(oms.submit_reject_rate(), 2.0/3.0), "srr_rate_two_thirds"); // 2 / (1+2)
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

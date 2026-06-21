@@ -558,6 +558,19 @@ public:
     OMSReject last_reject() const noexcept { return last_reject_; }
     // reject_count: ile zlecen odrzucono z danego powodu (#136, observability).
     uint64_t reject_count(OMSReject r) const noexcept { return reject_counts_[static_cast<int>(r)]; }
+    // total_rejects: laczna liczba odrzuconych submitow (#212) — sumuje wszystkie
+    // powody POZA NONE (indeks 0 to sukces, nigdy nie inkrementowany w fail()).
+    uint64_t total_rejects() const noexcept {
+        return reject_counts_[1] + reject_counts_[2] + reject_counts_[3];
+    }
+    // submit_reject_rate: odsetek prob submitu zakonczonych odrzuceniem (#212) =
+    // rejects / (przyjete + rejects). Observability jakosci pre-trade (zly tuning
+    // limitow / runaway algo daja wysoki wskaznik). 0 gdy brak prob.
+    double submit_reject_rate() const noexcept {
+        const uint64_t rej = total_rejects();
+        const uint64_t tot = total_submitted_ + rej;
+        return tot ? static_cast<double>(rej) / static_cast<double>(tot) : 0.0;
+    }
     // Liczniki operacji cyklu zycia (#151/#160, observability/dashboard).
     uint64_t total_submitted() const noexcept { return total_submitted_; }
     uint64_t total_fills()    const noexcept { return total_fills_; }
