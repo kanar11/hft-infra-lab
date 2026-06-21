@@ -1648,6 +1648,20 @@ void test_itch_book() {
     ASSERT(close(tn.total_notional('S'), 30004.0), "itchbook_total_notional_ask");
     ASSERT(tn.total_notional('B') == 0.0, "itchbook_total_notional_empty_bid");
 
+    // #199 slippage_bps (koszt egzekucji vs mid).
+    itch::ITCHOrderBook sl;
+    sl.on_add(1, 'B', 99.98, 100);                          // best bid
+    sl.on_add(2, 'S', 100.00, 100); sl.on_add(3, 'S', 100.02, 200);  // asks
+    // mid = 99.99; BUY 100 -> vwap 100.00 -> (100.00-99.99)/99.99*10000 ~ 1.0001 bps
+    ASSERT(close(sl.slippage_bps('B', 100), 1.00010001), "itchbook_slippage_buy_100");
+    // wieksze zlecenie zjada glebszy poziom -> wieksza slippage
+    ASSERT(sl.slippage_bps('B', 200) > sl.slippage_bps('B', 100), "itchbook_slippage_monotone");
+    // SELL 50 wchodzi w bid 99.98 -> (99.99-99.98)/99.99*10000 ~ 1.0001 bps
+    ASSERT(close(sl.slippage_bps('S', 50), 1.00010001), "itchbook_slippage_sell_50");
+    itch::ITCHOrderBook nlq;                                // ksiega jednostronna -> 0
+    nlq.on_add(1, 'B', 99.98, 100);
+    ASSERT(nlq.slippage_bps('B', 100) == 0.0, "itchbook_slippage_no_ask_liq");
+
     // #183 locked / crossed book.
     itch::ITCHOrderBook nb;
     nb.on_add(1, 'B', 100.00, 100); nb.on_add(2, 'S', 100.02, 100);   // normalny spread

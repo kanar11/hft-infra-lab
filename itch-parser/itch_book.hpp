@@ -301,6 +301,20 @@ public:
         return filled;
     }
 
+    // slippage_bps: oczekiwany koszt egzekucji w punktach bazowych (#199) — o ile
+    // bps gorzej niz mid wykona sie marketowe zlecenie `shares` po danej stronie.
+    // BUY placi powyzej mid, SELL dostaje ponizej — w obu wynik DODATNI (koszt).
+    // Buduje na expected_fill (VWAP po przejsciu ksiazki). 0 gdy brak fillu/mid.
+    // Pre-trade sizing: czy zlecenie nie zje za duzo spreadu/glebokosci.
+    double slippage_bps(char side, int64_t shares) const noexcept {
+        double vwap = 0.0;
+        const int64_t filled = expected_fill(side, shares, vwap);
+        const double m = mid_price();
+        if (filled <= 0 || m <= 0.0 || vwap <= 0.0) return 0.0;
+        const double diff = (side == 'B') ? (vwap - m) : (m - vwap);
+        return diff / m * 10000.0;
+    }
+
     // top_levels: skopiuj do n NAJLEPSZYCH poziomow po danej stronie (BUY: bids
     // malejaco od best; SELL: asks rosnaco) — cena + zagregowana qty. Zwraca ile
     // poziomow faktycznie wypelniono (<= n). L2 depth dla strategii/wyswietlania.
