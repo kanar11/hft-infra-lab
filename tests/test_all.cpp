@@ -1628,6 +1628,13 @@ void test_itch_book() {
     ASSERT(lw.level_count('S') == 3, "itchbook_level_count_ask");
     ASSERT(lw.total_shares('B') == 0 && lw.level_count('B') == 0, "itchbook_empty_bid_side");
 
+    // #191 total_notional ($ glebokosci).
+    itch::ITCHOrderBook tn;
+    tn.on_add(1, 'S', 100.00, 100);   // 10000.00
+    tn.on_add(2, 'S', 100.02, 200);   // 20004.00
+    ASSERT(close(tn.total_notional('S'), 30004.0), "itchbook_total_notional_ask");
+    ASSERT(tn.total_notional('B') == 0.0, "itchbook_total_notional_empty_bid");
+
     // #183 locked / crossed book.
     itch::ITCHOrderBook nb;
     nb.on_add(1, 'B', 100.00, 100); nb.on_add(2, 'S', 100.02, 100);   // normalny spread

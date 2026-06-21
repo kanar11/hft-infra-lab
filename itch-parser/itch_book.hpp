@@ -196,6 +196,18 @@ public:
         return sum;
     }
 
+    // total_notional: laczna WARTOSC ($) spoczywajacej plynnosci po stronie (#191).
+    // Suma cena*ilosc po wszystkich poziomach — dopelnia total_shares (akcje):
+    // dwie ksiazki o tej samej liczbie akcji moga miec rozny kapital przy roznych
+    // cenach. Miara glebokosci w dolarach.
+    double total_notional(char side) const noexcept {
+        const auto& book = (side == 'B') ? bids_ : asks_;
+        double sum = 0.0;
+        for (const auto& [px, qty] : book)
+            sum += (static_cast<double>(px) / 100.0) * static_cast<double>(qty);
+        return sum;
+    }
+
     // level_count: liczba roznych poziomow cenowych po danej stronie (#174).
     // Grubosc ksiazki — ile odrebnych cen ma plynnosc (rzadka vs gesta ksiazka).
     std::size_t level_count(char side) const noexcept {
