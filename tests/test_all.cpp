@@ -2433,6 +2433,20 @@ void test_router_ewma_partial() {
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.nbbo_spread() == 0.0 && empt.nbbo_spread_bps() == 0.0, "nbbo_spread_empty");
     }
+
+    // --- #216 venue_share_pct (koncentracja egzekucji) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));             // tanszy (fee 0) -> tu trafi routing
+        r.add_venue(Venue("B", 100, 0.01));
+        r.update_quote("A", 10.0, 11.0, 1000, 1000);
+        r.update_quote("B", 10.0, 11.0, 1000, 1000);
+        r.route_order("BUY", 30);
+        r.route_order("BUY", 70);                       // razem 100, wszystko na A
+        ASSERT(std::fabs(r.venue_share_pct("A") - 100.0) < 1e-9, "vsp_A_full");
+        ASSERT(std::fabs(r.venue_share_pct("B") - 0.0) < 1e-9, "vsp_B_zero");
+        ASSERT(r.venue_share_pct("GHOST") == 0.0, "vsp_unknown_zero");
+    }
 }
 
 

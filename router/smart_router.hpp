@@ -476,6 +476,16 @@ public:
         for (int i = 0; i < venue_count_; ++i) s += venues_[i].routed_shares;
         return s;
     }
+    // venue_share_pct: jaki % calego zaroutowanego wolumenu trafil na dane venue
+    // (#216) — koncentracja egzekucji do raportowania best-ex / TCA. Wysoki udzial
+    // jednego venue moze wymagac uzasadnienia. 0 dla nieznanego lub przy zerowym
+    // wolumenie.
+    double venue_share_pct(const char* venue_name) const noexcept {
+        const int64_t total = total_routed_shares();
+        if (total <= 0) return 0.0;
+        return static_cast<double>(venue_routed_shares(venue_name))
+             / static_cast<double>(total) * 100.0;
+    }
     // reset_routing_stats: wyzeruj liczniki TCA per venue (nowa sesja/okno).
     void reset_routing_stats() noexcept {
         for (int i = 0; i < venue_count_; ++i) {
