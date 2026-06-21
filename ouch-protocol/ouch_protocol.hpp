@@ -243,6 +243,16 @@ public:
         return 16;
     }
 
+    // encode_cancel_pending: Cancel Pending (15 B) — gielda PRZYJELA prosbe o
+    // anulowanie, ale jeszcze nie weszla w zycie (zlecenie w stanie blokujacym:
+    // aukcja, cross, halt). Stan POSREDNI: jeszcze nie 'C' (gotowe) ani 'I'
+    // (odrzucone). Klient czeka na finalne C/I; nie redukuje pozycji (#186).
+    static int encode_cancel_pending(uint8_t* buf, const char* token) noexcept {
+        buf[0] = 'P';
+        write_padded(buf + 1, token, 14);
+        return 15;
+    }
+
     // encode_replaced: Order Replaced (45 B) — giełda potwierdza Replace ('U').
     // Niesie NOWY token (replacement) + POPRZEDNI (zastapiony) + nowe parametry.
     static int encode_replaced(uint8_t* buf, const char* repl_token, const char* prev_token,
@@ -363,6 +373,16 @@ public:
             strip_padding(resp.token, data + 1, 14);
             resp.reason[0] = static_cast<char>(data[15]);
             resp.reason[1] = '\0';
+
+        } else if (msg_type == 'P') {  // Cancel Pending (#186)
+            if (len < 15) {
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "CANCEL_PENDING too short: %d < 15 bytes", len);
+                return resp;
+            }
+            safe_copy(resp.type, "CXL_PENDING");
+            strip_padding(resp.token, data + 1, 14);
 
         } else if (msg_type == 'U') {  // Order Replaced
             if (len < 45) {
