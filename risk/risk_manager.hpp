@@ -758,6 +758,26 @@ public:
         const int32_t exposure = std::abs(lookup(positions_, k) + lookup(pending_, k));
         return static_cast<double>(exposure) / static_cast<double>(cap) * 100.0;
     }
+    // headroom_shares: ile JESZCZE akcji wolno dodac po danej stronie zanim
+    // projected pozycja przekroczy limit (#245). BUY -> cap - cur; SELL -> short_cap
+    // + cur (mozna sprzedac az do -short_cap, lacznie z flipem z longa). Respektuje
+    // override (#161) i asymetryczny short cap (#106). 0 gdy cap wylaczony/brak miejsca.
+    int32_t headroom_shares(const char* symbol, Side side) const noexcept {
+        const uint64_t k = sym_to_key(symbol);
+        int32_t cap = limits_.max_position_per_symbol;
+        if (const auto ov = symbol_pos_limit_.find(k); ov != symbol_pos_limit_.end()) cap = ov->second;
+        if (cap <= 0) return 0;
+        const int32_t cur = lookup(positions_, k) + lookup(pending_, k);   // pozycja ze znakiem
+        int32_t room;
+        if (side == Side::BUY) {
+            room = cap - cur;
+        } else {
+            const int32_t short_cap = (limits_.max_short_per_symbol > 0)
+                ? limits_.max_short_per_symbol : cap;
+            room = short_cap + cur;
+        }
+        return room > 0 ? room : 0;
+    }
     // get_position_notional: ekspozycja symbolu w DOLARACH (#153) = |pos+pending|
     // * cena referencyjna. 0 gdy brak ceny ref. Risk w sztukach nie pokazuje
     // realnego ryzyka $ przy roznych cenach symboli.

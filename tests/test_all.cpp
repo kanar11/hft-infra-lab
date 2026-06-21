@@ -2880,6 +2880,14 @@ void test_risk_price_band() {
     ASSERT(std::fabs(rpu.position_utilization_pct("AAPL") - 35.0) < 1e-6, "posutil_override_35pct");
     ASSERT(std::fabs(rpu.position_utilization_pct("MSFT") - 0.0) < 1e-6, "posutil_no_exposure");
 
+    // #245 headroom_shares (cap 1000, symetryczny short).
+    RiskLimits hrl; hrl.max_position_per_symbol = 1000;
+    RiskManager rhr(hrl);
+    rhr.on_order_sent("AAPL", Side::BUY, 300);                              // pozycja +300
+    ASSERT(rhr.headroom_shares("AAPL", Side::BUY) == 700, "headroom_buy");  // 1000 - 300
+    ASSERT(rhr.headroom_shares("AAPL", Side::SELL) == 1300, "headroom_sell"); // 1000 + 300 (flip)
+    ASSERT(rhr.headroom_shares("MSFT", Side::BUY) == 1000, "headroom_fresh"); // pelny cap
+
     // #189 limit wartosci pozycji per symbol ($10k; shares hojne).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;
