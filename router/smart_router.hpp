@@ -440,6 +440,22 @@ public:
         return is_buy ? (best <= limit_price) : (best >= limit_price);
     }
 
+    // venue_effective_price: cena all-in (quote +/- fee) dla KONKRETNEGO venue po
+    // nazwie (#248). Inspekcja / wycena zlecenia kierowanego (directed order) na
+    // wskazana gielde, niezaleznie od best-price. 0 gdy nieznane, nieaktywne lub
+    // brak plynnosci po danej stronie. Uzupelnia best_effective_price (skan wszystkich).
+    double venue_effective_price(const char* venue_name, bool is_buy) const noexcept {
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (std::strcmp(v.name, venue_name) != 0) continue;
+            if (!v.is_active) return 0.0;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            return has_liq ? effective_price(v, is_buy) : 0.0;
+        }
+        return 0.0;
+    }
+
     // cheapest_venue: NAZWA venue z najlepsza cena all-in (quote +/- fee) po danej
     // stronie (#200). Uzupelnia best_effective_price (sama cena) — tu wiadomo
     // GDZIE. BUY: min all-in ask; SELL: max all-in bid. nullptr gdy brak plynnosci.

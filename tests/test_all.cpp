@@ -2629,6 +2629,19 @@ void test_router_ewma_partial() {
         ASSERT(empt.effective_spread_bps() == 0.0, "effspread_empty_zero");
     }
 
+    // --- #248 venue_effective_price (per-venue, directed order) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.01));
+        r.add_venue(Venue("B", 100, 0.02));
+        r.update_quote("A", 10.0, 11.0, 100, 100);
+        r.update_quote("B", 10.0, 11.0, 100, 100);
+        ASSERT(std::fabs(r.venue_effective_price("A", true) - 11.01) < 1e-9, "vep_A_buy");
+        ASSERT(std::fabs(r.venue_effective_price("B", true) - 11.02) < 1e-9, "vep_B_buy");
+        ASSERT(std::fabs(r.venue_effective_price("A", false) - 9.99) < 1e-9, "vep_A_sell");
+        ASSERT(r.venue_effective_price("GHOST", true) == 0.0, "vep_unknown_zero");
+    }
+
     // --- #216 venue_share_pct (koncentracja egzekucji) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
