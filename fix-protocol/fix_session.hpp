@@ -435,6 +435,22 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // OrderStatusRequest (35=H): klient pyta o biezacy status pracujacego zlecenia
+    // (#185). Uzywane do REKONCYLIACJI po reconnekcie / luce sekwencji — klient
+    // nie wie czy fille przyszly w czasie rozlaczenia. 11=ClOrdID + 55=Symbol +
+    // 54=Side. Gielda odpowiada ExecutionReport (35=8) z biezacym OrdStatus.
+    int build_order_status_request(char* out, int cap, const char* cl_ord_id,
+                                   const char* symbol, Side side,
+                                   char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=H%c49=%s%c56=%s%c34=%u%c11=%s%c55=%s%c54=%c%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            cl_ord_id, delim, symbol, delim, fix_side(side), delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.

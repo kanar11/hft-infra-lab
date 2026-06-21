@@ -2563,6 +2563,15 @@ void test_fix_session() {
         FIXMessage hbeat; hbeat.parse(buf);
         ASSERT(hbeat.is_admin(), "fix_heartbeat_is_admin");
 
+        // #185 OrderStatusRequest (35=H) — rekoncyliacja po reconnekcie.
+        s.build_order_status_request(buf, sizeof(buf), "ORD1", "AAPL", Side::BUY, '|');
+        FIXMessage osr; osr.parse(buf);
+        ASSERT(osr.is_valid() && osr.get_msg_type()[0] == 'H', "fix_osr_H_valid");
+        ASSERT(std::strcmp(osr.get_field(11), "ORD1") == 0, "fix_osr_clordid");
+        ASSERT(std::strcmp(osr.get_symbol(), "AAPL") == 0, "fix_osr_symbol");
+        ASSERT(std::strcmp(osr.get_side(), "BUY") == 0, "fix_osr_side");
+        ASSERT(!osr.is_admin(), "fix_osr_is_application");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
