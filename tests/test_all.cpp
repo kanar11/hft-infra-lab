@@ -2024,6 +2024,20 @@ void test_multicast_gap_recovery() {
     ASSERT(sw.count() == 2, "swr_pruned_old");             // keeps 900, 1500
     ASSERT(std::fabs(sw.rate_per_sec() - 2.0 * 1e9 / 1000.0) < 1e-3, "swr_rate");
 
+    // #265 RetransmitTracker — timeout / retry / escalate lifecycle.
+    multicast::RetransmitTracker rt(1000, 3);   // 1000 ns timeout, max 3 attempts
+    rt.request(5, 0);                            // attempt 1 at t=0
+    ASSERT(rt.outstanding() == 1, "rtx_outstanding");
+    ASSERT(rt.poll(500) == 0, "rtx_not_timed_out");      // 500 < 1000
+    ASSERT(rt.poll(1000) == 1, "rtx_retry_2");           // timeout -> attempt 2
+    ASSERT(rt.poll(2000) == 1, "rtx_retry_3");           // attempt 3
+    ASSERT(rt.poll(3000) == 0 && rt.escalated == 1 && rt.outstanding() == 0,
+           "rtx_escalate");                              // exhausted -> snapshot
+    multicast::RetransmitTracker rt2(1000, 3);
+    rt2.request(7, 0);
+    rt2.on_received(7);                                   // retransmit arrived
+    ASSERT(rt2.fulfilled == 1 && rt2.outstanding() == 0, "rtx_fulfilled");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

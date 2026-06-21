@@ -579,6 +579,62 @@ struct SlidingWindowRate {
 };
 
 
+// RetransmitTracker — retransmit-request lifecycle (expansion #265).
+//
+// GapRecovery tells you WHICH sequence numbers are missing. This manages the
+// REQUESTS for them: you ask the retransmission server (MoldUDP64 request / line
+// B) to resend a gap; if the fill doesn't arrive within `timeout_ns` you retry,
+// up to `max_attempts`, after which the gap is ESCALATED (give up on retransmit,
+// fall back to a full snapshot). Without this a single lost request would leave a
+// permanent hole. Backed by a std::map<seq, request-state>.
+struct RetransmitTracker {
+    std::int64_t timeout_ns;
+    int          max_attempts;
+
+    struct Req { std::int64_t last_sent_ns; int attempts; };
+    std::map<std::uint64_t, Req> pending;
+    std::uint64_t fulfilled = 0;   // retransmits that arrived
+    std::uint64_t escalated = 0;   // gaps that exhausted retries -> snapshot
+
+    explicit RetransmitTracker(std::int64_t timeout_ns_ = 1'000'000, int max_attempts_ = 3) noexcept
+        : timeout_ns(timeout_ns_), max_attempts(max_attempts_) {}
+
+    // request: register a gap-fill request for `seq` (no-op if already pending).
+    void request(std::uint64_t seq, std::int64_t now_ns) {
+        pending.try_emplace(seq, Req{now_ns, 1});
+    }
+    // on_received: a retransmitted packet for `seq` arrived — clear it.
+    void on_received(std::uint64_t seq) {
+        if (pending.erase(seq)) ++fulfilled;
+    }
+    // poll: process timeouts. For each pending request older than timeout_ns: if it
+    // still has attempts left, bump the attempt + timestamp (caller RESENDS) and
+    // count it; otherwise escalate (remove + ++escalated). Returns how many need a
+    // resend right now.
+    std::size_t poll(std::int64_t now_ns) {
+        std::size_t retries = 0;
+        for (auto it = pending.begin(); it != pending.end(); ) {
+            if (now_ns - it->second.last_sent_ns >= timeout_ns) {
+                if (it->second.attempts < max_attempts) {
+                    ++it->second.attempts;
+                    it->second.last_sent_ns = now_ns;
+                    ++retries;
+                    ++it;
+                } else {
+                    ++escalated;
+                    it = pending.erase(it);
+                }
+            } else {
+                ++it;
+            }
+        }
+        return retries;
+    }
+    std::size_t outstanding() const noexcept { return pending.size(); }
+    void reset() noexcept { pending.clear(); fulfilled = 0; escalated = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
