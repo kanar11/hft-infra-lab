@@ -479,6 +479,24 @@ public:
         return sum;
     }
 
+    // open_position_count: liczba symboli z NIEZEROWA pozycja netto (#196).
+    // Inaczej niz position_count() (= liczba wpisow w mapie, w tym zamknietych na
+    // 0): to faktyczna szerokosc portfela — ile instrumentow realnie trzymamy.
+    size_t open_position_count() const noexcept {
+        size_t c = 0;
+        for (const auto& [key, p] : positions_) if (p.net_qty != 0) ++c;
+        return c;
+    }
+
+    // is_flat: brak otwartych pozycji ORAZ brak pracujacych zlecen (#196).
+    // Kontrola end-of-day / rekoncyliacji: czy desk jest w pelni zamkniety.
+    bool is_flat() const noexcept {
+        if (open_position_count() != 0) return false;
+        for (const auto& [id, o] : orders_)
+            if (o.status == OrderStatus::SENT || o.status == OrderStatus::PARTIAL) return false;
+        return true;
+    }
+
     // cancel_all_symbol: jak cancel_all, ale tylko dla jednego tickera (np. po
     // halt'cie konkretnego symbolu).
     size_t cancel_all_symbol(const char* symbol) noexcept {

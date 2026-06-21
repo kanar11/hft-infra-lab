@@ -329,6 +329,18 @@ void test_oms_short_and_replace() {
         ASSERT(oms.get_order(o->order_id)->status == OrderStatus::FILLED, "amend_becomes_filled");
     }
 
+    {   // #196 position_count + is_flat (kontrola EOD).
+        OMS oms(100000, 1000000000.0);
+        ASSERT(oms.is_flat() && oms.open_position_count() == 0, "flat_empty");
+        Order* o = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        ASSERT(!oms.is_flat(), "flat_false_working_order");          // pracujace zlecenie
+        oms.fill_order(o->order_id, 100, 10.0);                      // pozycja 100
+        ASSERT(oms.open_position_count() == 1 && !oms.is_flat(), "flat_false_open_position");
+        Order* s = oms.submit_order("AAA", Side::SELL, 11.0, 100);
+        oms.fill_order(s->order_id, 100, 11.0);                      // netto 0
+        ASSERT(oms.open_position_count() == 0 && oms.is_flat(), "flat_after_close");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
