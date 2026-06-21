@@ -587,6 +587,21 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // QuoteCancel (35=Z): a market maker pulls quote(s) (#271). 117=QuoteID,
+    // 298=QuoteCancelType ('1'=cancel for one symbol, '4'=cancel all quotes),
+    // 55=Symbol. Completes the quote lifecycle: 35=R request -> 35=S quote -> 35=Z
+    // cancel. MMs pull quotes on adverse news or when inventory limits are hit.
+    int build_quote_cancel(char* out, int cap, const char* quote_id, char cancel_type,
+                           const char* symbol, char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=Z%c49=%s%c56=%s%c34=%u%c117=%s%c298=%c%c55=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            quote_id, delim, cancel_type, delim, symbol, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.

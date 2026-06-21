@@ -3477,6 +3477,14 @@ void test_fix_session() {
         ASSERT(rgm.get_field_nth(269, 5) == nullptr, "fix_rg_out_of_range");
         ASSERT(rgm.count_field(99999) == 0, "fix_rg_count_absent");
 
+        // #271 QuoteCancel (35=Z) — MM pulls a quote.
+        s.build_quote_cancel(buf, sizeof(buf), "Q1", '1', "AAPL", '|');
+        FIXMessage qcm; qcm.parse(buf);
+        ASSERT(qcm.is_valid() && qcm.get_msg_type()[0] == 'Z', "fix_qcxl_Z_valid");
+        ASSERT(std::strcmp(qcm.get_field(117), "Q1") == 0
+               && std::strcmp(qcm.get_field(298), "1") == 0, "fix_qcxl_id_type");
+        ASSERT(std::strcmp(qcm.get_symbol(), "AAPL") == 0, "fix_qcxl_symbol");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
