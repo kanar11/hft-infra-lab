@@ -316,6 +316,27 @@ public:
         return 28;
     }
 
+    // expected_length: oczekiwana dlugosc bajtowa komunikatu gielda->klient danego
+    // typu (#218). Parser strumienia (SoupBin/OUCH) musi znac granice ramki ZANIM
+    // sparsuje tresc — przy stalej dlugosci wystarczy typ z pierwszego bajtu.
+    // 0 dla nieznanego typu (blad ramki / desync). Spina wszystkie komunikaty.
+    static int expected_length(char type) noexcept {
+        switch (type) {
+            case 'A': return 41;   // Accepted
+            case 'C': return 20;   // Cancelled
+            case 'E': return 31;   // Executed
+            case 'J': return 16;   // Rejected
+            case 'U': return 45;   // Replaced
+            case 'B': return 28;   // Broken Trade
+            case 'I': return 16;   // Cancel Reject (#178)
+            case 'P': return 15;   // Cancel Pending (#186)
+            case 'D': return 20;   // AIQ Canceled (#194)
+            case 'S': return 10;   // System Event (#202)
+            case 'R': return 24;   // Restated (#210)
+            default:  return 0;    // nieznany
+        }
+    }
+
     // === DECODING (Exchange → Client) ===
 
     // parse_response: decode exchange response from raw bytes

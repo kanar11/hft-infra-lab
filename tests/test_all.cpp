@@ -3124,6 +3124,13 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 23).type, "ERROR") == 0,
            "ouch_restated_short_error");
 
+    // #218 expected_length — framing strumienia po typie.
+    ASSERT(OUCHMessage::expected_length('A') == 41, "ouch_explen_accepted");
+    ASSERT(OUCHMessage::expected_length('E') == 31, "ouch_explen_executed");
+    ASSERT(OUCHMessage::expected_length('S') == 10, "ouch_explen_sysevent");
+    ASSERT(OUCHMessage::expected_length('R') == 24, "ouch_explen_restated");
+    ASSERT(OUCHMessage::expected_length('Z') == 0, "ouch_explen_unknown");
+
     // #152 parse_order — strona gieldy dekoduje zlecenia klienta O/X/U.
     auto closep = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);
