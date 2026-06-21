@@ -1673,6 +1673,13 @@ void test_itch_book() {
     itch::ITCHOrderBook bal;
     bal.on_add(1, 'B', 100.00, 100); bal.on_add(2, 'S', 100.02, 100);   // zbalansowany
     ASSERT(close(bal.microprice_skew(), 0.0), "itchbook_microprice_skew_balanced");
+    // #254 imbalance_signal (mb: imbalance 0.5 bid-heavy; bal: 0.0)
+    ASSERT(mb.imbalance_signal(0.3) == 1, "itchbook_imb_signal_up");      // 0.5 > 0.3
+    ASSERT(mb.imbalance_signal(0.6) == 0, "itchbook_imb_signal_neutral"); // 0.5 < 0.6
+    ASSERT(bal.imbalance_signal(0.1) == 0, "itchbook_imb_signal_balanced");
+    itch::ITCHOrderBook ah;
+    ah.on_add(1, 'B', 100.00, 100); ah.on_add(2, 'S', 100.02, 300);     // ask-heavy -0.5
+    ASSERT(ah.imbalance_signal(0.3) == -1, "itchbook_imb_signal_down");
 
     // #95 pre-trade impact: walk księgi → VWAP marketowego zlecenia.
     itch::ITCHOrderBook fb;

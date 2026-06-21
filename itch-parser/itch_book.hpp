@@ -341,6 +341,16 @@ public:
         const double m  = mid_price();
         return (mp > 0.0 && m > 0.0) ? mp - m : 0.0;
     }
+    // imbalance_signal: discrete directional signal from top-of-book imbalance
+    // crossing a threshold (#254). imbalance() = (qbid - qask)/(qbid + qask) in
+    // [-1, 1]; returns +1 when bid-heavy beyond +threshold (upward pressure),
+    // -1 when ask-heavy beyond -threshold, 0 in between. Ready-to-use entry filter.
+    int imbalance_signal(double threshold) const noexcept {
+        const double imb = imbalance();
+        if (imb >  threshold) return 1;
+        if (imb < -threshold) return -1;
+        return 0;
+    }
     int64_t qty_at(char side, double price) const noexcept {
         const auto& book = (side == 'B') ? bids_ : asks_;
         const auto it = book.find(to_ticks(price));
