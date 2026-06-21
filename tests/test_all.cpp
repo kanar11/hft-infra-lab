@@ -41,6 +41,7 @@
 #include "../strategy/wma.hpp"
 #include "../strategy/hull_ma.hpp"
 #include "../strategy/dema.hpp"
+#include "../strategy/tema.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -2095,6 +2096,21 @@ void test_dema() {
     ASSERT(r.value() > 15.0, "dema_low_lag");             // sledzi swieze (1..21 srednia ~11)
 }
 
+// TEMA #222 — potrojna EMA, najnizsza zwloka.
+void test_tema() {
+    SECTION("TEMA (#222)");
+    TEMA c(5);
+    for (int i = 0; i < 30; ++i) c.update(50.0);          // stala -> 3*50-3*50+50 = 50
+    ASSERT(c.ready(), "tema_ready");
+    ASSERT(std::fabs(c.value() - 50.0) < 1e-9, "tema_constant");
+    TEMA r(5);
+    for (int i = 1; i <= 20; ++i) r.update(static_cast<double>(i));
+    const double prev = r.value();
+    r.update(21.0);
+    ASSERT(r.value() > prev, "tema_rises_on_uptrend");
+    ASSERT(r.value() > 15.0, "tema_low_lag");             // niska zwloka na rampie
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3436,6 +3452,7 @@ int main() {
     test_wma();
     test_hull_ma();
     test_dema();
+    test_tema();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
