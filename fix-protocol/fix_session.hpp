@@ -490,6 +490,22 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // MarketDataRequest (35=V): subskrypcja danych rynkowych dla symbolu (#209).
+    // 263=SubscriptionRequestType ('0'=snapshot, '1'=snapshot+updates, '2'=
+    // unsubscribe), 264=MarketDepth (0=pelna ksiazka, 1=top-of-book), 146=1 sym +
+    // 55. Klient wysyla na starcie sesji aby dostawac kwotowania danego instrumentu.
+    int build_market_data_request(char* out, int cap, const char* md_req_id,
+                                  char sub_type, int depth, const char* symbol,
+                                  char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=V%c49=%s%c56=%s%c34=%u%c262=%s%c263=%c%c264=%d%c146=1%c55=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            md_req_id, delim, sub_type, delim, depth, delim, delim, symbol, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.

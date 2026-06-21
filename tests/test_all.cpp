@@ -2812,6 +2812,14 @@ void test_fix_session() {
         ASSERT(std::strcmp(mcr.get_field(531), "7") == 0, "fix_mcr_response_all");
         ASSERT(mcr.get_int(533) == 5, "fix_mcr_affected_count");
 
+        // #209 MarketDataRequest (35=V) — subskrypcja danych rynkowych.
+        s.build_market_data_request(buf, sizeof(buf), "MDR1", '1', 1, "AAPL", '|');
+        FIXMessage mdr; mdr.parse(buf);
+        ASSERT(mdr.is_valid() && mdr.get_msg_type()[0] == 'V', "fix_mdr_V_valid");
+        ASSERT(std::strcmp(mdr.get_field(262), "MDR1") == 0, "fix_mdr_reqid");
+        ASSERT(std::strcmp(mdr.get_field(263), "1") == 0, "fix_mdr_subtype");
+        ASSERT(mdr.get_int(264) == 1 && std::strcmp(mdr.get_symbol(), "AAPL") == 0, "fix_mdr_depth_symbol");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
