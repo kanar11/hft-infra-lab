@@ -577,6 +577,35 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // ExecReport — kluczowe pola ExecutionReport (35=8) w typowanej strukturze (#241).
+    struct ExecReport {
+        char    ord_status = '\0';   // 39
+        char    exec_type  = '\0';   // 150
+        int32_t last_qty   = 0;      // 32
+        double  last_px    = 0.0;    // 31
+        int32_t cum_qty    = 0;      // 14
+        int32_t leaves_qty = 0;      // 151
+        bool    valid      = false;  // true gdy wiadomosc to faktycznie 35=8
+    };
+
+    // parse_exec_report: wyciaga ExecReport ze sparsowanej wiadomosci (#241). Klient
+    // konsumuje raporty wykonania bez recznego grzebania w tagach. valid=false gdy
+    // to nie 35=8. Symetria do build_exec_report (#101) — domyka roundtrip.
+    static ExecReport parse_exec_report(const FIXMessage& m) noexcept {
+        ExecReport r;
+        if (m.get_msg_type()[0] != '8') return r;     // valid pozostaje false
+        const char* os = m.get_field(39);
+        const char* et = m.get_field(150);
+        r.ord_status = os ? os[0] : '\0';
+        r.exec_type  = et ? et[0] : '\0';
+        r.last_qty   = m.get_int(32);
+        r.last_px    = m.get_double(31);
+        r.cum_qty    = m.get_int(14);
+        r.leaves_qty = m.get_int(151);
+        r.valid      = true;
+        return r;
+    }
+
     // build_reject (35=3) — Session-level Reject (#126). Acceptor odsyla gdy
     // przychodzaca wiadomosc lamie regule sesji (brak tagu, zla wartosc, zly
     // typ) — np. po negatywnym validate_new_order. Rozni sie od business reject

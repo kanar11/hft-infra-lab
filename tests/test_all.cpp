@@ -3121,6 +3121,19 @@ void test_fix_session() {
         ASSERT(std::strcmp(mdy.get_field(262), "MDR1") == 0, "fix_mdy_reqid_echo");
         ASSERT(std::strcmp(mdy.get_field(281), "0") == 0, "fix_mdy_reject_reason");
 
+        // #241 parse_exec_report — ekstrakcja pol 35=8 do struktury.
+        s.build_exec_report(buf, sizeof(buf), "ORD1", "EX1", "E1", '2', '2',  // Fill/Fill
+                            "AAPL", Side::BUY, 100, 150.25, 100, 0, '|');
+        FIXMessage erm; erm.parse(buf);
+        const fix::FIXSession::ExecReport exr = fix::FIXSession::parse_exec_report(erm);
+        ASSERT(exr.valid && exr.exec_type == '2' && exr.ord_status == '2', "fix_execrep_type_status");
+        ASSERT(exr.last_qty == 100 && std::fabs(exr.last_px - 150.25) < 1e-6, "fix_execrep_last");
+        ASSERT(exr.cum_qty == 100 && exr.leaves_qty == 0, "fix_execrep_cum_leaves");
+        // wiadomosc nie-8 -> invalid
+        s.build_new_order(buf, sizeof(buf), "ORDX", "AAPL", Side::BUY, 50, 10.0, '|');
+        FIXMessage notexec; notexec.parse(buf);
+        ASSERT(!fix::FIXSession::parse_exec_report(notexec).valid, "fix_execrep_non8_invalid");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
