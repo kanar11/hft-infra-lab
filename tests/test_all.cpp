@@ -43,6 +43,7 @@
 #include "../strategy/dema.hpp"
 #include "../strategy/tema.hpp"
 #include "../strategy/trix.hpp"
+#include "../strategy/cci.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -2188,6 +2189,21 @@ void test_trix() {
     ASSERT(dn.value() < 0.0, "trix_negative_on_downtrend");
 }
 
+// CCI #238 — Commodity Channel Index.
+void test_cci() {
+    SECTION("CCI (#238)");
+    CCI flat(5);
+    for (int i = 0; i < 6; ++i) flat.update(50.0);        // stala -> mad 0 -> 0
+    ASSERT(flat.ready(), "cci_ready");
+    ASSERT(std::fabs(flat.value() - 0.0) < 1e-9, "cci_flat_zero");
+    CCI up(5);
+    for (int i = 1; i <= 5; ++i) up.update(static_cast<double>(i));  // 1..5: CCI ~+111
+    ASSERT(up.value() > 100.0 && up.overbought(), "cci_overbought_uptrend");
+    CCI dn(5);
+    for (int i = 0; i < 5; ++i) dn.update(5.0 - i);       // 5..1: CCI ~-111
+    ASSERT(dn.value() < -100.0 && dn.oversold(), "cci_oversold_downtrend");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3620,6 +3636,7 @@ int main() {
     test_dema();
     test_tema();
     test_trix();
+    test_cci();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
