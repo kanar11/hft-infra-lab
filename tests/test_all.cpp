@@ -342,6 +342,17 @@ void test_oms_short_and_replace() {
         ASSERT(oms.open_position_count() == 0 && oms.is_flat(), "flat_after_close");
     }
 
+    {   // #204 reset_session_counters (zeruje statystyki, zostawia pozycje/zlecenia).
+        OMS oms(100000, 1000000000.0);
+        Order* o = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(o->order_id, 50, 10.0);                   // fills 1, PARTIAL
+        ASSERT(oms.total_submitted() == 1 && oms.total_fills() == 1, "rsc_counters_before");
+        oms.reset_session_counters();
+        ASSERT(oms.total_submitted() == 0 && oms.total_fills() == 0
+               && oms.total_cancels() == 0 && oms.total_replaces() == 0, "rsc_counters_zeroed");
+        ASSERT(oms.order_count() >= 1 && oms.open_position_count() == 1, "rsc_state_kept");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

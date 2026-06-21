@@ -564,6 +564,18 @@ public:
     uint64_t total_cancels()  const noexcept { return total_cancels_; }
     uint64_t total_replaces() const noexcept { return total_replaces_; }
 
+    // reset_session_counters: wyzeruj liczniki cyklu zycia (submitted/fills/cancels/
+    // replaces) ORAZ odrzucen per-powod na nowa sesje (#204). NIE rusza pozycji ani
+    // aktywnych zlecen — tylko statystyki observability (analogicznie do router
+    // reset_session_stats #192). Wolaj raz na otwarcie dnia.
+    void reset_session_counters() noexcept {
+        total_submitted_ = 0;
+        total_fills_     = 0;
+        total_cancels_   = 0;
+        total_replaces_  = 0;
+        for (auto& c : reject_counts_) c = 0;
+    }
+
     void print_orders() const {
         printf("\n=== ORDERS ===\n");
         for (const auto& [id, o] : orders_) {
