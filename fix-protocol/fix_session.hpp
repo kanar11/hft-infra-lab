@@ -602,6 +602,28 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // MassQuote (35=i): a market maker streams a SET of quotes in one message
+    // (#279) — efficient two-sided quoting across many symbols at once. 117=QuoteID,
+    // 295=NoQuoteEntries, then a repeating group per symbol: 299=QuoteEntryID,
+    // 55=Symbol, 132=BidPx, 133=OfferPx. Here a 2-symbol set; read it back with the
+    // repeating-group accessors (#263). Used by MMs to refresh a whole book at once.
+    int build_mass_quote(char* out, int cap, const char* quote_id,
+                         const char* sym1, double bid1, double ask1,
+                         const char* sym2, double bid2, double ask2,
+                         char delim = FIXMessage::SOH) noexcept {
+        char body[320];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=i%c49=%s%c56=%s%c34=%u%c117=%s%c296=1%c295=2%c"
+            "299=1%c55=%s%c132=%.2f%c133=%.2f%c"
+            "299=2%c55=%s%c132=%.2f%c133=%.2f%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            quote_id, delim, delim, delim,
+            delim, sym1, delim, bid1, delim, ask1, delim,
+            delim, sym2, delim, bid2, delim, ask2, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.

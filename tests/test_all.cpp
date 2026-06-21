@@ -3552,6 +3552,18 @@ void test_fix_session() {
                && std::strcmp(qcm.get_field(298), "1") == 0, "fix_qcxl_id_type");
         ASSERT(std::strcmp(qcm.get_symbol(), "AAPL") == 0, "fix_qcxl_symbol");
 
+        // #279 MassQuote (35=i) — 2-symbol quote set read via repeating-group accessors.
+        s.build_mass_quote(buf, sizeof(buf), "MQ1", "AAPL", 99.98, 100.02,
+                           "MSFT", 200.00, 200.10, '|');
+        FIXMessage mq; mq.parse(buf);
+        ASSERT(mq.is_valid() && mq.get_msg_type()[0] == 'i', "fix_massq_i_valid");
+        ASSERT(mq.get_int(295) == 2 && mq.count_field(55) == 2, "fix_massq_two_entries");
+        ASSERT(std::strcmp(mq.get_field_nth(55, 0), "AAPL") == 0
+               && std::strcmp(mq.get_field_nth(55, 1), "MSFT") == 0, "fix_massq_symbols");
+        ASSERT(std::fabs(mq.get_double_nth(132, 0) - 99.98) < 1e-6
+               && std::fabs(mq.get_double_nth(132, 1) - 200.00) < 1e-6, "fix_massq_bids");
+        ASSERT(std::fabs(mq.get_double_nth(133, 1) - 200.10) < 1e-6, "fix_massq_ask2");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
