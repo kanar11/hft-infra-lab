@@ -221,6 +221,10 @@ struct RiskLimits {
     // objete restrykcjami: gorszy spread, ryzyko manipulacji) oraz grube pomylki
     // typu 0.15 zamiast 150. 0 = wylaczony.
     double   min_price;
+    // Limit WARTOSCI ($) zagregowanej pozycji per symbol: |projected| * cena.
+    // Lapie drogie symbole, ktorych shares-owy max_position_per_symbol nie
+    // ogranicza wartosciowo (100 szt. po $3000 to $300k). 0 = wylaczony.
+    double   max_symbol_notional;
 
     RiskLimits() noexcept
         : max_position_per_symbol(5000),
@@ -234,7 +238,8 @@ struct RiskLimits {
           max_short_per_symbol(0),
           max_consecutive_losses(0),
           max_daily_traded_notional(0.0),
-          min_price(0.0) {}
+          min_price(0.0),
+          max_symbol_notional(0.0) {}
 };
 
 
@@ -460,6 +465,11 @@ public:
             if (-projected > short_cap)
                 return make_reject("Short position limit exceeded", t0);
         }
+
+        // Limit WARTOSCI pozycji per symbol (#189) — $ cap na |projected| * cena.
+        if (limits_.max_symbol_notional > 0.0
+            && std::abs(projected) * price > limits_.max_symbol_notional)
+            return make_reject("Symbol notional limit", t0);
 
         // Ekspozycja portfela: O(1) dzięki niezmiennikowi total_abs_exposure_
         const int32_t old_contrib = std::abs(cur_pos + cur_pend);

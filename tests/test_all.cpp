@@ -2454,6 +2454,20 @@ void test_risk_price_band() {
     reu.on_order_sent("BBB", Side::SELL, 200);                              // +|200| = 50%
     ASSERT(std::fabs(reu.exposure_utilization_pct() - 50.0) < 1e-6, "exput_50pct");
 
+    // #189 limit wartosci pozycji per symbol ($10k; shares hojne).
+    RiskLimits snl;
+    snl.max_symbol_notional    = 10000.0;
+    snl.max_position_per_symbol = 100000;
+    snl.max_portfolio_exposure  = 100000000;
+    snl.max_order_value         = 100000000;
+    snl.max_orders_per_second   = 1000000;
+    snl.max_price_band_pct      = 0.0;
+    RiskManager rsn(snl);
+    ASSERT(rsn.check_order("AAPL", Side::BUY, 50.0, 100).action == RiskAction::ALLOW,
+           "symnotional_under_ok");    // 100*50 = 5000
+    ASSERT(rsn.check_order("TSLA", Side::BUY, 50.0, 300).action == RiskAction::REJECT,
+           "symnotional_over_rejects"); // 300*50 = 15000 > 10000
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;
