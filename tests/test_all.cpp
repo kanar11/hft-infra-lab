@@ -1674,6 +1674,15 @@ void test_itch_book() {
     nlq.on_add(1, 'B', 99.98, 100);
     ASSERT(nlq.slippage_bps('B', 100) == 0.0, "itchbook_slippage_no_ask_liq");
 
+    // #207 spread_ticks (calkowita liczba ticow $0.01).
+    itch::ITCHOrderBook st;
+    st.on_add(1, 'B', 100.00, 100); st.on_add(2, 'S', 100.02, 100);  // 2 ticki
+    ASSERT(st.spread_ticks() == 2, "itchbook_spread_ticks_2");
+    itch::ITCHOrderBook st1;
+    st1.on_add(1, 'B', 50.00, 100); st1.on_add(2, 'S', 50.01, 100);  // 1 tick (touch)
+    ASSERT(st1.spread_ticks() == 1, "itchbook_spread_ticks_1");
+    ASSERT(nlq.spread_ticks() == 0, "itchbook_spread_ticks_onesided");
+
     // #183 locked / crossed book.
     itch::ITCHOrderBook nb;
     nb.on_add(1, 'B', 100.00, 100); nb.on_add(2, 'S', 100.02, 100);   // normalny spread

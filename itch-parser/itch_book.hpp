@@ -142,6 +142,13 @@ public:
         const double m = mid_price();
         return m > 0.0 ? spread() / m * 10000.0 : 0.0;
     }
+    // spread_ticks: spread w CALKOWITEJ liczbie ticow ($0.01) (#207). Dla strategii
+    // swiadomych wielkosci ticku: 1 = ksiazka najciasniejsza (touch, MM walczy o
+    // priorytet), wieksze = jest miejsce na poprawe kwotowania. 0 gdy jednostronna.
+    int64_t spread_ticks() const noexcept {
+        if (bids_.empty() || asks_.empty()) return 0;
+        return asks_.begin()->first - bids_.rbegin()->first;   // ceny w tickach x100
+    }
     // clear: zresetuj reconstructora do pustego (np. start nowej sesji / re-sync
     // po snapshot recovery). Statystyki feed handlera też zerowane.
     void clear() noexcept {
