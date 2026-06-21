@@ -435,6 +435,15 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.cancel_rate(), 0.5), "cancel_rate_half"); // 1/2
     }
 
+    {   // #266 total_traded_notional (cumulative $ of all fills).
+        OMS oms(1000000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(a->order_id, 100, 10.0);                    // 100 * 10 = 1000
+        Order* b = oms.submit_order("BBB", Side::SELL, 20.0, 50);
+        oms.fill_order(b->order_id, 50, 20.0);                     // 50 * 20 = 1000
+        ASSERT(close(oms.total_traded_notional(), 2000.0), "traded_notional_sum");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

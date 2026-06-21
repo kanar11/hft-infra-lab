@@ -204,6 +204,7 @@ class OMS {
     uint64_t  total_replaces_ = 0;
     uint64_t  total_ordered_shares_ = 0;  // suma zleconych akcji (#228)
     uint64_t  total_filled_shares_  = 0;  // suma wykonanych akcji (#228)
+    double    total_traded_notional_ = 0.0; // cumulative $ value of all fills (#266)
 
 public:
     // commission_per_share: np. 0.0035 = $0.0035/akcja (typowy taker fee).
@@ -306,6 +307,7 @@ public:
         order.fill_notional += static_cast<int64_t>(fill_qty) * fill_price;  // #141
         ++total_fills_;   // #151
         total_filled_shares_ += fill_qty;   // #228
+        total_traded_notional_ += static_cast<double>(fill_qty) * fill_price_f;  // #266
         order.status      = (order.filled_qty >= order.quantity)
                             ? OrderStatus::FILLED
                             : OrderStatus::PARTIAL;
@@ -647,6 +649,11 @@ public:
             : 0.0;
     }
     uint64_t total_filled_shares()  const noexcept { return total_filled_shares_; }
+    // total_traded_notional: cumulative $ value of every fill (Σ fill_qty *
+    // fill_price) (#266) — session turnover. Basis for commission/turnover
+    // analysis and exchange-tier volume tracking; independent of position (a
+    // round-trip trades twice the notional but nets zero position).
+    double   total_traded_notional() const noexcept { return total_traded_notional_; }
     // fill_ratio: jaka czesc ZLECONEGO wolumenu (akcji) sie wykonala (#228) =
     // wykonane / zlecone. Jakosc egzekucji: nisko = duzo niewypelnionych /
     // anulowanych zlecen (zle ceny limit, slaba plynnosc). 0 gdy nic nie zlecono.
@@ -667,6 +674,7 @@ public:
         total_replaces_  = 0;
         total_ordered_shares_ = 0;   // #228
         total_filled_shares_  = 0;
+        total_traded_notional_ = 0.0;   // #266
         for (auto& c : reject_counts_) c = 0;
     }
 
