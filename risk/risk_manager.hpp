@@ -709,6 +709,15 @@ public:
     }
     // get_total_exposure: laczna ekspozycja portfela — utrzymywany niezmiennik O(1).
     int64_t  get_total_exposure() const noexcept { return total_abs_exposure_; }
+    // exposure_utilization_pct: ekspozycja portfela jako % limitu (#181). Ile
+    // budzetu ryzyka jest zuzyte — portfelowy odpowiednik is_near_position_limit.
+    // 0 gdy limit wylaczony. Moze przekroczyc 100 tylko przy stanie sprzed limitu.
+    double exposure_utilization_pct() const noexcept {
+        if (limits_.max_portfolio_exposure <= 0) return 0.0;
+        return static_cast<double>(total_abs_exposure_)
+             / static_cast<double>(limits_.max_portfolio_exposure) * 100.0;
+    }
+
     // is_near_position_limit: czy ekspozycja symbolu osiagnela warn_pct% capu
     // (#167) — wczesne ostrzezenie ZANIM check_order twardo odrzuci. Respektuje
     // per-symbol override (#161). false gdy cap wylaczony.

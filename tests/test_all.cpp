@@ -2385,6 +2385,14 @@ void test_risk_price_band() {
     ASSERT(!rw.is_near_position_limit("AAPL", 80.0), "warn_below_80pct");   // 700 < 800
     ASSERT(rw.is_near_position_limit("AAPL", 60.0), "warn_above_60pct");    // 700 >= 600
 
+    // #181 wykorzystanie budzetu ekspozycji portfela (limit 1000).
+    RiskLimits el; el.max_portfolio_exposure = 1000;
+    RiskManager reu(el);
+    reu.on_order_sent("AAA", Side::BUY, 300);                               // |300| = 30%
+    ASSERT(std::fabs(reu.exposure_utilization_pct() - 30.0) < 1e-6, "exput_30pct");
+    reu.on_order_sent("BBB", Side::SELL, 200);                              // +|200| = 50%
+    ASSERT(std::fabs(reu.exposure_utilization_pct() - 50.0) < 1e-6, "exput_50pct");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;
