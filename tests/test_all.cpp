@@ -2254,6 +2254,20 @@ void test_router_ewma_partial() {
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(!empt.is_marketable(true, 100.0), "mkt_no_liquidity_false");
     }
+
+    // --- #192 reset_session_stats (pelny reset TCA, venue zostaja) ---
+    {
+        SmartOrderRouter rss(RoutingStrategy::BEST_PRICE);
+        rss.add_venue(Venue("A", 100, 0.01));
+        rss.update_quote("A", 10.0, 11.0, 100, 100);
+        rss.route_order("BUY", 50);
+        ASSERT(rss.get_total_routes() == 1 && rss.total_fees_paid() > 0.0
+               && rss.venue_routed_shares("A") > 0, "rss_stats_before");
+        rss.reset_session_stats();
+        ASSERT(rss.get_total_routes() == 0 && rss.total_fees_paid() == 0.0
+               && rss.venue_routed_shares("A") == 0, "rss_stats_zeroed");
+        ASSERT(rss.venue_count() == 1, "rss_venue_retained");
+    }
 }
 
 

@@ -449,6 +449,18 @@ public:
         }
     }
 
+    // reset_session_stats: PELNY reset TCA na nowa sesje (#192) — zeruje liczniki
+    // globalne (routes/rejects/latency/fees), ktorych reset_routing_stats NIE
+    // ruszal, oraz per-venue. Venue i ich quote'y zostaja (nie trzeba ich na nowo
+    // dodawac/kwotowac). Wolaj raz na otwarcie sesji.
+    void reset_session_stats() noexcept {
+        total_routes_     = 0;
+        total_rejected_   = 0;
+        total_latency_ns_ = 0;
+        total_fees_paid_  = 0.0;
+        reset_routing_stats();
+    }
+
     // total_fees_paid: suma oplat/rebate po wszystkich trasach (#138). Ujemne =
     // net rebate (maker). Podstawa analizy kosztow egzekucji.
     double   total_fees_paid()    const noexcept { return total_fees_paid_; }
