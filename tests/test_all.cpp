@@ -38,6 +38,7 @@
 #include "../strategy/ema.hpp"
 #include "../strategy/macd.hpp"
 #include "../strategy/stochastic.hpp"
+#include "../strategy/wma.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -1957,6 +1958,21 @@ void test_stochastic() {
     ASSERT(std::fabs(flat.percent_k() - 50.0) < 1e-9, "stoch_k_flat_neutral");
 }
 
+// WMA #198 — liniowo wazona srednia.
+void test_wma() {
+    SECTION("WMA (#198)");
+    WMA w(3);
+    w.update(1.0); w.update(2.0); w.update(3.0);          // (1*1+2*2+3*3)/(1+2+3)=14/6
+    ASSERT(w.ready(), "wma_ready");
+    ASSERT(std::fabs(w.value() - 14.0/6.0) < 1e-9, "wma_weighted");
+    // przesuniecie okna: dochodzi 4, wypada 1 -> (2*1+3*2+4*3)/6 = 20/6
+    w.update(4.0);
+    ASSERT(std::fabs(w.value() - 20.0/6.0) < 1e-9, "wma_window_slide");
+    WMA s(1);
+    s.update(42.0);
+    ASSERT(std::fabs(s.value() - 42.0) < 1e-9, "wma_period1_is_last");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3168,6 +3184,7 @@ int main() {
     test_ema();
     test_macd();
     test_stochastic();
+    test_wma();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
