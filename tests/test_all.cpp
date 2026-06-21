@@ -48,6 +48,7 @@
 #include "../strategy/roc.hpp"
 #include "../strategy/aroon.hpp"
 #include "../strategy/ensemble.hpp"
+#include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
 #include "../strategy/signal_throttle.hpp"
@@ -2319,6 +2320,55 @@ void test_roc() {
     ASSERT(!n.ready() && n.value() == 0.0, "roc_not_ready_zero");
 }
 
+// Backtester analytics (#263) — Sortino, Calmar/recovery, Kelly, ulcer, VaR/CVaR.
+void test_backtest() {
+    SECTION("Backtester analytics (#263)");
+    using backtest::Backtester;
+    {   // core: hit-rate, profit factor, fill-rate, gross, payoff, kelly
+        Backtester bt;
+        bt.on_order(true); bt.on_trade(+100.0);
+        bt.on_order(true); bt.on_trade(-40.0);
+        bt.on_order(true); bt.on_trade(+60.0);
+        bt.on_order(false);
+        const auto r = bt.compute();
+        ASSERT(r.trades == 3 && r.wins == 2 && r.losses == 1, "btc_counts");
+        ASSERT(std::fabs(r.profit_factor - 4.0) < 1e-9, "btc_profit_factor");    // 160/40
+        ASSERT(std::fabs(r.fill_rate - 0.75) < 1e-9, "btc_fill_rate");
+        ASSERT(std::fabs(r.payoff_ratio - 2.0) < 1e-9, "btc_payoff");            // 80/40
+        ASSERT(std::fabs(r.kelly_fraction - (2.0/3.0 - (1.0/3.0)/2.0)) < 1e-9, "btc_kelly");
+    }
+    {   // drawdown, recovery factor, dd duration
+        Backtester bt;
+        bt.on_trade(+100.0); bt.on_trade(-70.0); bt.on_trade(+50.0);
+        const auto r = bt.compute();
+        ASSERT(std::fabs(r.max_drawdown - 70.0) < 1e-9, "btc_max_dd");
+        ASSERT(std::fabs(r.recovery_factor - 80.0/70.0) < 1e-9, "btc_recovery");
+        ASSERT(bt.max_drawdown_duration() == 2, "btc_dd_duration");
+    }
+    {   // Sortino (downside-only) > Sharpe when down moves are few
+        Backtester bt;
+        bt.on_trade(+30.0); bt.on_trade(-10.0); bt.on_trade(+20.0); bt.on_trade(+40.0);
+        const auto r = bt.compute();
+        ASSERT(std::fabs(r.sortino - 8.0) < 1e-9, "btc_sortino");   // 20/5*2
+        ASSERT(r.sortino > r.sharpe, "btc_sortino_gt_sharpe");
+    }
+    {   // VaR / CVaR on a known distribution
+        Backtester bt;
+        bt.on_trade(-50.0); bt.on_trade(-30.0); bt.on_trade(-10.0);
+        bt.on_trade(+20.0); bt.on_trade(+100.0);
+        ASSERT(std::fabs(bt.value_at_risk(0.8) - 50.0) < 1e-9, "btc_var_80");
+        ASSERT(std::fabs(bt.conditional_value_at_risk(0.6) - 40.0) < 1e-9, "btc_cvar_60");
+        ASSERT(bt.ulcer_index() > 0.0, "btc_ulcer_positive");
+    }
+    {   // per-tag attribution
+        Backtester bt;
+        bt.on_trade(+10.0, "AAPL"); bt.on_trade(-5.0, "MSFT"); bt.on_trade(+3.0, "AAPL");
+        ASSERT(std::fabs(bt.pnl_for_tag("AAPL") - 13.0) < 1e-9, "btc_tag_aapl");
+        ASSERT(std::fabs(bt.pnl_for_tag("MSFT") + 5.0) < 1e-9, "btc_tag_msft");
+        ASSERT(bt.tag_count() == 2, "btc_tag_count");
+    }
+}
+
 // Aroon #260 — trend-strength oscillator.
 void test_aroon() {
     SECTION("Aroon (#260)");
@@ -3888,6 +3938,7 @@ int main() {
     test_bollinger_pctb();
     test_roc();
     test_aroon();
+    test_backtest();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
