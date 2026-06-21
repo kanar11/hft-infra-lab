@@ -149,6 +149,14 @@ public:
         if (bids_.empty() || asks_.empty()) return 0;
         return asks_.begin()->first - bids_.rbegin()->first;   // ceny w tickach x100
     }
+    // is_marketable: would a limit order at limit_price cross immediately against
+    // the resting book (#261)? BUY crosses when limit >= best_ask, SELL crosses
+    // when limit <= best_bid. Pre-submit check: marketable -> takes liquidity now,
+    // otherwise it would rest. false when that side has no resting liquidity.
+    bool is_marketable(char side, double limit_price) const noexcept {
+        if (side == 'B') { const double a = best_ask(); return a > 0.0 && limit_price >= a; }
+        else             { const double b = best_bid(); return b > 0.0 && limit_price <= b; }
+    }
     // clear: zresetuj reconstructora do pustego (np. start nowej sesji / re-sync
     // po snapshot recovery). Statystyki feed handlera też zerowane.
     void clear() noexcept {

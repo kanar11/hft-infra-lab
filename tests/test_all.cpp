@@ -1800,6 +1800,16 @@ void test_itch_book() {
     ASSERT(st1.spread_ticks() == 1, "itchbook_spread_ticks_1");
     ASSERT(nlq.spread_ticks() == 0, "itchbook_spread_ticks_onesided");
 
+    // #261 is_marketable (would a limit cross now?).
+    itch::ITCHOrderBook im;
+    im.on_add(1, 'B', 99.98, 100); im.on_add(2, 'S', 100.02, 100);   // bid 99.98 / ask 100.02
+    ASSERT(im.is_marketable('B', 100.02), "itchbook_mkt_buy_at_ask");   // limit >= ask
+    ASSERT(im.is_marketable('B', 100.05), "itchbook_mkt_buy_above");
+    ASSERT(!im.is_marketable('B', 100.00), "itchbook_mkt_buy_below");   // < ask -> rests
+    ASSERT(im.is_marketable('S', 99.98), "itchbook_mkt_sell_at_bid");   // limit <= bid
+    ASSERT(!im.is_marketable('S', 99.99), "itchbook_mkt_sell_above");   // > bid -> rests
+    ASSERT(!nlq.is_marketable('B', 100.0), "itchbook_mkt_no_ask");      // one-sided
+
     // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
     itch::ITCHOrderBook ni;
     ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 szt.
