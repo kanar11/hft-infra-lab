@@ -355,6 +355,32 @@ struct LossRateMeter {
 };
 
 
+// OutOfOrderMeter — odsetek pakietow poza kolejnoscia (expansion #195).
+//
+// Mierzy ile pakietow przyszlo Z NIZSZYM seq niz dotychczasowy max (czyli PO
+// pakiecie o wyzszym numerze) — objaw reorderingu na sciezce (multipath, ECMP,
+// kolejkowanie). Rozni sie od ReorderBuffer (naprawia kolejnosc) i LossRateMeter
+// (gubienie): to czysta DIAGNOSTYKA jakosci sieci. Wysoki ooo_rate sugeruje
+// problem z routingiem feedu, nie ze zrodlem.
+struct OutOfOrderMeter {
+    std::uint64_t highest = 0;
+    std::uint64_t total = 0;
+    std::uint64_t out_of_order = 0;
+    bool          init = false;
+
+    void on_packet(std::uint64_t seq) noexcept {
+        ++total;
+        if (!init) { highest = seq; init = true; return; }
+        if (seq < highest) ++out_of_order;   // przyszedl po wyzszym numerze
+        else               highest = seq;
+    }
+    double ooo_rate() const noexcept {
+        return total ? static_cast<double>(out_of_order) / static_cast<double>(total) : 0.0;
+    }
+    void reset() noexcept { highest = total = out_of_order = 0; init = false; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił

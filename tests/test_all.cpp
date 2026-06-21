@@ -1763,6 +1763,13 @@ void test_multicast_gap_recovery() {
     ASSERT(lrm.lost() == 1, "loss_count");
     ASSERT(std::fabs(lrm.loss_rate() - 1.0/6.0) < 1e-9, "loss_rate");
 
+    // #195 OutOfOrderMeter — odsetek pakietow poza kolejnoscia.
+    multicast::OutOfOrderMeter ooo;
+    const uint64_t oseq[] = {1, 2, 4, 3, 5};             // 3 przychodzi po 4
+    for (uint64_t s : oseq) ooo.on_packet(s);
+    ASSERT(ooo.total == 5 && ooo.out_of_order == 1, "ooo_counts");
+    ASSERT(std::fabs(ooo.ooo_rate() - 0.2) < 1e-9, "ooo_rate");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
