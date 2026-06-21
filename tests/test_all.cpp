@@ -3051,6 +3051,13 @@ void test_fix_session() {
         ASSERT(std::fabs(mdx.get_double(270) - 100.05) < 1e-6 && mdx.get_int(271) == 500,
                "fix_mdx_px_size");
 
+        // #233 MarketDataRequestReject (35=Y) — odrzucenie subskrypcji.
+        s.build_md_request_reject(buf, sizeof(buf), "MDR1", '0', '|');  // unknown symbol
+        FIXMessage mdy; mdy.parse(buf);
+        ASSERT(mdy.is_valid() && mdy.get_msg_type()[0] == 'Y', "fix_mdy_Y_valid");
+        ASSERT(std::strcmp(mdy.get_field(262), "MDR1") == 0, "fix_mdy_reqid_echo");
+        ASSERT(std::strcmp(mdy.get_field(281), "0") == 0, "fix_mdy_reject_reason");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");

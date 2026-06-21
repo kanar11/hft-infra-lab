@@ -541,6 +541,21 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // MarketDataRequestReject (35=Y): gielda ODRZUCA MarketDataRequest (35=V,
+    // #209) (#233) — np. nieznany symbol, brak uprawnien, nieobslugiwana glebokosc.
+    // 262=MDReqID (echo), 281=MDReqRejReason ('0'=unknown symbol, '1'=duplicate,
+    // '4'=unsupported depth, '5'=unsupported sub type). Domyka handshake V -> Y.
+    int build_md_request_reject(char* out, int cap, const char* md_req_id, char reason,
+                                char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=Y%c49=%s%c56=%s%c34=%u%c262=%s%c281=%c%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            md_req_id, delim, reason, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.
