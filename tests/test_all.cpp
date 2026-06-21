@@ -2857,6 +2857,15 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 14).type, "ERROR") == 0,
            "ouch_cxlpend_short_error");
 
+    // #194 AIQ Canceled ('D'): self-match prevention zdejmuje czesc zlecenia.
+    n = OUCHMessage::encode_aiq_canceled(buf, "TOK7", 40, 'Q');
+    const OUCHResponse aq = OUCHMessage::parse_response(buf, n);
+    ASSERT(std::strcmp(aq.type, "AIQ_CXL") == 0, "ouch_aiq_parsed");
+    ASSERT(std::strcmp(aq.token, "TOK7") == 0 && aq.shares == 40, "ouch_aiq_fields");
+    ASSERT(aq.reason[0] == 'Q', "ouch_aiq_reason");
+    ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 19).type, "ERROR") == 0,
+           "ouch_aiq_short_error");
+
     // #152 parse_order — strona gieldy dekoduje zlecenia klienta O/X/U.
     auto closep = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);

@@ -253,6 +253,19 @@ public:
         return 15;
     }
 
+    // encode_aiq_canceled: AIQ Canceled (20 B) — gielda zdjela CZESC zlecenia, bo
+    // matchowalaby sie z WLASNYM spoczywajacym zleceniem firmy (Anti-Internalization
+    // Quantity / self-match prevention). Nie blad: zlecenie zyje dalej z mniejsza
+    // iloscia. decrement_shares = ile zdjeto; reason kod 1-znakowy (#194).
+    static int encode_aiq_canceled(uint8_t* buf, const char* token, int32_t decrement_shares,
+                                   char reason = 'Q') noexcept {
+        buf[0] = 'D';
+        write_padded(buf + 1, token, 14);
+        write_u32_be(buf + 15, decrement_shares);
+        buf[19] = static_cast<uint8_t>(reason);
+        return 20;
+    }
+
     // encode_replaced: Order Replaced (45 B) — giełda potwierdza Replace ('U').
     // Niesie NOWY token (replacement) + POPRZEDNI (zastapiony) + nowe parametry.
     static int encode_replaced(uint8_t* buf, const char* repl_token, const char* prev_token,
@@ -383,6 +396,19 @@ public:
             }
             safe_copy(resp.type, "CXL_PEND");   // <=10 znakow: unik stringop-truncation (sanitizer -O1)
             strip_padding(resp.token, data + 1, 14);
+
+        } else if (msg_type == 'D') {  // AIQ Canceled (#194)
+            if (len < 20) {
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "AIQ_CANCEL too short: %d < 20 bytes", len);
+                return resp;
+            }
+            safe_copy(resp.type, "AIQ_CXL");
+            strip_padding(resp.token, data + 1, 14);
+            resp.shares    = read_u32_be(data + 15);    // ile zdjeto
+            resp.reason[0] = static_cast<char>(data[19]);
+            resp.reason[1] = '\0';
 
         } else if (msg_type == 'U') {  // Order Replaced
             if (len < 45) {
