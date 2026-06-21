@@ -48,6 +48,7 @@
 #include "../strategy/roc.hpp"
 #include "../strategy/aroon.hpp"
 #include "../strategy/cmo.hpp"
+#include "../strategy/zscore.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2453,6 +2454,20 @@ void test_cmo() {
     ASSERT(std::fabs(mix.value() - 100.0/3.0) < 1e-9, "cmo_mixed");
 }
 
+// ZScore #276 — rolling standard-score of price.
+void test_zscore() {
+    SECTION("ZScore (#276)");
+    ZScore c(5);
+    for (int i = 0; i < 5; ++i) c.update(50.0);          // flat -> sd 0 -> 0
+    ASSERT(c.ready(), "zscore_ready");
+    ASSERT(std::fabs(c.value() - 0.0) < 1e-9, "zscore_flat_zero");
+    ZScore z(5);
+    for (int i = 1; i <= 5; ++i) z.update(static_cast<double>(i));   // {1..5}
+    // mean 3, pop var ((4+1+0+1+4)/5)=2, sd=sqrt(2); z = (5-3)/sqrt(2) = sqrt(2)
+    ASSERT(std::fabs(z.value() - std::sqrt(2.0)) < 1e-9, "zscore_known");
+    ASSERT(z.value() > 0.0, "zscore_positive_above_mean");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4094,6 +4109,7 @@ int main() {
     test_roc();
     test_aroon();
     test_cmo();
+    test_zscore();
     test_backtest();
     test_ensemble();
     test_trailing_stop();
