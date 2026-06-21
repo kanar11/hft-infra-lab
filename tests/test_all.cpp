@@ -3035,6 +3035,16 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 9).type, "ERROR") == 0,
            "ouch_sysevent_short_error");
 
+    // #210 Restated ('R'): gielda zmienia parametry bez prosby klienta.
+    auto closepr = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
+    n = OUCHMessage::encode_restated(buf, "TOK8", 80, 100.05, 'P');
+    const OUCHResponse rs = OUCHMessage::parse_response(buf, n);
+    ASSERT(std::strcmp(rs.type, "RESTATED") == 0, "ouch_restated_parsed");
+    ASSERT(std::strcmp(rs.token, "TOK8") == 0 && rs.shares == 80, "ouch_restated_token_shares");
+    ASSERT(closepr(rs.price, 100.05) && rs.reason[0] == 'P', "ouch_restated_price_reason");
+    ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 23).type, "ERROR") == 0,
+           "ouch_restated_short_error");
+
     // #152 parse_order — strona gieldy dekoduje zlecenia klienta O/X/U.
     auto closep = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);

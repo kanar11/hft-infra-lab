@@ -277,6 +277,20 @@ public:
         return 10;
     }
 
+    // encode_restated: Restated (24 B) — gielda zmienila parametry zlecenia BEZ
+    // prosby klienta (#210): reprice zgodnosciowy (locked/crossed market), redukcja
+    // display, korekta. Zlecenie zyje dalej z NOWYMI shares/price. reason: kod
+    // 1-znakowy (np. 'P'=reprice, 'D'=display). Klient aktualizuje swoj obraz.
+    static int encode_restated(uint8_t* buf, const char* token, int32_t shares,
+                               double price, char reason = 'P') noexcept {
+        buf[0] = 'R';
+        write_padded(buf + 1, token, 14);
+        write_u32_be(buf + 15, shares);
+        write_u32_be(buf + 19, static_cast<uint32_t>(price * 10000));
+        buf[23] = static_cast<uint8_t>(reason);
+        return 24;
+    }
+
     // encode_replaced: Order Replaced (45 B) — giełda potwierdza Replace ('U').
     // Niesie NOWY token (replacement) + POPRZEDNI (zastapiony) + nowe parametry.
     static int encode_replaced(uint8_t* buf, const char* repl_token, const char* prev_token,
@@ -432,6 +446,20 @@ public:
             resp.match_number = static_cast<int64_t>(read_u64_be(data + 1));  // timestamp
             resp.reason[0]    = static_cast<char>(data[9]);                   // kod zdarzenia
             resp.reason[1]    = '\0';
+
+        } else if (msg_type == 'R') {  // Restated (#210)
+            if (len < 24) {
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "RESTATED too short: %d < 24 bytes", len);
+                return resp;
+            }
+            safe_copy(resp.type, "RESTATED");
+            strip_padding(resp.token, data + 1, 14);
+            resp.shares    = read_u32_be(data + 15);
+            resp.price     = read_u32_be(data + 19) / 10000.0;
+            resp.reason[0] = static_cast<char>(data[23]);
+            resp.reason[1] = '\0';
 
         } else if (msg_type == 'U') {  // Order Replaced
             if (len < 45) {
