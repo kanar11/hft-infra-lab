@@ -1827,12 +1827,12 @@ void test_volatility() {
 void test_ema() {
     SECTION("EMA (#173)");
     EMA e(0.5);
-    ASSERT(close(e.update(100.0), 100.0), "ema_first_is_seed");   // pierwsza = seed
-    ASSERT(close(e.update(200.0), 150.0), "ema_blend");           // 0.5*200 + 0.5*100
+    ASSERT(std::fabs(e.update(100.0) - 100.0) < 1e-9, "ema_first_is_seed");   // pierwsza = seed
+    ASSERT(std::fabs(e.update(200.0) - 150.0) < 1e-9, "ema_blend");           // 0.5*200 + 0.5*100
     ASSERT(e.ready(), "ema_ready");
     // alpha z okresu: 9-okresowa -> 2/10 = 0.2
     EMA p = EMA::from_period(9);
-    ASSERT(close(p.alpha(), 0.2), "ema_from_period_alpha");
+    ASSERT(std::fabs(p.alpha() - 0.2) < 1e-9, "ema_from_period_alpha");
     p.reset();
     ASSERT(!p.ready(), "ema_reset");
 }
