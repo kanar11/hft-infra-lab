@@ -525,6 +525,26 @@ public:
         const int32_t f = avail < shares ? avail : shares;
         return static_cast<double>(f) / static_cast<double>(shares);
     }
+    // venue_liquidity_share: a named venue's share of the CURRENT displayed
+    // liquidity on a side (#262), as a percent. Unlike venue_share_pct (#216,
+    // historical routed volume) this is the live quote concentration right now —
+    // a high share means the consolidated book leans on one venue's quote.
+    // 0 for unknown / inactive / no liquidity.
+    double venue_liquidity_share(const char* venue_name, bool is_buy) const noexcept {
+        const int32_t total = available_liquidity(is_buy);
+        if (total <= 0) return 0.0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (std::strcmp(v.name, venue_name) != 0) continue;
+            if (!v.is_active) return 0.0;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            const int32_t size = has_liq ? (is_buy ? v.ask_size : v.bid_size) : 0;
+            return static_cast<double>(size) / static_cast<double>(total) * 100.0;
+        }
+        return 0.0;
+    }
+
     int venue_count() const noexcept { return venue_count_; }
     // venue_routed_shares: laczny zaroutowany wolumen na dane venue (TCA, #117).
     int64_t venue_routed_shares(const char* venue_name) const noexcept {

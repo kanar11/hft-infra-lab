@@ -2690,6 +2690,18 @@ void test_router_ewma_partial() {
         ASSERT(empt.deepest_venue(true) == nullptr, "deepest_empty_null");
     }
 
+    // --- #262 venue_liquidity_share (current displayed concentration) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        r.update_quote("A", 10.0, 11.0, 100, 100);     // ask 100
+        r.update_quote("B", 10.0, 11.0, 100, 300);     // ask 300 -> total 400
+        ASSERT(std::fabs(r.venue_liquidity_share("A", true) - 25.0) < 1e-9, "vls_A_25");
+        ASSERT(std::fabs(r.venue_liquidity_share("B", true) - 75.0) < 1e-9, "vls_B_75");
+        ASSERT(r.venue_liquidity_share("GHOST", true) == 0.0, "vls_unknown_zero");
+    }
+
     // --- #208 nbbo_spread / nbbo_spread_bps (skonsolidowany rynek) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
