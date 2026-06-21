@@ -217,6 +217,10 @@ struct RiskLimits {
     // Dzienny limit OBROTU (suma nominalna zrealizowanych transakcji, $).
     // Lapie nadmierna aktywnosc/churn niezaleznie od pozycji. 0 = wylaczony.
     double   max_daily_traded_notional;
+    // Minimalna dopuszczalna cena zlecenia ($). Blokuje penny-stocki (czesto
+    // objete restrykcjami: gorszy spread, ryzyko manipulacji) oraz grube pomylki
+    // typu 0.15 zamiast 150. 0 = wylaczony.
+    double   min_price;
 
     RiskLimits() noexcept
         : max_position_per_symbol(5000),
@@ -229,7 +233,8 @@ struct RiskLimits {
           max_shares_per_order(100000),
           max_short_per_symbol(0),
           max_consecutive_losses(0),
-          max_daily_traded_notional(0.0) {}
+          max_daily_traded_notional(0.0),
+          min_price(0.0) {}
 };
 
 
@@ -413,6 +418,10 @@ public:
         // 2a. Fat-finger na ilość — qty jednego zlecenia ponad limit.
         if (limits_.max_shares_per_order > 0 && quantity > limits_.max_shares_per_order)
             return make_reject("Order quantity exceeds limit", t0);
+
+        // 2a'. Prog minimalnej ceny — penny-stocki / mikro-cenowe pomylki (#175).
+        if (limits_.min_price > 0.0 && price < limits_.min_price)
+            return make_reject("Price below minimum (penny stock)", t0);
 
         // 2b. Price band (fat-finger) — cena zbyt daleko od referencyjnej.
         //     Łapie grube pomyłki (np. 1500.00 zamiast 150.00) zanim trafią na

@@ -2365,6 +2365,15 @@ void test_risk_price_band() {
            "qtycap_at_limit_ok");
     ASSERT(r5.check_order("PENY", Side::BUY, 0.01, 1001).action == RiskAction::REJECT,
            "qtycap_over_rejects");   // tani notional ($10), ale 1001 szt. > limit
+
+    // #175 prog minimalnej ceny (penny-stock filter).
+    RiskLimits ml;
+    ml.min_price = 1.0;
+    RiskManager rmp(ml);
+    ASSERT(rmp.check_order("PENY", Side::BUY, 0.50, 100).action == RiskAction::REJECT,
+           "minprice_below_rejects");
+    ASSERT(rmp.check_order("AAPL", Side::BUY, 150.0, 100).action == RiskAction::ALLOW,
+           "minprice_above_ok");
 }
 
 
