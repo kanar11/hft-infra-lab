@@ -3142,6 +3142,15 @@ void test_risk_price_band() {
     rzz.update_pnl(-500.0);                 // peak 0 -> brak referencji
     ASSERT(std::fabs(rzz.current_drawdown_pct() - 0.0) < 1e-6, "dd_no_peak_zero");
 
+    // #267 drawdown_headroom_pct (limit 10%).
+    RiskLimits ddl; ddl.max_drawdown_pct = 10.0;
+    RiskManager rdh(ddl);
+    rdh.update_pnl(1000.0);                  // peak 1000
+    rdh.update_pnl(-50.0);                   // dd = 50/1000 = 5%
+    ASSERT(std::fabs(rdh.drawdown_headroom_pct() - 5.0) < 1e-6, "ddh_5pct");   // 10 - 5
+    rdh.update_pnl(-60.0);                   // dd = 110/1000 = 11% > 10
+    ASSERT(std::fabs(rdh.drawdown_headroom_pct() - 0.0) < 1e-6, "ddh_clamped");
+
     // #205 consecutive_losses_remaining (breaker serii strat, prog 3).
     RiskLimits cll; cll.max_consecutive_losses = 3;
     RiskManager rcl(cll);

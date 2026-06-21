@@ -815,6 +815,16 @@ public:
         if (peak_pnl_ <= 0.0) return 0.0;
         return (peak_pnl_ - daily_pnl_) / peak_pnl_ * 100.0;
     }
+    // drawdown_headroom_pct: percentage points of drawdown left before the drawdown
+    // circuit breaker trips (#267) = max_drawdown_pct - current_drawdown_pct, clamped
+    // >= 0. Early warning in the same "headroom" family as remaining_loss_budget
+    // (#213) and consecutive_losses_remaining (#205). 0 when the limit is disabled
+    // or already breached.
+    double   drawdown_headroom_pct() const noexcept {
+        if (limits_.max_drawdown_pct <= 0.0) return 0.0;
+        const double room = limits_.max_drawdown_pct - current_drawdown_pct();
+        return room > 0.0 ? room : 0.0;
+    }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
     // consecutive_losses_remaining: ile jeszcze stratnych fillow Z RZEDU do trip'a
     // bezpiecznika serii strat (#205, na bazie #114). -1 gdy breaker wylaczony,
