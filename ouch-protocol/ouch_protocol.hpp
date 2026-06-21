@@ -348,6 +348,28 @@ public:
         }
     }
 
+    // parse_stream: frame + decode a buffer of CONCATENATED exchange->client
+    // messages (#264) — the OUCH-over-SoupBin/TCP read path. recv() hands you an
+    // arbitrary byte chunk that may hold several whole messages plus a partial one
+    // at the tail. We read each message's type byte, look up its fixed length via
+    // expected_length (#218), and if the full message is present, decode it and
+    // invoke on_msg(OUCHResponse). Stops at an unknown type (desync) or a partial
+    // trailing message. Returns the number of bytes FULLY consumed — the caller
+    // keeps [consumed, len) and prepends it to the next read.
+    template <typename F>
+    static int parse_stream(const uint8_t* data, int len, F on_msg) {
+        int off = 0;
+        while (off < len) {
+            const char type = static_cast<char>(data[off]);
+            const int  mlen = expected_length(type);
+            if (mlen <= 0)        break;   // unknown type -> framing desync, stop
+            if (off + mlen > len) break;   // partial trailing message -> wait for more
+            on_msg(parse_response(data + off, mlen));
+            off += mlen;
+        }
+        return off;
+    }
+
     // === DECODING (Exchange → Client) ===
 
     // parse_response: decode exchange response from raw bytes

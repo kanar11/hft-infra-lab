@@ -3680,6 +3680,24 @@ void test_ouch_order_state() {
     // #250 fill_rate = filled / ordered
     ASSERT(tt.total_ordered_shares() == 300, "tracker_total_ordered");      // 100 + 200
     ASSERT(std::fabs(tt.fill_rate() - 60.0/300.0) < 1e-9, "tracker_fill_rate"); // 60/300 = 0.2
+
+    // #264 parse_stream — frame + decode concatenated OUCH messages.
+    uint8_t sbuf[256];
+    int soff = 0;
+    soff += OUCHMessage::encode_accepted(sbuf + soff, "TOK1", 'B', 100, "AAPL", 150.25, 99001); // 41
+    soff += OUCHMessage::encode_executed(sbuf + soff, "TOK1", 60, 150.25, 5001);                // 31
+    soff += OUCHMessage::encode_cancelled(sbuf + soff, "TOK1", 40, 'U');                        // 20
+    std::string seen;
+    int scount = 0;
+    const int consumed = OUCHMessage::parse_stream(sbuf, soff,
+        [&](const OUCHResponse& r) { ++scount; seen += r.type[0]; });
+    ASSERT(consumed == soff && scount == 3, "ouch_stream_consumed_all");
+    ASSERT(seen == "AEC", "ouch_stream_types");   // Accepted, Executed, Cancelled
+    // partial trailing message: drop 5 bytes of the last -> only first two decode
+    int pcount = 0;
+    const int consumed2 = OUCHMessage::parse_stream(sbuf, soff - 5,
+        [&](const OUCHResponse&) { ++pcount; });
+    ASSERT(consumed2 == 41 + 31 && pcount == 2, "ouch_stream_partial_tail");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
