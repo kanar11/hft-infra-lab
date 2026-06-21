@@ -1702,6 +1702,16 @@ void test_multicast_gap_recovery() {
     ASSERT(!dw.accept(5), "dedup_5_dup");
     ASSERT(dw.duplicates == 2, "dedup_count");
 
+    // #179 BackpressureMonitor — zaleglosc konsumenta wzgledem feedu.
+    multicast::BackpressureMonitor bp;
+    bp.on_enqueue(); bp.on_enqueue(); bp.on_enqueue();   // depth 3
+    ASSERT(bp.depth() == 3 && bp.peak_depth == 3, "bp_depth_peak");
+    bp.on_dequeue();                                     // depth 2
+    ASSERT(bp.depth() == 2 && bp.peak_depth == 3, "bp_peak_retained");
+    ASSERT(bp.overloaded(2) && !bp.overloaded(5), "bp_overloaded_threshold");
+    bp.on_dequeue(10);                                   // nie schodzi ponizej 0
+    ASSERT(bp.depth() == 0, "bp_no_underflow");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

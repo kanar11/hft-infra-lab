@@ -295,6 +295,34 @@ struct DedupWindow {
 };
 
 
+// BackpressureMonitor — czy konsument nadaza za feedem (expansion #179).
+//
+// Feed multicast leci ze stala szybkoscia rynku; jesli book-builder / konsument
+// nie nadaza, kolejka rosnie i handlujesz na NIEAKTUALNYCH danych. Monitor liczy
+// zakolejkowane vs przetworzone, sledzi glebokosc i jej szczyt, i flaguje
+// przeciazenie po progu. Lekki: dwa liczniki.
+//
+//   on_enqueue() przy odbiorze pakietu, on_dequeue() po przetworzeniu;
+//   depth() = zaleglosc, overloaded(threshold) -> pora zrzucic/zsnapshotowac.
+struct BackpressureMonitor {
+    std::uint64_t enqueued = 0;
+    std::uint64_t dequeued = 0;
+    std::uint64_t peak_depth = 0;
+
+    void on_enqueue(std::uint64_t n = 1) noexcept {
+        enqueued += n;
+        const std::uint64_t d = depth();
+        if (d > peak_depth) peak_depth = d;
+    }
+    void on_dequeue(std::uint64_t n = 1) noexcept {
+        dequeued += (n > depth() ? depth() : n);   // glebokosc nie schodzi ponizej 0
+    }
+    std::uint64_t depth() const noexcept { return enqueued - dequeued; }
+    bool overloaded(std::uint64_t threshold) const noexcept { return depth() >= threshold; }
+    void reset() noexcept { enqueued = dequeued = peak_depth = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
