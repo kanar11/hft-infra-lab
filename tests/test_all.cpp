@@ -2492,8 +2492,8 @@ void test_fix_session() {
         ASSERT(!FIXMessage::is_admin_msg_type("D"), "fix_app_neworder");
         ASSERT(!FIXMessage::is_admin_msg_type("AE"), "fix_multichar_not_admin");
         s.build_heartbeat(buf, sizeof(buf), nullptr, '|');
-        FIXMessage hb; hb.parse(buf);
-        ASSERT(hb.is_admin(), "fix_heartbeat_is_admin");
+        FIXMessage hbeat; hbeat.parse(buf);
+        ASSERT(hbeat.is_admin(), "fix_heartbeat_is_admin");
 
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
