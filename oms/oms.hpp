@@ -637,6 +637,15 @@ public:
     uint64_t total_cancels()  const noexcept { return total_cancels_; }
     uint64_t total_replaces() const noexcept { return total_replaces_; }
     uint64_t total_ordered_shares() const noexcept { return total_ordered_shares_; }
+    // cancel_rate: fraction of submitted orders that were cancelled (#258) =
+    // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high
+    // ratio means most orders never rest long (exchange msg-rate fees, surveillance
+    // flags). 0 when nothing submitted.
+    double cancel_rate() const noexcept {
+        return total_submitted_ > 0
+            ? static_cast<double>(total_cancels_) / static_cast<double>(total_submitted_)
+            : 0.0;
+    }
     uint64_t total_filled_shares()  const noexcept { return total_filled_shares_; }
     // fill_ratio: jaka czesc ZLECONEGO wolumenu (akcji) sie wykonala (#228) =
     // wykonane / zlecone. Jakosc egzekucji: nisko = duzo niewypelnionych /

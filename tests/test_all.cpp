@@ -425,6 +425,14 @@ void test_oms_short_and_replace() {
                "pending_split_after_fill");
     }
 
+    {   // #258 cancel_rate (cancels / submitted).
+        OMS oms(1000000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.submit_order("BBB", Side::BUY, 10.0, 100);              // submitted 2
+        oms.cancel_order(a->order_id);                             // cancels 1
+        ASSERT(close(oms.cancel_rate(), 0.5), "cancel_rate_half"); // 1/2
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
