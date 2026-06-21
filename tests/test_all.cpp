@@ -46,6 +46,7 @@
 #include "../strategy/cci.hpp"
 #include "../strategy/bollinger_pctb.hpp"
 #include "../strategy/roc.hpp"
+#include "../strategy/aroon.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -2308,6 +2309,20 @@ void test_roc() {
     ASSERT(!n.ready() && n.value() == 0.0, "roc_not_ready_zero");
 }
 
+// Aroon #260 — trend-strength oscillator.
+void test_aroon() {
+    SECTION("Aroon (#260)");
+    Aroon up(4);
+    for (int i = 1; i <= 5; ++i) up.update(static_cast<double>(i));   // rising: high last, low first
+    ASSERT(up.ready(), "aroon_ready");
+    ASSERT(std::fabs(up.up() - 100.0) < 1e-9, "aroon_up_100_on_uptrend");
+    ASSERT(std::fabs(up.down() - 0.0) < 1e-9, "aroon_down_0_on_uptrend");
+    Aroon dn(4);
+    for (int i = 0; i < 5; ++i) dn.update(5.0 - i);                   // falling: high first, low last
+    ASSERT(std::fabs(dn.up() - 0.0) < 1e-9, "aroon_up_0_on_downtrend");
+    ASSERT(std::fabs(dn.down() - 100.0) < 1e-9, "aroon_down_100_on_downtrend");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3850,6 +3865,7 @@ int main() {
     test_cci();
     test_bollinger_pctb();
     test_roc();
+    test_aroon();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
