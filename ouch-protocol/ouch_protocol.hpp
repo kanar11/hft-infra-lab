@@ -381,7 +381,7 @@ public:
                               "CANCEL_PENDING too short: %d < 15 bytes", len);
                 return resp;
             }
-            safe_copy(resp.type, "CXL_PENDING");
+            safe_copy(resp.type, "CXL_PEND");   // <=10 znakow: unik stringop-truncation (sanitizer -O1)
             strip_padding(resp.token, data + 1, 14);
 
         } else if (msg_type == 'U') {  // Order Replaced

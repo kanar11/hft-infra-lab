@@ -2773,7 +2773,7 @@ void test_ouch_order_state() {
     // #186 Cancel Pending ('P'): anulowanie przyjete, jeszcze nie finalne.
     n = OUCHMessage::encode_cancel_pending(buf, "TOK5");
     const OUCHResponse cp = OUCHMessage::parse_response(buf, n);
-    ASSERT(std::strcmp(cp.type, "CXL_PENDING") == 0, "ouch_cxlpend_parsed");
+    ASSERT(std::strcmp(cp.type, "CXL_PEND") == 0, "ouch_cxlpend_parsed");
     ASSERT(std::strcmp(cp.token, "TOK5") == 0, "ouch_cxlpend_token");
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 14).type, "ERROR") == 0,
            "ouch_cxlpend_short_error");
