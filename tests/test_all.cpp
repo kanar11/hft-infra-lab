@@ -2889,6 +2889,16 @@ void test_fix_session() {
         ASSERT(std::strcmp(mdr.get_field(263), "1") == 0, "fix_mdr_subtype");
         ASSERT(mdr.get_int(264) == 1 && std::strcmp(mdr.get_symbol(), "AAPL") == 0, "fix_mdr_depth_symbol");
 
+        // #217 MarketDataSnapshotFullRefresh (35=W) — odpowiedz na 35=V.
+        s.build_md_snapshot(buf, sizeof(buf), "MDR1", "AAPL", 99.98, 100, 100.02, 200, '|');
+        FIXMessage mdw; mdw.parse(buf);
+        ASSERT(mdw.is_valid() && mdw.get_msg_type()[0] == 'W', "fix_mdw_W_valid");
+        ASSERT(std::strcmp(mdw.get_field(262), "MDR1") == 0
+               && std::strcmp(mdw.get_symbol(), "AAPL") == 0, "fix_mdw_reqid_symbol");
+        ASSERT(mdw.get_int(268) == 2, "fix_mdw_two_entries");
+        ASSERT(std::strcmp(mdw.get_field(269), "0") == 0, "fix_mdw_first_is_bid"); // pierwszy wpis = bid
+        ASSERT(std::fabs(mdw.get_double(270) - 99.98) < 1e-6, "fix_mdw_bid_px");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
