@@ -2080,6 +2080,19 @@ void test_router_ewma_partial() {
         e.route_order("BUY", 10);
         ASSERT(close(e.reject_rate(), 1.0), "rejrate_all_rejected");
     }
+
+    // --- #170 remove_venue (decommission) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        ASSERT(r.venue_count() == 2, "remove_two_before");
+        ASSERT(r.remove_venue("A"), "remove_A_ok");
+        ASSERT(r.venue_count() == 1 && !r.venue_active("A"), "remove_A_gone");
+        ASSERT(!r.remove_venue("GHOST"), "remove_unknown_false");
+        r.update_quote("B", 10.0, 11.0, 100, 100);                 // B zostalo, dziala
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "remove_B_still_routes");
+    }
 }
 
 

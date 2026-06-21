@@ -179,6 +179,20 @@ public:
         if (venue_count_ < MAX_VENUES) venues_[venue_count_++] = v;
     }
 
+    // remove_venue: calkowicie usun venue z routingu (#170) — decommission,
+    // nie tylko wylaczenie (set_venue_active). Przesuwa tablice. Zwraca false
+    // gdy nieznane venue.
+    bool remove_venue(const char* venue_name) noexcept {
+        for (int i = 0; i < venue_count_; ++i) {
+            if (std::strcmp(venues_[i].name, venue_name) == 0) {
+                for (int j = i; j < venue_count_ - 1; ++j) venues_[j] = venues_[j + 1];
+                --venue_count_;
+                return true;
+            }
+        }
+        return false;
+    }
+
     // record_latency: zasil EWMA zmierzoną latencją round-trip (ns) z realnej
     // egzekucji. alpha=0.2 — świeże próbki ważą 20%, wygładza szum ale reaguje
     // na trend. Po pierwszej próbce EWMA = ona; potem wykładnicze wygładzanie.
