@@ -202,6 +202,22 @@ public:
         return (side == 'B') ? bids_.size() : asks_.size();
     }
 
+    // is_locked: best_bid == best_ask (#183). Ksiazka "zamknieta" — spread zero.
+    // Sygnalizuje nieaktualny/niespojny obraz (feed laggujacy) albo moment przed
+    // matchingiem; market-maker zwykle wstrzymuje kwotowanie.
+    bool is_locked() const noexcept {
+        return !bids_.empty() && !asks_.empty()
+            && bids_.rbegin()->first == asks_.begin()->first;
+    }
+
+    // is_crossed: best_bid > best_ask (#183). Ksiazka "skrzyzowana" — teoretyczny
+    // arbitraz (kup po ask < sprzedaj po bid). Realnie: niespojnosc feedu /
+    // brakujacy Delete; konsument powinien odrzucic albo zsnapshotowac.
+    bool is_crossed() const noexcept {
+        return !bids_.empty() && !asks_.empty()
+            && bids_.rbegin()->first > asks_.begin()->first;
+    }
+
     // vwap_depth: volume-weighted cena top-N poziomow po danej stronie (#155).
     // Fair-value uwzgledniajacy GLEBOKOSC (nie tylko touch); im glebiej, tym
     // bardziej odzwierciedla cene realizacji wiekszego zlecenia.

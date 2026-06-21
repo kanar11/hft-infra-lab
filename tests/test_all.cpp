@@ -1614,6 +1614,17 @@ void test_itch_book() {
     ASSERT(lw.level_count('S') == 3, "itchbook_level_count_ask");
     ASSERT(lw.total_shares('B') == 0 && lw.level_count('B') == 0, "itchbook_empty_bid_side");
 
+    // #183 locked / crossed book.
+    itch::ITCHOrderBook nb;
+    nb.on_add(1, 'B', 100.00, 100); nb.on_add(2, 'S', 100.02, 100);   // normalny spread
+    ASSERT(!nb.is_locked() && !nb.is_crossed(), "itchbook_normal_not_locked_crossed");
+    itch::ITCHOrderBook lk;
+    lk.on_add(1, 'B', 100.00, 100); lk.on_add(2, 'S', 100.00, 100);   // locked
+    ASSERT(lk.is_locked() && !lk.is_crossed(), "itchbook_locked");
+    itch::ITCHOrderBook cr;
+    cr.on_add(1, 'B', 100.05, 100); cr.on_add(2, 'S', 100.00, 100);   // crossed
+    ASSERT(cr.is_crossed() && !cr.is_locked(), "itchbook_crossed");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }
