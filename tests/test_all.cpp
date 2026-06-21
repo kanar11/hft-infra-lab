@@ -2675,6 +2675,18 @@ void test_risk_price_band() {
     RiskManager rcd;                        // domyslnie wylaczony (0)
     ASSERT(rcd.consecutive_losses_remaining() == -1, "clr_disabled");
 
+    // #213 remaining_loss_budget (max_daily_loss 1000).
+    RiskLimits lbl; lbl.max_daily_loss = 1000;
+    RiskManager rlb(lbl);
+    ASSERT(std::fabs(rlb.remaining_loss_budget() - 1000.0) < 1e-6, "rlb_full_at_start");
+    rlb.update_pnl(-300.0);                 // budzet 700
+    ASSERT(std::fabs(rlb.remaining_loss_budget() - 700.0) < 1e-6, "rlb_after_loss");
+    rlb.update_pnl(-800.0);                 // za prog -> clamp 0
+    ASSERT(std::fabs(rlb.remaining_loss_budget() - 0.0) < 1e-6, "rlb_clamped_zero");
+    RiskManager rlp(lbl);
+    rlp.update_pnl(500.0);                  // zysk zwieksza budzet -> 1500
+    ASSERT(std::fabs(rlp.remaining_loss_budget() - 1500.0) < 1e-6, "rlb_profit_extends");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

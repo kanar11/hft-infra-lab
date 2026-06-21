@@ -766,6 +766,14 @@ public:
         const int32_t rem = limits_.max_consecutive_losses - consec_losses_;
         return rem > 0 ? rem : 0;
     }
+    // remaining_loss_budget: ile jeszcze ($) mozna stracic zanim trip'nie circuit
+    // breaker dziennej straty (#213). Breaker: daily_pnl_ < -max_daily_loss, wiec
+    // budzet = max_daily_loss + daily_pnl_ (zysk go zwieksza, strata zmniejsza).
+    // 0 = juz na/za progiem. Early warning do throttlingu pozycji.
+    double remaining_loss_budget() const noexcept {
+        const double budget = static_cast<double>(limits_.max_daily_loss) + daily_pnl_;
+        return budget > 0.0 ? budget : 0.0;
+    }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }
     uint64_t get_total_rejects()              const noexcept { return total_rejects_; }
 
