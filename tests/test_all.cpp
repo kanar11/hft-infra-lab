@@ -3225,6 +3225,16 @@ void test_ouch_order_state() {
     ASSERT(ro.valid && ro.type == 'U' && std::strcmp(ro.token, "TOK1") == 0
            && std::strcmp(ro.new_token, "TOK2") == 0 && ro.shares == 80, "ouch_parse_replace");
 
+    // #226 Modify Order ('M') — redukcja wolumenu (decrease-only).
+    n = OUCHMessage::modify_order(buf, "TOK1", 50);
+    const OUCHOrder mo = OUCHMessage::parse_order(buf, n);
+    ASSERT(mo.valid && mo.type == 'M' && std::strcmp(mo.token, "TOK1") == 0
+           && mo.shares == 50, "ouch_parse_modify");
+    ASSERT(OUCHMessage::validate_order(mo) == nullptr, "ouch_modify_valid");
+    n = OUCHMessage::modify_order(buf, "TOK1", 0);                      // 0 = nieprawidlowe
+    ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
+                       "non-positive shares") == 0, "ouch_modify_zero_rejected");
+
     // #169 validate_order — gateway gieldy waliduje zlecenie klienta.
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);
     ASSERT(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)) == nullptr,

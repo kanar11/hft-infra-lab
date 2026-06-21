@@ -181,6 +181,17 @@ public:
         return 37;
     }
 
+    // modify_order: build Modify Order message (19 bytes) — REDUKCJA wolumenu
+    // (decrease-only) (#226). W odroznieniu od Replace ('U') zachowuje priorytet w
+    // kolejce: zmniejsza tylko shares, nie zmienia ceny ani tokenu. new_shares to
+    // nowa (mniejsza) liczba akcji.
+    static int modify_order(uint8_t* buf, const char* token, int32_t new_shares) noexcept {
+        buf[0] = 'M';
+        write_padded(buf + 1, token, 14);
+        write_u32_be(buf + 15, new_shares);
+        return 19;
+    }
+
     // === ENCODING (Exchange → Client) ===
     // Symetria do enter_order/cancel_order: strona giełdy buduje raporty, które
     // parse_response() po stronie klienta dekoduje. Domyka OUCH (encode obu
@@ -535,6 +546,12 @@ public:
             o.shares = static_cast<int32_t>(read_u32_be(data + 29));
             o.price  = read_u32_be(data + 33) / 10000.0;
             o.valid  = true;
+        } else if (t == 'M') {                  // Modify Order (19 B) #226
+            if (len < 19) return o;
+            o.type = 'M';
+            strip_padding(o.token, data + 1, 14);
+            o.shares = static_cast<int32_t>(read_u32_be(data + 15));   // nowa (mniejsza) ilosc
+            o.valid  = true;
         }
         return o;
     }
@@ -554,6 +571,8 @@ public:
             if (o.new_token[0] == '\0') return "empty replacement token";
             if (o.shares <= 0)   return "non-positive shares";
             if (o.price  <= 0.0) return "non-positive price";
+        } else if (o.type == 'M') {                  // #226 Modify (decrease-only)
+            if (o.shares <= 0)   return "non-positive shares";
         } else if (o.type == 'X') {
             if (o.shares < 0)    return "negative shares";
         }
