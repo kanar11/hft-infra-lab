@@ -211,6 +211,28 @@ public:
         return sum;
     }
 
+    // price_to_fill: NAJGORSZA cena (poziom), ktory trzeba dotknac aby wykonac
+    // `shares` przechodzac ksiazke (#247). BUY chodzi po askach rosnaco, SELL po
+    // bidach malejaco; zwraca cene poziomu, na ktorym skumulowana ilosc pokrywa
+    // zlecenie. To LIMIT do sweep'a (inaczej niz expected_fill=VWAP). 0 gdy za malo
+    // plynnosci.
+    double  price_to_fill(char side, int64_t shares) const noexcept {
+        if (shares <= 0) return 0.0;
+        int64_t remaining = shares;
+        if (side == 'B') {
+            for (const auto& [px, qty] : asks_) {
+                remaining -= qty;
+                if (remaining <= 0) return static_cast<double>(px) / 100.0;
+            }
+        } else {
+            for (auto it = bids_.rbegin(); it != bids_.rend(); ++it) {
+                remaining -= it->second;
+                if (remaining <= 0) return static_cast<double>(it->first) / 100.0;
+            }
+        }
+        return 0.0;   // niewystarczajaca plynnosc
+    }
+
     // total_shares: laczna spoczywajaca liczba akcji po danej stronie (#174).
     // Caly rozmiar ksiazki na jednej stronie — surowa miara dostepnej plynnosci
     // (w odroznieniu od liquidity_within, bez ograniczenia do okolic touch'a).
