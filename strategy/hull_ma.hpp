@@ -19,7 +19,6 @@ class HullMA {
     WMA half_;     // WMA(n/2)
     WMA full_;     // WMA(n)
     WMA smooth_;   // WMA(sqrt(n)) nad surowa seria
-    int period_;
 
     static int half_period(int n) noexcept { const int h = n / 2; return h < 1 ? 1 : h; }
     static int sqrt_period(int n) noexcept {
@@ -31,8 +30,7 @@ public:
     explicit HullMA(int period = 16) noexcept
         : half_(half_period(period < 1 ? 1 : period)),
           full_(period < 1 ? 1 : period),
-          smooth_(sqrt_period(period < 1 ? 1 : period)),
-          period_(period < 1 ? 1 : period) {}
+          smooth_(sqrt_period(period < 1 ? 1 : period)) {}
 
     void update(double price) {
         half_.update(price);
