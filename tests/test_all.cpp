@@ -2636,6 +2636,19 @@ void test_router_ewma_partial() {
         ASSERT(empt.cheapest_venue(true) == nullptr, "cheapest_empty_null");
     }
 
+    // --- #255 deepest_venue (largest displayed size per side) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        r.update_quote("A", 10.0, 11.0, 100, 100);     // bid_size 100 / ask_size 100
+        r.update_quote("B", 10.0, 11.0, 50, 300);      // bid_size 50  / ask_size 300
+        ASSERT(std::strcmp(r.deepest_venue(true), "B") == 0, "deepest_buy_B");   // ask 300 > 100
+        ASSERT(std::strcmp(r.deepest_venue(false), "A") == 0, "deepest_sell_A"); // bid 100 > 50
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.deepest_venue(true) == nullptr, "deepest_empty_null");
+    }
+
     // --- #208 nbbo_spread / nbbo_spread_bps (skonsolidowany rynek) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);

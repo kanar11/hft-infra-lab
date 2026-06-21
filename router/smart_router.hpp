@@ -477,6 +477,26 @@ public:
         return found ? best_name : nullptr;
     }
 
+    // deepest_venue: name of the venue with the LARGEST displayed size on a side
+    // (#255). BUY looks at ask_size, SELL at bid_size; only active venues with a
+    // positive quote. Complements cheapest_venue (#200, best price): a large order
+    // that prioritizes fill size over price routes to the deepest book. nullptr
+    // when no venue has liquidity.
+    const char* deepest_venue(bool is_buy) const noexcept {
+        const char* best_name = nullptr;
+        int32_t best = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            if (!has_liq) continue;
+            const int32_t size = is_buy ? v.ask_size : v.bid_size;
+            if (size > best) { best = size; best_name = v.name; }
+        }
+        return best_name;
+    }
+
     // available_liquidity: laczny displayed size top-of-book po stronie zlecenia
     // (is_buy → asks, sprzedaz → bids), tylko aktywne venue z dodatnim quote.
     // Pre-route sizing: czy w ogole jest plynnosc na pokrycie zlecenia (#109).
