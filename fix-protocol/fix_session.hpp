@@ -556,6 +556,23 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // Quote (35=S): a two-sided quote from a market maker (#249). 117=QuoteID,
+    // 55=Symbol, 132=BidPx, 133=OfferPx, 134=BidSize, 135=OfferSize. Quote-driven
+    // markets (vs order-driven): the MM streams quotes the venue can hit, instead
+    // of resting individual orders.
+    int build_quote(char* out, int cap, const char* quote_id, const char* symbol,
+                    double bid_px, double offer_px, int32_t bid_size, int32_t offer_size,
+                    char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=S%c49=%s%c56=%s%c34=%u%c117=%s%c55=%s%c132=%.2f%c133=%.2f%c134=%d%c135=%d%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            quote_id, delim, symbol, delim, bid_px, delim, offer_px, delim,
+            bid_size, delim, offer_size, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.

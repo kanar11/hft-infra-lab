@@ -3204,6 +3204,16 @@ void test_fix_session() {
         FIXMessage notexec; notexec.parse(buf);
         ASSERT(!fix::FIXSession::parse_exec_report(notexec).valid, "fix_execrep_non8_invalid");
 
+        // #249 Quote (35=S) — two-sided market maker quote.
+        s.build_quote(buf, sizeof(buf), "Q1", "AAPL", 99.98, 100.02, 500, 300, '|');
+        FIXMessage qm; qm.parse(buf);
+        ASSERT(qm.is_valid() && qm.get_msg_type()[0] == 'S', "fix_quote_S_valid");
+        ASSERT(std::strcmp(qm.get_field(117), "Q1") == 0
+               && std::strcmp(qm.get_symbol(), "AAPL") == 0, "fix_quote_id_symbol");
+        ASSERT(std::fabs(qm.get_double(132) - 99.98) < 1e-6
+               && std::fabs(qm.get_double(133) - 100.02) < 1e-6, "fix_quote_prices");
+        ASSERT(qm.get_int(134) == 500 && qm.get_int(135) == 300, "fix_quote_sizes");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
