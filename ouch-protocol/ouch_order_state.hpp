@@ -129,6 +129,20 @@ public:
         return (it != orders_.end()) ? it->second.filled : 0;
     }
     size_t   order_count() const noexcept { return orders_.size(); }
+    // total_filled_shares / total_remaining_shares: agregaty wolumenu po WSZYSTKICH
+    // sledzonych zleceniach (#242). filled = ile juz wykonano lacznie, remaining =
+    // ile jeszcze pracuje. Portfelowy obraz egzekucji niezalezny od pojedynczego
+    // tokenu (do sizing / monitoringu zaleglosci).
+    int32_t total_filled_shares() const noexcept {
+        int32_t s = 0;
+        for (const auto& [tok, rec] : orders_) s += rec.filled;
+        return s;
+    }
+    int32_t total_remaining_shares() const noexcept {
+        int32_t s = 0;
+        for (const auto& [tok, rec] : orders_) s += rec.remaining;
+        return s;
+    }
     uint64_t live()        const noexcept { return live_; }
     uint64_t fills()       const noexcept { return filled_; }
     uint64_t cancels()     const noexcept { return cancelled_; }

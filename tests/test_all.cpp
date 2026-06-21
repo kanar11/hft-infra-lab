@@ -3401,6 +3401,15 @@ void test_ouch_order_state() {
     n = OUCHMessage::enter_order(buf, "TOK1", 'X', 100, "AAPL", 150.25); // zla strona
     ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
                        "invalid side") == 0, "ouch_validate_bad_side");
+
+    // #242 agregaty wolumenu trackera (swiezy tracker).
+    ouch::OUCHOrderTracker tt;
+    tt.on_new("TOKA", 100);
+    tt.on_new("TOKB", 200);                                 // remaining 300 lacznie
+    n = OUCHMessage::encode_executed(buf, "TOKA", 60, 10.0, 1);
+    tt.on_response(OUCHMessage::parse_response(buf, n));     // TOKA: filled 60, remaining 40
+    ASSERT(tt.total_filled_shares() == 60, "tracker_total_filled");
+    ASSERT(tt.total_remaining_shares() == 240, "tracker_total_remaining");  // 40 + 200
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
