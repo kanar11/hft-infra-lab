@@ -2969,6 +2969,15 @@ void test_fix_session() {
         ASSERT(std::strcmp(mdw.get_field(269), "0") == 0, "fix_mdw_first_is_bid"); // pierwszy wpis = bid
         ASSERT(std::fabs(mdw.get_double(270) - 99.98) < 1e-6, "fix_mdw_bid_px");
 
+        // #225 MarketDataIncrementalRefresh (35=X) — przyrostowa zmiana bid.
+        s.build_md_incremental(buf, sizeof(buf), "MDR1", '1', '0', "AAPL", 100.05, 500, '|');
+        FIXMessage mdx; mdx.parse(buf);
+        ASSERT(mdx.is_valid() && mdx.get_msg_type()[0] == 'X', "fix_mdx_X_valid");
+        ASSERT(std::strcmp(mdx.get_field(279), "1") == 0, "fix_mdx_update_change"); // change
+        ASSERT(std::strcmp(mdx.get_field(269), "0") == 0, "fix_mdx_bid_entry");     // bid
+        ASSERT(std::fabs(mdx.get_double(270) - 100.05) < 1e-6 && mdx.get_int(271) == 500,
+               "fix_mdx_px_size");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");

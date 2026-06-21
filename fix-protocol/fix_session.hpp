@@ -524,6 +524,23 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // MarketDataIncrementalRefresh (35=X): przyrostowa aktualizacja po snapshocie
+    // (35=W, #217) — gielda przysyla TYLKO zmiany (#225), nie caly book. 262=
+    // MDReqID, 268=1, 279=MDUpdateAction ('0'=new, '1'=change, '2'=delete), 269=
+    // MDEntryType ('0'=bid/'1'=offer), 55, 270=Px, 271=Size. Strumien po subskrypcji.
+    int build_md_incremental(char* out, int cap, const char* md_req_id, char update_action,
+                             char entry_type, const char* symbol, double px, int32_t sz,
+                             char delim = FIXMessage::SOH) noexcept {
+        char body[320];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=X%c49=%s%c56=%s%c34=%u%c262=%s%c268=1%c279=%c%c269=%c%c55=%s%c270=%.2f%c271=%d%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            md_req_id, delim, delim, update_action, delim, entry_type, delim, symbol, delim,
+            px, delim, sz, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.
