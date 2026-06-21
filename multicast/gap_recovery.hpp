@@ -381,6 +381,34 @@ struct OutOfOrderMeter {
 };
 
 
+// SequenceResetDetector — wykrywa RESET sekwencji feedu (expansion #203).
+//
+// Na starcie dnia / po restarcie publishera numer sekwencji cofa sie do niskiej
+// wartosci. Konsument MUSI to wykryc, bo inaczej potraktuje nowe niskie numery
+// jako gigantyczna luke (gap-recovery oszaleje) — zamiast tego trzeba WYCZYSCIC
+// ksiazke i zsnapshotowac od nowa. Prog odroznia reset (duzy spadek) od zwyklego
+// reorderingu (maly spadek): reset gdy seq + threshold < last.
+struct SequenceResetDetector {
+    std::uint64_t threshold;
+    std::uint64_t last = 0;
+    bool          init = false;
+    std::uint64_t resets = 0;
+
+    explicit SequenceResetDetector(std::uint64_t threshold_ = 1000) noexcept
+        : threshold(threshold_) {}
+
+    // on_seq: zwraca true gdy wykryto reset (czas wyczyscic ksiazke).
+    bool on_seq(std::uint64_t seq) noexcept {
+        if (!init) { last = seq; init = true; return false; }
+        const bool reset = (seq + threshold < last);   // duzy spadek = reset, nie reorder
+        if (reset) { ++resets; last = seq; }            // przyjmij nowa baze
+        else if (seq > last) last = seq;                // normalny postep; reorder nie cofa
+        return reset;
+    }
+    void reset_state() noexcept { last = 0; init = false; resets = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił

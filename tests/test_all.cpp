@@ -1797,6 +1797,15 @@ void test_multicast_gap_recovery() {
     ASSERT(ooo.total == 5 && ooo.out_of_order == 1, "ooo_counts");
     ASSERT(std::fabs(ooo.ooo_rate() - 0.2) < 1e-9, "ooo_rate");
 
+    // #203 SequenceResetDetector — reset vs reorder.
+    multicast::SequenceResetDetector srd(1000);
+    ASSERT(!srd.on_seq(5000), "srd_init_no_reset");
+    ASSERT(!srd.on_seq(5001), "srd_normal");
+    ASSERT(!srd.on_seq(4999), "srd_small_reorder_not_reset");   // spadek 2 < 1000
+    ASSERT(srd.on_seq(10), "srd_big_drop_is_reset");            // 5001 -> 10
+    ASSERT(srd.resets == 1, "srd_reset_count");
+    ASSERT(!srd.on_seq(11), "srd_normal_after_reset");          // nowa baza 10
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
