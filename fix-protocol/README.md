@@ -1,9 +1,8 @@
 # FIX 4.2 Protocol Parser
 
 Parses Financial Information eXchange messages for order routing.
-*Analizuje komunikaty Financial Information eXchange do routingu zamówień.*
 
-## Performance 
+## Performance
 
 | Metric | C++ |
 |--------|-----|
@@ -11,7 +10,7 @@ Parses Financial Information eXchange messages for order routing.
 | **Latency (p50)** | **150 ns** |
 | **Latency (p99)** | **250 ns** |
 
-## Supported Message Types / Obsługiwane typy wiadomości
+## Supported Message Types
 
 - D = New Order
 - G = Modify
@@ -19,31 +18,31 @@ Parses Financial Information eXchange messages for order routing.
 - 8 = Execution Report
 - 0 = Heartbeat
 
-## Key Tags / Kluczowe znaczniki
+## Key Tags
 
-- 8  = BeginString (ZAWSZE pierwszy)
-- 9  = BodyLength (ZAWSZE drugi)
+- 8  = BeginString (ALWAYS first)
+- 9  = BodyLength (ALWAYS second)
 - 35 = MsgType
 - 55 = Symbol
 - 54 = Side (1=Buy, 2=Sell)
 - 44 = Price
 - 38 = OrderQty
-- 10 = CheckSum (ZAWSZE ostatni)
+- 10 = CheckSum (ALWAYS last)
 
-## Walidacja sesji (standard branżowy)
+## Session validation (industry standard)
 
-Każdy zgodny silnik FIX MUSI walidować pola obowiązkowe — wcześniej parser
-ich nie sprawdzał. Teraz:
+Every compliant FIX engine MUST validate the mandatory fields — earlier the
+parser did not check them. Now:
 
-| Co | Metoda | Opis |
-|----|--------|------|
-| **Delimiter SOH** | auto | Prawdziwy wire FIX używa `\x01` (ASCII SOH), nie `\|`. Parser auto-wykrywa: SOH jeśli obecny, inaczej `\|` (human-readable do logów/testów). |
-| **CheckSum (tag 10)** | `checksum_valid()` | Suma modulo-256 wszystkich bajtów do delimitera przed `10=`. Wykrywa uszkodzenie transmisji. |
-| **BodyLength (tag 9)** | `body_length_valid()` | Liczba bajtów body (od pola po tagu 9 do delimitera przed tagiem 10). |
-| **Wymagany nagłówek** | `has_required_header()` | Obecność tagów 8, 9, 35, 10. |
-| **Pełna walidacja** | `is_valid()` | nagłówek + checksum + bodylength. |
+| What | Method | Description |
+|------|--------|-------------|
+| **SOH delimiter** | auto | Real wire FIX uses `\x01` (ASCII SOH), not `\|`. The parser auto-detects: SOH if present, otherwise `\|` (human-readable for logs/tests). |
+| **CheckSum (tag 10)** | `checksum_valid()` | Modulo-256 sum of all bytes up to the delimiter before `10=`. Detects transmission corruption. |
+| **BodyLength (tag 9)** | `body_length_valid()` | Number of body bytes (from the field after tag 9 to the delimiter before tag 10). |
+| **Required header** | `has_required_header()` | Presence of tags 8, 9, 35, 10. |
+| **Full validation** | `is_valid()` | header + checksum + bodylength. |
 
-Budowanie poprawnych wiadomości (z auto-policzonym tagiem 9 i 10):
+Building valid messages (with auto-computed tags 9 and 10):
 
 ```cpp
 char msg[256];
@@ -53,17 +52,17 @@ FIXMessage::build_message(msg, sizeof(msg),
 
 FIXMessage m;
 m.parse(msg);
-if (m.is_valid()) { /* przyjmij zlecenie */ }
+if (m.is_valid()) { /* accept the order */ }
 ```
 
-## Files / Pliki
+## Files
 
 | File | Description |
 |------|-------------|
-| `fix_parser.hpp` | C++ header-only — parser + walidacja CheckSum/BodyLength + builder |
+| `fix_parser.hpp` | C++ header-only — parser + CheckSum/BodyLength validation + builder |
 | `fix_demo.cpp` | C++ demo with 31 unit tests (incl. checksum/bodylength/SOH) + throughput benchmark |
 
-## Run 
+## Run
 
 ```bash
 # C++ (build + run)

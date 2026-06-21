@@ -1,16 +1,16 @@
-# Order Book — 4 warianty matching engine
+# Order Book — 4 matching-engine variants
 
-Cztery niezależne implementacje (każda inny trade-off między prostotą,
-szybkością i bogactwem funkcji):
+Four independent implementations (each a different trade-off between simplicity,
+speed, and feature richness):
 
-| Wariant | Plik | Kiedy używać |
+| Variant | File | When to use |
 |---------|------|-------------|
 | **v1 basic**       | `orderbook.cpp`         | minimal didactic — `std::map<Price, Qty>` per side |
-| **v2 + ID**        | `orderbook.cpp` (rozszerzony) | dodaje cancel/modify z `unordered_map<id, Order>` |
-| **FlatOrderBook**  | `orderbook_flat.hpp`    | O(1) add/cancel/modify, zero heap alloc, tablica indeksowana ceną |
-| **FullOrderBook**  | `orderbook_pro.hpp`     | **production-grade L3**: FIFO per level, 10 typów zleceń + OCO/bracket/trailing, auction, snapshot recovery, compliance + analytics |
+| **v2 + ID**        | `orderbook.cpp` (extended) | adds cancel/modify with `unordered_map<id, Order>` |
+| **FlatOrderBook**  | `orderbook_flat.hpp`    | O(1) add/cancel/modify, zero heap alloc, price-indexed array |
+| **FullOrderBook**  | `orderbook_pro.hpp`     | **production-grade L3**: FIFO per level, 10 order types + OCO/bracket/trailing, auction, snapshot recovery, compliance + analytics |
 
-## Wydajność (Red Hat EL10, VirtualBox 2-core VM)
+## Performance (Red Hat EL10, VirtualBox 2-core VM)
 | Metric | v1/v2 | FlatOrderBook | FullOrderBook |
 |--------|-------|---------------|---------------|
 | Throughput (add)    | 17.8M ops/sec | ~25M ops/sec  | ~10-15M ops/sec |
@@ -19,91 +19,91 @@ szybkością i bogactwem funkcji):
 | Cancel by ID        | O(log N)      | O(1)          | O(1)            |
 | Memory footprint    | dynamic       | fixed         | fixed pool      |
 
-FullOrderBook trade'uje 2× narzut na add za bogactwo funkcji (FIFO traversal,
-event callbacks, multi-level depth). Wybór zależy od use case.
+FullOrderBook trades ~2× the add overhead for feature richness (FIFO traversal,
+event callbacks, multi-level depth). The choice depends on the use case.
 
 ## FullOrderBook — production-grade matching engine
 
-Najbardziej rozbudowany wariant — header-only ~5300 linii, pełna L3 księga,
-300+ testów w demo. Intrusive FIFO per price level, LIFO pool (zero heap na
-hot path), `BookCluster<N>` jako multi-symbol kontener z cross-symbol arb
-detection i aggregacjami.
+The most elaborate variant — header-only ~5300 lines, a full L3 book,
+300+ tests in the demo. Intrusive FIFO per price level, LIFO pool (zero heap on
+the hot path), `BookCluster<N>` as a multi-symbol container with cross-symbol arb
+detection and aggregations.
 
 ### Order types (10)
-- **LIMIT** — standardowy limit order
-- **IOC** (Immediate-Or-Cancel) — weź co możesz teraz, resztę kasuj
-- **FOK** (Fill-Or-Kill) — cała qty albo nic (atomowy)
-- **POST_ONLY** (ALO) — odrzuć jeśli zostałbyś takerem (cross na entry)
-- **ICEBERG** — pokazuj tylko `displayed_qty`, refresh z hidden reserve do
-  oryginalnego display size (+ opcjonalny anti-detection jitter ±bps);
-  po refresh maker traci priority (tail FIFO)
-- **STOP** — trigger-on-price, po triggerze staje się LIMIT/MARKET
-- **PEG** — peg do best bid/ask + offset (`submit_peg`) albo do midpointu
-  (`submit_peg_mid`), opcjonalny twardy cap price; re-quote po zmianie TOB
-- **MARKET** — bez ceny, zjadasz aż do wyczerpania
-- **HIDDEN** — dark-pool semantyka: niewidoczne w L1/L2, match w cross/auction
-- **AON** (All-Or-None) — fill jak FOK, ale persiste w księdze
+- **LIMIT** — standard limit order
+- **IOC** (Immediate-Or-Cancel) — take what you can now, cancel the rest
+- **FOK** (Fill-Or-Kill) — full qty or nothing (atomic)
+- **POST_ONLY** (ALO) — reject if you would become a taker (cross on entry)
+- **ICEBERG** — show only `displayed_qty`, refresh from the hidden reserve up to
+  the original display size (+ optional anti-detection jitter ±bps);
+  after a refresh the maker loses priority (tail FIFO)
+- **STOP** — trigger-on-price; after triggering it becomes LIMIT/MARKET
+- **PEG** — peg to best bid/ask + offset (`submit_peg`) or to the midpoint
+  (`submit_peg_mid`), optional hard cap price; re-quote when the TOB changes
+- **MARKET** — no price, eat until exhausted
+- **HIDDEN** — dark-pool semantics: invisible in L1/L2, matches in cross/auction
+- **AON** (All-Or-None) — fills like FOK, but persists in the book
 
-### Zlecenia złożone
-- **OCO** (One-Cancels-Other): `link_oco(a, b)` — completion jednej nogi
-  (full fill / cancel / expire / auction) kasuje drugą; deferred-cancel po
-  pętli match (bez dangling pointerów w hot path)
-- **Bracket**: `submit_bracket(side, entry, qty, tp, sl)` — po full fillu
-  entry automatycznie armuje take-profit LIMIT/GTC + stop-loss STOP jako
-  parę OCO; cancel entry = disarm
-- **Trailing stop**: `submit_trailing_stop(side, offset, ...)` — trigger
-  podąża za rynkiem (SELL: high-water − offset, BUY: low-water + offset)
-- **MOC** (Market-On-Close): `submit_moc(side, qty)` — kolejka poza księgą,
-  wykonanie w closing cross z price priority; resztki nie restują
-- **LOC** (Limit-On-Close): `submit_loc(side, price, qty)` — jak MOC, ale
-  z limitem; uczestniczy w price discovery crossu
-- **Reduce-only**: `submit_reduce_only(...)` — qty clamped do |pozycji|
-  konta, nigdy nie powiększy/odwróci pozycji
+### Compound orders
+- **OCO** (One-Cancels-Other): `link_oco(a, b)` — completion of one leg
+  (full fill / cancel / expire / auction) cancels the other; deferred-cancel
+  after the match loop (no dangling pointers in the hot path)
+- **Bracket**: `submit_bracket(side, entry, qty, tp, sl)` — after a full fill of
+  the entry it automatically arms a take-profit LIMIT/GTC + stop-loss STOP as an
+  OCO pair; cancelling the entry = disarm
+- **Trailing stop**: `submit_trailing_stop(side, offset, ...)` — the trigger
+  follows the market (SELL: high-water − offset, BUY: low-water + offset)
+- **MOC** (Market-On-Close): `submit_moc(side, qty)` — queued off-book,
+  executed in the closing cross with price priority; remainders don't rest
+- **LOC** (Limit-On-Close): `submit_loc(side, price, qty)` — like MOC, but
+  with a limit; participates in the price-discovery cross
+- **Reduce-only**: `submit_reduce_only(...)` — qty clamped to |account position|,
+  never increases/flips the position
 
-### Time in force (5) + STP (5 polityk)
+### Time in force (5) + STP (5 policies)
 DAY / GTC / IOC / FOK / GTD (`expire_gtd()` sweep). Self-trade prevention:
 NONE / CANCEL_NEWEST / CANCEL_OLDEST / CANCEL_BOTH / DECREMENT_AND_CXL
 (NASDAQ DAC).
 
 ### Auction matching (opening/closing cross)
-`enter_auction_mode()` → orders czekają bez matchu → `run_auction()` znajduje
-single clearing price maksymalizujący matched qty (tie-break: min imbalance),
-FIFO przy oversubscription, pełny incremental accounting depth/hidden.
+`enter_auction_mode()` → orders wait without matching → `run_auction()` finds a
+single clearing price maximizing matched qty (tie-break: min imbalance),
+FIFO on oversubscription, full incremental depth/hidden accounting.
 `indicative_auction_info()` — NOII (NASDAQ-style): indicative price + paired
-qty + imbalance per side BEZ egzekucji; `run_closing_auction()` — pełny
-closing cross z injection MOC/LOC; `try_run_auction(threshold)` — volatility
-extension (LSE/Xetra): surplus > próg odracza cross zamiast wykonywać go
-z dużym imbalance; wash-trade surveillance flaguje klientów po obu stronach
-crossa.
+qty + imbalance per side WITHOUT execution; `run_closing_auction()` — full
+closing cross with MOC/LOC injection; `try_run_auction(threshold)` — volatility
+extension (LSE/Xetra): surplus > threshold defers the cross instead of executing
+it with a large imbalance; wash-trade surveillance flags clients on both sides
+of a cross.
 
 ### Session lifecycle + halt
-Pełny dzień sesyjny: `begin_pre_open()` → `open_market()` (opening cross) →
+A full session day: `begin_pre_open()` → `open_market()` (opening cross) →
 continuous → `begin_closing()` → `close_market()` (closing cross + CLOSED,
-submity odrzucane, cancel dozwolony). Dwa modele haltu: hard halt
-(`halt()` — submity padają) i LULD-style pauza (`halt_for_auction()` —
-order entry trwa, `resume_with_auction()` robi reopen cross;
-`set_luld_halt_to_auction(true)` podpina pauzę pod band breach).
+submits rejected, cancel allowed). Two halt models: hard halt
+(`halt()` — submits fail) and LULD-style pause (`halt_for_auction()` —
+order entry continues, `resume_with_auction()` does a reopen cross;
+`set_luld_halt_to_auction(true)` ties the pause to a band breach).
 
 ### Compliance / market integrity
-- **LULD** circuit breaker (Limit Up / Limit Down bandy)
-- **SSR** — uptick rule (SEC Rule 201): short ≤ best bid odrzucany przy
-  aktywnym SSR; auto-trigger circuit breaker na spadku od reference
+- **LULD** circuit breaker (Limit Up / Limit Down bands)
+- **SSR** — uptick rule (SEC Rule 201): a short ≤ best bid is rejected while
+  SSR is active; auto-triggers the circuit breaker on a drop from reference
 - **MIFID II RTS27/28** — effective spread, signed price impact, executions
 - **Quote stuffing detection** (SEC 15c3-5) — per-account cancel rate flags
 - **Rate limiting** — token bucket per account (msg-rate throttle); reject
-  RATE_LIMITED, wewnętrzne resubmity engine bypass
-- **Wash-trade surveillance** — flaguje klientów z fillami po obu stronach
-  jednego crossa aukcyjnego
-- **Kill switch**: `mass_cancel(client_id)` — obejmuje też pending STOPy
+  RATE_LIMITED, internal engine resubmits bypass it
+- **Wash-trade surveillance** — flags clients with fills on both sides of a
+  single auction cross
+- **Kill switch**: `mass_cancel(client_id)` — also covers pending STOPs
 - **Per-account exposure** — open/filled net+gross qty per client_id
-- **Audit log** + **event seq numbers** (gap detect / dedup u konsumenta)
-- **Drop copy** — osobny strumień eventów monitorowanego konta (pełny
+- **Audit log** + **event seq numbers** (gap detect / dedup at the consumer)
+- **Drop copy** — a separate event stream for a monitored account (full
   lifecycle: ACCEPT/REJECT/FILL/REPLACE/CANCEL/EXPIRE, continuous + auction)
 
-### Analytics (mikrostruktura)
+### Analytics (microstructure)
 - **Flow**: VPIN, flow imbalance, Cont-Kukanov OFI, signed-volume EMA,
-  Markov chain kierunku trade'ów, Lee-Ready classification (+accuracy)
-- **Impact/TCA**: Kyle's lambda (globalna + per-side), implementation
+  Markov chain of trade direction, Lee-Ready classification (+accuracy)
+- **Impact/TCA**: Kyle's lambda (global + per-side), implementation
   shortfall, effective vs quoted spread, slippage guard, fill bands,
   per-account VWAP
 - **Price**: microprice, mid/microprice ring + momentum, TWAP-of-mid,
@@ -115,34 +115,34 @@ order entry trwa, `resume_with_auction()` robi reopen cross;
 
 ### Integrity audit
 ```cpp
-book.audit_book_integrity();   // 0 == księga spójna
+book.audit_book_integrity();   // 0 == book is consistent
 ```
-Weryfikuje 6 invariantów (prev/next, price==level, order_count,
-Σ displayed == total_qty, Σ (T−F−D) == total_hidden, tail). Audit znalazł
-5 realnych bugów accountingu (partial-rest depth, hidden drift, auction
-aggregates, iceberg modify, stop-cancel gap w kill switchu).
+Verifies 6 invariants (prev/next, price==level, order_count,
+Σ displayed == total_qty, Σ (T−F−D) == total_hidden, tail). The audit found
+5 real accounting bugs (partial-rest depth, hidden drift, auction
+aggregates, iceberg modify, stop-cancel gap in the kill switch).
 
 ### L1 / L2 / L3 views
 ```cpp
 TopOfBook tob = book.top_of_book();        // best bid/ask + qty + count
 int32_t mid   = book.mid_ticks();
-int32_t micro = book.microprice_ticks();   // size-weighted (lepszy predictor)
-int32_t imb   = book.imbalance_bps_n(3);   // depth-3 imbalance (trudny do spoofu)
+int32_t micro = book.microprice_ticks();   // size-weighted (better predictor)
+int32_t imb   = book.imbalance_bps_n(3);   // depth-3 imbalance (hard to spoof)
 
 DepthLevel bids[10], asks[10];
 int32_t bn=0, an=0;
 book.depth(10, bids, asks, &bn, &an);      // L2 depth — N best per side
-int32_t pos = book.queue_position(order_id);   // L3 — ile zleceń przede mną
+int32_t pos = book.queue_position(order_id);   // L3 — how many orders ahead of me
 book.predicted_vwap_ticks(Side::BUY, 500);     // pre-trade impact (walk-the-book)
 ```
 
 ### Trade tape + VWAP
-Ring buffer ostatnich 1024 egzekucji:
+Ring buffer of the last 1024 executions:
 ```cpp
 Trade recent[100];
 size_t n = book.recent_trades(recent, 100);
 int32_t vwap  = book.tape_vwap_ticks();
-int32_t vwapN = book.last_n_vwap_ticks(50);    // rolling, responsywniejszy
+int32_t vwapN = book.last_n_vwap_ticks(50);    // rolling, more responsive
 ```
 
 ### Snapshot recovery (full L3 dump)
@@ -153,20 +153,21 @@ Book b2;
 b2.load_snapshot(buf.data(), written);   // rebuild + audit-clean + id continuity
 ```
 
-Wire format: 4 B magic `"OBPO"` + 4 B version (aktualna: 2) + 8 B count +
-N×packed `OrderRecord` (70 B). Zero alokacji; `next_order_id_` kontynuuje
-za max wczytanym id; iceberg refresh size, pending STOPy (wracają do kolejki
-triggera) i PEGi (odzyskują reprice) przeżywają round-trip. `BookCluster`
-ma własny snapshot (magic `"OBCL"`) — multi-symbol recovery jednym buforem.
+Wire format: 4 B magic `"OBPO"` + 4 B version (current: 2) + 8 B count +
+N×packed `OrderRecord` (70 B). Zero allocation; `next_order_id_` continues
+past the max loaded id; iceberg refresh size, pending STOPs (return to the
+trigger queue) and PEGs (recover their reprice) survive the round-trip.
+`BookCluster` has its own snapshot (magic `"OBCL"`) — multi-symbol recovery in
+one buffer.
 
 ### L2 delta protocol
-18-bajtowy wire format (typy A/D/M/T), `enable_delta_queue(true)` + drain —
-incremental feed dla downstream konsumentów.
+18-byte wire format (types A/D/M/T), `enable_delta_queue(true)` + drain —
+an incremental feed for downstream consumers.
 
 ## Build & Run
 
 ```bash
-# wszystkie warianty
+# all variants
 make build
 
 # Basic v1 + v2 matching engine demo
@@ -175,7 +176,7 @@ make build
 # FlatOrderBook (sanity + benchmark vs std::map)
 ./orderbook/orderbook_flat 1000000
 
-# FullOrderBook — 300+ testów + percentyle benchmark
+# FullOrderBook — 300+ tests + percentile benchmark
 ./orderbook/orderbook_pro_demo 100000
 
 # Throughput + latency histogram (v2)
@@ -183,15 +184,15 @@ make build
 ./orderbook/latency_histogram 1000000
 ```
 
-## Files / Pliki
+## Files
 
 | File | Purpose |
 |------|---------|
 | `orderbook.cpp` | v1/v2 matching engine demo |
 | `orderbook_flat.hpp` + `orderbook_flat.cpp` | flat-array O(1) variant + sanity + bench |
-| `orderbook_pro_types.hpp` | model danych — stałe, enumy, Order/PriceLevel/Trade/BookStats/BookEvent (samodzielny, bez silnika) |
-| `orderbook_pro.hpp` | **FullOrderBook** — header-only L3 production-grade silnik matchingu (includuje `_types`) |
-| `orderbook_pro_cluster.hpp` | `BookCluster<N>` — wielo-symbolowy kontener + cross-symbol arb + snapshot (includuje `orderbook_pro.hpp`) |
-| `orderbook_pro_demo.cpp` | FullOrderBook — 370+ testów (typy zleceń, STP, OCO/bracket/trailing, auction, snapshot, integrity audit, analytics) + benchmark z percentylami |
+| `orderbook_pro_types.hpp` | data model — constants, enums, Order/PriceLevel/Trade/BookStats/BookEvent (standalone, no engine) |
+| `orderbook_pro.hpp` | **FullOrderBook** — header-only L3 production-grade matching engine (includes `_types`) |
+| `orderbook_pro_cluster.hpp` | `BookCluster<N>` — multi-symbol container + cross-symbol arb + snapshot (includes `orderbook_pro.hpp`) |
+| `orderbook_pro_demo.cpp` | FullOrderBook — 370+ tests (order types, STP, OCO/bracket/trailing, auction, snapshot, integrity audit, analytics) + percentile benchmark |
 | `benchmark_orderbook.cpp` | Throughput benchmark across order counts |
 | `latency_histogram.cpp` | Per-order latency percentiles (HFT-relevant) |

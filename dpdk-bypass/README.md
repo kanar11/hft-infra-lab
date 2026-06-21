@@ -1,21 +1,20 @@
-# DPDK Kernel Bypass Simulator / Symulator DPDK Kernel Bypass
+# DPDK Kernel Bypass Simulator
 
-Simulates DPDK-style poll mode driver for low-latency packet processing.
-*Symuluje DPDK-style sterownik w trybie sondowania do przetwarzania pakietów o niskich opóźnieniach.*
+Simulates a DPDK-style poll mode driver for low-latency packet processing.
 
-## Concepts Demonstrated / Demonstrujące koncepcje
+## Concepts Demonstrated
 - **Poll Mode Driver**: busy-wait loop vs interrupt-driven I/O
-- **CPU Pinning**: process pinned to isolated CPU core
+- **CPU Pinning**: process pinned to an isolated CPU core
 - **Zero-interrupt processing**: no kernel scheduling overhead
 - **Lock-free SPSC ring buffer**: power-of-2 masking, cache-line aligned packets
 
-## Files / Pliki
+## Files
 | File | Description |
 |------|-------------|
 | `kernel_bypass_sim.hpp` | C++ header-only — lock-free PacketRing, alignas(64) SimPacket |
 | `dpdk_demo.cpp` | 17 unit tests + throughput benchmark |
 
-## Performance / Wydajność
+## Performance
 
 | Metric | Result |
 |--------|--------|
@@ -23,7 +22,7 @@ Simulates DPDK-style poll mode driver for low-latency packet processing.
 | Interrupt mode | 8.4M pkt/sec (119ns/pkt) |
 | Speedup | **2.3x** |
 
-## Run / Uruchomienie
+## Run
 ```bash
 make build
 ./dpdk-bypass/dpdk_demo 50000    # benchmark

@@ -1,10 +1,8 @@
-# Order Management System / System zarządzania zleceniami
+# Order Management System
 
 Full order lifecycle management with pre-trade risk checks.
 
-*Pełne zarządzanie cyklem życia zlecenia z kontrolami ryzyka przed transakcją.*
-
-## Performance / Wydajność
+## Performance
 
 | Metric | C++ |
 |--------|-----|
@@ -14,7 +12,7 @@ Full order lifecycle management with pre-trade risk checks.
 | **Price handling** | Fixed-point int64 (no FP on hot path) |
 | **Order lookup** | unordered_map (hash, O(1)) |
 
-## Features / Funkcje
+## Features
 
 - Order lifecycle: NEW → SENT → FILLED / PARTIAL / CANCELLED / REJECTED
 - Pre-trade risk checks: order value limit + position limit
@@ -22,7 +20,7 @@ Full order lifecycle management with pre-trade risk checks.
 - Realized P&L calculation
 - Fixed-point pricing (C++): `$150.25 → 1502500` — avoids floating-point errors
 
-## Why C++ Here / Dlaczego C++ tutaj
+## Why C++ Here
 
 The OMS is on the critical path — it processes every order between the strategy
 and the exchange. In production HFT, the OMS must:
@@ -30,18 +28,14 @@ and the exchange. In production HFT, the OMS must:
 - Track positions without locking
 - Never allocate memory on the hot path
 
-*OMS jest na krytycznej ścieżce — przetwarza każde zlecenie między strategią
-a giełdą. W produkcyjnym HFT, OMS musi: walidować zlecenia w < 100ns,
-śledzić pozycje bez blokowania, nigdy nie alokować pamięci na gorącej ścieżce.*
-
-## Files / Pliki
+## Files
 
 | File | Description |
 |------|-------------|
 | `oms.hpp` | C++ header-only implementation (production-style) |
 | `oms_demo.cpp` | C++ demo with 17 unit tests + throughput benchmark |
 
-## Run / Uruchomienie
+## Run
 
 ```bash
 # C++ (build + run)
@@ -50,7 +44,7 @@ make build
 ./oms/oms_demo 5000000    # benchmark with 5M orders
 ```
 
-## Risk Checks / Kontrole ryzyka
+## Risk Checks
 
 Pre-trade checks enforce:
 - **Max order value**: rejects if `price × quantity > limit`

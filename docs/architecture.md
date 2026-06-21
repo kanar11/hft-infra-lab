@@ -1,4 +1,4 @@
-# System Architecture / Architektura systemu
+# System Architecture
 
 > **Scope note.** This diagram covers the *core* hot-path pipeline. The lab
 > also ships four alternative data sources — synthetic LCG (`simulator/`),
@@ -8,13 +8,10 @@
 > variants, multiple orderbook implementations, and a market-maker strategy.
 > See the root `README.md` Modules table.
 
-## Data Flow Pipeline / Przepływ danych
+## Data Flow Pipeline
 
 This is the complete path a trade takes through the system — from raw market data
 arriving on the wire to a filled order with P&L calculated.
-
-*To jest pełna ścieżka, jaką przechodzi transakcja przez system — od surowych danych
-rynkowych przychodzących po kablu do zrealizowanego zlecenia z obliczonym P&L.*
 
 ```
                          HFT Infrastructure Lab — Full Pipeline
@@ -30,7 +27,7 @@ rynkowych przychodzących po kablu do zrealizowanego zlecenia z obliczonym P&L.*
                       └──────────────┘     └──────────────┘     └──────┬──────┘
                                                                        │
                        Market data path (< 1μs total)                  │ Price updates
-                       Ścieżka danych rynkowych (< 1μs łącznie)       │ + book state
+                                                                       │ + book state
                                                                        ▼
   ┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌─────────────┐
   │   Exchange   │◀────│  FIX 4.2     │◀────│  OMS         │◀────│  Strategy   │
@@ -41,7 +38,7 @@ rynkowych przychodzących po kablu do zrealizowanego zlecenia z obliczonym P&L.*
   └─────────────┘     └──────────────┘     └──────┬───────┘     └──────┬──────┘
                                                    │                    │
                        Order path (< 5μs total)    │                    │
-                       Ścieżka zlecenia             │                    │
+                                                   │                    │
                                                    ▼                    │
                                             ┌──────────────┐            │
                                             │  Risk        │◀───────────┘
@@ -61,15 +58,12 @@ rynkowych przychodzących po kablu do zrealizowanego zlecenia z obliczonym P&L.*
                       └──────────────┘     └──────────────┘
 ```
 
-## Component Details / Szczegóły komponentów
+## Component Details
 
-### Market Data Path / Ścieżka danych rynkowych
+### Market Data Path
 
 The market data path is the **hot path** — it must be as fast as possible because
 every nanosecond of delay means worse prices.
-
-*Ścieżka danych rynkowych to **gorąca ścieżka** — musi być jak najszybsza, bo
-każda nanosekunda opóźnienia oznacza gorsze ceny.*
 
 ```
 Exchange ITCH feed (binary, UDP multicast)
@@ -96,7 +90,7 @@ Strategy (strategy/mean_reversion.hpp)
        SMA crossover signals, 100ns decision latency
 ```
 
-### Order Path / Ścieżka zlecenia
+### Order Path
 
 ```
 Strategy generates signal (BUY/SELL)
@@ -134,7 +128,7 @@ FIX 4.2 Sender (fix-protocol/fix_parser.hpp)
 Exchange receives our order
 ```
 
-### Support Systems / Systemy wspomagające
+### Support Systems
 
 ```
 Trade Logger (logger/trade_logger.hpp)
@@ -154,10 +148,9 @@ Infrastructure
     └── Linux Tuning (linux-tuning/)     sysctl, NUMA, scheduler tuning
 ```
 
-## Latency Budget / Budżet opóźnień
+## Latency Budget
 
 Where time is spent in the pipeline (approximate):
-*Gdzie jest spędzany czas w potoku (przybliżone):*
 
 ```
 Component                  Latency        Cumulative
@@ -177,11 +170,8 @@ Total tick-to-trade:       ~5.8 μs
 
 > Production HFT firms achieve 1-10 μs tick-to-trade with FPGA + kernel bypass.
 > Our ~5.8 μs is competitive for a software-only VM-based implementation.
->
-> Produkcyjne firmy HFT osiągają 1-10 μs z FPGA + kernel bypass.
-> Nasze ~5.8 μs jest konkurencyjne dla implementacji czysto programowej na VM.
 
-## Technology Stack / Stos technologii
+## Technology Stack
 
 ```
 ┌────────────────────────────────────────────┐

@@ -1,14 +1,12 @@
-# Benchmarks / Wzorce Wydajności
+# Benchmarks
 
 Dedicated micro-benchmarks measuring core HFT operation latencies.
-*Dedykowane mikro-benchmarki mierzące opóźnienia podstawowych operacji HFT.*
 
-## Results Summary / Podsumowanie wyników
+## Results Summary
 
 ### Ping-Pong Thread-to-Thread Latency
 
 Measures atomic flag round-trip between two threads (simulates market data → strategy path).
-*Mierzy czas okrążenia flagi atomowej między dwoma wątkami (symuluje ścieżkę dane rynkowe → strategia).*
 
 | Metric | Value |
 |--------|-------|
@@ -23,7 +21,6 @@ Measures atomic flag round-trip between two threads (simulates market data → s
 ### Orderbook Operations
 
 Per-operation latencies for the matching engine's three core operations.
-*Opóźnienia na operację dla trzech podstawowych operacji silnika dopasowującego.*
 
 | Operation | Avg | p50 | p90 | p99 | Throughput |
 |-----------|-----|-----|-----|-----|------------|
@@ -32,9 +29,8 @@ Per-operation latencies for the matching engine's three core operations.
 | **MATCH** (fill crossing) | **114 ns** | 90 ns | 241 ns | 281 ns | 8.7 M ops/sec |
 
 > Note: Results measured on sandbox Linux (2 vCPU). Your Red Hat VM results may differ.
-> Uwaga: Wyniki zmierzone na sandboxowym Linuxie. Twoje wyniki na Red Hat VM mogą się różnić.
 
-## How to Run / Jak uruchomić
+## How to Run
 
 ```bash
 # Build all benchmarks (from project root)
@@ -55,17 +51,14 @@ cd benchmarks/results && gnuplot plot_latency.gnuplot
 cd benchmarks/results && gnuplot plot_orderbook.gnuplot
 ```
 
-## What Each Benchmark Tests / Co testuje każdy benchmark
+## What Each Benchmark Tests
 
 ### latency_benchmark.cpp — Ping-Pong
 
 Two threads communicate via `std::atomic<int>` with cache-line alignment (`alignas(64)`).
 Thread A sets flag to 1 (ping), Thread B responds with 2 (pong). We measure the round-trip.
 
-*Dwa wątki komunikują się przez `std::atomic<int>` z wyrównaniem do linii cache (`alignas(64)`).
-Wątek A ustawia flagę na 1 (ping), Wątek B odpowiada 2 (pong). Mierzymy czas okrążenia.*
-
-Key techniques / Kluczowe techniki:
+Key techniques:
 - `alignas(64)` — prevents false sharing between cache lines
 - `memory_order_acquire/release` — minimal memory ordering (faster than `seq_cst`)
 - `__builtin_ia32_pause()` — x86 PAUSE instruction for efficient spin-waiting
@@ -75,13 +68,11 @@ Key techniques / Kluczowe techniki:
 
 Benchmarks a simplified orderbook with `std::map` (sorted tree) + `std::unordered_map` (hash index).
 
-*Benchmarkuje uproszczony orderbook z `std::map` (posortowane drzewo) + `std::unordered_map` (indeks hash).*
-
 - **ADD**: Insert order into price-level tree + hash index → O(log N)
 - **CANCEL**: Hash lookup O(1) + tree removal O(log N)
 - **MATCH**: Walk the tree from best price, fill against resting orders
 
-## Files / Pliki
+## Files
 
 | File | Description |
 |------|-------------|
@@ -94,7 +85,7 @@ Benchmarks a simplified orderbook with `std::map` (sorted tree) + `std::unordere
 | `results/plot_latency.gnuplot` | Gnuplot script for latency histogram |
 | `results/plot_orderbook.gnuplot` | Gnuplot script for orderbook chart |
 
-## Real-World Comparison / Porównanie z produkcją
+## Real-World Comparison
 
 | Metric | This Lab | Production HFT |
 |--------|----------|-----------------|

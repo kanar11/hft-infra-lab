@@ -1,38 +1,38 @@
 # Live WebSocket feed
 
-Czwarte źródło danych dla pipeline'u labu — obok syntetycznego LCG
-(`simulator/`), real-data LOBSTER CSV (`replay/`) i TCP FIX over epoll
+A fourth data source for the lab pipeline — alongside the synthetic LCG feed
+(`simulator/`), real-data LOBSTER CSV (`replay/`), and TCP FIX over epoll
 (`network/`).
 
-WebSocket to dziś standard dla crypto market data (Binance, Coinbase,
-Kraken) i części retail equity feedów. Production HFT na regulowanych
-giełdach używa raczej UDP multicast / kernel bypass, ale klient WS bywa
-przydatny do prototypów, monitoringu i strategii crypto.
+WebSocket is today's standard for crypto market data (Binance, Coinbase,
+Kraken) and parts of retail equity feeds. Production HFT on regulated
+exchanges tends to use UDP multicast / kernel bypass instead, but a WS client
+is handy for prototypes, monitoring, and crypto strategies.
 
-## Co tu jest
+## What's here
 
-- **`ws_client.hpp`** — minimalny klient RFC 6455 (~210 linii):
+- **`ws_client.hpp`** — a minimal RFC 6455 client (~210 lines):
   - TCP connect + HTTP/1.1 upgrade handshake
-  - parsing ramki: FIN, opcode, mask bit, payload length (inline / 16-bit / 64-bit)
-  - auto pong na ping, clean close, czyste odbieranie text/binary
-  - **plain ws:// only** (production wss:// wymagałby OpenSSL — celowo poza scope)
+  - frame parsing: FIN, opcode, mask bit, payload length (inline / 16-bit / 64-bit)
+  - auto pong on ping, clean close, clean text/binary receive
+  - **plain ws:// only** (production wss:// would require OpenSSL — intentionally out of scope)
 
-- **`feed_demo.cpp`** — self-contained demo, oba końce w jednym binarce:
-  - thread A: mock WebSocket server na `127.0.0.1:19998`
-    - akceptuje HTTP upgrade (bez weryfikacji `Sec-WebSocket-Accept` — to lab)
-    - emituje 50 trade'ów w formacie Binance: `{"e":"trade","s":"BTCUSDT","p":"42000.50","q":"0.5","t":1000}`
-  - thread B: `WsClient` łączy się przez `feed::WsClient::connect()`,
-    czyta każdą ramkę, parsuje cenę przez `sscanf`, liczy received
-  - exit code 0 gdy received == 50
+- **`feed_demo.cpp`** — a self-contained demo, both ends in one binary:
+  - thread A: mock WebSocket server on `127.0.0.1:19998`
+    - accepts the HTTP upgrade (without verifying `Sec-WebSocket-Accept` — this is a lab)
+    - emits 50 trades in Binance format: `{"e":"trade","s":"BTCUSDT","p":"42000.50","q":"0.5","t":1000}`
+  - thread B: `WsClient` connects via `feed::WsClient::connect()`,
+    reads each frame, parses the price via `sscanf`, counts received messages
+  - exit code 0 when received == 50
 
-## Uruchomienie
+## Running
 
 ```bash
 make build
 ./feed/feed_demo
 ```
 
-Spodziewany output:
+Expected output:
 
 ```
 === feed_demo (WebSocket) ===
@@ -41,10 +41,10 @@ Spodziewany output:
   last price   : 42049.50
 ```
 
-W CI wpięte jako `timeout 10 ./feed/feed_demo` — nie wymaga zewnętrznej
-sieci, deterministyczne.
+Wired into CI as `timeout 10 ./feed/feed_demo` — needs no external
+network, fully deterministic.
 
-## Format ramki WS (RFC 6455 §5.2)
+## WS frame format (RFC 6455 §5.2)
 
 ```
  0               1               2               3
@@ -57,70 +57,70 @@ sieci, deterministyczne.
 +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
 ```
 
-Opcody używane w demo:
+Opcodes used in the demo:
 
-| Hex | Opcode | Kierunek          | Obsługa w WsClient                  |
+| Hex | Opcode | Direction         | Handling in WsClient                |
 |-----|--------|-------------------|-------------------------------------|
-| 0x1 | TEXT   | server → client   | zwracany przez `recv_text`         |
-| 0x2 | BINARY | server → client   | zwracany przez `recv_text`         |
-| 0x8 | CLOSE  | obustronnie       | odsyła CLOSE, zwraca 0              |
-| 0x9 | PING   | server → client   | auto-PONG, kontynuuje pętlę read    |
-| 0xA | PONG   | server → client   | ignorowane                          |
+| 0x1 | TEXT   | server → client   | returned by `recv_text`             |
+| 0x2 | BINARY | server → client   | returned by `recv_text`             |
+| 0x8 | CLOSE  | both ways         | echoes CLOSE, returns 0             |
+| 0x9 | PING   | server → client   | auto-PONG, continues the read loop  |
+| 0xA | PONG   | server → client   | ignored                             |
 
 Payload length encoding:
 
-| len byte | znaczenie                                          |
+| len byte | meaning                                            |
 |----------|----------------------------------------------------|
-| 0–125    | długość inline                                     |
-| 126      | następne 2 bajty = uint16 BE                       |
-| 127      | następne 8 bajtów = uint64 BE                      |
+| 0–125    | inline length                                      |
+| 126      | next 2 bytes = uint16 BE                           |
+| 127      | next 8 bytes = uint64 BE                           |
 
-Mask bit + 4-bajtowy mask_key: klient → server *zawsze* maskuje (RFC),
-server → klient zwykle nie. Nasz demo serwer nie maskuje, klient też
-nie (mock_server akceptuje); produkcyjne giełdy odrzuciłyby unmasked
-client frame jako protocol violation.
+Mask bit + 4-byte mask_key: client → server *always* masks (RFC),
+server → client usually does not. Our demo server does not mask, and the
+client doesn't either (mock_server accepts that); production exchanges would
+reject an unmasked client frame as a protocol violation.
 
-## Po co własna impl skoro istnieje libwebsockets / Boost.Beast?
+## Why a custom impl when libwebsockets / Boost.Beast exist?
 
-To lab edukacyjny — celem jest pokazanie *struktury* protokołu (HTTP
-upgrade, frame header, opcode, length encoding), a nie produkcyjne
-wsparcie dla extensions, fragmentation, wss://, compression itd.
-Cały kod mieści się w ~210 linijach i jest czytelny w jednym posiedzeniu.
+This is an educational lab — the goal is to show the *structure* of the protocol
+(HTTP upgrade, frame header, opcode, length encoding), not production-grade
+support for extensions, fragmentation, wss://, compression, etc.
+The whole thing fits in ~210 lines and is readable in one sitting.
 
-W realnym projekcie crypto-HFT podmieniłbym `WsClient` na:
-- **Boost.Beast** — jeśli zostajesz na C++ i potrzebujesz wss:// + TLS
-- **libwebsockets** — jeśli chcesz event-loop friendly + extensions
-- **uWebSockets** — jeśli liczy się każda nanosekunda (najszybsza lib WS w benchmarkach)
+In a real crypto-HFT project you would swap `WsClient` for:
+- **Boost.Beast** — if you stay in C++ and need wss:// + TLS
+- **libwebsockets** — if you want event-loop-friendly + extensions
+- **uWebSockets** — if every nanosecond counts (fastest WS lib in benchmarks)
 
-## Co jest TERAZ w `WsClient` (`ws_client.hpp`)
+## What's in `WsClient` NOW (`ws_client.hpp`)
 
-Po ostatniej iteracji klient jest **RFC 6455 compliant** w zakresie tego co
-naprawdę potrzeba żeby pogadać z produkcyjnym serwerem WS:
+After the latest iteration the client is **RFC 6455 compliant** for what you
+actually need to talk to a production WS server:
 
-| Feature                          | Status | Szczegóły                                        |
+| Feature                          | Status | Details                                          |
 |----------------------------------|--------|--------------------------------------------------|
 | Plain `ws://` (no TLS)           | ✅     | TCP connect + HTTP upgrade                       |
-| HTTP/1.1 upgrade handshake       | ✅     | bez weryfikacji Sec-WebSocket-Accept (lab)       |
-| Sec-WebSocket-Key losowy         | ✅     | 16B z `/dev/urandom`, base64                     |
-| Masking client→server (RFC §5.3) | ✅     | losowy 4-byte mask key per ramka, XOR payloadu   |
-| Parsing FIN / opcode / mask bit  | ✅     | wszystkie 6 opcodów                              |
+| HTTP/1.1 upgrade handshake       | ✅     | without verifying Sec-WebSocket-Accept (lab)     |
+| Random Sec-WebSocket-Key         | ✅     | 16B from `/dev/urandom`, base64                  |
+| Masking client→server (RFC §5.3) | ✅     | random 4-byte mask key per frame, XOR payload    |
+| Parse FIN / opcode / mask bit    | ✅     | all 6 opcodes                                    |
 | Payload length 7/16/64 bit       | ✅     | inline / 126 / 127                               |
-| Ping → auto-pong                 | ✅     | echo payloadu                                    |
-| Clean close (opcode 0x8)         | ✅     | echo CLOSE i return 0                            |
-| Fragmentacja (FIN=0)             | ❌     | demo zakłada zawsze FIN=1 (Binance też tak robi) |
-| WSS (TLS / `wss://`)             | ⚠️     | osobna klasa `WssClient` — zobacz niżej          |
-| Compression (permessage-deflate) | ❌     | poza scope                                       |
+| Ping → auto-pong                 | ✅     | echoes the payload                               |
+| Clean close (opcode 0x8)         | ✅     | echoes CLOSE and returns 0                       |
+| Fragmentation (FIN=0)            | ❌     | demo assumes FIN=1 always (Binance does too)     |
+| WSS (TLS / `wss://`)             | ⚠️     | separate `WssClient` class — see below           |
+| Compression (permessage-deflate) | ❌     | out of scope                                     |
 
-To wystarczy żeby gadać z każdą publiczną crypto giełdą która używa **`ws://`**.
-Większość produkcyjnych giełd wymusza jednak `wss://` (TLS) — patrz dalej.
+That's enough to talk to any public crypto exchange that uses **`ws://`**.
+Most production exchanges, however, require `wss://` (TLS) — see below.
 
-## Podłączenie do prawdziwej giełdy (Binance, Coinbase, Kraken)
+## Connecting to a real exchange (Binance, Coinbase, Kraken)
 
-Crypto giełdy publikują streamy WS **przez TLS** (`wss://`). Do tego dorzucamy
-`feed/wss_client.hpp` (WsClient nad OpenSSL) i `feed/wss_demo.cpp` — przykładowy
-klient łączący się z `stream.binance.com:9443`.
+Crypto exchanges publish WS streams **over TLS** (`wss://`). For that we add
+`feed/wss_client.hpp` (WsClient over OpenSSL) and `feed/wss_demo.cpp` — an example
+client connecting to `stream.binance.com:9443`.
 
-### Krok 1 — zainstaluj OpenSSL development headers
+### Step 1 — install OpenSSL development headers
 
 ```bash
 # Ubuntu / Debian
@@ -133,35 +133,35 @@ sudo dnf install openssl-devel ca-certificates
 brew install openssl@3
 ```
 
-`ca-certificates` daje systemowy trust store — bez tego TLS nie zweryfikuje
-certyfikatu Binance i odrzuci połączenie.
+`ca-certificates` provides the system trust store — without it TLS cannot verify
+Binance's certificate and will reject the connection.
 
-### Krok 2 — zbuduj `wss_demo`
+### Step 2 — build `wss_demo`
 
 ```bash
-make wss                                  # target z Makefile
-# albo bezpośrednio:
+make wss                                  # target in the Makefile
+# or directly:
 g++ -O2 -std=c++17 -DHFT_USE_OPENSSL -Wall -Wextra -pthread \
     -o feed/wss_demo feed/wss_demo.cpp -lssl -lcrypto
 ```
 
-Flaga `-DHFT_USE_OPENSSL` jest wymagana — bez niej `wss_client.hpp` rzuca
-`#error "wss_client.hpp wymaga -DHFT_USE_OPENSSL"`.
+The `-DHFT_USE_OPENSSL` flag is required — without it `wss_client.hpp` raises
+`#error "wss_client.hpp requires -DHFT_USE_OPENSSL"`.
 
-### Krok 3 — uruchom
+### Step 3 — run
 
 ```bash
-# default: 20 trade'ów BTC/USDT z Binance
+# default: 20 BTC/USDT trades from Binance
 ./feed/wss_demo
 
-# inny endpoint
+# different endpoint
 ./feed/wss_demo stream.binance.com 9443 /ws/ethusdt@trade
 
-# więcej trade'ów
+# more trades
 ./feed/wss_demo stream.binance.com 9443 /ws/btcusdt@trade 100
 ```
 
-Spodziewany output:
+Expected output:
 
 ```
 === wss_demo — Binance WebSocket live trades ===
@@ -175,12 +175,12 @@ Limit:    20 trade events
   ...
 ```
 
-### Krok 4 (opcjonalnie) — podpięcie do strategii w labie
+### Step 4 (optional) — wiring into a lab strategy
 
-`WssClient` ma identyczne API co `WsClient` (`connect`, `recv_text`, `send_text`,
-`close`). Możesz go traktować jak drop-in replacement w każdym kodzie który
-używa `feed::WsClient`. Przykład: zamiast generatora syntetycznego w
-`simulator/market_sim.hpp`, karm strategię prawdziwymi tradesami BTC:
+`WssClient` has an identical API to `WsClient` (`connect`, `recv_text`, `send_text`,
+`close`). You can treat it as a drop-in replacement in any code that uses
+`feed::WsClient`. Example: instead of the synthetic generator in
+`simulator/market_sim.hpp`, feed the strategy real BTC trades:
 
 ```cpp
 #include "feed/wss_client.hpp"
@@ -197,38 +197,37 @@ while (true) {
     if (n <= 0) break;
     buf[n] = '\0';
 
-    // wyciągnij price z JSON (patrz wss_demo.cpp jak to robi)
+    // extract price from the JSON (see wss_demo.cpp for how it does it)
     double price = parse_price(buf);
     Signal sig = strat.on_market_data("BTCUSDT", price);
     if (sig.valid) {
-        // BUY albo SELL — wyślij do OMS, Risk Manager, etc.
+        // BUY or SELL — send to OMS, Risk Manager, etc.
     }
 }
 ```
 
-### Co weryfikujemy w TLS (bezpieczeństwo)
+### What we verify in TLS (security)
 
-- **Cert chain** — przez systemowy trust store (`SSL_CTX_set_default_verify_paths`)
-- **Hostname** — SAN albo CN w certyfikacie musi pasować do host'a (`SSL_set1_host`)
-- **SNI** — wysyłamy hostname w handshake (`SSL_set_tlsext_host_name`),
-  inaczej Cloudflare zwróciłby domyślny cert i hostname check by failnął
-- **TLS 1.2+** — wymuszone (`SSL_CTX_set_min_proto_version`); TLS 1.0/1.1 są deprecated
+- **Cert chain** — via the system trust store (`SSL_CTX_set_default_verify_paths`)
+- **Hostname** — the SAN or CN in the certificate must match the host (`SSL_set1_host`)
+- **SNI** — we send the hostname in the handshake (`SSL_set_tlsext_host_name`),
+  otherwise Cloudflare would return a default cert and the hostname check would fail
+- **TLS 1.2+** — enforced (`SSL_CTX_set_min_proto_version`); TLS 1.0/1.1 are deprecated
 
-Bez tych weryfikacji MITM byłby trywialny.
+Without these checks a MITM would be trivial.
 
-### Limity tej implementacji (jeśli planujesz produkcję)
+### Limits of this implementation (if you plan to go to production)
 
-- **Brak permessage-deflate compression** — Binance wspiera ale opcjonalnie.
-  Bez tego dostajesz pełne JSON-y zamiast skompresowanych ~30% mniejszych.
-- **Brak ping/pong heartbeats od klienta** — Binance wymaga że klient *odpowiada*
-  na PING (już to robimy), ale dla bardzo długich połączeń też klient powinien
-  *wysyłać* PING. Trywialne do dorobienia (`send_frame(PING, ...)`) ale nie
-  zaimplementowane.
-- **Brak reconnect z exponential backoff** — przy disconnect po prostu return -1.
-  Twój kod powinien to obsłużyć w pętli.
-- **Brak rate-limiting respect** — Binance ma 5 wiadomości/sek limit na
-  subskrypcje. Demo nie wysyła nic poza handshake'iem więc OK, ale przy
-  multi-stream subscription pamiętaj o tym.
+- **No permessage-deflate compression** — Binance supports it, but optionally.
+  Without it you get full JSON payloads instead of ~30%-smaller compressed ones.
+- **No client-side ping/pong heartbeats** — Binance requires the client to *respond*
+  to a PING (we already do that), but for very long connections the client should
+  also *send* PINGs. Trivial to add (`send_frame(PING, ...)`) but not implemented.
+- **No reconnect with exponential backoff** — on disconnect it simply returns -1.
+  Your code should handle that in a loop.
+- **No rate-limiting respect** — Binance has a 5-messages/sec limit on
+  subscriptions. The demo sends nothing beyond the handshake so it's fine, but with
+  multi-stream subscriptions keep it in mind.
 
-To wszystko mieści się w max 200 dodatkowych liniach jeśli kiedyś chcesz
-zrobić "production WsClient".
+All of that fits in at most ~200 additional lines if you ever want to build a
+"production WsClient".

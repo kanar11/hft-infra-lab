@@ -1,7 +1,6 @@
-# Risk Manager / Menedżer Ryzyka
+# Risk Manager
 
 Standalone pre-trade risk engine with circuit breaker and kill switch.
-*Autonomiczny silnik kontroli ryzyka z przełącznikiem obwodu i wyłącznikiem awaryjnym.*
 
 ## Performance
 
@@ -11,7 +10,7 @@ Standalone pre-trade risk engine with circuit breaker and kill switch.
 | **Latency (p50)** | **91 ns** |
 | **Latency (p99)** | **140 ns** |
 
-## Features / Funkcje
+## Features
 
 - **Per-symbol position limit** — max shares in one instrument
 - **Portfolio exposure limit** — max total absolute exposure
@@ -21,16 +20,15 @@ Standalone pre-trade risk engine with circuit breaker and kill switch.
 - **Order value limit** — max notional value per order
 - **Kill switch** — halts all trading instantly (manual or automatic)
 
-## Pipeline / Potok
+## Pipeline
 
 ```
 Strategy → Router → **Risk Manager** → OMS → Exchange
 ```
 
 Every order MUST pass all 7 risk checks before reaching the OMS.
-*Każde zlecenie MUSI przejść wszystkie 7 kontroli ryzyka zanim dotrze do OMS.*
 
-## Files / Pliki
+## Files
 
 | File | Description |
 |------|-------------|

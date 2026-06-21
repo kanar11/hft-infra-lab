@@ -1,9 +1,8 @@
-# Mean Reversion Strategy / Strategia Powrotu do Średniej
+# Mean Reversion Strategy
 
 Simple mean reversion strategy for the HFT pipeline demo.
-*Prosta strategia powrotu do średniej dla demonstracji potoku HFT.*
 
-## Performance 
+## Performance
 
 | Metric | C++ |
 |--------|-----|
@@ -11,7 +10,7 @@ Simple mean reversion strategy for the HFT pipeline demo.
 | **Latency (p50)** | **100 ns** |
 | **Latency (p99)** | **121 ns** |
 
-## Logic / Logika
+## Logic
 
 - Tracks a rolling Simple Moving Average (SMA) per stock
 - When price deviates from SMA by more than a threshold:
@@ -19,22 +18,20 @@ Simple mean reversion strategy for the HFT pipeline demo.
   - Price < SMA - 0.1% → BUY (underpriced, expect rise)
   - Otherwise → HOLD (no signal)
 
-*Śledzi toczącą się prostą średnią ruchomą (SMA) na akcję. Gdy cena odbiega od SMA o więcej niż próg: Cena > SMA + 0,1% → SPRZEDAJ. Cena < SMA - 0,1% → KUP. W przeciwnym razie → CZEKAJ.*
-
-## Parameters / Parametry
+## Parameters
 
 - Window: 20 ticks (SMA lookback)
 - Threshold: 0.1% deviation from SMA
 - Order size: 100 shares per signal
 
-## Files / Pliki
+## Files
 
 | File | Description |
 |------|-------------|
 | `mean_reversion.hpp` | C++ header-only implementation |
 | `strategy_demo.cpp` | C++ demo with 44 unit tests + throughput benchmark |
 
-## Run / Uruchomienie
+## Run
 
 ```bash
 # C++ (build + run)

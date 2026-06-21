@@ -1,9 +1,8 @@
-# Infrastructure Monitor / Monitor infrastruktury
+# Infrastructure Monitor
 
-Real-time system monitoring for HFT infrastructure — parses /proc filesystem for CPU, memory, network stats.
-*Monitorowanie systemu w czasie rzeczywistym dla infrastruktury HFT — parsuje /proc dla statystyk CPU, pamięci, sieci.*
+Real-time system monitoring for HFT infrastructure — parses the /proc filesystem for CPU, memory, and network stats.
 
-## Metrics Tracked / Śledzone metryki
+## Metrics Tracked
 - CPU usage per core (user, system, idle, iowait)
 - Context switches per second
 - Memory usage (total, free, available, hugepages)
@@ -11,24 +10,24 @@ Real-time system monitoring for HFT infrastructure — parses /proc filesystem f
 - IRQ count on isolated CPUs
 - NUMA node status
 
-## Alerts / Alerty
+## Alerts
 - Memory usage > configurable threshold
 - Context switches > threshold
 - Network errors > threshold
 
-## Files / Pliki
+## Files
 | File | Description |
 |------|-------------|
 | `infra_monitor.hpp` | C++ header-only — /proc parser, AlertThresholds, 8.6M parse/sec |
 | `monitor_demo.cpp` | 26 unit tests (mock /proc data) + throughput benchmark |
 
-## Performance / Wydajność
+## Performance
 
 | Metric | Result |
 |--------|--------|
 | /proc/stat parse | **8.6M/sec** (90ns p50) |
 
-## Run / Uruchomienie
+## Run
 ```bash
 make build
 ./monitoring/monitor_demo 50000    # benchmark

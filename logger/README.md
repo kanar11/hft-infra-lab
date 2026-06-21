@@ -1,9 +1,8 @@
 # Trade Logger / Audit Trail
 
 Thread-safe trade event logger with nanosecond timestamps.
-*Bezpieczny wątkowo logger zdarzeń handlowych z nanosekundowymi znacznikami czasu.*
 
-## Performance 
+## Performance
 
 | Metric | C++ |
 |--------|-----|
@@ -11,38 +10,34 @@ Thread-safe trade event logger with nanosecond timestamps.
 | **Latency (p50)** | **41 ns** |
 | **Latency (p99)** | **60 ns** |
 
-## Why This Exists / Dlaczego to istnieje
+## Why This Exists
 
 Every HFT firm must keep a complete audit trail of all trading activity.
 Regulators (SEC, MiFID II) require that every order, fill, cancel, and risk
 rejection is logged with precise timestamps and can be replayed later.
 
-*Każda firma HFT musi prowadzić pełną ścieżkę audytu całej aktywności handlowej.
-Regulatorzy (SEC, MiFID II) wymagają, aby każde zlecenie, realizacja, anulowanie
-i odrzucenie ryzyka były logowane z precyzyjnymi znacznikami czasu.*
+## Event Types
 
-## Event Types / Typy zdarzeń
+| Event | Description |
+|-------|-------------|
+| `ORDER_SUBMIT` | Strategy sends order |
+| `RISK_ACCEPT` | Risk manager approved |
+| `RISK_REJECT` | Risk manager blocked |
+| `ORDER_FILL` | Exchange filled order |
+| `ORDER_PARTIAL` | Partial fill received |
+| `ORDER_CANCEL` | Order cancelled |
+| `KILL_SWITCH` | Emergency stop |
+| `SYSTEM_START` | Session opened |
+| `SYSTEM_STOP` | Session closed |
 
-| Event | Description | Opis |
-|-------|-------------|------|
-| `ORDER_SUBMIT` | Strategy sends order | Strategia wysyła zlecenie |
-| `RISK_ACCEPT` | Risk manager approved | Menedżer ryzyka zatwierdził |
-| `RISK_REJECT` | Risk manager blocked | Menedżer ryzyka zablokował |
-| `ORDER_FILL` | Exchange filled order | Giełda zrealizowała zlecenie |
-| `ORDER_PARTIAL` | Partial fill received | Częściowa realizacja |
-| `ORDER_CANCEL` | Order cancelled | Zlecenie anulowane |
-| `KILL_SWITCH` | Emergency stop | Wyłącznik awaryjny |
-| `SYSTEM_START` | Session opened | Sesja otwarta |
-| `SYSTEM_STOP` | Session closed | Sesja zamknięta |
-
-## Files / Pliki
+## Files
 
 | File | Description |
 |------|-------------|
 | `trade_logger.hpp` | C++ header-only implementation |
 | `logger_demo.cpp` | C++ demo with 30 unit tests + throughput benchmark |
 
-## Run / Uruchomienie
+## Run
 
 ```bash
 # C++ (build + run)
@@ -51,7 +46,7 @@ make build
 ./logger/logger_demo 2000000      # 2M events
 ```
 
-## In Real HFT / W prawdziwym HFT
+## In Real HFT
 
 | This Lab | Production |
 |----------|------------|

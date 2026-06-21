@@ -14,31 +14,30 @@ simulator uses.
 
 ### Sample files shipped with the repo
 
-- **`sample_aapl.csv`** — 20 hand-crafted events. Smoke-test rozmiar, CI
-  smiga w <1ms.
-- **`generated_aapl_day.csv`** — 5000 syntetycznych eventów (~210 KB,
-  bundled w repo). Reprezentuje ~50 sekund handlu z realistycznymi
-  rozkładami (Poisson inter-arrival, ~50%/20%/15%/14%/1% mix submit/
-  cancel/delete/execute/halt, dyskretne rozmiary z preferencją round-lotów).
-  CI używa tego pliku jako "longer pipeline test" — przepuszczamy 5k
-  zdarzeń przez OMS + Logger żeby zobaczyć że nic się nie wykłada na
-  większej skali.
+- **`sample_aapl.csv`** — 20 hand-crafted events. Smoke-test sized, CI
+  runs it in <1ms.
+- **`generated_aapl_day.csv`** — 5000 synthetic events (~210 KB,
+  bundled in the repo). Represents ~50 seconds of trading with realistic
+  distributions (Poisson inter-arrival, ~50%/20%/15%/14%/1% mix of submit/
+  cancel/delete/execute/halt, discrete sizes with a round-lot preference).
+  CI uses this file as a "longer pipeline test" — we push 5k events
+  through the OMS + Logger to confirm nothing breaks at a larger scale.
 
-### Generowanie własnych fixture'ów
+### Generating your own fixtures
 
-Jeśli chcesz inny rozmiar / inny symbol / inny seed:
+If you want a different size / symbol / seed:
 
 ```bash
-python3 replay/gen_fixture.py                    # default: 10000 eventów, AAPL
-python3 replay/gen_fixture.py -n 50000           # 50k eventów
+python3 replay/gen_fixture.py                    # default: 10000 events, AAPL
+python3 replay/gen_fixture.py -n 50000           # 50k events
 python3 replay/gen_fixture.py -n 100000 -s MSFT  # 100k MSFT
 python3 replay/gen_fixture.py -o my_day.csv      # custom output
 ```
 
-Output jest **deterministyczny przy stałym seed** (default=42), więc
-można go używać do regression testów bez obawy że plik się zmieni.
+The output is **deterministic for a fixed seed** (default=42), so you can
+use it for regression tests without worrying that the file will change.
 
-Szczegóły rozkładów: zobacz docstring w `replay/gen_fixture.py`.
+Distribution details: see the docstring in `replay/gen_fixture.py`.
 
 ### Run the real thing
 
