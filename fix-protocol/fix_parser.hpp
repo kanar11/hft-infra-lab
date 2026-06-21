@@ -168,6 +168,27 @@ public:
         return f ? f->value : "UNKNOWN";
     }
 
+    // is_admin_msg_type: czy typ (tag 35) to wiadomosc SESYJNA (admin) (#177).
+    // Admin: 0=Heartbeat 1=TestRequest 2=ResendRequest 3=Reject 4=SequenceReset
+    // 5=Logout A=Logon (wszystkie jednoznakowe). Reszta = aplikacyjna (biznesowa,
+    // np. D/F/G/8). Silnik routuje admin do warstwy sesji, app do OMS; istotne
+    // tez przy ResendRequest (admin -> gap-fill, app -> retransmisja).
+    static bool is_admin_msg_type(const char* t) noexcept {
+        if (!t || t[0] == '\0' || t[1] != '\0') return false;  // admin typy sa jednoznakowe
+        switch (t[0]) {
+            case '0': case '1': case '2': case '3': case '4': case '5': case 'A':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // is_admin: czy TA wiadomosc jest sesyjna (admin) wg tag 35.
+    bool is_admin() const noexcept {
+        const FIXField* f = find_field(35);
+        return f && is_admin_msg_type(f->value);
+    }
+
     // get_symbol: tag 55 — ticker.
     const char* get_symbol() const noexcept {
         const FIXField* f = find_field(55);
