@@ -42,6 +42,7 @@
 #include "../strategy/hull_ma.hpp"
 #include "../strategy/dema.hpp"
 #include "../strategy/tema.hpp"
+#include "../strategy/trix.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -2146,6 +2147,21 @@ void test_tema() {
     ASSERT(r.value() > 15.0, "tema_low_lag");             // niska zwloka na rampie
 }
 
+// TRIX #230 — oscylator momentum z potrojnej EMA.
+void test_trix() {
+    SECTION("TRIX (#230)");
+    TRIX c(5);
+    for (int i = 0; i < 40; ++i) c.update(50.0);          // stala -> brak zmiany -> 0
+    ASSERT(c.ready(), "trix_ready");
+    ASSERT(std::fabs(c.value() - 0.0) < 1e-9, "trix_flat_zero");
+    TRIX up(5);
+    for (int i = 1; i <= 40; ++i) up.update(static_cast<double>(i));  // rosnaco
+    ASSERT(up.value() > 0.0, "trix_positive_on_uptrend");
+    TRIX dn(5);
+    for (int i = 0; i < 30; ++i) dn.update(100.0 - i);   // malejaco (ceny dodatnie)
+    ASSERT(dn.value() < 0.0, "trix_negative_on_downtrend");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3535,6 +3551,7 @@ int main() {
     test_hull_ma();
     test_dema();
     test_tema();
+    test_trix();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
