@@ -113,18 +113,19 @@ struct Order {
     int64_t     sent_ns;        // moment wysłania (status → SENT)
     int64_t     filled_ns;      // moment ostatniego fillu
     int64_t     fill_notional;  // Σ fill_qty × fill_price (#141) — do avg fill price
+    int64_t     expire_ns;      // GTD: wygasniecie (#172); 0 = bez wygasniecia (DAY/GTC)
 
     Order() noexcept
         : order_id(0), side(Side::BUY), price(0), quantity(0),
           filled_qty(0), status(OrderStatus::NEW),
-          created_ns(0), sent_ns(0), filled_ns(0), fill_notional(0) {
+          created_ns(0), sent_ns(0), filled_ns(0), fill_notional(0), expire_ns(0) {
         symbol[0] = '\0';
     }
 
     Order(uint64_t id, const char* sym, Side s, int64_t px, uint32_t qty) noexcept
         : order_id(id), side(s), price(px), quantity(qty),
           filled_qty(0), status(OrderStatus::NEW),
-          created_ns(0), sent_ns(0), filled_ns(0), fill_notional(0) {
+          created_ns(0), sent_ns(0), filled_ns(0), fill_notional(0), expire_ns(0) {
         std::strncpy(symbol, sym, 8);
         symbol[8] = '\0';
     }
@@ -217,7 +218,8 @@ public:
     // w mapie (stabilny dopóki OMS żyje) lub nullptr przy odrzuceniu.
     // out_reason (opcjonalny, #88): przy nullptr dostaje powód odrzucenia.
     Order* submit_order(const char* symbol, Side side, double price_f,
-                        uint32_t quantity, OMSReject* out_reason = nullptr) noexcept {
+                        uint32_t quantity, OMSReject* out_reason = nullptr,
+                        int64_t expire_ns = 0) noexcept {
         const int64_t t0    = mono_ns();
         const int64_t price = to_fixed(price_f);
         auto fail = [&](OMSReject r) -> Order* {
@@ -256,6 +258,7 @@ public:
         order.created_ns = t0;
         order.sent_ns    = mono_ns();
         order.status     = OrderStatus::SENT;
+        order.expire_ns  = expire_ns;   // #172 GTD
         auto it = orders_.emplace(id, order).first;
 
         // Zarezerwuj pending. Tworzymy Position leniwie tutaj (a nie dopiero
@@ -423,6 +426,21 @@ public:
         size_t n = 0;
         for (auto& [id, o] : orders_) {
             if (o.status == OrderStatus::SENT || o.status == OrderStatus::PARTIAL) {
+                cancel_order(id);
+                ++n;
+            }
+        }
+        return n;
+    }
+
+    // purge_expired: anuluj wszystkie AKTYWNE zlecenia GTD ktorych czas
+    // wygasniecia minal (#172; expire_ns > 0 && <= now_ns). Zwraca ile anulowano.
+    // Wolaj z petli sesji z biezacym mono_ns().
+    size_t purge_expired(int64_t now_ns) noexcept {
+        size_t n = 0;
+        for (auto& [id, o] : orders_) {
+            if ((o.status == OrderStatus::SENT || o.status == OrderStatus::PARTIAL)
+                && o.expire_ns > 0 && o.expire_ns <= now_ns) {
                 cancel_order(id);
                 ++n;
             }

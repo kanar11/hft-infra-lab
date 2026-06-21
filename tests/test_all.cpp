@@ -293,6 +293,16 @@ void test_oms_short_and_replace() {
         ASSERT(o2.cancel_all_symbol("AAA") == 1, "cancelall_symbol_one");
     }
 
+    {   // #172 wygasanie GTD: purge_expired anuluje wygasle, zostawia bez expiry.
+        OMS oms(100000, 1000000000.0);
+        OMSReject why = OMSReject::NONE;
+        Order* g = oms.submit_order("AAA", Side::BUY, 10.0, 100, &why, /*expire_ns=*/5000);
+        Order* d = oms.submit_order("BBB", Side::BUY, 10.0, 100);   // bez wygasniecia
+        ASSERT(oms.purge_expired(6000) == 1, "gtd_purged_one");     // 5000 <= 6000
+        ASSERT(oms.get_order(g->order_id)->status == OrderStatus::CANCELLED, "gtd_expired_cancelled");
+        ASSERT(oms.get_order(d->order_id)->status == OrderStatus::SENT, "gtd_no_expiry_kept");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
