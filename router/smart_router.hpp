@@ -524,6 +524,14 @@ public:
     // total_fees_paid: suma oplat/rebate po wszystkich trasach (#138). Ujemne =
     // net rebate (maker). Podstawa analizy kosztow egzekucji.
     double   total_fees_paid()    const noexcept { return total_fees_paid_; }
+    // avg_fee_per_share: srednia ZREALIZOWANA oplata na akcje (#232) = total_fees /
+    // total_routed_shares. Dodatnia = netto taker (placisz za plynnosc), ujemna =
+    // netto maker (zbierasz rebate). Kluczowa miara TCA jakosci routingu. 0 gdy
+    // nic nie zaroutowano.
+    double   avg_fee_per_share() const noexcept {
+        const int64_t total = total_routed_shares();
+        return total > 0 ? total_fees_paid_ / static_cast<double>(total) : 0.0;
+    }
 
     // set_venue_fee: runtime podmiana taryfy venue (#176). Harmonogramy oplat
     // zmieniaja sie (tier po wolumenie, promocja maker/taker); routing all-in

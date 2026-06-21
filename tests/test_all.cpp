@@ -2553,6 +2553,18 @@ void test_router_ewma_partial() {
         ASSERT(std::fabs(r.fillable_ratio(true, 400) - 0.75) < 1e-9, "ratio_three_quarters");
         ASSERT(std::fabs(r.fillable_ratio(true, 250) - 1.0) < 1e-9, "ratio_full");
     }
+
+    // --- #232 avg_fee_per_share (TCA: netto taker/maker) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.002));           // taker fee 0.002/akcja
+        r.update_quote("A", 10.0, 11.0, 1000, 1000);
+        r.route_order("BUY", 100);                      // fee 0.2
+        r.route_order("BUY", 100);                      // fee 0.2, razem 0.4 / 200 szt
+        ASSERT(std::fabs(r.avg_fee_per_share() - 0.002) < 1e-9, "avgfee_taker");
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.avg_fee_per_share() == 0.0, "avgfee_empty_zero");
+    }
 }
 
 
