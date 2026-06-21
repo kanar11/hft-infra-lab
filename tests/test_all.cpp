@@ -3782,6 +3782,20 @@ void test_ouch_order_state() {
     const int consumed2 = OUCHMessage::parse_stream(sbuf, soff - 5,
         [&](const OUCHResponse&) { ++pcount; });
     ASSERT(consumed2 == 41 + 31 && pcount == 2, "ouch_stream_partial_tail");
+
+    // #272 active_count — non-terminal (working) orders.
+    ouch::OUCHOrderTracker ac;
+    ac.on_new("A", 100); ac.on_new("B", 100);                 // both NEW (active)
+    ASSERT(ac.active_count() == 2, "ouch_active_two_new");
+    n = OUCHMessage::encode_executed(buf, "A", 100, 10.0, 1);
+    ac.on_response(OUCHMessage::parse_response(buf, n));       // A FILLED
+    ASSERT(ac.active_count() == 1, "ouch_active_after_fill");  // only B
+    n = OUCHMessage::encode_executed(buf, "B", 50, 10.0, 2);
+    ac.on_response(OUCHMessage::parse_response(buf, n));       // B PARTIAL (still active)
+    ASSERT(ac.active_count() == 1, "ouch_active_partial");
+    n = OUCHMessage::encode_cancelled(buf, "B", 50, 'U');
+    ac.on_response(OUCHMessage::parse_response(buf, n));       // B CANCELLED
+    ASSERT(ac.active_count() == 0, "ouch_active_after_cancel");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.

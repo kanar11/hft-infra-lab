@@ -150,6 +150,17 @@ public:
     // many orders went unfilled (bad limit prices, thin liquidity). 0 when nothing
     // was ordered.
     int64_t total_ordered_shares() const noexcept { return ordered_shares_; }
+    // active_count: number of orders still WORKING — non-terminal state (NEW/LIVE/
+    // PARTIAL), i.e. not FILLED/CANCELLED/REJECTED (#272). Unlike order_count (every
+    // order ever seen) or the event counters, this is the live open-order count the
+    // desk is actually exposed to right now.
+    size_t active_count() const noexcept {
+        size_t c = 0;
+        for (const auto& [tok, rec] : orders_)
+            if (rec.state != OrderState::FILLED && rec.state != OrderState::CANCELLED
+                && rec.state != OrderState::REJECTED) ++c;
+        return c;
+    }
     double  fill_rate() const noexcept {
         return ordered_shares_ > 0
             ? static_cast<double>(total_filled_shares()) / static_cast<double>(ordered_shares_)
