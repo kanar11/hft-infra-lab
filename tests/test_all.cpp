@@ -2376,6 +2376,20 @@ void test_router_ewma_partial() {
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.cheapest_venue(true) == nullptr, "cheapest_empty_null");
     }
+
+    // --- #208 nbbo_spread / nbbo_spread_bps (skonsolidowany rynek) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        r.update_quote("A", 99.98, 100.02, 100, 100);   // bid 99.98 / ask 100.02
+        r.update_quote("B", 100.00, 100.04, 100, 100);  // bid 100.00 / ask 100.04
+        // NBB = 100.00 (B), NBO = 100.02 (A) -> spread 0.02, mid 100.01
+        ASSERT(std::fabs(r.nbbo_spread() - 0.02) < 1e-9, "nbbo_spread_tighter");
+        ASSERT(std::fabs(r.nbbo_spread_bps() - 0.02/100.01*10000.0) < 1e-6, "nbbo_spread_bps");
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.nbbo_spread() == 0.0 && empt.nbbo_spread_bps() == 0.0, "nbbo_spread_empty");
+    }
 }
 
 

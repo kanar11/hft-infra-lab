@@ -381,6 +381,20 @@ public:
         const double b = national_best_bid(), a = national_best_ask();
         return (b > 0.0 && a > 0.0) ? (b + a) / 2.0 : 0.0;
     }
+    // nbbo_spread: skonsolidowany spread NBBO (#208) = NBO - NBB po wszystkich
+    // aktywnych venue. Zwykle CIASNIEJSZY niz na pojedynczej gieldzie (best bid i
+    // best ask moga byc na roznych venue). <=0 sygnalizuje locked/crossed miedzy
+    // venue (cross-venue arbitraz). 0 gdy brak dwustronnej plynnosci.
+    double nbbo_spread() const noexcept {
+        const double b = national_best_bid(), a = national_best_ask();
+        return (b > 0.0 && a > 0.0) ? (a - b) : 0.0;
+    }
+    // nbbo_spread_bps: nbbo_spread wzgledem nbbo_mid w punktach bazowych — miara
+    // jakosci skonsolidowanego rynku niezalezna od poziomu ceny.
+    double nbbo_spread_bps() const noexcept {
+        const double m = nbbo_mid();
+        return m > 0.0 ? nbbo_spread() / m * 10000.0 : 0.0;
+    }
     // active_venue_count: ile venue jest aktywnych (po health/manual) (#154).
     int active_venue_count() const noexcept {
         int n = 0;
