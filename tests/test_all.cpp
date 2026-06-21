@@ -2607,6 +2607,17 @@ void test_ouch_order_state() {
     const OUCHOrder ro = OUCHMessage::parse_order(buf, n);
     ASSERT(ro.valid && ro.type == 'U' && std::strcmp(ro.token, "TOK1") == 0
            && std::strcmp(ro.new_token, "TOK2") == 0 && ro.shares == 80, "ouch_parse_replace");
+
+    // #169 validate_order — gateway gieldy waliduje zlecenie klienta.
+    n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);
+    ASSERT(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)) == nullptr,
+           "ouch_validate_ok");
+    n = OUCHMessage::enter_order(buf, "TOK1", 'B', 0, "AAPL", 150.25);   // shares 0
+    ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
+                       "non-positive shares") == 0, "ouch_validate_zero_shares");
+    n = OUCHMessage::enter_order(buf, "TOK1", 'X', 100, "AAPL", 150.25); // zla strona
+    ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
+                       "invalid side") == 0, "ouch_validate_bad_side");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.

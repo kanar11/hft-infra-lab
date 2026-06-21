@@ -396,4 +396,25 @@ public:
         }
         return o;
     }
+
+    // validate_order: walidacja zlecenia KLIENTA po stronie gieldy (#169). Zwraca
+    // nullptr gdy OK, albo powod odrzucenia. Pairs z parse_order — gateway
+    // sprawdza zanim przekaze do matchingu.
+    static const char* validate_order(const OUCHOrder& o) noexcept {
+        if (!o.valid)        return "malformed";
+        if (o.token[0] == '\0') return "empty token";
+        if (o.type == 'O') {
+            if (o.side != 'B' && o.side != 'S') return "invalid side";
+            if (o.shares <= 0)   return "non-positive shares";
+            if (o.price  <= 0.0) return "non-positive price";
+            if (o.stock[0] == '\0') return "empty symbol";
+        } else if (o.type == 'U') {
+            if (o.new_token[0] == '\0') return "empty replacement token";
+            if (o.shares <= 0)   return "non-positive shares";
+            if (o.price  <= 0.0) return "non-positive price";
+        } else if (o.type == 'X') {
+            if (o.shares < 0)    return "negative shares";
+        }
+        return nullptr;
+    }
 };
