@@ -4,9 +4,7 @@
 
 Complete low-latency infrastructure lab for HFT systems — kernel tuning, networking, order management, and monitoring.
 
-*Kompletne laboratorium infrastruktury low-latency dla systemów HFT — dostrajanie kernela, sieci, zarządzanie zamówieniami i monitorowanie.*
-
-## Performance Highlights(Red Hat EL10, VirtualBox 2-core VM)
+## Performance Highlights (Red Hat EL10, VirtualBox 2-core VM)
 - Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
 - Order book — flat-array variant (`orderbook/orderbook_flat.hpp`): **O(1) add/match, zero heap alloc** — see `./orderbook/orderbook_flat 1000000` for live head-to-head vs the std::map baseline
 - **FullOrderBook L3** (`orderbook/orderbook_pro.hpp`): production-grade L3 matching engine — FIFO queue per price level, 10 order types (LIMIT/IOC/FOK/POST_ONLY/ICEBERG/STOP/PEG/MARKET/HIDDEN/AON) + OCO/bracket/trailing-stop, auction cross, self-trade prevention, LULD + MIFID II compliance, snapshot+delta recovery, integrity audit, microstructure analytics (VPIN, Kyle's λ, OFI, Lee-Ready, Hurst). 300+ tests: `./orderbook/orderbook_pro_demo 100000`
@@ -77,13 +75,13 @@ Format details and download links: [`replay/README.md`](replay/README.md).
 
 ## Live WebSocket feed
 
-Czwarte źródło danych — minimalny klient **RFC 6455 WebSocket** + self-contained mock server w jednym binarce (Binance-style JSON trade stream). Pokazuje strukturę protokołu (HTTP upgrade, frame header, opcode, length encoding) bez zależności od libwebsockets / Boost.Beast.
+A fourth data source — a minimal **RFC 6455 WebSocket** client + a self-contained mock server in a single binary (Binance-style JSON trade stream). It demonstrates the protocol structure (HTTP upgrade, frame header, opcode, length encoding) without depending on libwebsockets / Boost.Beast.
 
 ```bash
-./feed/feed_demo   # spawn mock server + WsClient w jednym procesie (50 trade'ów)
+./feed/feed_demo   # spawn mock server + WsClient in one process (50 trades)
 ```
 
-Szczegóły protokołu, opcody, podłączenie do prawdziwych giełd: [`feed/README.md`](feed/README.md).
+Protocol details, opcodes, and connecting to real exchanges: [`feed/README.md`](feed/README.md).
 
 ## Modules 
 
