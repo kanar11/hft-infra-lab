@@ -463,6 +463,21 @@ public:
         }
         return total;
     }
+    // fill_shortfall: ile akcji zlecenia NIE pokryje wyswietlona plynnosc (#224) =
+    // max(0, shares - available_liquidity). Reszta musialaby odlezec w ksiazce /
+    // poczekac na nowy quote. Pre-route sizing.
+    int32_t fill_shortfall(bool is_buy, int32_t shares) const noexcept {
+        const int32_t avail = available_liquidity(is_buy);
+        return shares > avail ? shares - avail : 0;
+    }
+    // fillable_ratio: jaka czesc zlecenia wykona sie od reki wg displayed (#224),
+    // 0..1. min(avail, shares) / shares. 0 dla shares <= 0.
+    double fillable_ratio(bool is_buy, int32_t shares) const noexcept {
+        if (shares <= 0) return 0.0;
+        const int32_t avail = available_liquidity(is_buy);
+        const int32_t f = avail < shares ? avail : shares;
+        return static_cast<double>(f) / static_cast<double>(shares);
+    }
     int venue_count() const noexcept { return venue_count_; }
     // venue_routed_shares: laczny zaroutowany wolumen na dane venue (TCA, #117).
     int64_t venue_routed_shares(const char* venue_name) const noexcept {

@@ -2492,6 +2492,20 @@ void test_router_ewma_partial() {
         ASSERT(std::fabs(r.venue_share_pct("B") - 0.0) < 1e-9, "vsp_B_zero");
         ASSERT(r.venue_share_pct("GHOST") == 0.0, "vsp_unknown_zero");
     }
+
+    // --- #224 fill_shortfall / fillable_ratio (pre-route sizing) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        r.update_quote("A", 10.0, 11.0, 100, 100);     // ask size 100
+        r.update_quote("B", 10.0, 11.0, 100, 200);     // ask size 200 -> razem 300
+        ASSERT(r.fill_shortfall(true, 250) == 0, "shortfall_covered");
+        ASSERT(r.fill_shortfall(true, 400) == 100, "shortfall_100");      // 400 - 300
+        ASSERT(r.fill_shortfall(true, 300) == 0, "shortfall_exact");
+        ASSERT(std::fabs(r.fillable_ratio(true, 400) - 0.75) < 1e-9, "ratio_three_quarters");
+        ASSERT(std::fabs(r.fillable_ratio(true, 250) - 1.0) < 1e-9, "ratio_full");
+    }
 }
 
 
