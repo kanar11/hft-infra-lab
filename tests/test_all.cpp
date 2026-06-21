@@ -2317,6 +2317,19 @@ void test_router_ewma_partial() {
                && rss.venue_routed_shares("A") == 0, "rss_stats_zeroed");
         ASSERT(rss.venue_count() == 1, "rss_venue_retained");
     }
+
+    // --- #200 cheapest_venue (inspekcja routingu) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.02));            // wyzszy fee
+        r.add_venue(Venue("B", 100, 0.01));            // nizszy fee
+        r.update_quote("A", 10.0, 11.0, 100, 100);
+        r.update_quote("B", 10.0, 11.0, 100, 100);     // ten sam quote
+        ASSERT(std::strcmp(r.cheapest_venue(true), "B") == 0, "cheapest_buy_B");   // all-in 11.01 < 11.02
+        ASSERT(std::strcmp(r.cheapest_venue(false), "B") == 0, "cheapest_sell_B"); // all-in 9.99 > 9.98
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.cheapest_venue(true) == nullptr, "cheapest_empty_null");
+    }
 }
 
 

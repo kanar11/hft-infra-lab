@@ -415,6 +415,27 @@ public:
         return is_buy ? (best <= limit_price) : (best >= limit_price);
     }
 
+    // cheapest_venue: NAZWA venue z najlepsza cena all-in (quote +/- fee) po danej
+    // stronie (#200). Uzupelnia best_effective_price (sama cena) — tu wiadomo
+    // GDZIE. BUY: min all-in ask; SELL: max all-in bid. nullptr gdy brak plynnosci.
+    // Inspekcja/logowanie decyzji routingu bez wykonywania route_order.
+    const char* cheapest_venue(bool is_buy) const noexcept {
+        const char* best_name = nullptr;
+        double best = 0.0; bool found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            if (!has_liq) continue;
+            const double eff = effective_price(v, is_buy);
+            if (!found || (is_buy ? (eff < best) : (eff > best))) {
+                best = eff; best_name = v.name; found = true;
+            }
+        }
+        return found ? best_name : nullptr;
+    }
+
     // available_liquidity: laczny displayed size top-of-book po stronie zlecenia
     // (is_buy → asks, sprzedaz → bids), tylko aktywne venue z dodatnim quote.
     // Pre-route sizing: czy w ogole jest plynnosc na pokrycie zlecenia (#109).
