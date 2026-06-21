@@ -2529,6 +2529,17 @@ void test_risk_price_band() {
     ASSERT(rsn.check_order("TSLA", Side::BUY, 50.0, 300).action == RiskAction::REJECT,
            "symnotional_over_rejects"); // 300*50 = 15000 > 10000
 
+    // #197 current_drawdown_pct (high-water mark).
+    RiskManager rdd;                       // domyslne limity
+    rdd.update_pnl(1000.0);                 // peak 1000, daily 1000
+    ASSERT(std::fabs(rdd.current_drawdown_pct() - 0.0) < 1e-6, "dd_at_peak_zero");
+    rdd.update_pnl(-300.0);                 // daily 700 -> dd = 300/1000 = 30%
+    ASSERT(std::fabs(rdd.current_drawdown_pct() - 30.0) < 1e-6, "dd_30pct");
+    ASSERT(std::fabs(rdd.get_peak_pnl() - 1000.0) < 1e-6, "dd_peak_1000");
+    RiskManager rzz;
+    rzz.update_pnl(-500.0);                 // peak 0 -> brak referencji
+    ASSERT(std::fabs(rzz.current_drawdown_pct() - 0.0) < 1e-6, "dd_no_peak_zero");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

@@ -749,6 +749,14 @@ public:
         return std::abs(lookup(positions_, k) + lookup(pending_, k)) * rp->second;
     }
     double   get_daily_pnl()                  const noexcept { return daily_pnl_; }
+    double   get_peak_pnl()                   const noexcept { return peak_pnl_; }
+    // current_drawdown_pct: biezacy % spadek od high-water mark (#197) — ta sama
+    // formula co breaker drawdown (check #6), wystawiona do monitoringu ZANIM
+    // trip. 0 gdy peak <= 0 (brak zysku, brak referencji). Dla dashboardu/alertu.
+    double   current_drawdown_pct() const noexcept {
+        if (peak_pnl_ <= 0.0) return 0.0;
+        return (peak_pnl_ - daily_pnl_) / peak_pnl_ * 100.0;
+    }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }
     uint64_t get_total_rejects()              const noexcept { return total_rejects_; }
