@@ -1694,6 +1694,14 @@ void test_itch_book() {
     ASSERT(st1.spread_ticks() == 1, "itchbook_spread_ticks_1");
     ASSERT(nlq.spread_ticks() == 0, "itchbook_spread_ticks_onesided");
 
+    // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
+    itch::ITCHOrderBook ni;
+    ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 szt.
+    ni.on_add(2, 'S', 100.00, 150);  // ask $: 100*150 = 15000, 150 szt.
+    // notional: (10000-15000)/25000 = -0.2 ; depth (szt): (200-150)/350 = +0.1428
+    ASSERT(close(ni.notional_imbalance(1), -0.2), "itchbook_notional_imb");
+    ASSERT(ni.depth_imbalance(1) > 0.0, "itchbook_depth_imb_differs_sign");  // przeciwny znak
+
     // #183 locked / crossed book.
     itch::ITCHOrderBook nb;
     nb.on_add(1, 'B', 100.00, 100); nb.on_add(2, 'S', 100.02, 100);   // normalny spread

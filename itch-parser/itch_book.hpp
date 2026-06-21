@@ -269,6 +269,21 @@ public:
         const int64_t tot = b + a;
         return tot > 0 ? static_cast<double>(b - a) / static_cast<double>(tot) : 0.0;
     }
+    // notional_imbalance: imbalance wazony WARTOSCIA ($) top-N poziomow (#215).
+    // Jak depth_imbalance, ale waga = cena*ilosc zamiast samej ilosci. Duze
+    // zlecenia patrza na nominal: 100 szt. po $300 wazy 30x wiecej niz 100 po $10.
+    // (Sb_$ - Sa_$)/(Sb_$ + Sa_$), zakres [-1,1]. 0 gdy pusto.
+    double  notional_imbalance(int n) const noexcept {
+        if (n <= 0) return 0.0;
+        double b = 0.0, a = 0.0; int c = 0;
+        for (auto it = bids_.rbegin(); it != bids_.rend() && c < n; ++it, ++c)
+            b += (static_cast<double>(it->first) / 100.0) * static_cast<double>(it->second);
+        c = 0;
+        for (auto it = asks_.begin(); it != asks_.end() && c < n; ++it, ++c)
+            a += (static_cast<double>(it->first) / 100.0) * static_cast<double>(it->second);
+        const double tot = b + a;
+        return tot > 0.0 ? (b - a) / tot : 0.0;
+    }
     double  microprice() const noexcept {
         if (bids_.empty() || asks_.empty()) return 0.0;
         const int64_t qb = best_bid_qty(), qa = best_ask_qty();
