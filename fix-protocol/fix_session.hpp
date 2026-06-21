@@ -573,6 +573,20 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // QuoteRequest (35=R): a client asks for a quote on a symbol (RFQ markets)
+    // (#256). 131=QuoteReqID, 146=1 sym + 55=Symbol. The market maker responds with
+    // a Quote (35=S, #249) — this is the request side of the RFQ flow.
+    int build_quote_request(char* out, int cap, const char* quote_req_id, const char* symbol,
+                            char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=R%c49=%s%c56=%s%c34=%u%c131=%s%c146=1%c55=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            quote_req_id, delim, delim, symbol, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.

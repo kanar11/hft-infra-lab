@@ -3271,6 +3271,13 @@ void test_fix_session() {
                && std::fabs(qm.get_double(133) - 100.02) < 1e-6, "fix_quote_prices");
         ASSERT(qm.get_int(134) == 500 && qm.get_int(135) == 300, "fix_quote_sizes");
 
+        // #256 QuoteRequest (35=R) — RFQ request side.
+        s.build_quote_request(buf, sizeof(buf), "QR1", "AAPL", '|');
+        FIXMessage qrq; qrq.parse(buf);
+        ASSERT(qrq.is_valid() && qrq.get_msg_type()[0] == 'R', "fix_qreq_R_valid");
+        ASSERT(std::strcmp(qrq.get_field(131), "QR1") == 0
+               && std::strcmp(qrq.get_symbol(), "AAPL") == 0, "fix_qreq_id_symbol");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
