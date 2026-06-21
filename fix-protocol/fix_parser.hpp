@@ -189,6 +189,41 @@ public:
         return f && is_admin_msg_type(f->value);
     }
 
+    // === Repeating-group readers (#263) ===
+    // FIX repeating groups (e.g. 35=W MarketDataSnapshot, 35=X incremental, mass
+    // quotes) repeat the same tag once per entry. get_field() returns only the
+    // FIRST occurrence; these let a consumer walk every entry. occurrence is 0-based.
+
+    // count_field: how many times `tag` appears in the message.
+    int count_field(int tag) const noexcept {
+        int c = 0;
+        for (int i = 0; i < field_count_; ++i) if (fields_[i].tag == tag) ++c;
+        return c;
+    }
+
+    // get_field_nth: value of the n-th (0-based) occurrence of `tag` (nullptr if
+    // fewer than n+1 occurrences).
+    const char* get_field_nth(int tag, int occurrence) const noexcept {
+        int c = 0;
+        for (int i = 0; i < field_count_; ++i) {
+            if (fields_[i].tag == tag) {
+                if (c == occurrence) return fields_[i].value;
+                ++c;
+            }
+        }
+        return nullptr;
+    }
+
+    // get_int_nth / get_double_nth: typed n-th occurrence (0 if absent).
+    int get_int_nth(int tag, int occurrence) const noexcept {
+        const char* v = get_field_nth(tag, occurrence);
+        return v ? std::atoi(v) : 0;
+    }
+    double get_double_nth(int tag, int occurrence) const noexcept {
+        const char* v = get_field_nth(tag, occurrence);
+        return v ? std::atof(v) : 0.0;
+    }
+
     // get_symbol: tag 55 — ticker.
     const char* get_symbol() const noexcept {
         const FIXField* f = find_field(55);

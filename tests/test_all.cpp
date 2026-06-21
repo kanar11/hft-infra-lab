@@ -3389,6 +3389,18 @@ void test_fix_session() {
         ASSERT(std::strcmp(qrq.get_field(131), "QR1") == 0
                && std::strcmp(qrq.get_symbol(), "AAPL") == 0, "fix_qreq_id_symbol");
 
+        // #263 repeating-group readers on a MarketDataSnapshot (35=W): bid + ask.
+        s.build_md_snapshot(buf, sizeof(buf), "MDR1", "AAPL", 99.98, 100, 100.02, 200, '|');
+        FIXMessage rgm; rgm.parse(buf);
+        ASSERT(rgm.count_field(269) == 2, "fix_rg_count_two");                 // two MD entries
+        ASSERT(std::strcmp(rgm.get_field_nth(269, 0), "0") == 0
+               && std::strcmp(rgm.get_field_nth(269, 1), "1") == 0, "fix_rg_entry_types"); // bid, ask
+        ASSERT(std::fabs(rgm.get_double_nth(270, 0) - 99.98) < 1e-6
+               && std::fabs(rgm.get_double_nth(270, 1) - 100.02) < 1e-6, "fix_rg_prices");
+        ASSERT(rgm.get_int_nth(271, 0) == 100 && rgm.get_int_nth(271, 1) == 200, "fix_rg_sizes");
+        ASSERT(rgm.get_field_nth(269, 5) == nullptr, "fix_rg_out_of_range");
+        ASSERT(rgm.count_field(99999) == 0, "fix_rg_count_absent");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
