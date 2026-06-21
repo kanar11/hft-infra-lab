@@ -554,6 +554,31 @@ struct ContiguousTracker {
 };
 
 
+// SlidingWindowRate — event count over a moving time window (expansion #257).
+//
+// FeedRateMeter gives an instantaneous (inter-arrival) and peak rate; this gives
+// the exact COUNT of events within the last `window_ns`, pruning timestamps that
+// fall out of the window. Useful for windowed burst detection and capacity
+// checks: "how many messages did I receive in the last millisecond?".
+struct SlidingWindowRate {
+    std::int64_t window_ns;
+    std::deque<std::int64_t> ts;
+
+    explicit SlidingWindowRate(std::int64_t window_ns_ = 1'000'000'000) noexcept
+        : window_ns(window_ns_) {}
+
+    void on_event(std::int64_t now_ns) {
+        ts.push_back(now_ns);
+        while (!ts.empty() && ts.front() <= now_ns - window_ns) ts.pop_front();
+    }
+    std::size_t count() const noexcept { return ts.size(); }   // events within the window
+    double rate_per_sec() const noexcept {
+        return window_ns > 0 ? static_cast<double>(ts.size()) * 1e9 / static_cast<double>(window_ns) : 0.0;
+    }
+    void reset() noexcept { ts.clear(); }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił

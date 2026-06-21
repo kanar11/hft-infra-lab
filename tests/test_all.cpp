@@ -1996,6 +1996,14 @@ void test_multicast_gap_recovery() {
     ct.receive(1);                              // duplikat -> ignoruj
     ASSERT(ct.contiguous_high() == 3, "contig_duplicate_ignored");
 
+    // #257 SlidingWindowRate — count within a moving window (1000 ns).
+    multicast::SlidingWindowRate sw(1000);
+    sw.on_event(0); sw.on_event(500); sw.on_event(900);
+    ASSERT(sw.count() == 3, "swr_all_in_window");          // all within [-100, 900]
+    sw.on_event(1500);                                     // prunes <= 500 (0 and 500)
+    ASSERT(sw.count() == 2, "swr_pruned_old");             // keeps 900, 1500
+    ASSERT(std::fabs(sw.rate_per_sec() - 2.0 * 1e9 / 1000.0) < 1e-3, "swr_rate");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
