@@ -37,6 +37,7 @@
 #include "../strategy/volatility.hpp"
 #include "../strategy/ema.hpp"
 #include "../strategy/macd.hpp"
+#include "../strategy/stochastic.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -1910,6 +1911,26 @@ void test_macd() {
     ASSERT(!d.bullish(), "macd_not_bullish_on_downtrend");
 }
 
+// Stochastic #190 — oscylator %K.
+void test_stochastic() {
+    SECTION("Stochastic (#190)");
+    Stochastic up(5);
+    for (int i = 1; i <= 5; ++i) up.update(i);            // 1..5, cur=5 = szczyt
+    ASSERT(up.ready(), "stoch_ready");
+    ASSERT(std::fabs(up.percent_k() - 100.0) < 1e-9, "stoch_k_top_100");
+    ASSERT(up.overbought(), "stoch_overbought");
+    Stochastic dn(5);
+    for (int i = 0; i < 5; ++i) dn.update(5.0 - i);       // 5,4,3,2,1, cur=1 = dno
+    ASSERT(std::fabs(dn.percent_k() - 0.0) < 1e-9, "stoch_k_bottom_0");
+    ASSERT(dn.oversold(), "stoch_oversold");
+    Stochastic mid(3);
+    mid.update(30); mid.update(10); mid.update(20);       // lo10 hi30 cur20 -> 50
+    ASSERT(std::fabs(mid.percent_k() - 50.0) < 1e-9, "stoch_k_mid_50");
+    Stochastic flat(3);
+    flat.update(100); flat.update(100);                   // plaskie -> 50
+    ASSERT(std::fabs(flat.percent_k() - 50.0) < 1e-9, "stoch_k_flat_neutral");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3076,6 +3097,7 @@ int main() {
     test_volatility();
     test_ema();
     test_macd();
+    test_stochastic();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
