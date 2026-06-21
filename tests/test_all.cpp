@@ -445,6 +445,15 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.total_traded_notional(), 2000.0), "traded_notional_sum");
     }
 
+    {   // #274 avg_fill_size (shares per fill).
+        OMS oms(1000000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(a->order_id, 40, 10.0);                     // fill 1: 40
+        oms.fill_order(a->order_id, 60, 10.0);                     // fill 2: 60
+        ASSERT(oms.total_fills() == 2 && oms.total_filled_shares() == 100, "avgfill_accum");
+        ASSERT(close(oms.avg_fill_size(), 50.0), "avgfill_50");     // 100 / 2
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

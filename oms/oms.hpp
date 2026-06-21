@@ -636,6 +636,15 @@ public:
     // Liczniki operacji cyklu zycia (#151/#160, observability/dashboard).
     uint64_t total_submitted() const noexcept { return total_submitted_; }
     uint64_t total_fills()    const noexcept { return total_fills_; }
+    // avg_fill_size: average shares per fill (#274) = total_filled_shares /
+    // total_fills. Execution granularity — a small average means orders are being
+    // chopped into many small fills (more exchange messages and per-fill fees,
+    // and possible information leakage). 0 when nothing filled.
+    double   avg_fill_size() const noexcept {
+        return total_fills_ > 0
+            ? static_cast<double>(total_filled_shares_) / static_cast<double>(total_fills_)
+            : 0.0;
+    }
     uint64_t total_cancels()  const noexcept { return total_cancels_; }
     uint64_t total_replaces() const noexcept { return total_replaces_; }
     uint64_t total_ordered_shares() const noexcept { return total_ordered_shares_; }
