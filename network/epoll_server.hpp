@@ -121,14 +121,20 @@ public:
             for (int i = 0; i < n; ++i) {
                 const int fd = events[i].data.fd;
                 if (fd == listen_fd_) {
-                    // new connection
-                    sockaddr_in caddr{};
-                    socklen_t   clen = sizeof(caddr);
-                    const int cfd = ::accept(listen_fd_,
-                                             reinterpret_cast<sockaddr*>(&caddr), &clen);
-                    if (cfd < 0) continue;
-                    set_nonblock(cfd);
-                    epoll_add(cfd, EPOLLIN);
+                    // Drain ALL pending connections in a loop. With a non-blocking
+                    // listener, accept() returns EAGAIN/EWOULDBLOCK once the backlog
+                    // is empty — that's our stop condition. Accepting only one per
+                    // wakeup would leave a connection burst queued until the next
+                    // epoll_wait, adding latency under load.
+                    for (;;) {
+                        sockaddr_in caddr{};
+                        socklen_t   clen = sizeof(caddr);
+                        const int cfd = ::accept(listen_fd_,
+                                                 reinterpret_cast<sockaddr*>(&caddr), &clen);
+                        if (cfd < 0) break;        // EAGAIN/EWOULDBLOCK: no more pending
+                        set_nonblock(cfd);
+                        epoll_add(cfd, EPOLLIN);
+                    }
                 } else {
                     // data on existing connection
                     const ssize_t got = ::recv(fd, read_buf, sizeof(read_buf), 0);

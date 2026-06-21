@@ -92,7 +92,10 @@ int main() {
     std::string accum;
     std::atomic<int> parsed{0};
 
-    std::thread client_thread(run_client);
+    // Capture the client's actual ack count (the thread's return value would
+    // otherwise be discarded). Written by the client thread, read after join().
+    int client_acks = 0;
+    std::thread client_thread([&client_acks] { client_acks = run_client(); });
 
     server.run([&](int fd, const std::uint8_t* data, std::size_t n) {
         accum.append(reinterpret_cast<const char*>(data), n);
@@ -124,7 +127,9 @@ int main() {
     std::printf("=== fix_server_demo ===\n");
     std::printf("  messages sent : %d\n", N_MSGS);
     std::printf("  parsed by srv : %d\n", got);
-    std::printf("  acks received : %d  (client side)\n", N_MSGS);
+    std::printf("  acks received : %d  (client side)\n", client_acks);
 
-    return (got == N_MSGS) ? 0 : 1;
+    // End-to-end success requires BOTH: the server parsed every message AND the
+    // client received an ack for every one (full round-trip verified).
+    return (got == N_MSGS && client_acks == N_MSGS) ? 0 : 1;
 }
