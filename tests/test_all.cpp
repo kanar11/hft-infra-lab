@@ -3214,6 +3214,14 @@ void test_risk_price_band() {
     rdh.update_pnl(-60.0);                   // dd = 110/1000 = 11% > 10
     ASSERT(std::fabs(rdh.drawdown_headroom_pct() - 0.0) < 1e-6, "ddh_clamped");
 
+    // #275 current_drawdown_dollars (absolute $ drawdown).
+    RiskManager rdd2;
+    rdd2.update_pnl(1000.0);                  // peak 1000
+    rdd2.update_pnl(-300.0);                  // daily 700 -> dd $300
+    ASSERT(std::fabs(rdd2.current_drawdown_dollars() - 300.0) < 1e-6, "dd_dollars_300");
+    rdd2.update_pnl(500.0);                   // daily 1200 -> new high -> dd 0
+    ASSERT(std::fabs(rdd2.current_drawdown_dollars() - 0.0) < 1e-6, "dd_dollars_new_high");
+
     // #205 consecutive_losses_remaining (breaker serii strat, prog 3).
     RiskLimits cll; cll.max_consecutive_losses = 3;
     RiskManager rcl(cll);

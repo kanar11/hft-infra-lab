@@ -825,6 +825,14 @@ public:
         const double room = limits_.max_drawdown_pct - current_drawdown_pct();
         return room > 0.0 ? room : 0.0;
     }
+    // current_drawdown_dollars: absolute drawdown from the high-water mark in $
+    // (#275) = peak_pnl_ - daily_pnl_, clamped >= 0. The dollar companion to
+    // current_drawdown_pct (#197) — some desks size and alert on absolute drawdown
+    // rather than a percentage. 0 at a new high.
+    double   current_drawdown_dollars() const noexcept {
+        const double dd = peak_pnl_ - daily_pnl_;
+        return dd > 0.0 ? dd : 0.0;
+    }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
     // consecutive_losses_remaining: ile jeszcze stratnych fillow Z RZEDU do trip'a
     // bezpiecznika serii strat (#205, na bazie #114). -1 gdy breaker wylaczony,
