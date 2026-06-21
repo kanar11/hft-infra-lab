@@ -635,6 +635,38 @@ struct RetransmitTracker {
 };
 
 
+// DualFeedReconciler — A/B line first-seen dedup + line-quality stats (#273).
+//
+// Exchanges publish the SAME feed on two independent lines (A and B, often via
+// different network paths / datacenters) for redundancy. A consumer takes
+// whichever copy of each sequence arrives FIRST and drops the duplicate. On top of
+// that, counting WHICH line won tells you which path is consistently faster — a
+// real ops signal for choosing the primary line. (ABLineArbitrator does the
+// packet-level take-first; this adds the win statistics.) `seen` would be windowed
+// in production, like DedupWindow.
+struct DualFeedReconciler {
+    std::set<std::uint64_t> seen;       // sequence numbers already delivered
+    std::uint64_t a_wins = 0;           // times line A delivered first
+    std::uint64_t b_wins = 0;           // times line B delivered first
+    std::uint64_t duplicates = 0;       // copies dropped (the other line won)
+
+    // on_packet: line 0 = A, 1 = B. Returns true if this is the FIRST copy of `seq`
+    // (deliver it downstream), false if the other line already delivered it (drop).
+    bool on_packet(std::uint64_t seq, int line) {
+        const auto res = seen.insert(seq);
+        if (!res.second) { ++duplicates; return false; }   // already delivered
+        if (line == 0) ++a_wins; else ++b_wins;
+        return true;
+    }
+    // a_win_rate: fraction of unique packets that line A delivered first.
+    double a_win_rate() const noexcept {
+        const std::uint64_t tot = a_wins + b_wins;
+        return tot ? static_cast<double>(a_wins) / static_cast<double>(tot) : 0.0;
+    }
+    void reset() noexcept { seen.clear(); a_wins = b_wins = duplicates = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił

@@ -2057,6 +2057,16 @@ void test_multicast_gap_recovery() {
     rt2.on_received(7);                                   // retransmit arrived
     ASSERT(rt2.fulfilled == 1 && rt2.outstanding() == 0, "rtx_fulfilled");
 
+    // #273 DualFeedReconciler — A/B first-seen dedup + line-win stats.
+    multicast::DualFeedReconciler dfr;
+    ASSERT(dfr.on_packet(1, 0), "dfr_A_first");           // A delivers seq 1 first
+    ASSERT(!dfr.on_packet(1, 1), "dfr_B_dup");            // B's copy is a duplicate
+    ASSERT(dfr.on_packet(2, 1), "dfr_B_first");           // B delivers seq 2 first
+    ASSERT(!dfr.on_packet(2, 0), "dfr_A_dup");            // A's copy is a duplicate
+    ASSERT(dfr.on_packet(3, 0), "dfr_A_first_2");         // A delivers seq 3
+    ASSERT(dfr.a_wins == 2 && dfr.b_wins == 1 && dfr.duplicates == 2, "dfr_counts");
+    ASSERT(std::fabs(dfr.a_win_rate() - 2.0/3.0) < 1e-9, "dfr_a_win_rate");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
