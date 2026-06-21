@@ -2732,6 +2732,13 @@ void test_fix_session() {
         FIXMessage mc2; mc2.parse(buf);
         ASSERT(std::strcmp(mc2.get_field(530), "7") == 0, "fix_masscancel_all");
 
+        // #201 OrderMassCancelReport (35=r) — odpowiedz gieldy.
+        s.build_mass_cancel_report(buf, sizeof(buf), "MC2", '7', 5, '|');
+        FIXMessage mcr; mcr.parse(buf);
+        ASSERT(mcr.is_valid() && mcr.get_msg_type()[0] == 'r', "fix_mcr_r_valid");
+        ASSERT(std::strcmp(mcr.get_field(531), "7") == 0, "fix_mcr_response_all");
+        ASSERT(mcr.get_int(533) == 5, "fix_mcr_affected_count");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");

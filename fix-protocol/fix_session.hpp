@@ -474,6 +474,22 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // OrderMassCancelReport (35=r): odpowiedz gieldy na OrderMassCancelRequest
+    // (35=q, #193) — domyka petle masowego anulowania (#201). response =
+    // 531=MassCancelResponse ('0'=odrzucono, '1'=po symbolu, '7'=wszystkie);
+    // affected = 533=TotalAffectedOrders (ile zlecen faktycznie anulowano).
+    int build_mass_cancel_report(char* out, int cap, const char* cl_ord_id,
+                                 char response, int32_t affected,
+                                 char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=r%c49=%s%c56=%s%c34=%u%c11=%s%c531=%c%c533=%d%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            cl_ord_id, delim, response, delim, affected, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.
