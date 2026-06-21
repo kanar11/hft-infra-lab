@@ -2567,6 +2567,19 @@ void test_router_ewma_partial() {
         ASSERT(empt.nbbo_spread() == 0.0 && empt.nbbo_spread_bps() == 0.0, "nbbo_spread_empty");
     }
 
+    // --- #240 effective_spread_bps (koszt przejscia z oplatami) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.01));            // taker fee 0.01
+        r.update_quote("A", 99.98, 100.02, 100, 100);  // bid 99.98 / ask 100.02 (quote spread 0.04)
+        // eff_ask = 100.03, eff_bid = 99.97, eff spread 0.06, mid 100.00 -> 6.0 bps
+        ASSERT(std::fabs(r.effective_spread_bps() - 6.0) < 1e-6, "effspread_with_fees");
+        // quote-only NBBO spread = 0.04/100.00*10000 = 4.0; effective > o round-trip fees
+        ASSERT(r.effective_spread_bps() > r.nbbo_spread_bps(), "effspread_gt_quote");
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.effective_spread_bps() == 0.0, "effspread_empty_zero");
+    }
+
     // --- #216 venue_share_pct (koncentracja egzekucji) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);

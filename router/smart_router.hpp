@@ -395,6 +395,17 @@ public:
         const double m = nbbo_mid();
         return m > 0.0 ? nbbo_spread() / m * 10000.0 : 0.0;
     }
+    // effective_spread_bps: RZECZYWISTY koszt przejscia spreadu Z OPLATAMI (#240) =
+    // best all-in ask (quote+fee) - best all-in bid (quote-fee), w bps. Wiekszy niz
+    // nbbo_spread_bps (#208, sam quote) o round-trip fees: pokazuje ile naprawde
+    // kosztuje wejscie+wyjscie po cenach takera. 0 bez dwustronnej plynnosci.
+    double effective_spread_bps() const noexcept {
+        const double eff_ask = best_effective_price(true);    // all-in kupna
+        const double eff_bid = best_effective_price(false);   // all-in sprzedazy
+        if (eff_ask <= 0.0 || eff_bid <= 0.0) return 0.0;
+        const double m = (eff_ask + eff_bid) / 2.0;
+        return m > 0.0 ? (eff_ask - eff_bid) / m * 10000.0 : 0.0;
+    }
     // active_venue_count: ile venue jest aktywnych (po health/manual) (#154).
     int active_venue_count() const noexcept {
         int n = 0;
