@@ -35,6 +35,7 @@
 #include "../strategy/rsi.hpp"
 #include "../strategy/ma_crossover.hpp"
 #include "../strategy/volatility.hpp"
+#include "../strategy/ema.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -1822,6 +1823,20 @@ void test_volatility() {
     ASSERT(c.target_size(1000, 0.01) == 1000, "vol_target_size_base_when_calm");
 }
 
+// EMA #173 — wykladnicza srednia kroczaca.
+void test_ema() {
+    SECTION("EMA (#173)");
+    EMA e(0.5);
+    ASSERT(close(e.update(100.0), 100.0), "ema_first_is_seed");   // pierwsza = seed
+    ASSERT(close(e.update(200.0), 150.0), "ema_blend");           // 0.5*200 + 0.5*100
+    ASSERT(e.ready(), "ema_ready");
+    // alpha z okresu: 9-okresowa -> 2/10 = 0.2
+    EMA p = EMA::from_period(9);
+    ASSERT(close(p.alpha(), 0.2), "ema_from_period_alpha");
+    p.reset();
+    ASSERT(!p.ready(), "ema_reset");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -2894,6 +2909,7 @@ int main() {
     test_rsi();
     test_ma_crossover();
     test_volatility();
+    test_ema();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
