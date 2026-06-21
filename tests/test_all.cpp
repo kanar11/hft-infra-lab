@@ -2837,6 +2837,19 @@ void test_router_ewma_partial() {
         ASSERT(empt.deepest_venue(true) == nullptr, "deepest_empty_null");
     }
 
+    // --- #278 fastest_venue (lowest selection latency) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 500, 0.0));   // static latency 500
+        r.add_venue(Venue("B", 200, 0.0));   // 200 (fastest)
+        r.add_venue(Venue("C", 800, 0.0));   // 800
+        ASSERT(std::strcmp(r.fastest_venue(), "B") == 0, "fastest_B");
+        r.set_venue_active("B", false);
+        ASSERT(std::strcmp(r.fastest_venue(), "A") == 0, "fastest_A_after_disable");
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.fastest_venue() == nullptr, "fastest_empty_null");
+    }
+
     // --- #262 venue_liquidity_share (current displayed concentration) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);

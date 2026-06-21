@@ -512,6 +512,23 @@ public:
         return best_name;
     }
 
+    // fastest_venue: name of the active venue with the lowest selection latency
+    // (#278) — EWMA of observed round-trips if available, else the configured p99 /
+    // static latency (selection_latency_ns). For latency-sensitive routing it
+    // completes the "best-by-X" family: cheapest_venue (price), deepest_venue
+    // (size), fastest_venue (speed). nullptr when no venue is active.
+    const char* fastest_venue() const noexcept {
+        const char* best_name = nullptr;
+        int64_t best = 0; bool found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const int64_t lat = v.selection_latency_ns();
+            if (!found || lat < best) { best = lat; best_name = v.name; found = true; }
+        }
+        return best_name;
+    }
+
     // available_liquidity: laczny displayed size top-of-book po stronie zlecenia
     // (is_buy → asks, sprzedaz → bids), tylko aktywne venue z dodatnim quote.
     // Pre-route sizing: czy w ogole jest plynnosc na pokrycie zlecenia (#109).
