@@ -355,6 +355,14 @@ public:
         return diff / m * 10000.0;
     }
 
+    // round_trip_cost_bps: pelny koszt transakcyjny round-trip dla `shares` (#231)
+    // = slippage kupna + slippage sprzedazy (bps vs mid). Ile zjada glebokosc gdy
+    // wejdziesz i wyjdziesz z pozycji tej wielkosci — realny prog rentownosci
+    // strategii. 0 gdy ksiega jednostronna (brak mid). Buduje na slippage_bps.
+    double round_trip_cost_bps(int64_t shares) const noexcept {
+        return slippage_bps('B', shares) + slippage_bps('S', shares);
+    }
+
     // top_levels: skopiuj do n NAJLEPSZYCH poziomow po danej stronie (BUY: bids
     // malejaco od best; SELL: asks rosnaco) — cena + zagregowana qty. Zwraca ile
     // poziomow faktycznie wypelniono (<= n). L2 depth dla strategii/wyswietlania.

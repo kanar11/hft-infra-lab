@@ -1718,6 +1718,12 @@ void test_itch_book() {
     nlq.on_add(1, 'B', 99.98, 100);
     ASSERT(nlq.slippage_bps('B', 100) == 0.0, "itchbook_slippage_no_ask_liq");
 
+    // #231 round_trip_cost_bps (kup+sprzedaj).
+    // sl: bid 99.98 / ask 100.00, mid 99.99; buy 100 slip ~1bps, sell 50 slip ~1bps
+    ASSERT(close(sl.round_trip_cost_bps(100), 2.0 * (0.01/99.99*10000.0)),
+           "itchbook_round_trip_cost");
+    ASSERT(nlq.round_trip_cost_bps(100) == 0.0, "itchbook_round_trip_onesided");
+
     // #207 spread_ticks (calkowita liczba ticow $0.01).
     itch::ITCHOrderBook st;
     st.on_add(1, 'B', 100.00, 100); st.on_add(2, 'S', 100.02, 100);  // 2 ticki
