@@ -1598,6 +1598,11 @@ void test_itch_book() {
     ASSERT(lw.liquidity_within('S', 1) == 300, "itchbook_liq_within_1");  // 10000+10001
     ASSERT(lw.liquidity_within('S', 5) == 600, "itchbook_liq_within_5");  // + 10005
 
+    // #174 total_shares + level_count (rozmiar i grubosc ksiazki).
+    ASSERT(lw.total_shares('S') == 600, "itchbook_total_shares_ask");     // 100+200+300
+    ASSERT(lw.level_count('S') == 3, "itchbook_level_count_ask");
+    ASSERT(lw.total_shares('B') == 0 && lw.level_count('B') == 0, "itchbook_empty_bid_side");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

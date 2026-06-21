@@ -186,6 +186,22 @@ public:
         return sum;
     }
 
+    // total_shares: laczna spoczywajaca liczba akcji po danej stronie (#174).
+    // Caly rozmiar ksiazki na jednej stronie — surowa miara dostepnej plynnosci
+    // (w odroznieniu od liquidity_within, bez ograniczenia do okolic touch'a).
+    int64_t total_shares(char side) const noexcept {
+        const auto& book = (side == 'B') ? bids_ : asks_;
+        int64_t sum = 0;
+        for (const auto& [px, qty] : book) sum += qty;
+        return sum;
+    }
+
+    // level_count: liczba roznych poziomow cenowych po danej stronie (#174).
+    // Grubosc ksiazki — ile odrebnych cen ma plynnosc (rzadka vs gesta ksiazka).
+    std::size_t level_count(char side) const noexcept {
+        return (side == 'B') ? bids_.size() : asks_.size();
+    }
+
     // vwap_depth: volume-weighted cena top-N poziomow po danej stronie (#155).
     // Fair-value uwzgledniajacy GLEBOKOSC (nie tylko touch); im glebiej, tym
     // bardziej odzwierciedla cene realizacji wiekszego zlecenia.
