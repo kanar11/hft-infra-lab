@@ -413,6 +413,17 @@ void test_oms_short_and_replace() {
         ASSERT(oms.losing_symbols() == 1, "losesym_one");   // BBB (CCC = 0, pominiety)
     }
 
+    {   // #251 pending_buy_shares / pending_sell_shares (working orders per side).
+        OMS oms(1000000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);   // pending +100
+        oms.submit_order("BBB", Side::SELL, 20.0, 60);              // pending -60
+        ASSERT(oms.pending_buy_shares() == 100 && oms.pending_sell_shares() == 60,
+               "pending_split_before");
+        oms.fill_order(a->order_id, 100, 10.0);                     // AAA pending -> 0
+        ASSERT(oms.pending_buy_shares() == 0 && oms.pending_sell_shares() == 60,
+               "pending_split_after_fill");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

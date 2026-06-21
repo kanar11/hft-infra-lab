@@ -512,6 +512,21 @@ public:
         return m;
     }
 
+    // pending_buy_shares / pending_sell_shares: total working (pending) shares per
+    // side across all symbols (#251). pending_qty is signed (buy +, sell -); these
+    // split it into directional exposure of live orders not yet filled. Pre-trade
+    // view of how much buy vs sell pressure is in flight.
+    int64_t pending_buy_shares() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, p] : positions_) if (p.pending_qty > 0) s += p.pending_qty;
+        return s;
+    }
+    int64_t pending_sell_shares() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, p] : positions_) if (p.pending_qty < 0) s += -p.pending_qty;
+        return s;
+    }
+
     // is_flat: brak otwartych pozycji ORAZ brak pracujacych zlecen (#196).
     // Kontrola end-of-day / rekoncyliacji: czy desk jest w pelni zamkniety.
     bool is_flat() const noexcept {
