@@ -2676,6 +2676,15 @@ void test_ouch_order_state() {
     ASSERT(rb.shares == 50 && rb.match_number == 99001, "ouch_broken_fields");
     ASSERT(rb.reason[0] == 'E', "ouch_broken_reason");
 
+    // #178 Cancel Reject ('I'): gielda odrzuca probe anulowania.
+    n = OUCHMessage::encode_cancel_reject(buf, "TOK9", 'T');   // T = too late (juz wykonane)
+    const OUCHResponse cr = OUCHMessage::parse_response(buf, n);
+    ASSERT(std::strcmp(cr.type, "CXL_REJECT") == 0, "ouch_cxlrej_parsed");
+    ASSERT(std::strcmp(cr.token, "TOK9") == 0, "ouch_cxlrej_token");
+    ASSERT(cr.reason[0] == 'T', "ouch_cxlrej_reason");
+    ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 15).type, "ERROR") == 0,
+           "ouch_cxlrej_short_error");
+
     // #152 parse_order — strona gieldy dekoduje zlecenia klienta O/X/U.
     auto closep = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);

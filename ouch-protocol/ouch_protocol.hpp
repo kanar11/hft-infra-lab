@@ -231,6 +231,18 @@ public:
         return 16;
     }
 
+    // encode_cancel_reject: Cancel Reject (16 B) — gielda ODRZUCA probe anulowania
+    // ('X'), bo zlecenia nie da sie anulowac (juz w pelni wykonane, nieznany token,
+    // albo cancel-pending). Rozni sie od 'C' (Cancelled = sukces): tu nic sie nie
+    // zmienilo, klient nie moze zalozyc ze pozycja zmalala. reason: kod 1-znakowy
+    // (#178).
+    static int encode_cancel_reject(uint8_t* buf, const char* token, char reason) noexcept {
+        buf[0] = 'I';
+        write_padded(buf + 1, token, 14);
+        buf[15] = static_cast<uint8_t>(reason);
+        return 16;
+    }
+
     // encode_replaced: Order Replaced (45 B) — giełda potwierdza Replace ('U').
     // Niesie NOWY token (replacement) + POPRZEDNI (zastapiony) + nowe parametry.
     static int encode_replaced(uint8_t* buf, const char* repl_token, const char* prev_token,
@@ -336,6 +348,18 @@ public:
                 return resp;
             }
             safe_copy(resp.type, "REJECTED");
+            strip_padding(resp.token, data + 1, 14);
+            resp.reason[0] = static_cast<char>(data[15]);
+            resp.reason[1] = '\0';
+
+        } else if (msg_type == 'I') {  // Cancel Reject (#178)
+            if (len < 16) {
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "CANCEL_REJECT too short: %d < 16 bytes", len);
+                return resp;
+            }
+            safe_copy(resp.type, "CXL_REJECT");
             strip_padding(resp.token, data + 1, 14);
             resp.reason[0] = static_cast<char>(data[15]);
             resp.reason[1] = '\0';
