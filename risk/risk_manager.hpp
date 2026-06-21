@@ -783,6 +783,14 @@ public:
     }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }
     uint64_t get_total_rejects()              const noexcept { return total_rejects_; }
+    // check_reject_rate: odsetek kontroli check_order zakonczonych odrzuceniem
+    // (#229) = rejects / checks. Wysoki = strategia czesto lamie limity (zly
+    // tuning / agresywny algo). Lustro OMS submit_reject_rate (#212). 0 gdy brak.
+    double check_reject_rate() const noexcept {
+        return total_checks_ > 0
+            ? static_cast<double>(total_rejects_) / static_cast<double>(total_checks_)
+            : 0.0;
+    }
 
 
     // ====================================================================

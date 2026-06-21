@@ -2820,6 +2820,20 @@ void test_risk_price_band() {
     rtd.add_traded_notional(50000.0);
     ASSERT(std::fabs(rtd.daily_turnover_pct() - 0.0) < 1e-6, "turnover_disabled");
 
+    // #229 check_reject_rate (maly max_order_value -> czesc check'ow odrzucona).
+    RiskLimits crl;
+    crl.max_order_value        = 500;
+    crl.max_position_per_symbol = 100000000;
+    crl.max_portfolio_exposure  = 100000000;
+    crl.max_orders_per_second   = 1000000;
+    crl.max_price_band_pct      = 0.0;
+    RiskManager rckr(crl);
+    rckr.check_order("AAA", Side::BUY, 10.0, 10);    // value 100 <= 500 -> pass
+    rckr.check_order("AAA", Side::BUY, 10.0, 100);   // value 1000 > 500 -> reject
+    rckr.check_order("AAA", Side::BUY, 10.0, 100);   // reject
+    ASSERT(rckr.get_total_checks() == 3 && rckr.get_total_rejects() == 2, "crr_counts");
+    ASSERT(std::fabs(rckr.check_reject_rate() - 2.0/3.0) < 1e-9, "crr_rate_two_thirds");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;
