@@ -448,6 +448,22 @@ public:
         return n;
     }
 
+    // open_order_notional: laczny nominal ($) NIEZREALIZOWANEJ czesci wszystkich
+    // pracujacych zlecen (SENT/PARTIAL) (#180). Kapital zwiazany w ksiazce zlecen
+    // — widok pre-trade exposure niezalezny od pozycji (te pokrywa unrealized_pnl).
+    // Liczy tylko reszte (quantity - filled_qty), wiec partiale licza sie uczciwie.
+    double open_order_notional() const noexcept {
+        double sum = 0.0;
+        for (const auto& [id, o] : orders_) {
+            if (o.status == OrderStatus::SENT || o.status == OrderStatus::PARTIAL) {
+                const uint32_t remaining = (o.filled_qty < o.quantity)
+                    ? (o.quantity - o.filled_qty) : 0;
+                sum += to_float(o.price) * static_cast<double>(remaining);
+            }
+        }
+        return sum;
+    }
+
     // cancel_all_symbol: jak cancel_all, ale tylko dla jednego tickera (np. po
     // halt'cie konkretnego symbolu).
     size_t cancel_all_symbol(const char* symbol) noexcept {

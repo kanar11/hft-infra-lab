@@ -304,6 +304,16 @@ void test_oms_short_and_replace() {
         ASSERT(oms.get_order(d->order_id)->status == OrderStatus::SENT, "gtd_no_expiry_kept");
     }
 
+    {   // #180 open_order_notional: kapital w pracujacych zleceniach (reszta).
+        OMS oms(100000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);   // notional 1000
+        Order* b = oms.submit_order("BBB", Side::SELL, 20.0, 50);   // notional 1000
+        oms.fill_order(a->order_id, 40, 10.0);                      // reszta 60 -> 600
+        ASSERT(close(oms.open_order_notional(), 1600.0), "open_notional_partial");  // 600 + 1000
+        oms.cancel_order(b->order_id);
+        ASSERT(close(oms.open_order_notional(), 600.0), "open_notional_after_cancel");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
