@@ -1642,6 +1642,11 @@ void test_itch_book() {
     ASSERT(close(mb.imbalance(), 0.5), "itchbook_imbalance");   // (300-100)/400
     // microprice: (100.02*300 + 100.00*100)/400 = 100.015 (>mid 100.01, bid-heavy)
     ASSERT(close(mb.microprice(), 100.015), "itchbook_microprice");
+    // #239 microprice_skew = microprice - mid = 0.005 (>0: presja wzrostowa, bid-heavy)
+    ASSERT(close(mb.microprice_skew(), 0.005), "itchbook_microprice_skew");
+    itch::ITCHOrderBook bal;
+    bal.on_add(1, 'B', 100.00, 100); bal.on_add(2, 'S', 100.02, 100);   // zbalansowany
+    ASSERT(close(bal.microprice_skew(), 0.0), "itchbook_microprice_skew_balanced");
 
     // #95 pre-trade impact: walk księgi → VWAP marketowego zlecenia.
     itch::ITCHOrderBook fb;

@@ -310,6 +310,15 @@ public:
         return (best_ask() * static_cast<double>(qb) + best_bid() * static_cast<double>(qa))
                / static_cast<double>(tot);
     }
+    // microprice_skew: microprice - mid (#239). Znak i wielkosc presji kierunkowej
+    // w jednostkach ceny: >0 = wieksza plynnosc po BIDZIE (presja wzrostowa,
+    // microprice ciagnie ku askowi), <0 = po ASKU (spadkowa). 0 dla zbalansowanego
+    // lub jednostronnego rynku. Sygnal alpha krotkiego horyzontu.
+    double  microprice_skew() const noexcept {
+        const double mp = microprice();
+        const double m  = mid_price();
+        return (mp > 0.0 && m > 0.0) ? mp - m : 0.0;
+    }
     int64_t qty_at(char side, double price) const noexcept {
         const auto& book = (side == 'B') ? bids_ : asks_;
         const auto it = book.find(to_ticks(price));
