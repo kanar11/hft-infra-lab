@@ -2815,6 +2815,22 @@ void test_router_ewma_partial() {
         ASSERT(std::fabs(r.nbbo_spread_bps() - 0.02/100.01*10000.0) < 1e-6, "nbbo_spread_bps");
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.nbbo_spread() == 0.0 && empt.nbbo_spread_bps() == 0.0, "nbbo_spread_empty");
+        // #270 normal NBBO: NBB 100.00 (B) / NBO 100.02 (A) -> not locked/crossed
+        ASSERT(!r.nbbo_locked() && !r.nbbo_crossed(), "nbbo_normal");
+    }
+
+    // --- #270 nbbo_locked / nbbo_crossed ---
+    {
+        SmartOrderRouter lk(RoutingStrategy::BEST_PRICE);
+        lk.add_venue(Venue("A", 100, 0.0)); lk.add_venue(Venue("B", 100, 0.0));
+        lk.update_quote("A", 99.98, 100.00, 100, 100);   // ask 100.00
+        lk.update_quote("B", 100.00, 100.04, 100, 100);  // bid 100.00 == ask 100.00
+        ASSERT(lk.nbbo_locked() && !lk.nbbo_crossed(), "nbbo_locked");
+        SmartOrderRouter cr(RoutingStrategy::BEST_PRICE);
+        cr.add_venue(Venue("A", 100, 0.0)); cr.add_venue(Venue("B", 100, 0.0));
+        cr.update_quote("A", 99.98, 100.00, 100, 100);   // ask 100.00
+        cr.update_quote("B", 100.05, 100.10, 100, 100);  // bid 100.05 > ask 100.00
+        ASSERT(cr.nbbo_crossed() && !cr.nbbo_locked(), "nbbo_crossed");
     }
 
     // --- #240 effective_spread_bps (koszt przejscia z oplatami) ---

@@ -395,6 +395,21 @@ public:
         const double m = nbbo_mid();
         return m > 0.0 ? nbbo_spread() / m * 10000.0 : 0.0;
     }
+    // nbbo_locked / nbbo_crossed: consolidated market-integrity checks across venues
+    // (#270). LOCKED = national best bid == national best ask (spread zero) — a
+    // Reg NMS locked market, usually a stale quote or a maker about to be hit.
+    // CROSSED = NBB > NBO — a cross-venue arbitrage (buy the ask cheaper than you
+    // sell the bid), in practice a feed inconsistency / lagging venue. Both false
+    // without two-sided liquidity.
+    bool nbbo_locked() const noexcept {
+        const double b = national_best_bid(), a = national_best_ask();
+        return b > 0.0 && a > 0.0 && b == a;
+    }
+    bool nbbo_crossed() const noexcept {
+        const double b = national_best_bid(), a = national_best_ask();
+        return b > 0.0 && a > 0.0 && b > a;
+    }
+
     // effective_spread_bps: RZECZYWISTY koszt przejscia spreadu Z OPLATAMI (#240) =
     // best all-in ask (quote+fee) - best all-in bid (quote-fee), w bps. Wiekszy niz
     // nbbo_spread_bps (#208, sam quote) o round-trip fees: pokazuje ile naprawde
