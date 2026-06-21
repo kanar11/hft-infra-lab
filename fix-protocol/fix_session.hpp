@@ -451,6 +451,29 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // OrderMassCancelRequest (35=q): masowe anulowanie pracujacych zlecen (#193) —
+    // panic button ryzyka/ops. request_type: '1' = po symbolu (wymaga symbol),
+    // '7' = WSZYSTKIE zlecenia firmy. 530=MassCancelRequestType. Gielda odpowiada
+    // OrderMassCancelReport (35=r). symbol ignorowany dla typu '7'.
+    int build_mass_cancel(char* out, int cap, const char* cl_ord_id, char request_type,
+                          const char* symbol = nullptr, char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        int n;
+        if (request_type == '1' && symbol) {
+            n = std::snprintf(body, sizeof(body),
+                "35=q%c49=%s%c56=%s%c34=%u%c11=%s%c530=1%c55=%s%c",
+                delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+                cl_ord_id, delim, delim, symbol, delim);
+        } else {
+            n = std::snprintf(body, sizeof(body),
+                "35=q%c49=%s%c56=%s%c34=%u%c11=%s%c530=7%c",
+                delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+                cl_ord_id, delim, delim);
+        }
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.

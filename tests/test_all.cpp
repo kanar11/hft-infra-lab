@@ -2649,6 +2649,16 @@ void test_fix_session() {
         ASSERT(std::strcmp(osr.get_side(), "BUY") == 0, "fix_osr_side");
         ASSERT(!osr.is_admin(), "fix_osr_is_application");
 
+        // #193 OrderMassCancelRequest (35=q) — panic button.
+        s.build_mass_cancel(buf, sizeof(buf), "MC1", '1', "AAPL", '|');   // po symbolu
+        FIXMessage mc1; mc1.parse(buf);
+        ASSERT(mc1.is_valid() && mc1.get_msg_type()[0] == 'q', "fix_masscancel_q_valid");
+        ASSERT(std::strcmp(mc1.get_field(530), "1") == 0, "fix_masscancel_by_symbol");
+        ASSERT(std::strcmp(mc1.get_symbol(), "AAPL") == 0, "fix_masscancel_symbol");
+        s.build_mass_cancel(buf, sizeof(buf), "MC2", '7', nullptr, '|'); // wszystkie
+        FIXMessage mc2; mc2.parse(buf);
+        ASSERT(std::strcmp(mc2.get_field(530), "7") == 0, "fix_masscancel_all");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
