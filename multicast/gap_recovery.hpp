@@ -525,6 +525,35 @@ struct LatencyTracker {
 };
 
 
+// ContiguousTracker — najwyzszy CIAGLY seq (expansion #243).
+//
+// Konsument moze bezpiecznie dzialac tylko na danych do ktorych NIE MA luk ponizej
+// (np. publikowac ksiazke, liczyc P&L). ContiguousTracker utrzymuje "cumulative
+// ack": najwyzszy numer taki, ze wszystkie ponizej dotarly. Pakiety poza
+// kolejnoscia laduja w buforze i sa wciagane, gdy luka sie wypelni. Inaczej niz
+// GapRecovery (sledzi KTORE seq brakuja) — tu jedna liczba: "do tad pewne".
+struct ContiguousTracker {
+    std::uint64_t next_expected;        // pierwszy jeszcze nie-dostarczony seq
+    std::set<std::uint64_t> ahead;      // odebrane przedwczesnie (nad luka)
+
+    explicit ContiguousTracker(std::uint64_t start = 1) noexcept : next_expected(start) {}
+
+    void receive(std::uint64_t seq) {
+        if (seq < next_expected) return;          // duplikat / stary — ignoruj
+        if (seq == next_expected) {
+            ++next_expected;
+            while (ahead.count(next_expected)) { ahead.erase(next_expected); ++next_expected; }
+        } else {
+            ahead.insert(seq);                    // luka ponizej — odloz
+        }
+    }
+    // contiguous_high: ostatni seq bez luki ponizej (0 gdy jeszcze nic ciaglego).
+    std::uint64_t contiguous_high() const noexcept { return next_expected - 1; }
+    std::size_t   buffered() const noexcept { return ahead.size(); }
+    void reset(std::uint64_t start = 1) noexcept { next_expected = start; ahead.clear(); }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił

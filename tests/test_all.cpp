@@ -1943,6 +1943,17 @@ void test_multicast_gap_recovery() {
     ASSERT(std::fabs(lt.avg_ns() - 100.0) < 1e-9 && lt.peak_ns() == 200, "lat_peak_retained");
     ASSERT(lt.count == 3, "lat_count");
 
+    // #243 ContiguousTracker — cumulative-ack watermark.
+    multicast::ContiguousTracker ct;            // next_expected 1
+    ct.receive(1);
+    ASSERT(ct.contiguous_high() == 1, "contig_first");
+    ct.receive(3);                              // luka: brak 2 -> buforuj 3
+    ASSERT(ct.contiguous_high() == 1 && ct.buffered() == 1, "contig_gap_buffered");
+    ct.receive(2);                              // wypelnia luke -> wciaga 2 i 3
+    ASSERT(ct.contiguous_high() == 3 && ct.buffered() == 0, "contig_filled_pulls_ahead");
+    ct.receive(1);                              // duplikat -> ignoruj
+    ASSERT(ct.contiguous_high() == 3, "contig_duplicate_ignored");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
