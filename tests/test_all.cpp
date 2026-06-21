@@ -36,6 +36,7 @@
 #include "../strategy/ma_crossover.hpp"
 #include "../strategy/volatility.hpp"
 #include "../strategy/ema.hpp"
+#include "../strategy/macd.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -1862,6 +1863,21 @@ void test_ema() {
     ASSERT(!p.ready(), "ema_reset");
 }
 
+// MACD #182 — momentum z trzech EMA.
+void test_macd() {
+    SECTION("MACD (#182)");
+    MACD m;                                   // 12/26/9
+    for (int i = 1; i <= 60; ++i) m.update(100.0 + i);   // monotoniczny wzrost
+    ASSERT(m.ready(), "macd_ready");
+    ASSERT(m.macd() > 0.0, "macd_positive_on_uptrend");   // fast EMA nad slow
+    ASSERT(m.bullish(), "macd_bullish_on_uptrend");
+    ASSERT(std::fabs(m.histogram() - (m.macd() - m.signal())) < 1e-9, "macd_histogram_def");
+    MACD d;
+    for (int i = 1; i <= 60; ++i) d.update(200.0 - i);   // monotoniczny spadek
+    ASSERT(d.macd() < 0.0, "macd_negative_on_downtrend");
+    ASSERT(!d.bullish(), "macd_not_bullish_on_downtrend");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -2983,6 +2999,7 @@ int main() {
     test_ma_crossover();
     test_volatility();
     test_ema();
+    test_macd();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
