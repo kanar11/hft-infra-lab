@@ -263,6 +263,38 @@ struct InterArrivalMeter {
 };
 
 
+// DedupWindow — deduplikacja sekwencji (expansion #171).
+//
+// UDP potrafi DUPLIKOWAC pakiety (retransmisje, A/B line, multipath). Konsument
+// musi przetworzyc kazdy seq DOKLADNIE RAZ (at-most-once). DedupWindow pamieta
+// niedawno widziane numery w przesuwnym oknie i odrzuca powtorki. Rozni sie od
+// ReorderBuffer (kolejnosc) i GapRecovery (luki) — tu chodzi o duplikaty.
+//
+//   accept(seq) -> true gdy NOWY (przekaz dalej), false gdy duplikat.
+struct DedupWindow {
+    std::uint64_t window;
+    std::uint64_t high = 0;
+    bool          init = false;
+    std::set<std::uint64_t> seen;
+    std::uint64_t duplicates = 0;
+
+    explicit DedupWindow(std::uint64_t window_ = 1024) noexcept
+        : window(window_ ? window_ : 1) {}
+
+    bool accept(std::uint64_t seq) {
+        if (!init) { init = true; high = seq; seen.insert(seq); return true; }
+        if (seq + window <= high) { ++duplicates; return false; }   // poza oknem -> traktuj jak dup
+        if (seen.count(seq))      { ++duplicates; return false; }
+        seen.insert(seq);
+        if (seq > high) high = seq;
+        // Prune: zapomnij numery ktore wypadly z okna (ogranicza pamiec).
+        while (!seen.empty() && *seen.begin() + window <= high) seen.erase(seen.begin());
+        return true;
+    }
+    void reset() noexcept { *this = DedupWindow{window}; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił

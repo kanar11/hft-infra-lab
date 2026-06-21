@@ -1677,6 +1677,15 @@ void test_multicast_gap_recovery() {
     ASSERT(pm.count(1300) == 1 && pm.peak_count() == 3, "rate_peak_holds");
     ASSERT(std::fabs(pm.peak_rate_per_sec() - 3e6) < 1.0, "rate_peak_rate_3M");
 
+    // #171 DedupWindow — at-most-once (odrzuca duplikaty).
+    multicast::DedupWindow dw(100);
+    ASSERT(dw.accept(1), "dedup_1_new");
+    ASSERT(!dw.accept(1), "dedup_1_dup");
+    ASSERT(dw.accept(2), "dedup_2_new");
+    ASSERT(dw.accept(5), "dedup_5_new_gap_ok");     // luka OK, to nie duplikat
+    ASSERT(!dw.accept(5), "dedup_5_dup");
+    ASSERT(dw.duplicates == 2, "dedup_count");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
