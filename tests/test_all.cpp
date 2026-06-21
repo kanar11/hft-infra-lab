@@ -376,6 +376,17 @@ void test_oms_short_and_replace() {
         ASSERT(oms.largest_position() == 100, "largest_is_AAA");
     }
 
+    {   // #228 fill_ratio (wykonane / zlecone akcje).
+        OMS oms(1000000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);   // zlecone 100
+        oms.fill_order(a->order_id, 60, 10.0);                      // wykonane 60
+        Order* b = oms.submit_order("BBB", Side::BUY, 10.0, 100);   // zlecone razem 200
+        oms.fill_order(b->order_id, 100, 10.0);                     // wykonane razem 160
+        ASSERT(oms.total_ordered_shares() == 200 && oms.total_filled_shares() == 160,
+               "fillratio_accumulators");
+        ASSERT(close(oms.fill_ratio(), 0.8), "fillratio_080");      // 160/200
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

@@ -202,6 +202,8 @@ class OMS {
     uint64_t  total_fills_    = 0;   // liczniki operacji cyklu zycia (#151)
     uint64_t  total_cancels_  = 0;
     uint64_t  total_replaces_ = 0;
+    uint64_t  total_ordered_shares_ = 0;  // suma zleconych akcji (#228)
+    uint64_t  total_filled_shares_  = 0;  // suma wykonanych akcji (#228)
 
 public:
     // commission_per_share: np. 0.0035 = $0.0035/akcja (typowy taker fee).
@@ -269,6 +271,7 @@ public:
         }
         pos_it->second.pending_qty += signed_n;
         ++total_submitted_;   // #160
+        total_ordered_shares_ += quantity;   // #228
         return &it->second;
     }
 
@@ -302,6 +305,7 @@ public:
         order.filled_qty    += fill_qty;
         order.fill_notional += static_cast<int64_t>(fill_qty) * fill_price;  // #141
         ++total_fills_;   // #151
+        total_filled_shares_ += fill_qty;   // #228
         order.status      = (order.filled_qty >= order.quantity)
                             ? OrderStatus::FILLED
                             : OrderStatus::PARTIAL;
@@ -596,6 +600,16 @@ public:
     uint64_t total_fills()    const noexcept { return total_fills_; }
     uint64_t total_cancels()  const noexcept { return total_cancels_; }
     uint64_t total_replaces() const noexcept { return total_replaces_; }
+    uint64_t total_ordered_shares() const noexcept { return total_ordered_shares_; }
+    uint64_t total_filled_shares()  const noexcept { return total_filled_shares_; }
+    // fill_ratio: jaka czesc ZLECONEGO wolumenu (akcji) sie wykonala (#228) =
+    // wykonane / zlecone. Jakosc egzekucji: nisko = duzo niewypelnionych /
+    // anulowanych zlecen (zle ceny limit, slaba plynnosc). 0 gdy nic nie zlecono.
+    double fill_ratio() const noexcept {
+        return total_ordered_shares_
+            ? static_cast<double>(total_filled_shares_) / static_cast<double>(total_ordered_shares_)
+            : 0.0;
+    }
 
     // reset_session_counters: wyzeruj liczniki cyklu zycia (submitted/fills/cancels/
     // replaces) ORAZ odrzucen per-powod na nowa sesje (#204). NIE rusza pozycji ani
@@ -606,6 +620,8 @@ public:
         total_fills_     = 0;
         total_cancels_   = 0;
         total_replaces_  = 0;
+        total_ordered_shares_ = 0;   // #228
+        total_filled_shares_  = 0;
         for (auto& c : reject_counts_) c = 0;
     }
 
