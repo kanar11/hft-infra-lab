@@ -1734,6 +1734,14 @@ void test_multicast_gap_recovery() {
     bp.on_dequeue(10);                                   // nie schodzi ponizej 0
     ASSERT(bp.depth() == 0, "bp_no_underflow");
 
+    // #187 LossRateMeter — agregatowa stopa utraty.
+    multicast::LossRateMeter lrm;
+    const uint64_t seqs[] = {1, 2, 3, 5, 6};             // brak 4; zakres 1..6
+    for (uint64_t s : seqs) lrm.on_packet(s);
+    ASSERT(lrm.expected() == 6 && lrm.received == 5, "loss_expected_received");
+    ASSERT(lrm.lost() == 1, "loss_count");
+    ASSERT(std::fabs(lrm.loss_rate() - 1.0/6.0) < 1e-9, "loss_rate");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

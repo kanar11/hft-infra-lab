@@ -323,6 +323,38 @@ struct BackpressureMonitor {
 };
 
 
+// LossRateMeter — agregatowa stopa utraty pakietow (expansion #187).
+//
+// GapRecovery sledzi KONKRETNE brakujace zakresy (do retransmisji); LossRateMeter
+// daje jedna liczbe SLA: ile % oczekiwanych pakietow nie dotarlo w calej sesji.
+// Oczekiwane = rozpietosc sekwencji (highest - first + 1); odebrane = licznik.
+// Zaklada brak duplikatow (najpierw DedupWindow); duplikaty zanizalyby strate.
+//
+//   on_packet(seq) na kazdy odebrany; loss_rate() do dashboardu/alertu.
+struct LossRateMeter {
+    std::uint64_t first = 0;
+    std::uint64_t highest = 0;
+    std::uint64_t received = 0;
+    bool          init = false;
+
+    void on_packet(std::uint64_t seq) noexcept {
+        if (!init) { first = highest = seq; init = true; }
+        else if (seq > highest) highest = seq;
+        ++received;
+    }
+    std::uint64_t expected() const noexcept { return init ? (highest - first + 1) : 0; }
+    std::uint64_t lost() const noexcept {
+        const std::uint64_t e = expected();
+        return e > received ? e - received : 0;
+    }
+    double loss_rate() const noexcept {
+        const std::uint64_t e = expected();
+        return e ? static_cast<double>(lost()) / static_cast<double>(e) : 0.0;
+    }
+    void reset() noexcept { first = highest = received = 0; init = false; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
