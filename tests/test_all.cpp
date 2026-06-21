@@ -2132,6 +2132,19 @@ void test_router_ewma_partial() {
         r.update_quote("B", 10.0, 11.0, 100, 100);                 // B zostalo, dziala
         ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "remove_B_still_routes");
     }
+
+    // --- #176 set_venue_fee (runtime zmiana taryfy -> routing all-in) ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.02));            // drozszy taker
+        r.add_venue(Venue("B", 100, 0.01));            // tanszy
+        r.update_quote("A", 10.0, 11.0, 100, 100);
+        r.update_quote("B", 10.0, 11.0, 100, 100);     // ten sam quote
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "fee_default_B_cheaper");
+        ASSERT(r.set_venue_fee("A", 0.0), "fee_set_A_zero");   // A teraz all-in 11.00
+        ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "A") == 0, "fee_reroute_A");
+        ASSERT(!r.set_venue_fee("GHOST", 0.0), "fee_unknown_false");
+    }
 }
 
 

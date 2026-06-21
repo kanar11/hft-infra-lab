@@ -442,6 +442,18 @@ public:
     // net rebate (maker). Podstawa analizy kosztow egzekucji.
     double   total_fees_paid()    const noexcept { return total_fees_paid_; }
 
+    // set_venue_fee: runtime podmiana taryfy venue (#176). Harmonogramy oplat
+    // zmieniaja sie (tier po wolumenie, promocja maker/taker); routing all-in
+    // (quote ± fee) natychmiast uwzglednia nowa stawke. false gdy nieznane venue.
+    bool set_venue_fee(const char* venue_name, double fee_per_share) noexcept {
+        for (int i = 0; i < venue_count_; ++i)
+            if (std::strcmp(venues_[i].name, venue_name) == 0) {
+                venues_[i].fee_per_share = fee_per_share;
+                return true;
+            }
+        return false;
+    }
+
     uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
     // reject_rate: odsetek prob routingu zakonczonych odrzuceniem (#162) =
