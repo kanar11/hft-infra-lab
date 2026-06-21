@@ -2920,6 +2920,16 @@ void test_risk_price_band() {
     reu.on_order_sent("BBB", Side::SELL, 200);                              // +|200| = 50%
     ASSERT(std::fabs(reu.exposure_utilization_pct() - 50.0) < 1e-6, "exput_50pct");
 
+    // #252 exposure_headroom (portfolio cap 1000).
+    RiskLimits ehl; ehl.max_portfolio_exposure = 1000;
+    RiskManager reh(ehl);
+    reh.on_order_sent("AAA", Side::BUY, 300);                       // |300|
+    ASSERT(reh.exposure_headroom() == 700, "exph_700");            // 1000 - 300
+    reh.on_order_sent("BBB", Side::SELL, 500);                      // +|500| = 800
+    ASSERT(reh.exposure_headroom() == 200, "exph_200");
+    reh.on_order_sent("CCC", Side::BUY, 400);                       // 1200 > cap
+    ASSERT(reh.exposure_headroom() == 0, "exph_clamped_zero");
+
     // #237 position_utilization_pct (per symbol, cap 1000).
     RiskLimits pul; pul.max_position_per_symbol = 1000;
     RiskManager rpu(pul);

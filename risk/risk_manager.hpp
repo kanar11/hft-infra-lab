@@ -734,6 +734,15 @@ public:
         return static_cast<double>(total_abs_exposure_)
              / static_cast<double>(limits_.max_portfolio_exposure) * 100.0;
     }
+    // exposure_headroom: remaining absolute portfolio exposure capacity (#252) =
+    // max_portfolio_exposure - total_abs_exposure_, clamped to >= 0. Portfolio-level
+    // analog of headroom_shares (#245): how much more |exposure| can be added before
+    // the portfolio cap. 0 when the limit is disabled or already reached.
+    int64_t exposure_headroom() const noexcept {
+        const int64_t cap = limits_.max_portfolio_exposure;
+        if (cap <= 0) return 0;
+        return cap > total_abs_exposure_ ? cap - total_abs_exposure_ : 0;
+    }
 
     // is_near_position_limit: czy ekspozycja symbolu osiagnela warn_pct% capu
     // (#167) — wczesne ostrzezenie ZANIM check_order twardo odrzuci. Respektuje
