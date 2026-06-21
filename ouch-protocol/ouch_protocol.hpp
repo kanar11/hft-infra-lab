@@ -266,6 +266,17 @@ public:
         return 20;
     }
 
+    // encode_system_event: System Event (10 B) — zdarzenie sesji gieldy (#202):
+    // 'S'=start dnia, 'E'=koniec dnia, 'O'=otwarcie rynku, 'C'=zamkniecie, 'A'=
+    // halt awaryjny, 'R'=wznowienie. Klient BRAMKUJE handel wg tych zdarzen
+    // (np. nie wysyla zlecen przed 'O' / po 'C'). timestamp = nanosekundy.
+    static int encode_system_event(uint8_t* buf, int64_t timestamp, char event_code) noexcept {
+        buf[0] = 'S';
+        write_u64_be(buf + 1, static_cast<uint64_t>(timestamp));
+        buf[9] = static_cast<uint8_t>(event_code);
+        return 10;
+    }
+
     // encode_replaced: Order Replaced (45 B) — giełda potwierdza Replace ('U').
     // Niesie NOWY token (replacement) + POPRZEDNI (zastapiony) + nowe parametry.
     static int encode_replaced(uint8_t* buf, const char* repl_token, const char* prev_token,
@@ -409,6 +420,18 @@ public:
             resp.shares    = read_u32_be(data + 15);    // ile zdjeto
             resp.reason[0] = static_cast<char>(data[19]);
             resp.reason[1] = '\0';
+
+        } else if (msg_type == 'S') {  // System Event (#202)
+            if (len < 10) {
+                safe_copy(resp.type, "ERROR");
+                std::snprintf(resp.error_msg, sizeof(resp.error_msg) - 1,
+                              "SYS_EVENT too short: %d < 10 bytes", len);
+                return resp;
+            }
+            safe_copy(resp.type, "SYS_EVENT");
+            resp.match_number = static_cast<int64_t>(read_u64_be(data + 1));  // timestamp
+            resp.reason[0]    = static_cast<char>(data[9]);                   // kod zdarzenia
+            resp.reason[1]    = '\0';
 
         } else if (msg_type == 'U') {  // Order Replaced
             if (len < 45) {

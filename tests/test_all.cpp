@@ -2946,6 +2946,14 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 19).type, "ERROR") == 0,
            "ouch_aiq_short_error");
 
+    // #202 System Event ('S'): zdarzenie sesji (otwarcie rynku).
+    n = OUCHMessage::encode_system_event(buf, 123456789, 'O');
+    const OUCHResponse se = OUCHMessage::parse_response(buf, n);
+    ASSERT(std::strcmp(se.type, "SYS_EVENT") == 0, "ouch_sysevent_parsed");
+    ASSERT(se.match_number == 123456789 && se.reason[0] == 'O', "ouch_sysevent_fields");
+    ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 9).type, "ERROR") == 0,
+           "ouch_sysevent_short_error");
+
     // #152 parse_order — strona gieldy dekoduje zlecenia klienta O/X/U.
     auto closep = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);
