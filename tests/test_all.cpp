@@ -44,6 +44,7 @@
 #include "../strategy/tema.hpp"
 #include "../strategy/trix.hpp"
 #include "../strategy/cci.hpp"
+#include "../strategy/bollinger_pctb.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -2233,6 +2234,21 @@ void test_cci() {
     ASSERT(dn.value() < -100.0 && dn.oversold(), "cci_oversold_downtrend");
 }
 
+// Bollinger %B #246.
+void test_bollinger_pctb() {
+    SECTION("Bollinger %B (#246)");
+    BollingerPercentB flat(5, 2.0);
+    for (int i = 0; i < 6; ++i) flat.update(50.0);        // stala -> sd 0 -> 0.5
+    ASSERT(flat.ready(), "pctb_ready");
+    ASSERT(std::fabs(flat.value() - 0.5) < 1e-9, "pctb_flat_mid");
+    BollingerPercentB up(5, 2.0);
+    for (int i = 1; i <= 5; ++i) up.update(static_cast<double>(i));  // {1..5}
+    // mean 3, sd=sqrt(2); %B = (5 - (3 - 2*sqrt2)) / (4*sqrt2)
+    const double exp = (5.0 - (3.0 - 2.0 * std::sqrt(2.0))) / (4.0 * std::sqrt(2.0));
+    ASSERT(std::fabs(up.value() - exp) < 1e-9, "pctb_known_series");
+    ASSERT(up.value() > 0.5, "pctb_above_mean_on_uptrend");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3709,6 +3725,7 @@ int main() {
     test_tema();
     test_trix();
     test_cci();
+    test_bollinger_pctb();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
