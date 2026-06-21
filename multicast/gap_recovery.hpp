@@ -473,6 +473,32 @@ struct TokenBucket {
 };
 
 
+// ConflationBuffer — trzyma tylko NAJNOWSZA wartosc per klucz (expansion #227).
+//
+// Gdy konsument nie nadaza, nie ma sensu przetwarzac kazdej posredniej
+// aktualizacji ceny/ksiazki — liczy sie najnowszy STAN. ConflationBuffer
+// nadpisuje wartosc per klucz (np. symbol) i liczy ile aktualizacji ZDLAWIL
+// (skonflowal). Konsument okresowo drenuje najnowszy stan. Klasyczna technika
+// przy backpressure: zamiast kolejkowac w nieskonczonosc, skacz do najswiezszego.
+struct ConflationBuffer {
+    std::map<std::uint64_t, double> latest;   // klucz -> najnowsza wartosc
+    std::uint64_t conflated = 0;
+
+    void update(std::uint64_t key, double value) {
+        auto [it, inserted] = latest.try_emplace(key, value);
+        if (!inserted) { it->second = value; ++conflated; }   // nadpisanie = konflacja
+    }
+    bool get(std::uint64_t key, double& out) const {
+        const auto it = latest.find(key);
+        if (it == latest.end()) return false;
+        out = it->second;
+        return true;
+    }
+    std::size_t pending() const noexcept { return latest.size(); }
+    void drain() noexcept { latest.clear(); }   // konsument pobral najnowszy stan
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił

@@ -1885,6 +1885,20 @@ void test_multicast_gap_recovery() {
     ASSERT(tb.try_consume(2500000, 1.0), "tb_refill_2");
     ASSERT(!tb.try_consume(2500000, 1.0), "tb_refill_exhausted");
 
+    // #227 ConflationBuffer — najnowszy stan per klucz + licznik konflacji.
+    multicast::ConflationBuffer cb;
+    cb.update(1, 100.0);              // klucz 1
+    cb.update(1, 101.0);             // nadpisanie -> konflacja 1
+    cb.update(2, 50.0);             // nowy klucz
+    cb.update(1, 102.0);            // konflacja 2
+    ASSERT(cb.pending() == 2 && cb.conflated == 2, "conflate_pending_count");
+    double v = 0.0;
+    ASSERT(cb.get(1, v) && std::fabs(v - 102.0) < 1e-9, "conflate_latest_value");
+    ASSERT(cb.get(2, v) && std::fabs(v - 50.0) < 1e-9, "conflate_other_key");
+    ASSERT(!cb.get(99, v), "conflate_unknown_false");
+    cb.drain();
+    ASSERT(cb.pending() == 0, "conflate_drain");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
