@@ -1751,6 +1751,15 @@ void test_itch_book() {
     ASSERT(lw.liquidity_within('S', 1) == 300, "itchbook_liq_within_1");  // 10000+10001
     ASSERT(lw.liquidity_within('S', 5) == 600, "itchbook_liq_within_5");  // + 10005
 
+    // #269 liquidity_imbalance_within (ticks-based imbalance).
+    itch::ITCHOrderBook li;
+    li.on_add(1, 'B', 100.00, 300); li.on_add(2, 'B', 99.99, 100);   // bids
+    li.on_add(3, 'S', 100.02, 100); li.on_add(4, 'S', 100.03, 200);  // asks
+    // within 0 ticks (touch): bid 300, ask 100 -> (300-100)/400 = 0.5
+    ASSERT(close(li.liquidity_imbalance_within(0), 0.5), "itchbook_liqimb_touch");
+    // within 1 tick: bid 400, ask 300 -> (400-300)/700 = 0.142857
+    ASSERT(close(li.liquidity_imbalance_within(1), 100.0/700.0), "itchbook_liqimb_1tick");
+
     // #174 total_shares + level_count (rozmiar i grubosc ksiazki).
     // #223 fillable_shares (do ceny limit).
     // lw aski: 100.00(100), 100.01(200), 100.05(300)

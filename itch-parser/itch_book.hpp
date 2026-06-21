@@ -332,6 +332,17 @@ public:
         const double tot = b + a;
         return tot > 0.0 ? (b - a) / tot : 0.0;
     }
+    // liquidity_imbalance_within: order-book imbalance of the liquidity within N
+    // ticks of each touch (#269) — (bid_liq - ask_liq)/(bid_liq + ask_liq) using
+    // liquidity_within (#164) on both sides. Unlike depth_imbalance (top-N price
+    // LEVELS) this is anchored to a price DISTANCE from the touch, so it's
+    // unaffected by how levels are split. [-1, 1]; 0 when both sides empty.
+    double  liquidity_imbalance_within(int ticks) const noexcept {
+        const int64_t b = liquidity_within('B', ticks);
+        const int64_t a = liquidity_within('S', ticks);
+        const int64_t tot = b + a;
+        return tot > 0 ? static_cast<double>(b - a) / static_cast<double>(tot) : 0.0;
+    }
     double  microprice() const noexcept {
         if (bids_.empty() || asks_.empty()) return 0.0;
         const int64_t qb = best_bid_qty(), qa = best_ask_qty();
