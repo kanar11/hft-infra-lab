@@ -1855,6 +1855,15 @@ void test_multicast_gap_recovery() {
     ASSERT(srt.allow(2500), "srt_allowed_2500");                // 1500 od ostatniego
     ASSERT(srt.suppressed == 2, "srt_suppressed_count");
 
+    // #219 TokenBucket — burst do pojemnosci + uzupelnianie w czasie.
+    multicast::TokenBucket tb(5.0, 1000.0);                     // 5 tokenow, 1000/s
+    for (int i = 0; i < 5; ++i) ASSERT(tb.try_consume(0, 1.0), "tb_burst_ok");  // 5 od reki
+    ASSERT(!tb.try_consume(0, 1.0), "tb_empty");               // 6ty pusto
+    // po 2.5 ms uzupelni ~2.5 tokena -> dwa consume ok, trzeci nie
+    ASSERT(tb.try_consume(2500000, 1.0), "tb_refill_1");
+    ASSERT(tb.try_consume(2500000, 1.0), "tb_refill_2");
+    ASSERT(!tb.try_consume(2500000, 1.0), "tb_refill_exhausted");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

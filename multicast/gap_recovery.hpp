@@ -439,6 +439,40 @@ struct SnapshotRequestThrottle {
 };
 
 
+// TokenBucket — rate limiter z burstami (expansion #219).
+//
+// Klasyczny token bucket do PACINGU wychodzacych zadan (retransmit-request,
+// tempo zlecen, snapshot-request). W kazdej chwili masz do `capacity` tokenow;
+// uzupelniaja sie z tempem `refill_per_sec`. try_consume() bierze token jesli
+// jest. Rozni sie od SnapshotRequestThrottle (sztywny min-odstep): bucket DOPUSZCZA
+// krotki burst do pojemnosci, a dlawi dopiero przy trwale za wysokim tempie.
+struct TokenBucket {
+    double        capacity;
+    double        tokens;
+    double        refill_per_ns;
+    std::int64_t  last_ns = 0;
+    bool          init = false;
+
+    TokenBucket(double capacity_, double refill_per_sec) noexcept
+        : capacity(capacity_), tokens(capacity_),
+          refill_per_ns(refill_per_sec / 1e9) {}
+
+    // try_consume: czy mozna pobrac n tokenow teraz. Najpierw dolewa wg uplywu
+    // czasu (cap do capacity), potem konsumuje jesli starcza.
+    bool try_consume(std::int64_t now_ns, double n = 1.0) noexcept {
+        if (!init) { init = true; last_ns = now_ns; }
+        else {
+            tokens += static_cast<double>(now_ns - last_ns) * refill_per_ns;
+            if (tokens > capacity) tokens = capacity;
+            last_ns = now_ns;
+        }
+        if (tokens >= n) { tokens -= n; return true; }
+        return false;
+    }
+    void reset() noexcept { tokens = capacity; last_ns = 0; init = false; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
