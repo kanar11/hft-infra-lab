@@ -488,6 +488,26 @@ public:
         return c;
     }
 
+    // gross_position_shares: suma |net_qty| po wszystkich symbolach (#220) — laczna
+    // BRUTTO ekspozycja kierunkowa w akcjach (long + |short|). Inaczej niz netto
+    // (gdzie long i short by sie znosily) — miara calkowitego rozmiaru ksiazki.
+    int64_t gross_position_shares() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, p] : positions_) s += std::abs(static_cast<int64_t>(p.net_qty));
+        return s;
+    }
+
+    // largest_position: najwieksza POJEDYNCZA pozycja |net_qty| (#220) — koncentracja
+    // ryzyka w jednym instrumencie (do limitow/dashboardu). 0 gdy plasko.
+    int32_t largest_position() const noexcept {
+        int32_t m = 0;
+        for (const auto& [key, p] : positions_) {
+            const int32_t a = std::abs(p.net_qty);
+            if (a > m) m = a;
+        }
+        return m;
+    }
+
     // is_flat: brak otwartych pozycji ORAZ brak pracujacych zlecen (#196).
     // Kontrola end-of-day / rekoncyliacji: czy desk jest w pelni zamkniety.
     bool is_flat() const noexcept {

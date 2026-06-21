@@ -365,6 +365,16 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.submit_reject_rate(), 2.0/3.0), "srr_rate_two_thirds"); // 2 / (1+2)
     }
 
+    {   // #220 gross_position_shares + largest_position.
+        OMS oms(1000000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(a->order_id, 100, 10.0);                 // +100
+        Order* b = oms.submit_order("BBB", Side::SELL, 20.0, 60);
+        oms.fill_order(b->order_id, 60, 20.0);                  // -60 (short)
+        ASSERT(oms.gross_position_shares() == 160, "gross_long_plus_abs_short"); // 100 + 60
+        ASSERT(oms.largest_position() == 100, "largest_is_AAA");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
