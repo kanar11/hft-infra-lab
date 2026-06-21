@@ -315,6 +315,19 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.open_order_notional(), 600.0), "open_notional_after_cancel");
     }
 
+    {   // #188 amend_quantity: reduce-only w miejscu.
+        OMS oms(100000, 1000000000.0);
+        Order* o = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(o->order_id, 30, 10.0);                 // filled 30, PARTIAL
+        ASSERT(oms.amend_quantity(o->order_id, 50), "amend_reduce_ok");        // 100 -> 50
+        ASSERT(oms.get_order(o->order_id)->quantity == 50, "amend_qty_50");
+        ASSERT(!oms.amend_quantity(o->order_id, 70), "amend_increase_rejected"); // 70 >= 50
+        ASSERT(!oms.amend_quantity(o->order_id, 20), "amend_below_filled_rejected"); // 20 < 30
+        ASSERT(!oms.amend_quantity(999999, 10), "amend_unknown_rejected");
+        ASSERT(oms.amend_quantity(o->order_id, 30), "amend_to_filled_ok");     // 50 -> 30 == filled
+        ASSERT(oms.get_order(o->order_id)->status == OrderStatus::FILLED, "amend_becomes_filled");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

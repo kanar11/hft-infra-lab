@@ -417,6 +417,21 @@ public:
         return true;
     }
 
+    // amend_quantity: REDUKCJA ilosci w miejscu, ta sama cena (#188). Reduce-only
+    // amend zwykle ZACHOWUJE priorytet w kolejce na gieldzie (inaczej niz pelny
+    // cancel/replace ze zmiana ceny). Wymusza: zlecenie aktywne, nowa ilosc
+    // mniejsza od biezacej i nie ponizej juz wykonanej. Deleguje do replace_order
+    // (ta sama cena), wiec ksiegowosc pending/pozycji jest spojna.
+    bool amend_quantity(uint64_t order_id, uint32_t new_quantity) noexcept {
+        auto it = orders_.find(order_id);
+        if (it == orders_.end()) return false;
+        const Order& order = it->second;
+        if (order.status != OrderStatus::SENT && order.status != OrderStatus::PARTIAL) return false;
+        if (new_quantity >= order.quantity)   return false;   // tylko redukcja
+        if (new_quantity <  order.filled_qty) return false;   // nie ponizej wykonanego
+        return replace_order(order_id, to_float(order.price), new_quantity);
+    }
+
     // cancel_all: masowe anulowanie wszystkich AKTYWNYCH zleceń (#100). Risk-off
     // / panic button — przy kill switchu albo końcu sesji zdejmujemy wszystkie
     // otwarte zlecenia (zwalnia pending). Zwraca ile anulowano. Iteracja po
