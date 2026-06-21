@@ -388,6 +388,16 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.fill_ratio(), 0.8), "fillratio_080");      // 160/200
     }
 
+    {   // #236 avg_commission_per_share (prowizja 0.01/akcja).
+        OMS oms(1000000, 1000000000.0, /*commission_per_share=*/0.01);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(a->order_id, 100, 10.0);                     // fee 1.0, filled 100
+        ASSERT(close(to_float(oms.total_fees()), 1.0), "avgcomm_total_fee");
+        ASSERT(close(oms.avg_commission_per_share(), 0.01), "avgcomm_per_share"); // 1.0/100
+        OMS empt(1000000, 1000000000.0);
+        ASSERT(empt.avg_commission_per_share() == 0.0, "avgcomm_empty_zero");
+    }
+
     {   // #166 runtime zmiana prowizji.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

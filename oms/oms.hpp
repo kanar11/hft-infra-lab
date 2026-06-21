@@ -556,6 +556,14 @@ public:
     }
     // total_fees: skumulowane prowizje całego OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
+    // avg_commission_per_share: srednia prowizja ($) na WYKONANA akcje (#236) =
+    // total_fees / total_filled_shares. Miara TCA kosztu egzekucji po stronie OMS
+    // (lustro router avg_fee_per_share #232). 0 gdy nic nie wykonano.
+    double  avg_commission_per_share() const noexcept {
+        return total_filled_shares_ > 0
+            ? to_float(total_fees_) / static_cast<double>(total_filled_shares_)
+            : 0.0;
+    }
     // Runtime zmiana prowizji (#166) — harmonogram oplat moze sie zmienic w sesji
     // (tier po wolumenie, promocja). Kolejne fille uzywaja nowej stawki.
     void   set_commission(double per_share) noexcept {
