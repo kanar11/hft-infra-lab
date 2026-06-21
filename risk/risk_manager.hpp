@@ -771,6 +771,16 @@ public:
     // projected pozycja przekroczy limit (#245). BUY -> cap - cur; SELL -> short_cap
     // + cur (mozna sprzedac az do -short_cap, lacznie z flipem z longa). Respektuje
     // override (#161) i asymetryczny short cap (#106). 0 gdy cap wylaczony/brak miejsca.
+    // projected_exposure: absolute symbol position if this order fully fills (#259)
+    // = |current_net + current_pending + signed(side, qty)|. Pre-trade what-if that
+    // returns the RESULTING exposure (vs headroom_shares #245 which returns the
+    // remaining room). For sizing decisions before submitting.
+    int32_t projected_exposure(const char* symbol, Side side, int32_t qty) const noexcept {
+        const uint64_t k = sym_to_key(symbol);
+        const int32_t cur = lookup(positions_, k) + lookup(pending_, k);
+        return std::abs(cur + signed_qty(side, qty));
+    }
+
     int32_t headroom_shares(const char* symbol, Side side) const noexcept {
         const uint64_t k = sym_to_key(symbol);
         int32_t cap = limits_.max_position_per_symbol;

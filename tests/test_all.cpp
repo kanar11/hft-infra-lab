@@ -2999,6 +2999,14 @@ void test_risk_price_band() {
     ASSERT(rhr.headroom_shares("AAPL", Side::SELL) == 1300, "headroom_sell"); // 1000 + 300 (flip)
     ASSERT(rhr.headroom_shares("MSFT", Side::BUY) == 1000, "headroom_fresh"); // pelny cap
 
+    // #259 projected_exposure (resulting |position| after a hypothetical fill).
+    RiskManager rpe(hrl);
+    rpe.on_order_sent("AAPL", Side::BUY, 300);                              // pozycja +300
+    ASSERT(rpe.projected_exposure("AAPL", Side::BUY, 200) == 500, "projexp_buy");   // |300+200|
+    ASSERT(rpe.projected_exposure("AAPL", Side::SELL, 100) == 200, "projexp_sell"); // |300-100|
+    ASSERT(rpe.projected_exposure("AAPL", Side::SELL, 500) == 200, "projexp_flip"); // |300-500|
+    ASSERT(rpe.projected_exposure("MSFT", Side::BUY, 100) == 100, "projexp_fresh");
+
     // #189 limit wartosci pozycji per symbol ($10k; shares hojne).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;
