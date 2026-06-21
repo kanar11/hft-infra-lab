@@ -39,6 +39,7 @@
 #include "../strategy/macd.hpp"
 #include "../strategy/stochastic.hpp"
 #include "../strategy/wma.hpp"
+#include "../strategy/hull_ma.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -2007,6 +2008,22 @@ void test_wma() {
     ASSERT(std::fabs(s.value() - 42.0) < 1e-9, "wma_period1_is_last");
 }
 
+// HullMA #206 — niskoopozniona srednia na bazie WMA.
+void test_hull_ma() {
+    SECTION("HullMA (#206)");
+    HullMA c(9);
+    for (int i = 0; i < 30; ++i) c.update(50.0);          // stala -> HMA = stala
+    ASSERT(c.ready(), "hma_ready");
+    ASSERT(std::fabs(c.value() - 50.0) < 1e-9, "hma_constant");
+    // rosnacy trend -> HMA rosnie i (niska zwloka) wyprzedza prosta srednia okna
+    HullMA r(9);
+    for (int i = 1; i <= 29; ++i) r.update(static_cast<double>(i));
+    const double prev = r.value();
+    r.update(30.0);
+    ASSERT(r.value() > prev, "hma_rises_on_uptrend");
+    ASSERT(r.value() > 15.5, "hma_low_lag_above_mean");  // srednia 1..30 = 15.5
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3260,6 +3277,7 @@ int main() {
     test_macd();
     test_stochastic();
     test_wma();
+    test_hull_ma();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
