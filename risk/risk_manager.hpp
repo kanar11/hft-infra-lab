@@ -746,6 +746,18 @@ public:
         const int32_t exposure = std::abs(lookup(positions_, k) + lookup(pending_, k));
         return static_cast<double>(exposure) >= static_cast<double>(cap) * warn_pct / 100.0;
     }
+    // position_utilization_pct: ekspozycja symbolu jako % jego limitu (#237) —
+    // per-symbolowy odpowiednik exposure_utilization_pct (#181). Zwraca WARTOSC
+    // (vs bool z is_near_position_limit #167). Respektuje per-symbol override
+    // (#161). 0 gdy cap wylaczony.
+    double position_utilization_pct(const char* symbol) const noexcept {
+        const uint64_t k = sym_to_key(symbol);
+        int32_t cap = limits_.max_position_per_symbol;
+        if (const auto ov = symbol_pos_limit_.find(k); ov != symbol_pos_limit_.end()) cap = ov->second;
+        if (cap <= 0) return 0.0;
+        const int32_t exposure = std::abs(lookup(positions_, k) + lookup(pending_, k));
+        return static_cast<double>(exposure) / static_cast<double>(cap) * 100.0;
+    }
     // get_position_notional: ekspozycja symbolu w DOLARACH (#153) = |pos+pending|
     // * cena referencyjna. 0 gdy brak ceny ref. Risk w sztukach nie pokazuje
     // realnego ryzyka $ przy roznych cenach symboli.

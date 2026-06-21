@@ -2813,6 +2813,15 @@ void test_risk_price_band() {
     reu.on_order_sent("BBB", Side::SELL, 200);                              // +|200| = 50%
     ASSERT(std::fabs(reu.exposure_utilization_pct() - 50.0) < 1e-6, "exput_50pct");
 
+    // #237 position_utilization_pct (per symbol, cap 1000).
+    RiskLimits pul; pul.max_position_per_symbol = 1000;
+    RiskManager rpu(pul);
+    rpu.on_order_sent("AAPL", Side::BUY, 700);                              // 700/1000 = 70%
+    ASSERT(std::fabs(rpu.position_utilization_pct("AAPL") - 70.0) < 1e-6, "posutil_70pct");
+    rpu.set_symbol_position_limit("AAPL", 2000);                           // override cap 2000
+    ASSERT(std::fabs(rpu.position_utilization_pct("AAPL") - 35.0) < 1e-6, "posutil_override_35pct");
+    ASSERT(std::fabs(rpu.position_utilization_pct("MSFT") - 0.0) < 1e-6, "posutil_no_exposure");
+
     // #189 limit wartosci pozycji per symbol ($10k; shares hojne).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;
