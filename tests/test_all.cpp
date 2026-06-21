@@ -2603,6 +2603,19 @@ void test_risk_price_band() {
     rzz.update_pnl(-500.0);                 // peak 0 -> brak referencji
     ASSERT(std::fabs(rzz.current_drawdown_pct() - 0.0) < 1e-6, "dd_no_peak_zero");
 
+    // #205 consecutive_losses_remaining (breaker serii strat, prog 3).
+    RiskLimits cll; cll.max_consecutive_losses = 3;
+    RiskManager rcl(cll);
+    ASSERT(rcl.consecutive_losses_remaining() == 3, "clr_full_at_start");
+    rcl.update_pnl(-10.0);                  // strata 1
+    ASSERT(rcl.consecutive_losses_remaining() == 2, "clr_after_one_loss");
+    rcl.update_pnl(-10.0);                  // strata 2
+    ASSERT(rcl.consecutive_losses_remaining() == 1, "clr_after_two_losses");
+    rcl.update_pnl(5.0);                    // zysk zeruje serie
+    ASSERT(rcl.consecutive_losses_remaining() == 3, "clr_reset_on_win");
+    RiskManager rcd;                        // domyslnie wylaczony (0)
+    ASSERT(rcd.consecutive_losses_remaining() == -1, "clr_disabled");
+
     // #94 fat-finger na ilość — qty cap niezależny od notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;

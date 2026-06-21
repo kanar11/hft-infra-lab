@@ -758,6 +758,14 @@ public:
         return (peak_pnl_ - daily_pnl_) / peak_pnl_ * 100.0;
     }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
+    // consecutive_losses_remaining: ile jeszcze stratnych fillow Z RZEDU do trip'a
+    // bezpiecznika serii strat (#205, na bazie #114). -1 gdy breaker wylaczony,
+    // 0 gdy juz trip'nal. Wczesne ostrzeganie zanim desk zostanie zatrzymany.
+    int32_t  consecutive_losses_remaining() const noexcept {
+        if (limits_.max_consecutive_losses <= 0) return -1;
+        const int32_t rem = limits_.max_consecutive_losses - consec_losses_;
+        return rem > 0 ? rem : 0;
+    }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }
     uint64_t get_total_rejects()              const noexcept { return total_rejects_; }
 
