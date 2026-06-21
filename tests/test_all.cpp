@@ -1827,6 +1827,15 @@ void test_multicast_gap_recovery() {
     ASSERT(srd.resets == 1, "srd_reset_count");
     ASSERT(!srd.on_seq(11), "srd_normal_after_reset");          // nowa baza 10
 
+    // #211 SnapshotRequestThrottle — min odstep miedzy zadaniami.
+    multicast::SnapshotRequestThrottle srt(1000);               // min 1000 ns
+    ASSERT(srt.allow(0), "srt_first_allowed");
+    ASSERT(!srt.allow(500), "srt_throttled_500");               // 500 < 1000 od 0
+    ASSERT(!srt.allow(999), "srt_throttled_999");
+    ASSERT(srt.allow(1000), "srt_allowed_1000");                // 1000 >= 1000
+    ASSERT(srt.allow(2500), "srt_allowed_2500");                // 1500 od ostatniego
+    ASSERT(srt.suppressed == 2, "srt_suppressed_count");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

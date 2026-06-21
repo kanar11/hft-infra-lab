@@ -409,6 +409,36 @@ struct SequenceResetDetector {
 };
 
 
+// SnapshotRequestThrottle — dlawi zadania snapshotu (expansion #211).
+//
+// Gdy feed migocze, gap-recovery moze wyzwalac sie raz za razem i zasypac serwer
+// snapshotow zadaniami ("snapshot storm"), co pogarsza sytuacje. Throttle wymusza
+// MINIMALNY odstep miedzy zadaniami: allow() zwraca true tylko gdy minelo dosc
+// czasu od ostatniego, inaczej false (zliczane jako suppressed). Niezalezny od
+// logiki wykrywania luk — czysta kontrola tempa.
+struct SnapshotRequestThrottle {
+    std::int64_t min_interval_ns;
+    std::int64_t last_request_ns = 0;
+    bool          requested = false;
+    std::uint64_t suppressed = 0;
+
+    explicit SnapshotRequestThrottle(std::int64_t min_interval_ns_ = 1'000'000) noexcept
+        : min_interval_ns(min_interval_ns_) {}
+
+    // allow: czy wolno teraz wyslac zadanie snapshotu.
+    bool allow(std::int64_t now_ns) noexcept {
+        if (!requested || now_ns - last_request_ns >= min_interval_ns) {
+            last_request_ns = now_ns;
+            requested = true;
+            return true;
+        }
+        ++suppressed;
+        return false;
+    }
+    void reset() noexcept { last_request_ns = 0; requested = false; suppressed = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
