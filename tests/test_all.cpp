@@ -1840,6 +1840,18 @@ void test_itch_book() {
     ASSERT(!im.is_marketable('S', 99.99), "itchbook_mkt_sell_above");   // > bid -> rests
     ASSERT(!nlq.is_marketable('B', 100.0), "itchbook_mkt_no_ask");      // one-sided
 
+    // #277 nth_level_price / nth_level_qty (random level access).
+    itch::ITCHOrderBook nl;
+    nl.on_add(1, 'S', 100.00, 100); nl.on_add(2, 'S', 100.02, 200); nl.on_add(3, 'S', 100.05, 300);
+    nl.on_add(4, 'B', 99.99, 150);  nl.on_add(5, 'B', 99.98, 250);
+    ASSERT(close(nl.nth_level_price('S', 0), 100.00), "itchbook_nth_ask0");   // best ask
+    ASSERT(close(nl.nth_level_price('S', 2), 100.05), "itchbook_nth_ask2");
+    ASSERT(nl.nth_level_qty('S', 1) == 200, "itchbook_nth_ask_qty");
+    ASSERT(close(nl.nth_level_price('B', 0), 99.99), "itchbook_nth_bid0");    // best bid
+    ASSERT(nl.nth_level_qty('B', 1) == 250, "itchbook_nth_bid_qty");
+    ASSERT(nl.nth_level_price('S', 5) == 0.0 && nl.nth_level_qty('B', 9) == 0,
+           "itchbook_nth_out_of_range");
+
     // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
     itch::ITCHOrderBook ni;
     ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 szt.

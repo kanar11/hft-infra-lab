@@ -442,6 +442,35 @@ public:
         return c;
     }
 
+    // nth_level_price / nth_level_qty: random access to the n-th best price level on
+    // a side (#277, 0-based; BUY counts bids down from best, SELL counts asks up).
+    // Single-level lookup without copying the whole top-N (unlike top_levels). 0
+    // when n is out of range. Handy for L2 strategies that reference one level.
+    double  nth_level_price(char side, int n) const noexcept {
+        if (n < 0) return 0.0;
+        int i = 0;
+        if (side == 'B') {
+            for (auto it = bids_.rbegin(); it != bids_.rend(); ++it, ++i)
+                if (i == n) return static_cast<double>(it->first) / 100.0;
+        } else {
+            for (auto it = asks_.begin(); it != asks_.end(); ++it, ++i)
+                if (i == n) return static_cast<double>(it->first) / 100.0;
+        }
+        return 0.0;
+    }
+    int64_t nth_level_qty(char side, int n) const noexcept {
+        if (n < 0) return 0;
+        int i = 0;
+        if (side == 'B') {
+            for (auto it = bids_.rbegin(); it != bids_.rend(); ++it, ++i)
+                if (i == n) return it->second;
+        } else {
+            for (auto it = asks_.begin(); it != asks_.end(); ++it, ++i)
+                if (i == n) return it->second;
+        }
+        return 0;
+    }
+
     size_t  bid_levels()     const noexcept { return bids_.size(); }
     size_t  ask_levels()     const noexcept { return asks_.size(); }
     size_t  resting_orders() const noexcept { return orders_.size(); }
