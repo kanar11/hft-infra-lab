@@ -40,6 +40,7 @@
 #include "../strategy/stochastic.hpp"
 #include "../strategy/wma.hpp"
 #include "../strategy/hull_ma.hpp"
+#include "../strategy/dema.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../strategy/trailing_stop.hpp"
 #include "../strategy/pov_algo.hpp"
@@ -2052,6 +2053,21 @@ void test_hull_ma() {
     ASSERT(r.value() > 15.5, "hma_low_lag_above_mean");  // srednia 1..30 = 15.5
 }
 
+// DEMA #214 — podwojna EMA o niskiej zwloce.
+void test_dema() {
+    SECTION("DEMA (#214)");
+    DEMA c(5);
+    for (int i = 0; i < 25; ++i) c.update(50.0);          // stala -> 2*50 - 50 = 50
+    ASSERT(c.ready(), "dema_ready");
+    ASSERT(std::fabs(c.value() - 50.0) < 1e-9, "dema_constant");
+    DEMA r(5);
+    for (int i = 1; i <= 20; ++i) r.update(static_cast<double>(i));
+    const double prev = r.value();
+    r.update(21.0);
+    ASSERT(r.value() > prev, "dema_rises_on_uptrend");
+    ASSERT(r.value() > 15.0, "dema_low_lag");             // sledzi swieze (1..21 srednia ~11)
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -3350,6 +3366,7 @@ int main() {
     test_stochastic();
     test_wma();
     test_hull_ma();
+    test_dema();
     test_ensemble();
     test_trailing_stop();
     test_pov_algo();
