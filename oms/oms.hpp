@@ -698,6 +698,15 @@ public:
     // analysis and exchange-tier volume tracking; independent of position (a
     // round-trip trades twice the notional but nets zero position).
     double   total_traded_notional() const noexcept { return total_traded_notional_; }
+    // avg_trade_price: blended VWAP across EVERY fill (#306) = total_traded_notional
+    // / total_filled_shares. The single execution price the whole session achieved,
+    // independent of side or position — the TCA benchmark you compare arrival/VWAP
+    // slippage against. 0 when nothing filled.
+    double   avg_trade_price() const noexcept {
+        return total_filled_shares_ > 0
+            ? total_traded_notional_ / static_cast<double>(total_filled_shares_)
+            : 0.0;
+    }
     // fill_ratio: jaka czesc ZLECONEGO wolumenu (akcji) sie wykonala (#228) =
     // wykonane / zlecone. Jakosc egzekucji: nisko = duzo niewypelnionych /
     // anulowanych zlecen (zle ceny limit, slaba plynnosc). 0 gdy nic nie zlecono.

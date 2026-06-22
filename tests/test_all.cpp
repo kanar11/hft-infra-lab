@@ -470,6 +470,10 @@ void test_oms_short_and_replace() {
         Order* b = oms.submit_order("BBB", Side::SELL, 20.0, 50);
         oms.fill_order(b->order_id, 50, 20.0);                     // 50 * 20 = 1000
         ASSERT(close(oms.total_traded_notional(), 2000.0), "traded_notional_sum");
+        // #306 avg_trade_price — blended VWAP = 2000 notional / 150 shares.
+        ASSERT(close(oms.avg_trade_price(), 2000.0 / 150.0), "avg_trade_price_blended");
+        OMS empt(1000000, 1000000000.0);
+        ASSERT(empt.avg_trade_price() == 0.0, "avg_trade_price_empty_zero");
     }
 
     {   // #274 avg_fill_size (shares per fill).
