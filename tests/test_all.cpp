@@ -2891,6 +2891,20 @@ void test_router_ewma_partial() {
         ASSERT(std::strcmp(r.fastest_venue(), "A") == 0, "fastest_A_after_disable");
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.fastest_venue() == nullptr, "fastest_empty_null");
+        // #286 avg_venue_latency_ns: A 500, C 800 active (B disabled above) -> 650
+        ASSERT(std::fabs(r.avg_venue_latency_ns() - 650.0) < 1e-9, "avglat_after_disable");
+    }
+
+    // --- #286 avg_venue_latency_ns ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));   // latency 100
+        r.add_venue(Venue("B", 300, 0.0));   // latency 300
+        ASSERT(std::fabs(r.avg_venue_latency_ns() - 200.0) < 1e-9, "avglat_200");
+        r.set_venue_active("B", false);
+        ASSERT(std::fabs(r.avg_venue_latency_ns() - 100.0) < 1e-9, "avglat_one_active");
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.avg_venue_latency_ns() == 0.0, "avglat_empty_zero");
     }
 
     // --- #262 venue_liquidity_share (current displayed concentration) ---

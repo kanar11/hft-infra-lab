@@ -529,6 +529,20 @@ public:
         return best_name;
     }
 
+    // avg_venue_latency_ns: mean selection latency across all ACTIVE venues (#286).
+    // Whereas fastest_venue gives the single best path, this is the market-wide
+    // connectivity health — a rising average warns that the whole fabric (not just
+    // one venue) is degrading. 0 when no venue is active.
+    double avg_venue_latency_ns() const noexcept {
+        int64_t sum = 0; int n = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            if (!venues_[i].is_active) continue;
+            sum += venues_[i].selection_latency_ns();
+            ++n;
+        }
+        return n > 0 ? static_cast<double>(sum) / static_cast<double>(n) : 0.0;
+    }
+
     // available_liquidity: laczny displayed size top-of-book po stronie zlecenia
     // (is_buy → asks, sprzedaz → bids), tylko aktywne venue z dodatnim quote.
     // Pre-route sizing: czy w ogole jest plynnosc na pokrycie zlecenia (#109).
