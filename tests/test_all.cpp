@@ -2150,6 +2150,16 @@ void test_multicast_gap_recovery() {
            "fh_stale_unhealthy");
     ASSERT(std::fabs(fh.score(0.6, 0.0, false) - 0.0) < 1e-9, "fh_clamped_zero"); // 100 - 120 -> 0
 
+    // #297 GapFillTimer — recovery-SLA timing.
+    multicast::GapFillTimer gft;
+    gft.record(1000, 1050);   // 50 ms
+    gft.record(2000, 2150);   // 150 ms
+    gft.record(3000, 3010);   // 10 ms
+    ASSERT(gft.gaps == 3 && gft.max_recovery_ms == 150, "gft_count_max");
+    ASSERT(std::fabs(gft.avg_recovery_ms() - 70.0) < 1e-9, "gft_avg");  // (50+150+10)/3
+    gft.record(5000, 4000);   // negative -> ignored
+    ASSERT(gft.gaps == 3, "gft_negative_ignored");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

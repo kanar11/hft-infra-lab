@@ -732,6 +732,33 @@ struct FeedHealth {
 };
 
 
+// GapFillTimer — recovery-SLA monitor (expansion #297).
+//
+// Detecting a gap (#82) and recovering it (snapshot/retransmit) takes TIME, and how
+// long is a quality-of-feed SLA: a slow recovery means the book is stale for that
+// long. GapFillTimer times each gap from detection to fill and reports count, mean
+// and worst-case recovery — exactly the numbers an ops dashboard alerts on. Negative
+// durations (clock skew / out-of-order timestamps) are ignored.
+struct GapFillTimer {
+    uint64_t gaps = 0;
+    int64_t  total_recovery_ms = 0;
+    int64_t  max_recovery_ms = 0;
+
+    // record: a gap detected at detect_ms was filled at fill_ms.
+    void record(int64_t detect_ms, int64_t fill_ms) noexcept {
+        const int64_t dur = fill_ms - detect_ms;
+        if (dur < 0) return;
+        ++gaps;
+        total_recovery_ms += dur;
+        if (dur > max_recovery_ms) max_recovery_ms = dur;
+    }
+    double avg_recovery_ms() const noexcept {
+        return gaps > 0 ? static_cast<double>(total_recovery_ms) / static_cast<double>(gaps) : 0.0;
+    }
+    void reset() noexcept { gaps = 0; total_recovery_ms = 0; max_recovery_ms = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
