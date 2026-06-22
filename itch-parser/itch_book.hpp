@@ -502,6 +502,19 @@ public:
         for (int i = 0; i < n; ++i) sum += nth_level_qty(side, i);
         return sum;
     }
+    // depth_notional: total $ notional resting across the top N price levels on a
+    // side (#309) = sum(price * qty) over levels 0..N-1 — the capital a sweep would
+    // consume, the $ companion to cumulative_qty (#293, shares). Stops at the end of
+    // book (an out-of-range level returns price 0). Uses nth_level_price/qty (#277).
+    double  depth_notional(char side, int n) const noexcept {
+        double sum = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const double px = nth_level_price(side, i);
+            if (px <= 0.0) break;
+            sum += px * static_cast<double>(nth_level_qty(side, i));
+        }
+        return sum;
+    }
 
     size_t  bid_levels()     const noexcept { return bids_.size(); }
     size_t  ask_levels()     const noexcept { return asks_.size(); }
