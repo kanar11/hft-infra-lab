@@ -1,27 +1,27 @@
 /*
- * ITCHOrderBook — rekonstrukcja księgi L3 ze strumienia NASDAQ ITCH
+ * ITCHOrderBook — L3 book reconstruction from the NASDAQ ITCH stream
  * (expansion #82).
  *
- * itch_parser.hpp dekoduje POJEDYNCZE wiadomości; nikt nie składał z nich
- * KSIĘGI. To jest brakujący most: feed handler, który z Add/Execute/Cancel/
- * Delete/Replace odtwarza pełny obraz rynku (best bid/ask, głębokość, resting
- * orders po order_ref).
+ * itch_parser.hpp decodes SINGLE messages; nobody assembled a BOOK from them.
+ * This is the missing bridge: a feed handler that, from Add/Execute/Cancel/
+ * Delete/Replace, rebuilds the full picture of the market (best bid/ask, depth,
+ * resting orders by order_ref).
  *
- * To NIE jest silnik dopasowań (orderbook_pro) — reconstructor tylko ODTWARZA
- * to, co mówi feed; nigdy nie matchuje i nigdy nie krzyżuje. Prawdziwy ITCH to
- * już zmatchowana księga, więc Add'y po obu stronach nie przecinają się — a
- * egzekucje/anulacje przychodzą wprost jako wiadomości, nie wynikają z matchu.
+ * This is NOT a matching engine (orderbook_pro) — the reconstructor only REPLAYS
+ * what the feed says; it never matches and never crosses. Real ITCH is an
+ * already-matched book, so Adds on both sides do not cross — and
+ * executions/cancels arrive directly as messages, not as a result of a match.
  *
- * Mapowanie zdarzeń:
- *   ADD_ORDER       → resting order (ref → side/price/qty) + agregat poziomu
- *   ORDER_EXECUTED  → redukcja qty resting o exec_shares (0 → usuń)
- *   ORDER_CANCELLED → redukcja qty o cancelled_shares (partial cancel)
- *   DELETE_ORDER    → usuń resting w całości
- *   REPLACE_ORDER   → delete(orig) + add(new) z nową ceną/ilością
- *   (TRADE/SYSTEM/STOCK_DIR — nie zmieniają księgi limit-order)
+ * Event mapping:
+ *   ADD_ORDER       → resting order (ref → side/price/qty) + level aggregate
+ *   ORDER_EXECUTED  → reduce resting qty by exec_shares (0 → remove)
+ *   ORDER_CANCELLED → reduce qty by cancelled_shares (partial cancel)
+ *   DELETE_ORDER    → remove the resting order entirely
+ *   REPLACE_ORDER   → delete(orig) + add(new) with a new price/qty
+ *   (TRADE/SYSTEM/STOCK_DIR — do not change the limit-order book)
  *
- * Ceny w tickach int64 (× 100 = $0.01), agregaty per poziom w dwóch std::map.
- * best_bid = max klucz bids_, best_ask = min klucz asks_.
+ * Prices in int64 ticks (× 100 = $0.01), per-level aggregates in two std::map.
+ * best_bid = max key of bids_, best_ask = min key of asks_.
  */
 #pragma once
 
@@ -46,9 +46,9 @@ class ITCHOrderBook {
     std::map<int64_t, int64_t> bids_;              // price_ticks → Σ qty (BUY)
     std::map<int64_t, int64_t> asks_;              // price_ticks → Σ qty (SELL)
 
-    // Statystyki / diagnostyka feed handlera.
+    // Feed-handler statistics / diagnostics.
     uint64_t adds_ = 0, executes_ = 0, cancels_ = 0, deletes_ = 0, replaces_ = 0;
-    uint64_t orphans_ = 0;   // event dla nieznanego ref (luka w feedzie / desync)
+    uint64_t orphans_ = 0;   // event for an unknown ref (gap in the feed / desync)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -57,8 +57,8 @@ class ITCHOrderBook {
         return (side == 'B') ? bids_ : asks_;
     }
 
-    // reduce_: zdejmij qty z resting (execute/cancel). Czyści poziom i order
-    // gdy schodzą do zera. Nieznany ref = orphan (gap recovery to sygnał).
+    // reduce_: remove qty from a resting order (execute/cancel). Cleans up the level
+    // and the order when they drop to zero. An unknown ref = orphan (a gap-recovery signal).
     void reduce_(int64_t ref, uint32_t qty) noexcept {
         auto it = orders_.find(ref);
         if (it == orders_.end()) { ++orphans_; return; }
@@ -75,7 +75,7 @@ class ITCHOrderBook {
     }
 
 public:
-    // --- Pojedyncze zdarzenia (gdy wołane bezpośrednio) ---
+    // --- Single events (when called directly) ---
     void on_add(int64_t ref, char side, double price, uint32_t shares) noexcept {
         if (shares == 0) return;
         const int64_t px = to_ticks(price);
@@ -88,20 +88,20 @@ public:
     void on_delete(int64_t ref) noexcept {
         auto it = orders_.find(ref);
         if (it == orders_.end()) { ++orphans_; ++deletes_; return; }
-        reduce_(ref, it->second.shares);   // zdejmij całość
+        reduce_(ref, it->second.shares);   // remove the whole thing
         ++deletes_;
     }
     void on_replace(int64_t orig_ref, int64_t new_ref, double new_price, uint32_t new_shares) noexcept {
         auto it = orders_.find(orig_ref);
         if (it == orders_.end()) { ++orphans_; ++replaces_; return; }
-        const char side = it->second.side;   // replace zachowuje stronę
+        const char side = it->second.side;   // replace keeps the side
         reduce_(orig_ref, it->second.shares);
         on_add(new_ref, side, new_price, new_shares);
-        --adds_;                              // on_add policzył add; replace to nie add
+        --adds_;                              // on_add counted an add; a replace is not an add
         ++replaces_;
     }
 
-    // apply: dispatch z ParsedMessage (główne wejście — karm strumieniem z parsera).
+    // apply: dispatch from a ParsedMessage (the main entry — feed it the parser's stream).
     void apply(const ParsedMessage& pm) noexcept {
         switch (pm.type) {
             case MsgType::ADD_ORDER:
@@ -125,29 +125,29 @@ public:
                 on_replace(pm.data.replace_order.orig_order_ref, pm.data.replace_order.new_order_ref,
                            pm.data.replace_order.new_price, pm.data.replace_order.new_shares);
                 break;
-            default: break;   // TRADE / SYSTEM_EVENT / STOCK_DIRECTORY — nie ruszają księgi
+            default: break;   // TRADE / SYSTEM_EVENT / STOCK_DIRECTORY — do not touch the book
         }
     }
 
-    // --- Zapytania o stan księgi ---
+    // --- Book-state queries ---
     double  best_bid()  const noexcept { return bids_.empty() ? 0.0 : bids_.rbegin()->first / 100.0; }
     double  best_ask()  const noexcept { return asks_.empty() ? 0.0 : asks_.begin()->first  / 100.0; }
     double  spread()    const noexcept {
         if (bids_.empty() || asks_.empty()) return 0.0;
         return best_ask() - best_bid();
     }
-    // spread_bps: spread względem mid w punktach bazowych (#131) — miara
-    // jakości/płynności rynku niezależna od poziomu ceny.
+    // spread_bps: spread relative to mid in basis points (#131) — a measure of
+    // market quality/liquidity independent of the price level.
     double  spread_bps() const noexcept {
         const double m = mid_price();
         return m > 0.0 ? spread() / m * 10000.0 : 0.0;
     }
-    // spread_ticks: spread w CALKOWITEJ liczbie ticow ($0.01) (#207). Dla strategii
-    // swiadomych wielkosci ticku: 1 = ksiazka najciasniejsza (touch, MM walczy o
-    // priorytet), wieksze = jest miejsce na poprawe kwotowania. 0 gdy jednostronna.
+    // spread_ticks: spread in a WHOLE number of ticks ($0.01) (#207). For strategies
+    // tick-size aware: 1 = the tightest book (touch, MMs fight for priority), larger =
+    // there is room to improve the quote. 0 when one-sided.
     int64_t spread_ticks() const noexcept {
         if (bids_.empty() || asks_.empty()) return 0;
-        return asks_.begin()->first - bids_.rbegin()->first;   // ceny w tickach x100
+        return asks_.begin()->first - bids_.rbegin()->first;   // prices in ticks x100
     }
     // is_marketable: would a limit order at limit_price cross immediately against
     // the resting book (#261)? BUY crosses when limit >= best_ask, SELL crosses
@@ -157,34 +157,34 @@ public:
         if (side == 'B') { const double a = best_ask(); return a > 0.0 && limit_price >= a; }
         else             { const double b = best_bid(); return b > 0.0 && limit_price <= b; }
     }
-    // clear: zresetuj reconstructora do pustego (np. start nowej sesji / re-sync
-    // po snapshot recovery). Statystyki feed handlera też zerowane.
+    // clear: reset the reconstructor to empty (e.g. start of a new session / re-sync
+    // after snapshot recovery). The feed-handler statistics are zeroed too.
     void clear() noexcept {
         orders_.clear(); bids_.clear(); asks_.clear();
         adds_ = executes_ = cancels_ = deletes_ = replaces_ = orphans_ = 0;
     }
-    // mid_price: średnia best bid/ask; 0 gdy księga jednostronna.
+    // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
         if (bids_.empty() || asks_.empty()) return 0.0;
         return (best_bid() + best_ask()) / 2.0;
     }
     int64_t best_bid_qty() const noexcept { return bids_.empty() ? 0 : bids_.rbegin()->second; }
     int64_t best_ask_qty() const noexcept { return asks_.empty() ? 0 : asks_.begin()->second; }
-    // imbalance: order-book imbalance top-of-book = (bidQ-askQ)/(bidQ+askQ),
-    // zakres [-1,1]. >0 = przewaga kupna (presja w górę), <0 = sprzedaży.
-    // Klasyczny krótkoterminowy predyktor kierunku w mikrostrukturze.
+    // imbalance: top-of-book order-book imbalance = (bidQ-askQ)/(bidQ+askQ),
+    // range [-1,1]. >0 = buy-side dominance (upward pressure), <0 = sell-side.
+    // A classic short-term direction predictor in microstructure.
     double  imbalance() const noexcept {
         const int64_t b = best_bid_qty(), a = best_ask_qty();
         const int64_t tot = b + a;
         return tot > 0 ? static_cast<double>(b - a) / static_cast<double>(tot) : 0.0;
     }
-    // microprice: fair-value wazony rozmiarami (Stoikov). Przy przewadze bidu
-    // (Q_bid > Q_ask) ciazy ku ASK (spodziewany ruch w gore) i odwrotnie —
-    // lepszy estymator "prawdziwej" ceny niz prosty mid. 0 gdy ksiega jednostronna.
+    // microprice: size-weighted fair value (Stoikov). When the bid dominates
+    // (Q_bid > Q_ask) it leans toward the ASK (an expected up-move) and vice versa —
+    // a better estimator of the "true" price than a simple mid. 0 when the book is one-sided.
     //   microprice = (P_ask*Q_bid + P_bid*Q_ask) / (Q_bid + Q_ask)
-    // liquidity_within: laczna qty w N TICKACH od best po danej stronie (#164).
-    // Miara gestosci plynnosci przy szczycie (ile zrealizuje sie blisko touch'a)
-    // niezalezna od liczby poziomow. BUY: bidy >= best_bid - ticks; SELL: aski
+    // liquidity_within: total qty within N TICKS of best on a given side (#164).
+    // A measure of liquidity density at the top (how much fills near the touch)
+    // independent of the number of levels. BUY: bids >= best_bid - ticks; SELL: asks
     // <= best_ask + ticks.
     int64_t liquidity_within(char side, int ticks) const noexcept {
         if (ticks < 0) return 0;
@@ -201,16 +201,16 @@ public:
         return sum;
     }
 
-    // fillable_shares: ile akcji da sie wykonac do CENY LIMIT (#223). BUY: suma
-    // qty asks o cenie <= limit; SELL: suma qty bids o cenie >= limit. Inaczej niz
-    // liquidity_within (ticki od best) — tu prog to konkretna cena zlecenia. Sizing
-    // zlecenia z limitem: ile sie wykona od reki bez przebicia limitu.
+    // fillable_shares: how many shares can be executed up to a LIMIT PRICE (#223). BUY:
+    // sum of ask qty at price <= limit; SELL: sum of bid qty at price >= limit. Unlike
+    // liquidity_within (ticks from best) — here the threshold is a specific order price.
+    // Sizing a limit order: how much fills immediately without crossing past the limit.
     int64_t fillable_shares(char side, double limit_price) const noexcept {
         const int64_t lim = to_ticks(limit_price);
         int64_t sum = 0;
-        if (side == 'B') {                       // kupno: aski rosnaco, bierz <= limit
+        if (side == 'B') {                       // buy: asks ascending, take <= limit
             for (const auto& [px, qty] : asks_) { if (px > lim) break; sum += qty; }
-        } else {                                 // sprzedaz: bidy malejaco od best, bierz >= limit
+        } else {                                 // sell: bids descending from best, take >= limit
             for (auto it = bids_.rbegin(); it != bids_.rend(); ++it) {
                 if (it->first < lim) break;
                 sum += it->second;
@@ -219,11 +219,11 @@ public:
         return sum;
     }
 
-    // price_to_fill: NAJGORSZA cena (poziom), ktory trzeba dotknac aby wykonac
-    // `shares` przechodzac ksiazke (#247). BUY chodzi po askach rosnaco, SELL po
-    // bidach malejaco; zwraca cene poziomu, na ktorym skumulowana ilosc pokrywa
-    // zlecenie. To LIMIT do sweep'a (inaczej niz expected_fill=VWAP). 0 gdy za malo
-    // plynnosci.
+    // price_to_fill: the WORST price (level) that must be touched to execute
+    // `shares` by walking the book (#247). BUY walks asks ascending, SELL walks
+    // bids descending; returns the price of the level at which cumulative size covers
+    // the order. This is the LIMIT for a sweep (unlike expected_fill=VWAP). 0 when there
+    // is too little liquidity.
     double  price_to_fill(char side, int64_t shares) const noexcept {
         if (shares <= 0) return 0.0;
         int64_t remaining = shares;
@@ -238,12 +238,12 @@ public:
                 if (remaining <= 0) return static_cast<double>(it->first) / 100.0;
             }
         }
-        return 0.0;   // niewystarczajaca plynnosc
+        return 0.0;   // insufficient liquidity
     }
 
-    // total_shares: laczna spoczywajaca liczba akcji po danej stronie (#174).
-    // Caly rozmiar ksiazki na jednej stronie — surowa miara dostepnej plynnosci
-    // (w odroznieniu od liquidity_within, bez ograniczenia do okolic touch'a).
+    // total_shares: total resting number of shares on a given side (#174).
+    // The whole size of the book on one side — a raw measure of available liquidity
+    // (unlike liquidity_within, with no restriction to the touch area).
     int64_t total_shares(char side) const noexcept {
         const auto& book = (side == 'B') ? bids_ : asks_;
         int64_t sum = 0;
@@ -251,10 +251,10 @@ public:
         return sum;
     }
 
-    // total_notional: laczna WARTOSC ($) spoczywajacej plynnosci po stronie (#191).
-    // Suma cena*ilosc po wszystkich poziomach — dopelnia total_shares (akcje):
-    // dwie ksiazki o tej samej liczbie akcji moga miec rozny kapital przy roznych
-    // cenach. Miara glebokosci w dolarach.
+    // total_notional: total VALUE ($) of resting liquidity on a side (#191).
+    // Sum of price*qty over all levels — complements total_shares (shares):
+    // two books with the same number of shares can hold different capital at different
+    // prices. A measure of depth in dollars.
     double total_notional(char side) const noexcept {
         const auto& book = (side == 'B') ? bids_ : asks_;
         double sum = 0.0;
@@ -263,31 +263,31 @@ public:
         return sum;
     }
 
-    // level_count: liczba roznych poziomow cenowych po danej stronie (#174).
-    // Grubosc ksiazki — ile odrebnych cen ma plynnosc (rzadka vs gesta ksiazka).
+    // level_count: number of distinct price levels on a given side (#174).
+    // The thickness of the book — how many distinct prices have liquidity (sparse vs dense book).
     std::size_t level_count(char side) const noexcept {
         return (side == 'B') ? bids_.size() : asks_.size();
     }
 
-    // is_locked: best_bid == best_ask (#183). Ksiazka "zamknieta" — spread zero.
-    // Sygnalizuje nieaktualny/niespojny obraz (feed laggujacy) albo moment przed
-    // matchingiem; market-maker zwykle wstrzymuje kwotowanie.
+    // is_locked: best_bid == best_ask (#183). A "locked" book — zero spread.
+    // Signals a stale/inconsistent picture (a lagging feed) or a moment before
+    // matching; a market maker usually pauses quoting.
     bool is_locked() const noexcept {
         return !bids_.empty() && !asks_.empty()
             && bids_.rbegin()->first == asks_.begin()->first;
     }
 
-    // is_crossed: best_bid > best_ask (#183). Ksiazka "skrzyzowana" — teoretyczny
-    // arbitraz (kup po ask < sprzedaj po bid). Realnie: niespojnosc feedu /
-    // brakujacy Delete; konsument powinien odrzucic albo zsnapshotowac.
+    // is_crossed: best_bid > best_ask (#183). A "crossed" book — theoretical
+    // arbitrage (buy at ask < sell at bid). Realistically: feed inconsistency /
+    // a missing Delete; a consumer should reject or take a snapshot.
     bool is_crossed() const noexcept {
         return !bids_.empty() && !asks_.empty()
             && bids_.rbegin()->first > asks_.begin()->first;
     }
 
-    // vwap_depth: volume-weighted cena top-N poziomow po danej stronie (#155).
-    // Fair-value uwzgledniajacy GLEBOKOSC (nie tylko touch); im glebiej, tym
-    // bardziej odzwierciedla cene realizacji wiekszego zlecenia.
+    // vwap_depth: volume-weighted price of the top-N levels on a given side (#155).
+    // Fair value that accounts for DEPTH (not just the touch); the deeper, the more
+    // it reflects the execution price of a larger order.
     double  vwap_depth(char side, int n) const noexcept {
         if (n <= 0) return 0.0;
         double notional = 0.0; int64_t qty = 0; int c = 0;
@@ -316,9 +316,9 @@ public:
         return (bv > 0.0 && av > 0.0) ? (bv + av) / 2.0 : 0.0;
     }
 
-    // depth_imbalance: order-book imbalance po TOP-N poziomach (#148), uogolnienie
-    // top-of-book imbalance (#87, n=1). (Σbid - Σask)/(Σbid+Σask) z n najlepszych
-    // poziomow kazdej strony. Glebszy obraz presji niz sam touch.
+    // depth_imbalance: order-book imbalance over the TOP-N levels (#148), a generalization
+    // of top-of-book imbalance (#87, n=1). (Σbid - Σask)/(Σbid+Σask) over the n best
+    // levels of each side. A deeper picture of pressure than the touch alone.
     double  depth_imbalance(int n) const noexcept {
         if (n <= 0) return 0.0;
         int64_t b = 0, a = 0; int c = 0;
@@ -328,10 +328,10 @@ public:
         const int64_t tot = b + a;
         return tot > 0 ? static_cast<double>(b - a) / static_cast<double>(tot) : 0.0;
     }
-    // notional_imbalance: imbalance wazony WARTOSCIA ($) top-N poziomow (#215).
-    // Jak depth_imbalance, ale waga = cena*ilosc zamiast samej ilosci. Duze
-    // zlecenia patrza na nominal: 100 szt. po $300 wazy 30x wiecej niz 100 po $10.
-    // (Sb_$ - Sa_$)/(Sb_$ + Sa_$), zakres [-1,1]. 0 gdy pusto.
+    // notional_imbalance: imbalance weighted by VALUE ($) of the top-N levels (#215).
+    // Like depth_imbalance, but weight = price*qty instead of qty alone. Large
+    // orders look at notional: 100 shares at $300 weigh 30x more than 100 at $10.
+    // (Sb_$ - Sa_$)/(Sb_$ + Sa_$), range [-1,1]. 0 when empty.
     double  notional_imbalance(int n) const noexcept {
         if (n <= 0) return 0.0;
         double b = 0.0, a = 0.0; int c = 0;
@@ -362,10 +362,10 @@ public:
         return (best_ask() * static_cast<double>(qb) + best_bid() * static_cast<double>(qa))
                / static_cast<double>(tot);
     }
-    // microprice_skew: microprice - mid (#239). Znak i wielkosc presji kierunkowej
-    // w jednostkach ceny: >0 = wieksza plynnosc po BIDZIE (presja wzrostowa,
-    // microprice ciagnie ku askowi), <0 = po ASKU (spadkowa). 0 dla zbalansowanego
-    // lub jednostronnego rynku. Sygnal alpha krotkiego horyzontu.
+    // microprice_skew: microprice - mid (#239). The sign and magnitude of directional
+    // pressure in price units: >0 = more liquidity on the BID (upward pressure,
+    // microprice pulls toward the ask), <0 = on the ASK (downward). 0 for a balanced
+    // or one-sided market. A short-horizon alpha signal.
     double  microprice_skew() const noexcept {
         const double mp = microprice();
         const double m  = mid_price();
@@ -386,10 +386,10 @@ public:
         const auto it = book.find(to_ticks(price));
         return (it != book.end()) ? it->second : 0;
     }
-    // expected_fill: pre-trade impact — przejdź odtworzoną księgę i policz VWAP
-    // jaki osiągnęłoby marketowe zlecenie `shares` po danej stronie (BUY bierze
-    // asks rosnąco, SELL bids malejąco). Zwraca ile akcji wykonalne (≤ shares
-    // gdy płynność niewystarczająca); out_vwap = średnia cena (0 gdy 0 fill).
+    // expected_fill: pre-trade impact — walk the reconstructed book and compute the VWAP
+    // a market order of `shares` on a given side would achieve (BUY takes asks
+    // ascending, SELL bids descending). Returns how many shares are executable (≤ shares
+    // when liquidity is insufficient); out_vwap = the average price (0 when 0 fill).
     int64_t expected_fill(char side, int64_t shares, double& out_vwap) const noexcept {
         out_vwap = 0.0;
         if (shares <= 0) return 0;
@@ -412,11 +412,11 @@ public:
         return filled;
     }
 
-    // slippage_bps: oczekiwany koszt egzekucji w punktach bazowych (#199) — o ile
-    // bps gorzej niz mid wykona sie marketowe zlecenie `shares` po danej stronie.
-    // BUY placi powyzej mid, SELL dostaje ponizej — w obu wynik DODATNI (koszt).
-    // Buduje na expected_fill (VWAP po przejsciu ksiazki). 0 gdy brak fillu/mid.
-    // Pre-trade sizing: czy zlecenie nie zje za duzo spreadu/glebokosci.
+    // slippage_bps: expected execution cost in basis points (#199) — how many
+    // bps worse than mid a market order of `shares` on a given side would execute at.
+    // BUY pays above mid, SELL gets below — in both cases the result is POSITIVE (a cost).
+    // Builds on expected_fill (VWAP after walking the book). 0 when there is no fill/mid.
+    // Pre-trade sizing: whether the order eats too much spread/depth.
     double slippage_bps(char side, int64_t shares) const noexcept {
         double vwap = 0.0;
         const int64_t filled = expected_fill(side, shares, vwap);
@@ -426,10 +426,10 @@ public:
         return diff / m * 10000.0;
     }
 
-    // round_trip_cost_bps: pelny koszt transakcyjny round-trip dla `shares` (#231)
-    // = slippage kupna + slippage sprzedazy (bps vs mid). Ile zjada glebokosc gdy
-    // wejdziesz i wyjdziesz z pozycji tej wielkosci — realny prog rentownosci
-    // strategii. 0 gdy ksiega jednostronna (brak mid). Buduje na slippage_bps.
+    // round_trip_cost_bps: the full round-trip transaction cost for `shares` (#231)
+    // = buy slippage + sell slippage (bps vs mid). How much depth eats when you enter
+    // and exit a position of this size — the real break-even threshold for a
+    // strategy. 0 when the book is one-sided (no mid). Builds on slippage_bps.
     double round_trip_cost_bps(int64_t shares) const noexcept {
         return slippage_bps('B', shares) + slippage_bps('S', shares);
     }
@@ -446,9 +446,9 @@ public:
         return shares - filled;
     }
 
-    // top_levels: skopiuj do n NAJLEPSZYCH poziomow po danej stronie (BUY: bids
-    // malejaco od best; SELL: asks rosnaco) — cena + zagregowana qty. Zwraca ile
-    // poziomow faktycznie wypelniono (<= n). L2 depth dla strategii/wyswietlania.
+    // top_levels: copy up to n BEST levels on a given side (BUY: bids descending
+    // from best; SELL: asks ascending) — price + aggregated qty. Returns how many
+    // levels were actually filled (<= n). L2 depth for strategies/display.
     int top_levels(char side, int n, double* out_px, int64_t* out_qty) const noexcept {
         int c = 0;
         if (side == 'B') {
@@ -535,13 +535,13 @@ public:
     int64_t total_bid_qty()  const noexcept { int64_t s = 0; for (auto& l : bids_) s += l.second; return s; }
     int64_t total_ask_qty()  const noexcept { int64_t s = 0; for (auto& l : asks_) s += l.second; return s; }
 
-    // --- Statystyki feed handlera ---
+    // --- Feed-handler statistics ---
     uint64_t adds()     const noexcept { return adds_; }
     uint64_t executes() const noexcept { return executes_; }
     uint64_t cancels()  const noexcept { return cancels_; }
     uint64_t deletes()  const noexcept { return deletes_; }
     uint64_t replaces() const noexcept { return replaces_; }
-    uint64_t orphans()  const noexcept { return orphans_; }   // sygnał desync / luki feedu
+    uint64_t orphans()  const noexcept { return orphans_; }   // desync signal / feed gaps
 };
 
 }  // namespace itch

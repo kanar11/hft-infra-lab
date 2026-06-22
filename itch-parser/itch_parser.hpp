@@ -1,17 +1,17 @@
 /*
- * ITCHParser — parser binarnego protokołu NASDAQ ITCH 5.0.
+ * ITCHParser — a parser for the binary NASDAQ ITCH 5.0 protocol.
  *
- * ITCH = market data feed NASDAQ. Binarny, big-endian, wiadomości stałej
- * długości (per typ). Zwykle dostarczany przez UDP multicast w obramowaniu
- * MoldUDP64 (patrz multicast/multicast.hpp).
+ * ITCH = NASDAQ's market data feed. Binary, big-endian, fixed-length messages
+ * (per type). Usually delivered over UDP multicast framed in MoldUDP64
+ * (see multicast/multicast.hpp).
  *
- * Parsowanie market data jest na krytycznej ścieżce — każda nanosekunda
- * zaoszczędzona tu = lepsze ceny w strategii. Zero alokacji, zero kopii,
- * direct big-endian decode przez be64toh.
+ * Parsing market data is on the critical path — every nanosecond saved here =
+ * better prices in the strategy. Zero allocation, zero copy,
+ * direct big-endian decode via be64toh.
  *
- * Wydajność (lab): ~60M msg/sec, 16 ns/msg, p50=40ns, p99=50ns.
+ * Performance (lab): ~60M msg/sec, 16 ns/msg, p50=40ns, p99=50ns.
  *
- * Typy wiadomości i ich rozmiar wire (bajty):
+ * Message types and their wire size (bytes):
  *   A = ADD_ORDER       34
  *   F = ADD_ORDER_MPID  38
  *   D = DELETE_ORDER    17
@@ -22,61 +22,53 @@
  *   S = SYSTEM_EVENT    10
  *   R = STOCK_DIRECTORY 18
  *
- * Walidacja długości: parse() sprawdza `len >= expected_size[type]` przed
- * każdym typem (linie 323/342/364... — patrz parse_add_order etc.). Krótszy
- * bufor → MsgType::ERROR, nie out-of-bounds read.
+ * Length validation: parse() checks `len >= expected_size[type]` before
+ * each type (see parse_add_order etc.). A shorter
+ * buffer → MsgType::ERROR, not an out-of-bounds read.
  */
 
 #pragma once
 
-#include <cstdint>   // typy całkowite o stałym rozmiarze
-#include <cstring>   // memcpy — kopiowanie surowych bajtów
+#include <cstdint>   // fixed-size integer types
+#include <cstring>   // memcpy — copying raw bytes
 #include <string>
-#include <endian.h>  // be64toh, be32toh — konwersja BE → native order
+#include <endian.h>  // be64toh, be32toh — BE → native order conversion
 
 
-// Helpery byte-order. ITCH używa big-endian (MSB first).
-// ITCH używa big-endian (najbardziej znaczący bajt pierwszy).
+// Byte-order helpers. ITCH uses big-endian (MSB first).
 // Intel/AMD CPUs use little-endian, so we must swap bytes.
-// Procesory Intel/AMD używają little-endian, więc musimy zamieniać bajty.
 //
 // We use memcpy() before swapping to avoid "unaligned access" crashes.
-// Używamy memcpy() przed zamianą, aby uniknąć błędów "unaligned access".
 // (Data in a packet stream is not guaranteed to be aligned to word boundaries)
-// (Dane w strumieniu pakietów nie są gwarantowane na granicach słów)
 
 // Read a big-endian 64-bit integer from a raw byte pointer
-// Odczytaj 64-bitową liczbę całkowitą big-endian ze wskaźnika na surowe bajty
 static inline int64_t read_be64(const uint8_t* p) {
     uint64_t v;
-    memcpy(&v, p, 8);          // copy 8 bytes into v safely / bezpiecznie skopiuj 8 bajtów do v
-    return (int64_t)be64toh(v); // swap byte order if needed / zamień kolejność bajtów jeśli potrzeba
+    memcpy(&v, p, 8);          // copy 8 bytes into v safely
+    return (int64_t)be64toh(v); // swap byte order if needed
 }
 
 // Read a big-endian 32-bit unsigned integer
-// Odczytaj 32-bitową nieznakową liczbę całkowitą big-endian
 static inline uint32_t read_be32(const uint8_t* p) {
     uint32_t v;
     memcpy(&v, p, 4);
     return be32toh(v);
 }
 
-// Struktury wiadomości — jeden POD per typ ITCH'a, pakowane przez parsery niżej.
-// Pomyśl o tym jak o wierszu w tabeli bazy danych — stały zestaw pól.
+// Message structs — one POD per ITCH type, packed by the parsers below.
+// Think of it like a row in a database table — a fixed set of fields.
 
 // ADD_ORDER message: someone placed a new limit order in the book
-// Wiadomość ADD_ORDER: ktoś złożył nowe zlecenie z limitem ceny
 struct AddOrderMsg {
-    int64_t  timestamp_ns;  // nanoseconds since midnight / nanosekundy od północy
-    int64_t  order_ref;     // unique order ID (like PID for processes) / unikalny ID zlecenia
-    char     side;          // 'B' = BUY / KUP,  'S' = SELL / SPRZEDAJ
-    uint32_t shares;        // number of shares / liczba akcji
-    char     stock[9];      // stock symbol e.g. "AAPL\0" (8 chars + null) / symbol akcji
-    double   price;         // price in dollars e.g. 150.25 / cena w dolarach
+    int64_t  timestamp_ns;  // nanoseconds since midnight
+    int64_t  order_ref;     // unique order ID (like PID for processes)
+    char     side;          // 'B' = BUY,  'S' = SELL
+    uint32_t shares;        // number of shares
+    char     stock[9];      // stock symbol e.g. "AAPL\0" (8 chars + null)
+    double   price;         // price in dollars e.g. 150.25
 };
 
 // ADD_ORDER_MPID message: like ADD_ORDER but includes Market Participant ID (who placed it)
-// Wiadomość ADD_ORDER_MPID: jak ADD_ORDER ale zawiera ID uczestnika rynku
 struct AddOrderMpidMsg {
     int64_t  timestamp_ns;
     int64_t  order_ref;
@@ -85,45 +77,39 @@ struct AddOrderMpidMsg {
     char     stock[9];
     double   price;
     char     mpid[5];       // Market Participant ID e.g. "GSCO" (Goldman Sachs) + null
-                            // Identyfikator uczestnika rynku np. "GSCO" + null
 };
 
 // DELETE_ORDER message: an order was cancelled/removed from the book
-// Wiadomość DELETE_ORDER: zlecenie zostało anulowane/usunięte z booka
 struct DeleteOrderMsg {
     int64_t timestamp_ns;
-    int64_t order_ref;      // which order to remove / które zlecenie usunąć
+    int64_t order_ref;      // which order to remove
 };
 
 // REPLACE_ORDER message: modify an existing order (new price/size)
-// Wiadomość REPLACE_ORDER: modyfikuj istniejące zlecenie (nowa cena/rozmiar)
 struct ReplaceOrderMsg {
     int64_t  timestamp_ns;
-    int64_t  orig_order_ref; // original order being replaced / oryginalne zastępowane zlecenie
-    int64_t  new_order_ref;  // new order reference / nowa referencja zlecenia
-    uint32_t new_shares;     // updated quantity / zaktualizowana ilość
-    double   new_price;      // updated price / zaktualizowana cena
+    int64_t  orig_order_ref; // original order being replaced
+    int64_t  new_order_ref;  // new order reference
+    uint32_t new_shares;     // updated quantity
+    double   new_price;      // updated price
 };
 
 // ORDER_EXECUTED message: a fill happened — shares traded
-// Wiadomość ORDER_EXECUTED: realizacja — akcje zostały sprzedane/kupione
 struct OrderExecutedMsg {
     int64_t  timestamp_ns;
-    int64_t  order_ref;      // which order was filled / które zlecenie zostało zrealizowane
-    uint32_t exec_shares;    // how many shares traded / ile akcji zostało skonsumowanych
-    int64_t  match_number;   // unique trade ID / unikalny ID transakcji
+    int64_t  order_ref;      // which order was filled
+    uint32_t exec_shares;    // how many shares traded
+    int64_t  match_number;   // unique trade ID
 };
 
 // ORDER_CANCELLED message: partial cancellation (reduces shares remaining)
-// Wiadomość ORDER_CANCELLED: częściowe anulowanie (zmniejsza pozostałą ilość)
 struct OrderCancelledMsg {
     int64_t  timestamp_ns;
     int64_t  order_ref;
-    uint32_t cancelled_shares; // how many shares removed / ile akcji usunięto
+    uint32_t cancelled_shares; // how many shares removed
 };
 
 // TRADE message: a matched trade (both sides)
-// Wiadomość TRADE: dopasowana transakcja (obie strony)
 struct TradeMsg {
     int64_t  timestamp_ns;
     int64_t  order_ref;
@@ -135,21 +121,19 @@ struct TradeMsg {
 };
 
 // SYSTEM_EVENT message: market open/close/halted signals
-// Wiadomość SYSTEM_EVENT: sygnały otwarcia/zamknięcia/wstrzymania rynku
 struct SystemEventMsg {
     int64_t timestamp_ns;
-    char    event_code; // 'O'=open, 'C'=close, 'H'=halt / 'O'=otwarcie, 'C'=zamknięcie
+    char    event_code; // 'O'=open, 'C'=close, 'H'=halt
 };
 
 // STOCK_DIRECTORY message: stock metadata (symbol info)
-// Wiadomość STOCK_DIRECTORY: metadane akcji (informacje o symbolu)
 struct StockDirectoryMsg {
     int64_t timestamp_ns;
     char    stock[9];
-    char    market_category; // 'Q'=NASDAQ, 'N'=NYSE, etc. / kategoria rynku
+    char    market_category; // 'Q'=NASDAQ, 'N'=NYSE, etc.
 };
 
-// Enum typu wiadomości — type-safe, nie surowe inty.
+// Message-type enum — type-safe, not raw ints.
 enum class MsgType {
     ADD_ORDER,
     ADD_ORDER_MPID,
@@ -165,17 +149,13 @@ enum class MsgType {
 };
 
 // ParsedMessage: a tagged union holding ONE of the 8 message types
-// ParsedMessage: oznaczona unia przechowująca JEDEN z 8 typów wiadomości
 //
 // A 'union' shares the same memory for multiple types (only one is valid at a time)
-// 'union' dzieli tę samą pamięć dla wielu typów (tylko jeden jest ważny naraz)
 // Like a /proc file — same interface, different content depending on what you read
-// Jak plik /proc — ten sam interfejs, różna zawartość zależnie od tego co czytasz
 struct ParsedMessage {
-    MsgType type;  // tells you WHICH field in 'data' is valid / mówi które pole w 'data' jest ważne
+    MsgType type;  // tells you WHICH field in 'data' is valid
 
     // union: all fields share the same memory block
-    // union: wszystkie pola dzielą ten sam blok pamięci
     union {
         AddOrderMsg       add_order;
         AddOrderMpidMsg   add_order_mpid;
@@ -192,9 +172,8 @@ struct ParsedMessage {
 // ITCHParser — main entry: parse(buf, len) → ParsedMessage.
 class ITCHParser {
 public:
-    // Statistics tracked during parsing / Statystyki śledzone podczas parsowania
+    // Statistics tracked during parsing
     // (public struct inside a class — members accessible from outside)
-    // (publiczna struktura wewnątrz klasy — dostępna z zewnątrz)
     struct Stats {
         uint64_t total_parsed   = 0;
         uint64_t add_orders     = 0;
@@ -208,38 +187,30 @@ public:
     };
 
     // Constructor: called when ITCHParser is created, initialises stats to zero
-    // Konstruktor: wywoływany przy tworzeniu ITCHParser, inicjalizuje statystyki do zera
     // 'noexcept' means this function will never throw an exception (faster)
-    // 'noexcept' oznacza że ta funkcja nigdy nie rzuci wyjątku (szybciej)
     ITCHParser() noexcept = default;
 
     // parse(): main entry point — reads one raw ITCH message and returns its type + data
-    // parse(): główny punkt wejścia — odczytuje jedną surową wiadomość ITCH i zwraca jej typ + dane
     //
-    // Parameters / Parametry:
-    //   data — pointer to raw bytes (the network packet / surowe bajty pakietu sieciowego)
-    //   len  — number of bytes available / dostępna liczba bajtów
-    // Returns / Zwraca:
+    // Parameters:
+    //   data — pointer to raw bytes (the network packet)
+    //   len  — number of bytes available
+    // Returns:
     //   ParsedMessage with .type and .data filled in
-    //   ParsedMessage z wypełnionym .type i .data
     //
     // 'const uint8_t*' means: pointer to bytes that we won't modify (read-only)
-    // 'const uint8_t*' oznacza: wskaźnik do bajtów, których nie zmodyfikujemy (tylko do odczytu)
     ParsedMessage parse(const uint8_t* data, size_t len) noexcept {
         ParsedMessage result{};
         result.type = MsgType::ERROR;
 
         // Need at least 1 byte to read the message type
-        // Potrzebujemy co najmniej 1 bajtu żeby odczytać typ wiadomości
         if (len < 1) return result;
 
         // First byte is always the message type character ('A', 'D', 'U', etc.)
-        // Pierwszy bajt to zawsze znak typu wiadomości ('A', 'D', 'U' itp.)
         uint8_t msg_type = data[0];
         stats_.total_parsed++;
 
         // Switch statement: like a chain of if/elif, but compiled to a jump table (faster)
-        // Instrukcja switch: jak łańcuch if/elif, ale skompilowana do tablicy skoków (szybciej)
         switch (msg_type) {
             case 'A': result = parse_add_order(data, len);       stats_.add_orders++;     break;
             case 'F': result = parse_add_order_mpid(data, len);  stats_.add_orders++;     break;
@@ -258,29 +229,22 @@ public:
     }
 
     // const Stats& means: return a reference to stats (no copy), and don't allow modification
-    // const Stats& oznacza: zwróć referencję do statystyk (bez kopiowania), bez możliwości modyfikacji
     const Stats& stats() const noexcept { return stats_; }
 
     // Reset counters (e.g., at start of new trading day)
-    // Zresetuj liczniki (np. na początku nowego dnia handlowego)
     void reset_stats() noexcept { stats_ = Stats{}; }
 
 private:
     // Private member: only accessible from inside this class (like a local variable for the object)
-    // Prywatna składowa: dostępna tylko z wnętrza tej klasy
     // The trailing underscore is a naming convention for private member variables
-    // Podkreślenie na końcu to konwencja nazewnictwa dla prywatnych zmiennych składowych
     Stats stats_;
 
     // ── Individual message parsers ────────────────────────────────────────
     // inline: hint to compiler to expand this code in-place instead of calling it
-    // inline: wskazówka dla kompilatora żeby rozwinął ten kod w miejscu zamiast go wywoływać
     // (eliminates function call overhead — every nanosecond matters in HFT)
-    // (eliminuje narzut wywołania funkcji — każda nanosekunda ma znaczenie w HFT)
 
     static inline ParsedMessage parse_add_order(const uint8_t* d, size_t len) noexcept {
         // ADD_ORDER layout (34 bytes total):
-        // Układ ADD_ORDER (łącznie 34 bajty):
         // [0]    = msg_type  'A'     (1 byte)
         // [1..8] = timestamp_ns      (8 bytes, big-endian int64)
         // [9..16]= order_ref         (8 bytes, big-endian int64)
@@ -296,17 +260,16 @@ private:
 
         msg.timestamp_ns = read_be64(d + 1);
         msg.order_ref    = read_be64(d + 9);
-        msg.side         = (char)d[17];            // 'B' or 'S' / 'B' lub 'S'
+        msg.side         = (char)d[17];            // 'B' or 'S'
         msg.shares       = read_be32(d + 18);
-        memcpy(msg.stock, d + 22, 8);              // copy 8 bytes of stock name / skopiuj 8 bajtów nazwy akcji
-        msg.stock[8]     = '\0';                    // null-terminate the string / zakończ ciąg znakiem null
-        msg.price        = read_be32(d + 30) / 10000.0; // convert fixed-point to float / konwertuj stałoprzecinkowy na zmiennoprzecinkowy
+        memcpy(msg.stock, d + 22, 8);              // copy 8 bytes of stock name
+        msg.stock[8]     = '\0';                    // null-terminate the string
+        msg.price        = read_be32(d + 30) / 10000.0; // convert fixed-point to float
         return m;
     }
 
     static inline ParsedMessage parse_add_order_mpid(const uint8_t* d, size_t len) noexcept {
         // ADD_ORDER_MPID layout (38 bytes): same as ADD_ORDER + 4-byte MPID at end
-        // Układ ADD_ORDER_MPID (38 bajtów): jak ADD_ORDER + 4-bajtowy MPID na końcu
         ParsedMessage m{};
         if (len < 38) { m.type = MsgType::ERROR; return m; }
 
