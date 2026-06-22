@@ -790,6 +790,24 @@ public:
         return std::abs(cur + signed_qty(side, qty));
     }
 
+    // would_breach_position: pre-trade predicate — would this order breach the
+    // per-symbol position limit (#291)? Mirrors check_order's position check exactly
+    // (asymmetric long_cap vs short_cap #106, per-symbol override #161) but is const
+    // and side-effect-free — no stats, no latency accounting. For what-if sizing
+    // before committing. false when the cap is disabled.
+    bool would_breach_position(const char* symbol, Side side, int32_t qty) const noexcept {
+        const uint64_t k = sym_to_key(symbol);
+        int32_t long_cap = limits_.max_position_per_symbol;
+        if (const auto ov = symbol_pos_limit_.find(k); ov != symbol_pos_limit_.end())
+            long_cap = ov->second;
+        if (long_cap <= 0) return false;
+        const int32_t projected = lookup(positions_, k) + lookup(pending_, k) + signed_qty(side, qty);
+        if (projected >= 0) return projected > long_cap;
+        const int32_t short_cap = (limits_.max_short_per_symbol > 0)
+            ? limits_.max_short_per_symbol : long_cap;
+        return -projected > short_cap;
+    }
+
     int32_t headroom_shares(const char* symbol, Side side) const noexcept {
         const uint64_t k = sym_to_key(symbol);
         int32_t cap = limits_.max_position_per_symbol;

@@ -3306,6 +3306,13 @@ void test_risk_price_band() {
     ASSERT(rpe.projected_exposure("AAPL", Side::SELL, 500) == 200, "projexp_flip"); // |300-500|
     ASSERT(rpe.projected_exposure("MSFT", Side::BUY, 100) == 100, "projexp_fresh");
 
+    // #291 would_breach_position (cap 1000; AAPL already +300 from #259 setup).
+    ASSERT(!rpe.would_breach_position("AAPL", Side::BUY, 700), "breach_at_cap_ok");   // 300+700=1000
+    ASSERT(rpe.would_breach_position("AAPL", Side::BUY, 701), "breach_over_cap");     // 1001 > 1000
+    ASSERT(!rpe.would_breach_position("AAPL", Side::SELL, 100), "breach_sell_ok");    // 200
+    ASSERT(!rpe.would_breach_position("MSFT", Side::BUY, 1000), "breach_fresh_at_cap"); // exactly cap
+    ASSERT(rpe.would_breach_position("MSFT", Side::BUY, 1001), "breach_fresh_over");
+
     // #189 limit wartosci pozycji per symbol ($10k; shares hojne).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;
