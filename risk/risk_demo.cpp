@@ -1,11 +1,10 @@
 /*
  * Risk Manager Demo & Benchmark — C++ Implementation
- * Demo i Benchmark Menedżera Ryzyka — implementacja C++
  *
- * Compile / Kompilacja:
+ * Compile:
  *   g++ -O2 -std=c++17 -Wall -Wextra -o risk_demo risk_demo.cpp
  *
- * Run / Uruchomienie:
+ * Run:
  *   ./risk_demo [number_of_checks]   # default: 1,000,000
  */
 
@@ -138,7 +137,7 @@ void test_kill_switch_deactivate() {
     ASSERT(r.action == RiskAction::ALLOW, "test_kill_switch_deactivate");
 }
 
-// Persistencja kill switcha — restart procesu nie może obejść trip'a.
+// Kill-switch persistence — a process restart cannot bypass the trip.
 void test_kill_switch_persistence() {
     const char* path = "/tmp/hft_risk_persist_test.txt";
     std::remove(path);

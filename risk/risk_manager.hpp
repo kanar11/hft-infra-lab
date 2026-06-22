@@ -1,64 +1,64 @@
 /*
  * ============================================================================
- *  Risk Manager — Menedżer Ryzyka (C++)
+ *  Risk Manager (C++)
  * ============================================================================
  *
- *  STRESZCZENIE
- *  ------------
- *  Menedżer ryzyka jest "bramkarzem" na hot-pathie zleceń: każde zlecenie
- *  z `strategy` lub `router` MUSI przejść przez `check_order()` zanim trafi
- *  do `OMS`. Jeśli kontrola odmówi, zlecenie nigdy nie idzie na giełdę.
+ *  SUMMARY
+ *  -------
+ *  The risk manager is the "gatekeeper" on the order hot path: every order
+ *  from `strategy` or `router` MUST pass through `check_order()` before it
+ *  reaches `OMS`. If the check refuses, the order never goes to the exchange.
  *
- *  Miejsce w potoku:
+ *  Place in the pipeline:
  *      Strategy → Router → **Risk Manager** → OMS → Exchange
  *
- *  ARCHITEKTURA — TRZY STANY
- *  -------------------------
- *  Klasa trzyma trzy ortogonalne grupy stanu, każda ma własny cel:
+ *  ARCHITECTURE — THREE STATES
+ *  ---------------------------
+ *  The class holds three orthogonal groups of state, each with its own purpose:
  *
- *  1. Pozycje (positions_ + pending_)
- *     Co aktualnie mamy + co właśnie wysłaliśmy na giełdę ale jeszcze
- *     niezrealizowane. positions_[s] aktualizuje się TYLKO przy fillu;
- *     pending_[s] rośnie przy submit, maleje przy fill lub cancel.
+ *  1. Positions (positions_ + pending_)
+ *     What we currently hold + what we just sent to the exchange but is not
+ *     yet filled. positions_[s] updates ONLY on a fill;
+ *     pending_[s] grows on submit, shrinks on fill or cancel.
  *
  *  2. P&L (daily_pnl_ + peak_pnl_)
- *     daily_pnl_ to suma realizowanych zysków/strat od początku sesji.
- *     peak_pnl_ to maksimum osiągnięte — punkt odniesienia dla drawdown.
+ *     daily_pnl_ is the sum of realized profit/loss since the start of the session.
+ *     peak_pnl_ is the maximum reached — the reference point for drawdown.
  *
  *  3. Rate limiter (order_timestamps_)
- *     Kołowa kolejka znaczników czasu ostatnich zleceń. Stare wpisy
- *     (> 1s) są wyrzucane przy każdym check, więc rozmiar tej kolejki
- *     to liczba zleceń w ostatniej sekundzie.
+ *     A circular queue of timestamps of the most recent orders. Stale entries
+ *     (> 1s) are evicted on every check, so the size of this queue is the
+ *     number of orders in the last second.
  *
- *  Plus jedna **denormalizowana** wartość dla wydajności:
+ *  Plus one **denormalized** value for performance:
  *      total_abs_exposure_ = sum_s |positions_[s] + pending_[s]|
- *  Utrzymywana jako niezmiennik przez `adjust_pending()`. Dzięki temu
- *  sprawdzenie ekspozycji portfela w `check_order()` jest O(1) zamiast
- *  O(liczba_symboli).
+ *  Maintained as an invariant by `adjust_pending()`. Thanks to it the
+ *  portfolio-exposure check in `check_order()` is O(1) instead of
+ *  O(number_of_symbols).
  *
- *  KILL SWITCH — MASZYNA STANÓW
- *  ----------------------------
- *  kill_switch_active_ ma tylko dwa stany: false (handel włączony) i
- *  true (wszystko odrzucone). Aktywuje się na 3 sposoby:
+ *  KILL SWITCH — STATE MACHINE
+ *  ---------------------------
+ *  kill_switch_active_ has only two states: false (trading enabled) and
+ *  true (everything rejected). It activates in 3 ways:
  *      - circuit breaker: daily_pnl_ < -max_daily_loss
  *      - drawdown breach: (peak - daily) / peak > max_drawdown_pct
- *      - manualnie: activate_kill_switch()
- *  Wyłącza się na 2 sposoby:
- *      - reset_daily() (np. na początku nowej sesji)
- *      - deactivate_kill_switch() (manualnie, np. po naprawie problemu)
+ *      - manually: activate_kill_switch()
+ *  It deactivates in 2 ways:
+ *      - reset_daily() (e.g. at the start of a new session)
+ *      - deactivate_kill_switch() (manually, e.g. after fixing the problem)
  *
- *  WYDAJNOŚĆ
- *  ---------
- *  Każdy `check_order()` wykonuje 7 kontroli w O(1):
- *      1. kill switch              — atomic bool read
- *      2. wartość zlecenia          — int * int compare
- *      3. limit pozycji per-symbol  — 2× hash lookup + abs
- *      4. ekspozycja portfela       — 1× hash lookup + 1× int subtract/add
+ *  PERFORMANCE
+ *  -----------
+ *  Each `check_order()` performs 7 checks in O(1):
+ *      1. kill switch               — atomic bool read
+ *      2. order value               — int * int compare
+ *      3. per-symbol position limit — 2× hash lookup + abs
+ *      4. portfolio exposure        — 1× hash lookup + 1× int subtract/add
  *      5. circuit breaker           — 1× double compare
  *      6. drawdown                  — 1× float divide
- *      7. rate limit                — pop_front pętla + size compare
+ *      7. rate limit                — pop_front loop + size compare
  *
- *  Python equivalent osiągał ~200K checks/sec; ta wersja C++ osiąga
+ *  The Python equivalent reached ~200K checks/sec; this C++ version reaches
  *  ~30-50M checks/sec.
  * ============================================================================
  */
@@ -74,7 +74,7 @@
 #include <cstdlib>     // std::remove
 #include <cmath>
 #include <string>      // persist_path_
-#include <atomic>      // kill switch — czytany/pisany z wielu wątków (threaded pipeline)
+#include <atomic>      // kill switch — read/written from multiple threads (threaded pipeline)
 #include <unistd.h>    // ::fsync, ::fileno
 
 #include "../common/types.hpp"
@@ -83,17 +83,17 @@
 
 
 // ============================================================================
-// RiskAction — co menedżer ryzyka decyduje dla zlecenia
+// RiskAction — what the risk manager decides for an order
 // ============================================================================
 //
-// ALLOW  : zlecenie może iść dalej do OMS
-// REJECT : pojedyncze zlecenie odrzucone (nie zmienia stanu menedżera)
-// KILL   : krytyczne — kill switch został aktywowany, kolejne zlecenia
-//          też będą REJECT dopóki nie wywołasz deactivate_kill_switch()
-//          lub reset_daily()
+// ALLOW  : the order may proceed to the OMS
+// REJECT : a single order rejected (does not change manager state)
+// KILL   : critical — the kill switch has been activated, subsequent orders
+//          will also be REJECT until you call deactivate_kill_switch()
+//          or reset_daily()
 //
-// Reprezentacja jako uint8_t (1 bajt) — w packed struct RiskCheckResult
-// nie marnujemy pamięci.
+// Represented as uint8_t (1 byte) — in the packed RiskCheckResult struct
+// we do not waste memory.
 // ============================================================================
 
 enum class RiskAction : uint8_t {
@@ -102,7 +102,7 @@ enum class RiskAction : uint8_t {
     KILL   = 2
 };
 
-// action_str: konwersja enum → string dla printf/log
+// action_str: convert enum → string for printf/log
 inline const char* action_str(RiskAction a) noexcept {
     switch (a) {
         case RiskAction::ALLOW:  return "ALLOW";
@@ -113,14 +113,14 @@ inline const char* action_str(RiskAction a) noexcept {
 }
 
 
-// KillReason — DLACZEGO kill switch się zatrzasnął (#121). Do post-mortem/ops:
-// odrozni manualny halt od automatycznego breakera i ktory limit go odpalil.
+// KillReason — WHY the kill switch latched (#121). For post-mortem/ops:
+// distinguishes a manual halt from an automatic breaker and which limit fired it.
 enum class KillReason : uint8_t {
-    NONE                = 0,   // kill switch nieaktywny
+    NONE                = 0,   // kill switch inactive
     MANUAL              = 1,   // activate_kill_switch() (admin)
-    CIRCUIT_BREAKER     = 2,   // dzienna strata > max_daily_loss
-    DRAWDOWN            = 3,   // spadek od peak > max_drawdown_pct
-    CONSECUTIVE_LOSSES  = 4,   // seria stratnych fillow > limit
+    CIRCUIT_BREAKER     = 2,   // daily loss > max_daily_loss
+    DRAWDOWN            = 3,   // drop from peak > max_drawdown_pct
+    CONSECUTIVE_LOSSES  = 4,   // streak of losing fills > limit
 };
 
 inline const char* kill_reason_str(KillReason r) noexcept {
@@ -136,23 +136,23 @@ inline const char* kill_reason_str(KillReason r) noexcept {
 
 
 // ============================================================================
-// RiskCheckResult — co `check_order()` zwraca
+// RiskCheckResult — what `check_order()` returns
 // ============================================================================
 //
-// Pola:
-//   action     : decyzja (ALLOW / REJECT / KILL)
-//   reason     : krótki opis dlaczego (np. "Position limit exceeded").
-//                Bufor o stałym rozmiarze 128 bajtów — bez alokacji
-//                na stercie, kopiowane przez strncpy. Krótkie powody
-//                (do ~50 znaków) mieszczą się z zapasem.
-//   latency_ns : ile nanosekund zajęła sama kontrola (mono_ns z common/).
-//                Używane do agregacji statystyk wydajności.
+// Fields:
+//   action     : decision (ALLOW / REJECT / KILL)
+//   reason     : a short description of why (e.g. "Position limit exceeded").
+//                A fixed-size 128-byte buffer — no heap allocation,
+//                copied via strncpy. Short reasons
+//                (up to ~50 chars) fit with room to spare.
+//   latency_ns : how many nanoseconds the check itself took (mono_ns from common/).
+//                Used to aggregate performance statistics.
 //
-// Konstruktor domyślny → ALLOW z pustym powodem (sensowny default jeśli
-// ktoś po prostu deklaruje `RiskCheckResult r;`).
+// Default constructor → ALLOW with an empty reason (a sensible default if
+// someone simply declares `RiskCheckResult r;`).
 //
-// Konstruktor z 3 argumentami → przyjmuje wszystko, bezpiecznie kopiuje
-// powód (strncpy + null terminator).
+// The 3-argument constructor → takes everything, safely copies the
+// reason (strncpy + null terminator).
 // ============================================================================
 
 struct RiskCheckResult {
@@ -174,21 +174,21 @@ struct RiskCheckResult {
 
 
 // ============================================================================
-// RiskLimits — konfigurowalne progi
+// RiskLimits — configurable thresholds
 // ============================================================================
 //
-// Wszystkie te pola czyta tylko `RiskManager`. Wartości domyślne pasują
-// do "rozsądnej średniej firmy" — produkcyjnie ładujesz z config.yaml
-// przez config_loader.hpp.
+// All of these fields are read only by `RiskManager`. The defaults match
+// a "reasonable mid-size firm" — in production you load them from config.yaml
+// via config_loader.hpp.
 //
-// max_position_per_symbol : ile akcji jednego tickera maksymalnie
-//                            możesz mieć long lub short (abs(net) ≤ limit)
-// max_portfolio_exposure  : suma absolutnych pozycji po wszystkich tickerach
-// max_daily_loss          : dzienny limit straty w dolarach — przekroczenie
-//                            włącza kill switch (circuit breaker)
-// max_orders_per_second   : rate limit, deque pruning okno 1-sek
-// max_order_value         : maksymalna wartość JEDNEGO zlecenia (cena × qty)
-// max_drawdown_pct        : maksymalny % spadek od peak_pnl_, np. 5.0 = 5%
+// max_position_per_symbol : how many shares of one ticker you can hold long
+//                            or short at most (abs(net) ≤ limit)
+// max_portfolio_exposure  : sum of absolute positions over all tickers
+// max_daily_loss          : daily loss limit in dollars — exceeding it
+//                            turns on the kill switch (circuit breaker)
+// max_orders_per_second   : rate limit, deque pruning over a 1-sec window
+// max_order_value         : the maximum value of ONE order (price × qty)
+// max_drawdown_pct        : maximum % drop from peak_pnl_, e.g. 5.0 = 5%
 // ============================================================================
 
 struct RiskLimits {
@@ -198,32 +198,32 @@ struct RiskLimits {
     int32_t  max_orders_per_second;
     int64_t  max_order_value;
     double   max_drawdown_pct;
-    // Fat-finger / price-band: maks. % odchylenia ceny zlecenia od ceny
-    // referencyjnej symbolu (last/mid z market data). ≤ 0 = wyłączony.
-    // 20% = standardowy luźny band (NMS LULD jest ciaśniejszy per-tier, ale
-    // ten check łapie głównie grube pomyłki: 1500 zamiast 150).
+    // Fat-finger / price-band: max % deviation of the order price from the
+    // symbol's reference price (last/mid from market data). ≤ 0 = disabled.
+    // 20% = a standard loose band (NMS LULD is tighter per-tier, but this
+    // check mainly catches gross mistakes: 1500 instead of 150).
     double   max_price_band_pct;
-    // Fat-finger na ILOSC: max akcji w JEDNYM zleceniu, niezaleznie od ceny
-    // (notional moze byc maly przy taniej akcji, a 10M szt. to nadal pomylka).
-    // 0 = wylaczony.
+    // Fat-finger on QUANTITY: max shares in ONE order, regardless of price
+    // (notional can be small for a cheap stock, but 10M shares is still a mistake).
+    // 0 = disabled.
     int32_t  max_shares_per_order;
-    // Osobny (ciaśniejszy) limit pozycji KROTKIEJ per symbol. 0 = symetria
-    // (uzyj max_position_per_symbol po obu stronach).
+    // A separate (tighter) SHORT position limit per symbol. 0 = symmetric
+    // (use max_position_per_symbol on both sides).
     int32_t  max_short_per_symbol;
-    // Bezpiecznik serii strat: N kolejnych stratnych fillow (update_pnl<0) z
-    // rzedu trip'uje kill switch. Lapie "death spiral" zanim drawdown urosnie.
-    // 0 = wylaczony.
+    // Loss-streak breaker: N consecutive losing fills (update_pnl<0) in a row
+    // trips the kill switch. Catches a "death spiral" before the drawdown grows.
+    // 0 = disabled.
     int32_t  max_consecutive_losses;
-    // Dzienny limit OBROTU (suma nominalna zrealizowanych transakcji, $).
-    // Lapie nadmierna aktywnosc/churn niezaleznie od pozycji. 0 = wylaczony.
+    // Daily TURNOVER limit (sum of notional of executed trades, $).
+    // Catches excessive activity/churn regardless of position. 0 = disabled.
     double   max_daily_traded_notional;
-    // Minimalna dopuszczalna cena zlecenia ($). Blokuje penny-stocki (czesto
-    // objete restrykcjami: gorszy spread, ryzyko manipulacji) oraz grube pomylki
-    // typu 0.15 zamiast 150. 0 = wylaczony.
+    // Minimum allowed order price ($). Blocks penny stocks (often subject to
+    // restrictions: worse spread, manipulation risk) and gross mistakes like
+    // 0.15 instead of 150. 0 = disabled.
     double   min_price;
-    // Limit WARTOSCI ($) zagregowanej pozycji per symbol: |projected| * cena.
-    // Lapie drogie symbole, ktorych shares-owy max_position_per_symbol nie
-    // ogranicza wartosciowo (100 szt. po $3000 to $300k). 0 = wylaczony.
+    // VALUE ($) limit of the aggregated per-symbol position: |projected| * price.
+    // Catches expensive symbols whose share-based max_position_per_symbol does not
+    // bound by value (100 shares at $3000 is $300k). 0 = disabled.
     double   max_symbol_notional;
 
     RiskLimits() noexcept
@@ -244,26 +244,26 @@ struct RiskLimits {
 
 
 // ============================================================================
-// RiskManager — główna klasa
+// RiskManager — the main class
 // ============================================================================
 //
-// API podzielone na trzy grupy:
+// API split into three groups:
 //
-//   Hot path (wywoływane przez strategy / router / OMS na każde zlecenie):
+//   Hot path (called by strategy / router / OMS on every order):
 //     check_order(symbol, side, price, qty) → RiskCheckResult
 //
-//   Stan mutators (wywoływane po pozytywnej kontroli + akcji giełdowej):
-//     on_order_sent(symbol, side, qty)        — rezerwacja pending
-//     on_order_cancelled(symbol, side, rem)   — zwolnienie pending
-//     update_position(symbol, side, qty)      — przepływ pending→realized
-//     update_pnl(pnl_change)                  — wpisanie zysku/straty
+//   State mutators (called after a positive check + exchange action):
+//     on_order_sent(symbol, side, qty)        — reserve pending
+//     on_order_cancelled(symbol, side, rem)   — release pending
+//     update_position(symbol, side, qty)      — pending→realized flow
+//     update_pnl(pnl_change)                  — record profit/loss
 //
-//   Sterowanie (admin / nowa sesja):
-//     activate_kill_switch()       — wymuś stan KILL
-//     deactivate_kill_switch()     — pozwól wrócić do handlu
-//     reset_daily()                — nowy dzień: zeruj P&L, pending, rate limit
+//   Control (admin / new session):
+//     activate_kill_switch()       — force the KILL state
+//     deactivate_kill_switch()     — allow trading to resume
+//     reset_daily()                — new day: zero P&L, pending, rate limit
 //
-//   Accessory (debug / monitoring):
+//   Accessors (debug / monitoring):
 //     get_position(symbol), get_pending(symbol), get_daily_pnl(),
 //     get_total_checks(), get_total_rejects(), is_kill_switch_active(),
 //     print_stats()
@@ -272,89 +272,89 @@ struct RiskLimits {
 class RiskManager {
 
     // --------------------------------------------------------------------
-    // Stan: progi (czytane na każdy check_order)
+    // State: thresholds (read on every check_order)
     // --------------------------------------------------------------------
     RiskLimits limits_;
 
     // --------------------------------------------------------------------
-    // Stan: pozycje
+    // State: positions
     //
-    // positions_[key]  = zrealizowana ilość (signed) — aktualizowana
-    //                    tylko w update_position() po fillu
-    // pending_[key]    = ilość w locie (signed: BUY = +qty, SELL = -qty)
-    //                    rośnie przy on_order_sent, maleje przy
-    //                    on_order_cancelled lub update_position
+    // positions_[key]  = realized quantity (signed) — updated
+    //                    only in update_position() after a fill
+    // pending_[key]    = in-flight quantity (signed: BUY = +qty, SELL = -qty)
+    //                    grows on on_order_sent, shrinks on
+    //                    on_order_cancelled or update_position
     //
-    // Klucz = sym_to_key(const char*) z common/symbol_key.hpp.
-    // Packed uint64_t (do 8 znaków ASCII jako bity) — bez alokacji
-    // std::string przy każdym lookup. Ten sam schemat co OMS.
+    // Key = sym_to_key(const char*) from common/symbol_key.hpp.
+    // Packed uint64_t (up to 8 ASCII chars as bits) — no std::string
+    // allocation on every lookup. Same scheme as OMS.
     // --------------------------------------------------------------------
     std::unordered_map<uint64_t, int32_t> positions_;
     std::unordered_map<uint64_t, int32_t> pending_;
 
     // --------------------------------------------------------------------
-    // Stan: denormalizowana ekspozycja portfela
+    // State: denormalized portfolio exposure
     //
     // total_abs_exposure_ = sum_s |positions_[s] + pending_[s]|
     //
-    // Utrzymywane jako niezmiennik przez `adjust_pending()`. Bez tego
-    // sprawdzenie #4 w check_order musiałoby iterować po wszystkich
-    // symbolach — O(N). Z niezmiennikiem to O(1).
+    // Maintained as an invariant by `adjust_pending()`. Without it,
+    // check #4 in check_order would have to iterate over all
+    // symbols — O(N). With the invariant it is O(1).
     // --------------------------------------------------------------------
     int64_t total_abs_exposure_;
 
     // --------------------------------------------------------------------
-    // Stan: P&L
+    // State: P&L
     //
-    // daily_pnl_ : skumulowany realizowany P&L od początku dnia
-    // peak_pnl_  : najwyższe daily_pnl_ widziane do tej pory (do drawdown)
+    // daily_pnl_ : cumulative realized P&L since the start of the day
+    // peak_pnl_  : the highest daily_pnl_ seen so far (for drawdown)
     //
-    // Aktualizowane przez update_pnl(). Resetowane przez reset_daily().
+    // Updated by update_pnl(). Reset by reset_daily().
     // --------------------------------------------------------------------
     double daily_pnl_;
     double peak_pnl_;
-    int32_t consec_losses_ = 0;   // seria stratnych update_pnl (#114)
-    double  traded_notional_ = 0.0;  // dzienny obrot nominalny (#144)
+    int32_t consec_losses_ = 0;   // streak of losing update_pnl (#114)
+    double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
-    // Stan: kill switch + opcjonalna persistencja
+    // State: kill switch + optional persistence
     // --------------------------------------------------------------------
-    // atomic — w run_pipeline_threaded check_order (wątek konsumenta) czyta
-    // równolegle z zapisem przez breaker/manual. Plain bool = data race (UB);
-    // komentarz w check_order od początku zakładał "atomic bool read".
+    // atomic — in run_pipeline_threaded check_order (the consumer thread) reads
+    // concurrently with writes by the breaker/manual path. A plain bool = data race (UB);
+    // the comment in check_order assumed an "atomic bool read" from the start.
     std::atomic<bool> kill_switch_active_;
-    KillReason  kill_reason_ = KillReason::NONE;   // dlaczego ostatnio trip (#121)
-    std::string persist_path_;     // pusty = persistencja wyłączona
+    KillReason  kill_reason_ = KillReason::NONE;   // why it last tripped (#121)
+    std::string persist_path_;     // empty = persistence disabled
 
-    // Ceny referencyjne per symbol (last/mid z market data) dla price-bandu.
-    // Aktualizowane przez update_reference_price(); puste = check pominięty
-    // dla symboli bez znanej ceny.
+    // Reference prices per symbol (last/mid from market data) for the price band.
+    // Updated by update_reference_price(); empty = the check is skipped
+    // for symbols without a known price.
     std::unordered_map<uint64_t, double> ref_price_;
 
-    // Lista zakazanych symboli (#84) — halt giełdowy, Reg SHO restriction,
-    // brak locate na short, compliance freeze. Każde zlecenie na symbol z tej
-    // listy jest odrzucane przed pozostałymi checkami pozycji.
+    // List of restricted symbols (#84) — exchange halt, Reg SHO restriction,
+    // no locate on a short, compliance freeze. Every order on a symbol from this
+    // list is rejected before the remaining position checks.
     std::unordered_set<uint64_t> restricted_;
 
-    // Per-symbol override limitu pozycji (#161). Symbole zmienne/niepłynne czesto
-    // dostaja ciaśniejszy cap niz globalny max_position_per_symbol. Pusty wpis =
-    // uzyj globalnego.
+    // Per-symbol position-limit override (#161). Volatile/illiquid symbols often
+    // get a tighter cap than the global max_position_per_symbol. No entry =
+    // use the global one.
     std::unordered_map<uint64_t, int32_t> symbol_pos_limit_;
 
     // --------------------------------------------------------------------
-    // Stan: rate limit
+    // State: rate limit
     //
-    // Kolejka FIFO znaczników czasu (CLOCK_MONOTONIC). Przy każdym
-    // check_order ze przodu wyrzucamy wpisy starsze niż 1 sekunda; jeśli
-    // pozostały rozmiar ≥ max_orders_per_second → REJECT.
+    // A FIFO queue of timestamps (CLOCK_MONOTONIC). On every
+    // check_order we evict from the front entries older than 1 second; if
+    // the remaining size ≥ max_orders_per_second → REJECT.
     //
-    // std::deque (nie vector) bo pop_front jest O(1). Z vectorem trzeba
-    // by było erase(begin, begin+N) = O(M) za każdym razem.
+    // std::deque (not vector) because pop_front is O(1). With a vector you
+    // would have to erase(begin, begin+N) = O(M) every time.
     // --------------------------------------------------------------------
     std::deque<int64_t> order_timestamps_;
 
     // --------------------------------------------------------------------
-    // Stan: statystyki (do print_stats / monitoring)
+    // State: statistics (for print_stats / monitoring)
     // --------------------------------------------------------------------
     uint64_t total_checks_;
     uint64_t total_rejects_;
@@ -363,11 +363,11 @@ class RiskManager {
 public:
 
     // ====================================================================
-    // Konstruktor
+    // Constructor
     // ====================================================================
     //
-    // Domyślnie używa RiskLimits() (sensowne firmowe progi). Można podać
-    // własne limity ładowane z config.yaml.
+    // By default uses RiskLimits() (sensible firm thresholds). You can pass
+    // your own limits loaded from config.yaml.
     // ====================================================================
 
     explicit RiskManager(const RiskLimits& limits = RiskLimits()) noexcept
@@ -382,25 +382,25 @@ public:
 
 
     // ====================================================================
-    // check_order — siedem kontroli na hot-pathie
+    // check_order — seven checks on the hot path
     // ====================================================================
     //
-    // Kolejność checków jest świadoma — najtańsze najpierw, żeby przy
-    // odrzuceniu nie marnować pracy:
+    // The order of the checks is deliberate — cheapest first, so that on a
+    // rejection we do not waste work:
     //
-    //   1. Kill switch        : pojedynczy bool, ~1 ns
+    //   1. Kill switch        : a single bool, ~1 ns
     //   2. Order value        : multiplication + compare, ~5 ns
     //   3. Per-symbol limit   : 2× hash lookup, ~30 ns
-    //   4. Portfolio exposure : odjęcie/dodanie z niezmiennika, ~5 ns
+    //   4. Portfolio exposure : subtract/add from the invariant, ~5 ns
     //   5. Circuit breaker    : double compare, ~2 ns
     //   6. Drawdown           : divide + compare, ~5 ns
-    //   7. Rate limit         : deque pop pętla + compare, ~10-50 ns
+    //   7. Rate limit         : deque pop loop + compare, ~10-50 ns
     //
-    // Łącznie ~60-100 ns dla allow path (gorący przypadek).
+    // In total ~60-100 ns for the allow path (the hot case).
     //
-    // Zwraca RiskCheckResult z action + reason + latency_ns. NIE rzuca
-    // wyjątków (noexcept) — produkcyjny hot path nie może niespodziewanie
-    // się rozwijać stos.
+    // Returns RiskCheckResult with action + reason + latency_ns. Does NOT throw
+    // exceptions (noexcept) — a production hot path cannot unexpectedly
+    // unwind the stack.
     // ====================================================================
 
     RiskCheckResult check_order(const char* symbol, Side side,
@@ -408,29 +408,29 @@ public:
         const int64_t t0 = mono_ns();
         total_checks_++;
 
-        // 1. Kill switch — odrzuć wszystko jeśli aktywny
+        // 1. Kill switch — reject everything if active
         if (kill_switch_active_) return make_reject("Kill switch active", t0);
 
-        // 1b. Restricted symbol — halt / Reg SHO / brak locate / freeze.
+        // 1b. Restricted symbol — halt / Reg SHO / no locate / freeze.
         if (!restricted_.empty() && restricted_.count(sym_to_key(symbol)))
             return make_reject("Symbol restricted", t0);
 
-        // 2. Wartość pojedynczego zlecenia
+        // 2. Single-order value
         const int64_t order_value = static_cast<int64_t>(price * quantity);
         if (order_value > limits_.max_order_value)
             return make_reject("Order value exceeds limit", t0);
 
-        // 2a. Fat-finger na ilość — qty jednego zlecenia ponad limit.
+        // 2a. Fat-finger on quantity — single-order qty above the limit.
         if (limits_.max_shares_per_order > 0 && quantity > limits_.max_shares_per_order)
             return make_reject("Order quantity exceeds limit", t0);
 
-        // 2a'. Prog minimalnej ceny — penny-stocki / mikro-cenowe pomylki (#175).
+        // 2a'. Minimum price threshold — penny stocks / micro-price mistakes (#175).
         if (limits_.min_price > 0.0 && price < limits_.min_price)
             return make_reject("Price below minimum (penny stock)", t0);
 
-        // 2b. Price band (fat-finger) — cena zbyt daleko od referencyjnej.
-        //     Łapie grube pomyłki (np. 1500.00 zamiast 150.00) zanim trafią na
-        //     rynek. Pomijany gdy band wyłączony albo brak ceny ref dla symbolu.
+        // 2b. Price band (fat-finger) — price too far from the reference.
+        //     Catches gross mistakes (e.g. 1500.00 instead of 150.00) before they
+        //     reach the market. Skipped when the band is off or there is no ref price for the symbol.
         if (limits_.max_price_band_pct > 0.0) {
             const auto rp = ref_price_.find(sym_to_key(symbol));
             if (rp != ref_price_.end() && rp->second > 0.0) {
@@ -440,22 +440,22 @@ public:
             }
         }
 
-        // 2c. Dzienny limit obrotu — nadmierna aktywnosc/churn (#144).
+        // 2c. Daily turnover limit — excessive activity/churn (#144).
         if (limits_.max_daily_traded_notional > 0.0
             && traded_notional_ >= limits_.max_daily_traded_notional)
             return make_reject("Daily traded notional limit", t0);
 
-        // 3 + 4. Limity pozycji (per-symbol i portfolio) — wspólny lookup
+        // 3 + 4. Position limits (per-symbol and portfolio) — shared lookup
         const uint64_t key       = sym_to_key(symbol);
         const int32_t  signed_n  = signed_qty(side, quantity);
         const int32_t  cur_pos   = lookup(positions_, key);
         const int32_t  cur_pend  = lookup(pending_,   key);
         const int32_t  projected = cur_pos + cur_pend + signed_n;
-        // Limit long: per-symbol override (#161) albo globalny.
+        // Long limit: per-symbol override (#161) or global.
         int32_t long_cap = limits_.max_position_per_symbol;
         if (const auto ov = symbol_pos_limit_.find(key); ov != symbol_pos_limit_.end())
             long_cap = ov->second;
-        // Asymetryczne limity (#106): long vs short (short osobnym capem; 0 = symetria).
+        // Asymmetric limits (#106): long vs short (short has its own cap; 0 = symmetric).
         if (projected >= 0) {
             if (projected > long_cap)
                 return make_reject("Position limit exceeded", t0);
@@ -466,28 +466,28 @@ public:
                 return make_reject("Short position limit exceeded", t0);
         }
 
-        // Limit WARTOSCI pozycji per symbol (#189) — $ cap na |projected| * cena.
+        // Per-symbol position VALUE limit (#189) — $ cap on |projected| * price.
         if (limits_.max_symbol_notional > 0.0
             && std::abs(projected) * price > limits_.max_symbol_notional)
             return make_reject("Symbol notional limit", t0);
 
-        // Ekspozycja portfela: O(1) dzięki niezmiennikowi total_abs_exposure_
+        // Portfolio exposure: O(1) thanks to the total_abs_exposure_ invariant
         const int32_t old_contrib = std::abs(cur_pos + cur_pend);
         const int32_t new_contrib = std::abs(projected);
         if (total_abs_exposure_ - old_contrib + new_contrib > limits_.max_portfolio_exposure)
             return make_reject("Portfolio exposure exceeded", t0);
 
-        // 5 + 6. Kontrole P&L (circuit breaker + drawdown). Obie mogą
-        //        włączyć kill switch — wtedy następne check'i też dostaną REJECT.
+        // 5 + 6. P&L checks (circuit breaker + drawdown). Both can
+        //        turn on the kill switch — then subsequent checks also get REJECT.
         if (const char* fail = check_pnl_breakers())
             return make_reject(fail, t0);
 
-        // 7. Rate limit (oddzielny helper — czystszy main flow)
+        // 7. Rate limit (separate helper — cleaner main flow)
         const int64_t now = mono_ns();
         if (!check_rate_limit(now))
             return make_reject("Rate limit exceeded", t0);
 
-        // Wszystkie 7 kontroli przeszły
+        // All 7 checks passed
         const int64_t elapsed = mono_ns() - t0;
         total_latency_ns_ += elapsed;
         return RiskCheckResult(RiskAction::ALLOW, "All checks passed", elapsed);
@@ -498,9 +498,9 @@ public:
     // Mutator: on_order_sent
     // ====================================================================
     //
-    // Wywoływany ZA `check_order()` jeśli ALLOW i zlecenie zostało
-    // wysłane na giełdę. Rezerwuje miejsce w pending_, tak żeby kolejne
-    // check_order dla tego samego symbolu znał już "in-flight" exposure.
+    // Called AFTER `check_order()` if ALLOW and the order has been
+    // sent to the exchange. Reserves room in pending_, so that the next
+    // check_order for the same symbol already knows the "in-flight" exposure.
     //
     // BUY: pending += qty, SELL: pending -= qty.
     // ====================================================================
@@ -513,11 +513,11 @@ public:
     // Mutator: on_order_cancelled
     // ====================================================================
     //
-    // Wywoływany gdy zlecenie zostało anulowane PRZED fillem (lub
-    // częściowo wypełnione i reszta anulowana). Zwalnia tyle pending,
-    // ile nie zostało wypełnione (parametr `remaining`).
+    // Called when an order was cancelled BEFORE a fill (or
+    // partially filled and the rest cancelled). Releases as much pending
+    // as was not filled (the `remaining` parameter).
     //
-    // Algebra: odwrotny znak do on_order_sent (BUY cancel = -, SELL cancel = +).
+    // Algebra: opposite sign to on_order_sent (BUY cancel = -, SELL cancel = +).
     // ====================================================================
     void on_order_cancelled(const char* symbol, Side side, int32_t remaining) noexcept {
         adjust_pending(sym_to_key(symbol), -signed_qty(side, remaining));
@@ -528,13 +528,13 @@ public:
     // Mutator: update_position
     // ====================================================================
     //
-    // Wywoływany po fillu. Przepływ ilości z pending do positions:
+    // Called after a fill. Flow of quantity from pending to positions:
     //   positions_[s] += signed_q
     //   pending_[s]   -= signed_q
     //
-    // Suma pos+pend pozostaje BEZ ZMIAN, więc total_abs_exposure_
-    // nie wymaga aktualizacji. Po to istnieje rozdzielenie pending
-    // od positions — żeby fill nie wymagał recompute'u niezmiennika.
+    // The sum pos+pend stays UNCHANGED, so total_abs_exposure_
+    // needs no update. That is why pending is separated from positions —
+    // so that a fill does not require recomputing the invariant.
     // ====================================================================
     void update_position(const char* symbol, Side side, int32_t quantity) noexcept {
         const int32_t  signed_q = signed_qty(side, quantity);
@@ -548,17 +548,17 @@ public:
     // Mutator: update_pnl
     // ====================================================================
     //
-    // Wywoływany po każdym fillu z realizowanym P&L (delta — nie suma).
-    // Aktualizuje:
+    // Called after every fill with realized P&L (a delta — not the total).
+    // Updates:
     //   daily_pnl_ += pnl_change
     //   peak_pnl_  = max(peak_pnl_, daily_pnl_)
     //
-    // peak_pnl_ to high-water mark do liczenia drawdown w check #6.
+    // peak_pnl_ is the high-water mark for computing drawdown in check #6.
     // ====================================================================
     void update_pnl(double pnl_change) noexcept {
         daily_pnl_ += pnl_change;
         if (daily_pnl_ > peak_pnl_) peak_pnl_ = daily_pnl_;
-        // Bezpiecznik serii strat (#114): N stratnych z rzedu -> kill switch.
+        // Loss-streak breaker (#114): N losses in a row -> kill switch.
         if (pnl_change < 0.0) {
             ++consec_losses_;
             if (limits_.max_consecutive_losses > 0
@@ -568,7 +568,7 @@ public:
                 persist_state();
             }
         } else if (pnl_change > 0.0) {
-            consec_losses_ = 0;   // zysk zeruje serie
+            consec_losses_ = 0;   // a profit resets the streak
         }
     }
 
@@ -577,22 +577,22 @@ public:
     // Mutator: update_reference_price
     // ====================================================================
     //
-    // Wywoływany z market data (last trade / mid) dla price-bandu. Bez znanej
-    // ceny referencyjnej fat-finger check dla danego symbolu jest pomijany —
-    // pierwsze zlecenie na świeży symbol przechodzi, kolejne są walidowane
-    // względem ostatniej ceny.
+    // Called from market data (last trade / mid) for the price band. Without a
+    // known reference price the fat-finger check for that symbol is skipped —
+    // the first order on a fresh symbol passes, subsequent ones are validated
+    // against the last price.
     // ====================================================================
     void update_reference_price(const char* symbol, double price) noexcept {
         if (price > 0.0) ref_price_[sym_to_key(symbol)] = price;
     }
 
-    // add_traded_notional: dolicz nominal zrealizowanej transakcji ($) do
-    // dziennego obrotu (#144). Wolaj po fillu (price*qty). get do monitoringu.
+    // add_traded_notional: add the notional of an executed trade ($) to the
+    // daily turnover (#144). Call after a fill (price*qty). Getter for monitoring.
     void   add_traded_notional(double notional) noexcept { if (notional > 0.0) traded_notional_ += notional; }
     double get_traded_notional() const noexcept { return traded_notional_; }
-    // daily_turnover_pct: dzienny obrot jako % limitu max_daily_traded_notional
-    // (#221) — ile budzetu obrotu zuzyte (lustro exposure_utilization_pct #181 dla
-    // churn/aktywnosci). 0 gdy limit wylaczony.
+    // daily_turnover_pct: daily turnover as % of the max_daily_traded_notional
+    // limit (#221) — how much of the turnover budget is used (mirror of
+    // exposure_utilization_pct #181 for churn/activity). 0 when the limit is off.
     double daily_turnover_pct() const noexcept {
         if (limits_.max_daily_traded_notional <= 0.0) return 0.0;
         return traded_notional_ / limits_.max_daily_traded_notional * 100.0;
@@ -603,13 +603,13 @@ public:
     // Restricted-symbol list (#84)
     // ====================================================================
     //
-    // restrict_symbol  — wpisz symbol na listę zakazanych (halt/Reg SHO/freeze)
-    // allow_symbol     — zdejmij z listy (np. wznowienie po halt'cie)
-    // is_restricted    — czy symbol jest aktualnie zakazany
-    // clear_restricted — wyczyść całą listę (np. nowa sesja)
+    // restrict_symbol  — put a symbol on the restricted list (halt/Reg SHO/freeze)
+    // allow_symbol     — remove from the list (e.g. resume after a halt)
+    // is_restricted    — whether a symbol is currently restricted
+    // clear_restricted — clear the whole list (e.g. new session)
     // ====================================================================
-    // set_symbol_position_limit: per-symbol override limitu pozycji (#161);
-    // limit<=0 usuwa override (powrot do globalnego).
+    // set_symbol_position_limit: per-symbol position-limit override (#161);
+    // limit<=0 removes the override (back to the global one).
     void set_symbol_position_limit(const char* symbol, int32_t limit) noexcept {
         const uint64_t k = sym_to_key(symbol);
         if (limit > 0) symbol_pos_limit_[k] = limit;
@@ -625,16 +625,16 @@ public:
 
 
     // ====================================================================
-    // Kill switch — manualne sterowanie + persistencja
+    // Kill switch — manual control + persistence
     // ====================================================================
     //
-    // Po trip'ie (manualnym ALBO automatycznym przez update_pnl) zapisujemy
-    // stan na dysk. Restart procesu w trakcie dnia handlowego musi WIDZIEĆ
-    // że limit już dziś przekroczony — inaczej trader właśnie obszedł halt
-    // resetując proces. load_persisted_state() przy startupie wczytuje.
+    // After a trip (manual OR automatic via update_pnl) we save the
+    // state to disk. A process restart during the trading day must SEE
+    // that the limit was already breached today — otherwise the trader just
+    // bypassed the halt by restarting the process. load_persisted_state() reads it at startup.
     //
-    // Format pliku (text dla audytu): "active=1\nlast_pnl=-12345.67\n"
-    // Po manualnym deactivate trzeba dodatkowo wywołać clear_persisted_state().
+    // File format (text for audit): "active=1\nlast_pnl=-12345.67\n"
+    // After a manual deactivate you additionally need to call clear_persisted_state().
     void activate_kill_switch() noexcept {
         kill_switch_active_ = true;
         kill_reason_        = KillReason::MANUAL;
@@ -643,27 +643,27 @@ public:
     void deactivate_kill_switch() noexcept {
         kill_switch_active_ = false;
         kill_reason_        = KillReason::NONE;
-        persist_state();   // persistuj też "wyłączony" żeby restart widział aktualny stan
+        persist_state();   // persist "off" too so a restart sees the current state
     }
     bool       is_kill_switch_active() const noexcept { return kill_switch_active_; }
     KillReason get_kill_reason()       const noexcept { return kill_reason_; }   // #121
 
-    // Runtime update limitow (#129) — ryzyko czesto zaostrza limity intraday
-    // (np. po stracie) bez restartu. get_limits do inspekcji/dashboardu.
+    // Runtime limit update (#129) — risk often tightens limits intraday
+    // (e.g. after a loss) without a restart. get_limits for inspection/dashboard.
     const RiskLimits& get_limits() const noexcept { return limits_; }
     void set_limits(const RiskLimits& l) noexcept { limits_ = l; }
 
-    // set_persist_path: opcjonalny plik do persistencji stanu kill switcha.
-    // Wywołaj raz po konstrukcji. Bez tego persistencja jest no-op (zachowanie
-    // wstecz kompatybilne).
+    // set_persist_path: optional file for persisting the kill-switch state.
+    // Call once after construction. Without it persistence is a no-op (backward-
+    // compatible behavior).
     void set_persist_path(const char* path) noexcept {
         if (path && *path) persist_path_ = path;
         else                persist_path_.clear();
     }
 
-    // load_persisted_state: wczytaj stan zapisany w persist_path_. Wywołaj
-    // PO konstrukcji + set_persist_path, PRZED przyjmowaniem zleceń. Zwraca
-    // true gdy plik wczytany (active+pnl zaktualizowane), false gdy brak.
+    // load_persisted_state: load the state saved in persist_path_. Call
+    // AFTER construction + set_persist_path, BEFORE accepting orders. Returns
+    // true when the file was read (active+pnl updated), false when missing.
     bool load_persisted_state() noexcept {
         if (persist_path_.empty()) return false;
         FILE* f = std::fopen(persist_path_.c_str(), "r");
@@ -674,30 +674,30 @@ public:
         std::fclose(f);
         if (n < 1) return false;
         kill_switch_active_ = (active != 0);
-        if (n >= 2) daily_pnl_ = pnl;  // przywróć też P&L żeby drawdown nie wystartował od zera
+        if (n >= 2) daily_pnl_ = pnl;  // restore P&L too so drawdown does not start from zero
         return true;
     }
 
-    // clear_persisted_state: usuń plik (np. po reset_daily na nowy dzień).
+    // clear_persisted_state: remove the file (e.g. after reset_daily for a new day).
     void clear_persisted_state() noexcept {
         if (!persist_path_.empty()) std::remove(persist_path_.c_str());
     }
 
 
     // ====================================================================
-    // reset_daily — start nowego dnia handlowego
+    // reset_daily — start of a new trading day
     // ====================================================================
     //
-    // Zeruje wszystkie stan'y "dzienne":
-    //   - daily_pnl_ i peak_pnl_   → 0
-    //   - rate limiter             → pusty (nowa minuta od zera)
-    //   - pending_                 → pusty (otwarte zlecenia z poprzedniego
-    //                                dnia są anulowane przez giełdę o północy)
-    //   - kill_switch_active_      → false (na czysto)
+    // Zeroes all "daily" state:
+    //   - daily_pnl_ and peak_pnl_  → 0
+    //   - rate limiter              → empty (a new minute from zero)
+    //   - pending_                  → empty (open orders from the previous
+    //                                day are cancelled by the exchange at midnight)
+    //   - kill_switch_active_       → false (a clean slate)
     //
-    // Pozycje (positions_) ZACHOWANE — overnight holdings zostają.
-    // Po reset trzeba przeliczyć total_abs_exposure_ z samych
-    // positions_, bo pending_ jest teraz pusty.
+    // Positions (positions_) are KEPT — overnight holdings remain.
+    // After reset, total_abs_exposure_ must be recomputed from positions_
+    // alone, because pending_ is now empty.
     // ====================================================================
     void reset_daily() noexcept {
         daily_pnl_ = 0.0;
@@ -710,21 +710,21 @@ public:
         kill_reason_        = KillReason::NONE;
         total_abs_exposure_ = 0;
         for (const auto& kv : positions_) total_abs_exposure_ += std::abs(kv.second);
-        clear_persisted_state();   // nowy dzień = czyste konto, plik nieaktualny
+        clear_persisted_state();   // new day = clean account, the file is stale
     }
 
 
     // ====================================================================
-    // Accessory (read-only)
+    // Accessors (read-only)
     // ====================================================================
     int32_t  get_position(const char* symbol) const noexcept { return lookup(positions_, sym_to_key(symbol)); }
     int32_t  get_pending(const char* symbol)  const noexcept { return lookup(pending_,   sym_to_key(symbol)); }
-    // get_exposure: |pozycja + pending| dla symbolu (#137) — to co liczy check #3.
+    // get_exposure: |position + pending| for a symbol (#137) — what check #3 computes.
     int32_t  get_exposure(const char* symbol) const noexcept {
         const uint64_t k = sym_to_key(symbol);
         return std::abs(lookup(positions_, k) + lookup(pending_, k));
     }
-    // get_total_exposure: laczna ekspozycja portfela — utrzymywany niezmiennik O(1).
+    // get_total_exposure: total portfolio exposure — the maintained O(1) invariant.
     int64_t  get_total_exposure() const noexcept { return total_abs_exposure_; }
     // total_pending_exposure: sum of |pending| shares across symbols (#283) — the
     // exposure tied up in WORKING (not-yet-filled) orders, isolated from filled
@@ -759,9 +759,9 @@ public:
     int64_t  short_exposure() const noexcept {
         return (get_total_exposure() - net_exposure()) / 2;
     }
-    // exposure_utilization_pct: ekspozycja portfela jako % limitu (#181). Ile
-    // budzetu ryzyka jest zuzyte — portfelowy odpowiednik is_near_position_limit.
-    // 0 gdy limit wylaczony. Moze przekroczyc 100 tylko przy stanie sprzed limitu.
+    // exposure_utilization_pct: portfolio exposure as % of the limit (#181). How
+    // much of the risk budget is used — the portfolio analog of is_near_position_limit.
+    // 0 when the limit is off. Can exceed 100 only from a pre-limit state.
     double exposure_utilization_pct() const noexcept {
         if (limits_.max_portfolio_exposure <= 0) return 0.0;
         return static_cast<double>(total_abs_exposure_)
@@ -777,9 +777,9 @@ public:
         return cap > total_abs_exposure_ ? cap - total_abs_exposure_ : 0;
     }
 
-    // is_near_position_limit: czy ekspozycja symbolu osiagnela warn_pct% capu
-    // (#167) — wczesne ostrzezenie ZANIM check_order twardo odrzuci. Respektuje
-    // per-symbol override (#161). false gdy cap wylaczony.
+    // is_near_position_limit: whether the symbol's exposure reached warn_pct% of the cap
+    // (#167) — an early warning BEFORE check_order hard-rejects. Respects the
+    // per-symbol override (#161). false when the cap is off.
     bool is_near_position_limit(const char* symbol, double warn_pct) const noexcept {
         const uint64_t k = sym_to_key(symbol);
         int32_t cap = limits_.max_position_per_symbol;
@@ -788,10 +788,10 @@ public:
         const int32_t exposure = std::abs(lookup(positions_, k) + lookup(pending_, k));
         return static_cast<double>(exposure) >= static_cast<double>(cap) * warn_pct / 100.0;
     }
-    // position_utilization_pct: ekspozycja symbolu jako % jego limitu (#237) —
-    // per-symbolowy odpowiednik exposure_utilization_pct (#181). Zwraca WARTOSC
-    // (vs bool z is_near_position_limit #167). Respektuje per-symbol override
-    // (#161). 0 gdy cap wylaczony.
+    // position_utilization_pct: symbol exposure as % of its limit (#237) —
+    // the per-symbol analog of exposure_utilization_pct (#181). Returns a VALUE
+    // (vs the bool from is_near_position_limit #167). Respects the per-symbol override
+    // (#161). 0 when the cap is off.
     double position_utilization_pct(const char* symbol) const noexcept {
         const uint64_t k = sym_to_key(symbol);
         int32_t cap = limits_.max_position_per_symbol;
@@ -800,10 +800,10 @@ public:
         const int32_t exposure = std::abs(lookup(positions_, k) + lookup(pending_, k));
         return static_cast<double>(exposure) / static_cast<double>(cap) * 100.0;
     }
-    // headroom_shares: ile JESZCZE akcji wolno dodac po danej stronie zanim
-    // projected pozycja przekroczy limit (#245). BUY -> cap - cur; SELL -> short_cap
-    // + cur (mozna sprzedac az do -short_cap, lacznie z flipem z longa). Respektuje
-    // override (#161) i asymetryczny short cap (#106). 0 gdy cap wylaczony/brak miejsca.
+    // headroom_shares: how many MORE shares may be added on a given side before
+    // the projected position exceeds the limit (#245). BUY -> cap - cur; SELL -> short_cap
+    // + cur (you can sell down to -short_cap, including a flip from long). Respects
+    // the override (#161) and the asymmetric short cap (#106). 0 when the cap is off / no room.
     // projected_exposure: absolute symbol position if this order fully fills (#259)
     // = |current_net + current_pending + signed(side, qty)|. Pre-trade what-if that
     // returns the RESULTING exposure (vs headroom_shares #245 which returns the
@@ -837,7 +837,7 @@ public:
         int32_t cap = limits_.max_position_per_symbol;
         if (const auto ov = symbol_pos_limit_.find(k); ov != symbol_pos_limit_.end()) cap = ov->second;
         if (cap <= 0) return 0;
-        const int32_t cur = lookup(positions_, k) + lookup(pending_, k);   // pozycja ze znakiem
+        const int32_t cur = lookup(positions_, k) + lookup(pending_, k);   // signed position
         int32_t room;
         if (side == Side::BUY) {
             room = cap - cur;
@@ -848,9 +848,9 @@ public:
         }
         return room > 0 ? room : 0;
     }
-    // get_position_notional: ekspozycja symbolu w DOLARACH (#153) = |pos+pending|
-    // * cena referencyjna. 0 gdy brak ceny ref. Risk w sztukach nie pokazuje
-    // realnego ryzyka $ przy roznych cenach symboli.
+    // get_position_notional: symbol exposure in DOLLARS (#153) = |pos+pending|
+    // * reference price. 0 when there is no ref price. Risk in shares does not show
+    // the real $ risk across symbols with different prices.
     double   get_position_notional(const char* symbol) const noexcept {
         const uint64_t k = sym_to_key(symbol);
         const auto rp = ref_price_.find(k);
@@ -859,9 +859,9 @@ public:
     }
     double   get_daily_pnl()                  const noexcept { return daily_pnl_; }
     double   get_peak_pnl()                   const noexcept { return peak_pnl_; }
-    // current_drawdown_pct: biezacy % spadek od high-water mark (#197) — ta sama
-    // formula co breaker drawdown (check #6), wystawiona do monitoringu ZANIM
-    // trip. 0 gdy peak <= 0 (brak zysku, brak referencji). Dla dashboardu/alertu.
+    // current_drawdown_pct: current % drop from the high-water mark (#197) — the same
+    // formula as the drawdown breaker (check #6), exposed for monitoring BEFORE
+    // a trip. 0 when peak <= 0 (no profit, no reference). For a dashboard/alert.
     double   current_drawdown_pct() const noexcept {
         if (peak_pnl_ <= 0.0) return 0.0;
         return (peak_pnl_ - daily_pnl_) / peak_pnl_ * 100.0;
@@ -885,18 +885,18 @@ public:
         return dd > 0.0 ? dd : 0.0;
     }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
-    // consecutive_losses_remaining: ile jeszcze stratnych fillow Z RZEDU do trip'a
-    // bezpiecznika serii strat (#205, na bazie #114). -1 gdy breaker wylaczony,
-    // 0 gdy juz trip'nal. Wczesne ostrzeganie zanim desk zostanie zatrzymany.
+    // consecutive_losses_remaining: how many more losing fills IN A ROW until the
+    // loss-streak breaker trips (#205, based on #114). -1 when the breaker is off,
+    // 0 when it already tripped. Early warning before the desk is halted.
     int32_t  consecutive_losses_remaining() const noexcept {
         if (limits_.max_consecutive_losses <= 0) return -1;
         const int32_t rem = limits_.max_consecutive_losses - consec_losses_;
         return rem > 0 ? rem : 0;
     }
-    // remaining_loss_budget: ile jeszcze ($) mozna stracic zanim trip'nie circuit
-    // breaker dziennej straty (#213). Breaker: daily_pnl_ < -max_daily_loss, wiec
-    // budzet = max_daily_loss + daily_pnl_ (zysk go zwieksza, strata zmniejsza).
-    // 0 = juz na/za progiem. Early warning do throttlingu pozycji.
+    // remaining_loss_budget: how much more ($) can be lost before the daily-loss
+    // circuit breaker trips (#213). Breaker: daily_pnl_ < -max_daily_loss, so the
+    // budget = max_daily_loss + daily_pnl_ (a profit increases it, a loss decreases it).
+    // 0 = already at/past the threshold. Early warning for throttling positions.
     double remaining_loss_budget() const noexcept {
         const double budget = static_cast<double>(limits_.max_daily_loss) + daily_pnl_;
         return budget > 0.0 ? budget : 0.0;
@@ -914,9 +914,9 @@ public:
     }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }
     uint64_t get_total_rejects()              const noexcept { return total_rejects_; }
-    // check_reject_rate: odsetek kontroli check_order zakonczonych odrzuceniem
-    // (#229) = rejects / checks. Wysoki = strategia czesto lamie limity (zly
-    // tuning / agresywny algo). Lustro OMS submit_reject_rate (#212). 0 gdy brak.
+    // check_reject_rate: fraction of check_order checks that ended in rejection
+    // (#229) = rejects / checks. High = the strategy often breaks limits (bad
+    // tuning / aggressive algo). Mirror of OMS submit_reject_rate (#212). 0 when none.
     double check_reject_rate() const noexcept {
         return total_checks_ > 0
             ? static_cast<double>(total_rejects_) / static_cast<double>(total_checks_)
@@ -925,7 +925,7 @@ public:
 
 
     // ====================================================================
-    // print_stats — dump dla debug / monitoring
+    // print_stats — dump for debug / monitoring
     // ====================================================================
     void print_stats() const {
         printf("\n=== Risk Manager Statistics ===\n");
@@ -941,23 +941,23 @@ public:
 
 
 // ============================================================================
-// Część prywatna — helpery wewnętrzne
+// Private part — internal helpers
 // ============================================================================
 
 private:
 
-    // signed_qty: zamiana (side, qty) na sygnowaną liczbę.
+    // signed_qty: convert (side, qty) to a signed number.
     // BUY  → +qty
     // SELL → -qty
-    // Używane 4× w klasie — wyciągnięte żeby nie powtarzać tego samego
-    // ternary'a.
+    // Used 4× in the class — extracted to avoid repeating the same
+    // ternary.
     static int32_t signed_qty(Side side, int32_t qty) noexcept {
         return (side == Side::BUY) ? qty : -qty;
     }
 
 
-    // lookup: read-only dostęp do mapy bez wstawiania default-value.
-    // Zwraca wartość lub 0, jeśli klucza nie ma. Używane przy obu mapach
+    // lookup: read-only access to a map without inserting a default value.
+    // Returns the value, or 0 if the key is absent. Used for both maps
     // (positions_, pending_).
     static int32_t lookup(const std::unordered_map<uint64_t, int32_t>& m,
                           uint64_t key) noexcept {
@@ -966,9 +966,9 @@ private:
     }
 
 
-    // adjust_pending: wspólny mutator dla on_order_sent / on_order_cancelled.
-    // Trzyma niezmiennik total_abs_exposure_ = sum_s |pos[s] + pend[s]|.
-    // Czysty O(1).
+    // adjust_pending: shared mutator for on_order_sent / on_order_cancelled.
+    // Keeps the invariant total_abs_exposure_ = sum_s |pos[s] + pend[s]|.
+    // Pure O(1).
     void adjust_pending(uint64_t key, int32_t delta) noexcept {
         const int32_t pos      = lookup(positions_, key);
         const int32_t old_pend = lookup(pending_,   key);
@@ -978,24 +978,24 @@ private:
     }
 
 
-    // check_pnl_breakers: kontrole #5 i #6 z check_order.
+    // check_pnl_breakers: checks #5 and #6 from check_order.
     //
-    // Zwraca:
-    //   nullptr           — wszystko OK, pozwól handlować
-    //   const char* str   — powód odrzucenia (kill switch też włącza
-    //                        się jako side-effect tej funkcji)
+    // Returns:
+    //   nullptr           — all OK, allow trading
+    //   const char* str   — the rejection reason (the kill switch also turns
+    //                        on as a side-effect of this function)
     //
-    // Po breach'u kill_switch_active_ = true. Każdy następny check_order
-    // odrzuci na #1 zanim w ogóle dotrze tu.
+    // After a breach kill_switch_active_ = true. Every subsequent check_order
+    // rejects at #1 before it even reaches here.
     const char* check_pnl_breakers() noexcept {
-        // 5. Circuit breaker — przekroczona dzienna strata
+        // 5. Circuit breaker — daily loss exceeded
         if (daily_pnl_ < -static_cast<double>(limits_.max_daily_loss)) {
             kill_switch_active_ = true;
             kill_reason_        = KillReason::CIRCUIT_BREAKER;
-            persist_state();   // restart procesu nie może obejść trip'a
+            persist_state();   // a process restart cannot bypass the trip
             return "Circuit breaker: daily loss limit";
         }
-        // 6. Drawdown — % spadek od peak_pnl_ przekroczył próg
+        // 6. Drawdown — % drop from peak_pnl_ exceeded the threshold
         if (peak_pnl_ > 0.0) {
             const double drawdown_pct = (peak_pnl_ - daily_pnl_) / peak_pnl_ * 100.0;
             if (drawdown_pct > limits_.max_drawdown_pct) {
@@ -1008,9 +1008,9 @@ private:
         return nullptr;
     }
 
-    // persist_state: atomowo zapisz active+daily_pnl do persist_path_.
-    // Atomic write = tmpfile + rename (rename na tym samym fs jest atomowy).
-    // Bez tego pad procesu w trakcie write zostawiłby uszkodzony plik.
+    // persist_state: atomically write active+daily_pnl to persist_path_.
+    // Atomic write = tmpfile + rename (rename on the same fs is atomic).
+    // Without it a process crash mid-write would leave a corrupted file.
     void persist_state() noexcept {
         if (persist_path_.empty()) return;
         std::string tmp = persist_path_ + ".tmp";
@@ -1019,23 +1019,23 @@ private:
         std::fprintf(f, "active=%d\nlast_pnl=%.6f\n",
                      kill_switch_active_ ? 1 : 0, daily_pnl_);
         std::fflush(f);
-        ::fsync(::fileno(f));       // durable do fizycznego dysku (POSIX, nie std::)
+        ::fsync(::fileno(f));       // durable to the physical disk (POSIX, not std::)
         std::fclose(f);
         std::rename(tmp.c_str(), persist_path_.c_str());
     }
 
 
-    // check_rate_limit: kontrola #7 z check_order.
+    // check_rate_limit: check #7 from check_order.
     //
-    // Strategia: trzymaj FIFO znaczników czasu zleceń. Przed sprawdzeniem
-    // wyrzuć wszystkie starsze niż 1s (deque.pop_front). Następnie:
-    //   jeśli rozmiar ≥ limit → REJECT
-    //   inaczej               → push_back(now), ALLOW
+    // Strategy: keep a FIFO of order timestamps. Before checking,
+    // evict all older than 1s (deque.pop_front). Then:
+    //   if size ≥ limit → REJECT
+    //   otherwise       → push_back(now), ALLOW
     //
-    // Amortyzowane O(1) per check (każdy timestamp jest wstawiany raz
-    // i wyrzucany raz w ciągu swojego życia ≤ 1s).
+    // Amortized O(1) per check (each timestamp is inserted once
+    // and evicted once during its lifetime ≤ 1s).
     //
-    // Zwraca true (ALLOW), false (REJECT).
+    // Returns true (ALLOW), false (REJECT).
     bool check_rate_limit(int64_t now) noexcept {
         const int64_t one_sec_ago = now - 1'000'000'000;
         while (!order_timestamps_.empty() && order_timestamps_.front() <= one_sec_ago)
@@ -1047,9 +1047,9 @@ private:
     }
 
 
-    // make_reject: skraca powtarzalny pattern w check_order.
-    // Liczy latency, inkrementuje total_rejects_, zbiera total_latency_ns_,
-    // zwraca RiskCheckResult{REJECT, reason, elapsed}.
+    // make_reject: shortens the repetitive pattern in check_order.
+    // Computes latency, increments total_rejects_, accumulates total_latency_ns_,
+    // returns RiskCheckResult{REJECT, reason, elapsed}.
     RiskCheckResult make_reject(const char* reason, int64_t t0) noexcept {
         const int64_t elapsed = mono_ns() - t0;
         total_rejects_++;
