@@ -130,6 +130,16 @@ public:
         auto it = orders_.find(token);
         return (it != orders_.end()) ? it->second.filled : 0;
     }
+    // filled_fraction: completion of ONE order = filled / (filled + remaining)
+    // (#288), in [0, 1]. Per-order progress (vs the portfolio total_filled/
+    // remaining aggregates) — useful for tracking how far a large worked order has
+    // got. 0 for an unknown token or a fully-broken order.
+    double  filled_fraction(const char* token) const noexcept {
+        const auto it = orders_.find(token);
+        if (it == orders_.end()) return 0.0;
+        const int32_t total = it->second.filled + it->second.remaining;
+        return total > 0 ? static_cast<double>(it->second.filled) / static_cast<double>(total) : 0.0;
+    }
     size_t   order_count() const noexcept { return orders_.size(); }
     // total_filled_shares / total_remaining_shares: agregaty wolumenu po WSZYSTKICH
     // sledzonych zleceniach (#242). filled = ile juz wykonano lacznie, remaining =

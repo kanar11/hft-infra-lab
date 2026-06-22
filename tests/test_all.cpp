@@ -3961,6 +3961,15 @@ void test_ouch_order_state() {
     n = OUCHMessage::encode_cancelled(buf, "A", 100, 'U');
     cpt.on_response(OUCHMessage::parse_response(buf, n));      // C confirms -> flag cleared
     ASSERT(cpt.cancel_pending_count() == 0, "ouch_cxlpend_cleared");
+
+    // #288 filled_fraction — per-order completion.
+    ouch::OUCHOrderTracker ff;
+    ff.on_new("A", 100);                                       // filled 0 / remaining 100
+    ASSERT(std::fabs(ff.filled_fraction("A") - 0.0) < 1e-9, "ouch_ff_zero");
+    n = OUCHMessage::encode_executed(buf, "A", 60, 10.0, 1);
+    ff.on_response(OUCHMessage::parse_response(buf, n));       // filled 60 / remaining 40
+    ASSERT(std::fabs(ff.filled_fraction("A") - 0.6) < 1e-9, "ouch_ff_partial");
+    ASSERT(ff.filled_fraction("UNKNOWN") == 0.0, "ouch_ff_unknown");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
