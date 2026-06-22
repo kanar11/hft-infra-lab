@@ -674,6 +674,22 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // OrderMassStatusRequest (35=AF): ask the exchange for the status of MANY orders
+    // at once (#311) — 584=MassStatusReqID, 585=MassStatusReqType (1=AllOrders,
+    // 7=Status for a symbol), 55=Symbol when scoped. The exchange replies with an
+    // ExecutionReport per matching order. Bulk reconciliation after a gap / reconnect,
+    // vs the single-order OrderStatusRequest (35=H, #185).
+    int build_mass_status_request(char* out, int cap, const char* req_id, int req_type,
+                                  const char* symbol, char delim = FIXMessage::SOH) noexcept {
+        char body[200];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=AF%c49=%s%c56=%s%c34=%u%c584=%s%c585=%d%c55=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            req_id, delim, req_type, delim, symbol, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.

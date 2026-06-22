@@ -3849,6 +3849,15 @@ void test_fix_session() {
                "fix_tss_id_status");
         ASSERT(!tss.is_admin(), "fix_tss_application");
 
+        // #311 OrderMassStatusRequest (35=AF) — bulk order-status query.
+        s.build_mass_status_request(buf, sizeof(buf), "MS1", 7, "AAPL", '|');  // 7 = by symbol
+        FIXMessage msr; msr.parse(buf);
+        ASSERT(msr.is_valid() && std::strcmp(msr.get_msg_type(), "AF") == 0, "fix_massstat_AF_valid");
+        ASSERT(std::strcmp(msr.get_field(584), "MS1") == 0 && msr.get_int(585) == 7,
+               "fix_massstat_id_type");
+        ASSERT(std::strcmp(msr.get_symbol(), "AAPL") == 0, "fix_massstat_symbol");
+        ASSERT(!msr.is_admin(), "fix_massstat_application");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
