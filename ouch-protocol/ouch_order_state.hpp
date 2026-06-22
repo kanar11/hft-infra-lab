@@ -166,6 +166,18 @@ public:
                 s += rec.remaining;
         return s;
     }
+    // largest_remaining: the biggest single WORKING order by remaining shares (#312),
+    // over LIVE/PARTIAL orders. The largest concentration of open exposure in one
+    // order — filling or cancelling it moves the book the most, so risk/monitoring
+    // watches it. 0 when nothing is working. Complements working_shares (#304, total).
+    int32_t largest_remaining() const noexcept {
+        int32_t mx = 0;
+        for (const auto& [tok, rec] : orders_)
+            if ((rec.state == OrderState::LIVE || rec.state == OrderState::PARTIAL)
+                && rec.remaining > mx)
+                mx = rec.remaining;
+        return mx;
+    }
     // total_ordered_shares / fill_rate: cumulative shares ordered (sum of on_new)
     // and executed/ordered ratio (#250) — client-side execution quality. Low =
     // many orders went unfilled (bad limit prices, thin liquidity). 0 when nothing

@@ -4219,6 +4219,21 @@ void test_ouch_order_state() {
     n = OUCHMessage::encode_cancelled(buf, "A", 70, 'U');
     ws.on_response(OUCHMessage::parse_response(buf, n));            // A -> CANCELLED, dropped
     ASSERT(ws.working_shares() == 100, "ouch_ws_after_cancel");      // B only
+
+    // #312 largest_remaining — biggest single working order by remaining.
+    ouch::OUCHOrderTracker lr;
+    lr.on_new("A", 100); lr.on_new("B", 300); lr.on_new("C", 200);
+    ASSERT(lr.largest_remaining() == 0, "ouch_lr_none_working");     // all still NEW
+    n = OUCHMessage::encode_accepted(buf, "A", 'B', 100, "AAPL", 150.25, 99301);
+    lr.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_accepted(buf, "B", 'B', 300, "AAPL", 150.25, 99302);
+    lr.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_accepted(buf, "C", 'B', 200, "AAPL", 150.25, 99303);
+    lr.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(lr.largest_remaining() == 300, "ouch_lr_b_largest");      // B 300
+    n = OUCHMessage::encode_executed(buf, "B", 250, 150.25, 1);
+    lr.on_response(OUCHMessage::parse_response(buf, n));             // B -> remaining 50
+    ASSERT(lr.largest_remaining() == 200, "ouch_lr_c_now_largest");  // C 200 > A 100 > B 50
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
