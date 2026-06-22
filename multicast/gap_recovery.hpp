@@ -759,6 +759,41 @@ struct GapFillTimer {
 };
 
 
+// InterArrivalStats — feed jitter characterization (expansion #305).
+//
+// A healthy multicast feed delivers at a steady cadence; bursty or jittery arrivals
+// stress the consumer's buffers and point to upstream congestion. InterArrivalStats
+// records the gap between consecutive packet timestamps and reports min / mean / max
+// — the jitter envelope (max - min). Distinct from LatencyTracker (#235), which
+// measures per-message PROCESSING time, not arrival cadence. Non-monotonic
+// timestamps (clock skew / reorder) are ignored.
+struct InterArrivalStats {
+    int64_t  last_ts = -1;
+    uint64_t count = 0;          // number of gaps measured
+    int64_t  total_gap = 0;
+    int64_t  min_gap = 0;
+    int64_t  max_gap = 0;
+
+    void on_message(int64_t ts) noexcept {
+        if (last_ts >= 0) {
+            const int64_t gap = ts - last_ts;
+            if (gap >= 0) {
+                if (count == 0 || gap < min_gap) min_gap = gap;
+                if (gap > max_gap) max_gap = gap;
+                total_gap += gap;
+                ++count;
+            }
+        }
+        last_ts = ts;
+    }
+    double mean_gap() const noexcept {
+        return count > 0 ? static_cast<double>(total_gap) / static_cast<double>(count) : 0.0;
+    }
+    int64_t jitter() const noexcept { return count > 0 ? max_gap - min_gap : 0; }
+    void reset() noexcept { last_ts = -1; count = 0; total_gap = 0; min_gap = 0; max_gap = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił

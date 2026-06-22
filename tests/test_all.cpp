@@ -2171,6 +2171,16 @@ void test_multicast_gap_recovery() {
     gft.record(5000, 4000);   // negative -> ignored
     ASSERT(gft.gaps == 3, "gft_negative_ignored");
 
+    // #305 InterArrivalStats — feed jitter envelope.
+    multicast::InterArrivalStats ias;
+    ias.on_message(1000);     // first -> no gap
+    ias.on_message(1050);     // gap 50
+    ias.on_message(1060);     // gap 10
+    ias.on_message(1200);     // gap 140
+    ASSERT(ias.count == 3 && ias.min_gap == 10 && ias.max_gap == 140, "ias_min_max");
+    ASSERT(std::fabs(ias.mean_gap() - (200.0 / 3.0)) < 1e-9, "ias_mean");  // (50+10+140)/3
+    ASSERT(ias.jitter() == 130, "ias_jitter");                            // 140 - 10
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
