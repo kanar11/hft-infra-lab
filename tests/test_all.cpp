@@ -49,6 +49,7 @@
 #include "../strategy/aroon.hpp"
 #include "../strategy/cmo.hpp"
 #include "../strategy/zscore.hpp"
+#include "../strategy/tsi.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2498,6 +2499,18 @@ void test_zscore() {
     ASSERT(z.value() > 0.0, "zscore_positive_above_mean");
 }
 
+// TSI #284 — True Strength Index (double-smoothed momentum).
+void test_tsi() {
+    SECTION("TSI (#284)");
+    TSI up(3, 2);
+    for (int i = 1; i <= 40; ++i) up.update(static_cast<double>(i));   // steady +1 momentum
+    ASSERT(up.ready(), "tsi_ready");
+    ASSERT(std::fabs(up.value() - 100.0) < 1e-6, "tsi_uptrend_100");
+    TSI dn(3, 2);
+    for (int i = 0; i < 40; ++i) dn.update(100.0 - i);                  // steady -1 momentum
+    ASSERT(std::fabs(dn.value() - (-100.0)) < 1e-6, "tsi_downtrend_neg100");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4182,6 +4195,7 @@ int main() {
     test_aroon();
     test_cmo();
     test_zscore();
+    test_tsi();
     test_backtest();
     test_ensemble();
     test_trailing_stop();
