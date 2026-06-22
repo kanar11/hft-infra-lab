@@ -4130,6 +4130,22 @@ void test_ouch_order_state() {
     sc.on_response(OUCHMessage::parse_response(buf, n));              // A -> CANCELLED
     ASSERT(sc.status_count(ouch::OrderState::LIVE) == 1, "ouch_sc_live_after_cxl");
     ASSERT(sc.status_count(ouch::OrderState::CANCELLED) == 1, "ouch_sc_cancelled");
+
+    // #304 working_shares — LIVE/PARTIAL remaining only (confirmed book exposure).
+    ouch::OUCHOrderTracker ws;
+    ws.on_new("A", 100); ws.on_new("B", 100);                       // both NEW (not acked)
+    ASSERT(ws.working_shares() == 0, "ouch_ws_none_acked");         // distinct from total_remaining
+    n = OUCHMessage::encode_accepted(buf, "A", 'B', 100, "AAPL", 150.25, 99201);
+    ws.on_response(OUCHMessage::parse_response(buf, n));            // A -> LIVE, remaining 100
+    ASSERT(ws.working_shares() == 100, "ouch_ws_a_live");
+    n = OUCHMessage::encode_executed(buf, "A", 30, 150.25, 1);
+    ws.on_response(OUCHMessage::parse_response(buf, n));            // A -> PARTIAL, remaining 70
+    n = OUCHMessage::encode_accepted(buf, "B", 'B', 100, "AAPL", 150.25, 99202);
+    ws.on_response(OUCHMessage::parse_response(buf, n));            // B -> LIVE, remaining 100
+    ASSERT(ws.working_shares() == 170, "ouch_ws_partial_plus_live"); // 70 + 100
+    n = OUCHMessage::encode_cancelled(buf, "A", 70, 'U');
+    ws.on_response(OUCHMessage::parse_response(buf, n));            // A -> CANCELLED, dropped
+    ASSERT(ws.working_shares() == 100, "ouch_ws_after_cancel");      // B only
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.

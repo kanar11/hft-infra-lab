@@ -155,6 +155,17 @@ public:
         for (const auto& [tok, rec] : orders_) s += rec.remaining;
         return s;
     }
+    // working_shares: open shares truly resting on the exchange RIGHT NOW (#304) —
+    // sum of `remaining` over orders in LIVE or PARTIAL state only. Unlike
+    // total_remaining_shares (#242), which also counts leftovers on NEW (sent, not
+    // yet acked) and CANCELLED records, this is the confirmed live book exposure.
+    int32_t working_shares() const noexcept {
+        int32_t s = 0;
+        for (const auto& [tok, rec] : orders_)
+            if (rec.state == OrderState::LIVE || rec.state == OrderState::PARTIAL)
+                s += rec.remaining;
+        return s;
+    }
     // total_ordered_shares / fill_rate: cumulative shares ordered (sum of on_new)
     // and executed/ordered ratio (#250) — client-side execution quality. Low =
     // many orders went unfilled (bad limit prices, thin liquidity). 0 when nothing
