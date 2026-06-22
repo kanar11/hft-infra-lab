@@ -1885,6 +1885,12 @@ void test_itch_book() {
     ASSERT(nla.nth_level_price('S', 5) == 0.0 && nla.nth_level_qty('B', 9) == 0,
            "itchbook_nth_out_of_range");
 
+    // #293 cumulative_qty (top-N displayed size across levels).
+    ASSERT(nla.cumulative_qty('S', 2) == 300, "itchbook_cumqty_ask2");   // 100 + 200
+    ASSERT(nla.cumulative_qty('S', 10) == 600, "itchbook_cumqty_ask_all"); // all (extra 0)
+    ASSERT(nla.cumulative_qty('B', 1) == 150, "itchbook_cumqty_bid1");   // best bid only
+    ASSERT(nla.cumulative_qty('B', 5) == 400, "itchbook_cumqty_bid_all"); // 150 + 250
+
     // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
     itch::ITCHOrderBook ni;
     ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 szt.

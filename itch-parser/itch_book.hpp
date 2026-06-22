@@ -481,6 +481,15 @@ public:
         }
         return 0;
     }
+    // cumulative_qty: total displayed size across the top N price levels on a side
+    // (#293), summing nth_level_qty (#277). How many shares a marketable order would
+    // see before walking past depth N — the sizing input for a sweep. Naturally
+    // stops at the end of book (out-of-range levels contribute 0).
+    int64_t cumulative_qty(char side, int n) const noexcept {
+        int64_t sum = 0;
+        for (int i = 0; i < n; ++i) sum += nth_level_qty(side, i);
+        return sum;
+    }
 
     size_t  bid_levels()     const noexcept { return bids_.size(); }
     size_t  ask_levels()     const noexcept { return asks_.size(); }
