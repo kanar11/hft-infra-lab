@@ -1918,6 +1918,12 @@ void test_itch_book() {
     ASSERT(close(nla.depth_notional('B', 1), 14998.5), "itchbook_depthnot_bid1");  // 99.99*150
     ASSERT(close(nla.depth_notional('B', 5), 39993.5), "itchbook_depthnot_bid_all"); // + 99.98*250
 
+    // #317 queue_ahead (shares resting at a price level).
+    ASSERT(nla.queue_ahead('S', 100.02) == 200, "itchbook_queue_ask_level");
+    ASSERT(nla.queue_ahead('B', 99.98) == 250, "itchbook_queue_bid_level");
+    ASSERT(nla.queue_ahead('B', 99.99) == 150, "itchbook_queue_best_bid");
+    ASSERT(nla.queue_ahead('S', 101.00) == 0, "itchbook_queue_empty_level");  // no level there
+
     // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
     itch::ITCHOrderBook ni;
     ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 szt.

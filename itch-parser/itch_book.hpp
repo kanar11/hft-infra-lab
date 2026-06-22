@@ -515,6 +515,19 @@ public:
         }
         return sum;
     }
+    // queue_ahead: total displayed shares resting AT a given price level (#317) —
+    // the FIFO queue a new limit order at `price` would sit behind. 0 if no level at
+    // that price. Queue-position estimation for passive orders: fill probability and
+    // expected time-to-fill scale with how deep in the queue you join.
+    int64_t queue_ahead(char side, double price) const noexcept {
+        const int64_t px = to_ticks(price);
+        if (side == 'B') {
+            const auto it = bids_.find(px);
+            return it != bids_.end() ? it->second : 0;
+        }
+        const auto it = asks_.find(px);
+        return it != asks_.end() ? it->second : 0;
+    }
 
     size_t  bid_levels()     const noexcept { return bids_.size(); }
     size_t  ask_levels()     const noexcept { return asks_.size(); }
