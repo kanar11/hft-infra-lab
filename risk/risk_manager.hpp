@@ -746,6 +746,19 @@ public:
         for (const auto& [key, v] : pending_)   s += v;
         return s;
     }
+    // long_exposure / short_exposure: the directional split of book exposure (#315),
+    // derived from gross (get_total_exposure) and net (net_exposure #299):
+    //   long  = (gross + net) / 2,  short = (gross - net) / 2.
+    // long = shares committed to net-long symbols, short = |net-short symbols|;
+    // together they reconstruct gross (long + short) and net (long - short). The
+    // sums are always even (gross +/- net = Σ 2·max(±x,0)), so the halving is exact.
+    // A market-neutral desk watches the two legs stay balanced.
+    int64_t  long_exposure() const noexcept {
+        return (get_total_exposure() + net_exposure()) / 2;
+    }
+    int64_t  short_exposure() const noexcept {
+        return (get_total_exposure() - net_exposure()) / 2;
+    }
     // exposure_utilization_pct: ekspozycja portfela jako % limitu (#181). Ile
     // budzetu ryzyka jest zuzyte — portfelowy odpowiednik is_near_position_limit.
     // 0 gdy limit wylaczony. Moze przekroczyc 100 tylko przy stanie sprzed limitu.

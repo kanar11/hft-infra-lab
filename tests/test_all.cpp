@@ -3449,6 +3449,16 @@ void test_risk_price_band() {
     ASSERT(nex.net_exposure() == -500, "netexp_short_tilt");        // -300 -200
     ASSERT(nex.get_total_exposure() == 500, "netexp_gross_still_500"); // |-300| + |-200|
 
+    // #315 long_exposure / short_exposure (derived from gross & net).
+    RiskManager lse;
+    lse.on_order_sent("AAPL", Side::BUY, 300);                      // +300
+    lse.on_order_sent("MSFT", Side::SELL, 200);                     // -200
+    // gross 500, net 100 -> long (500+100)/2=300, short (500-100)/2=200
+    ASSERT(lse.long_exposure() == 300 && lse.short_exposure() == 200, "lse_split_long_tilt");
+    lse.on_order_sent("AAPL", Side::SELL, 600);                     // AAPL -> -300
+    // gross 500, net -500 -> long 0, short 500
+    ASSERT(lse.long_exposure() == 0 && lse.short_exposure() == 500, "lse_all_short");
+
     // #237 position_utilization_pct (per symbol, cap 1000).
     RiskLimits pul; pul.max_position_per_symbol = 1000;
     RiskManager rpu(pul);
