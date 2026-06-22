@@ -888,6 +888,17 @@ public:
         const double budget = static_cast<double>(limits_.max_daily_loss) + daily_pnl_;
         return budget > 0.0 ? budget : 0.0;
     }
+    // loss_budget_utilization_pct: how much of the daily-loss circuit-breaker budget
+    // is consumed (#307), in [0, 100]. 0 while flat or in profit, 100 at the trip
+    // point (daily_pnl_ == -max_daily_loss). The percentage companion to
+    // remaining_loss_budget (#213, dollars) — dashboards alert on "85% of loss
+    // budget used" more naturally than on a dollar figure. 0 when the limit is off.
+    double loss_budget_utilization_pct() const noexcept {
+        if (limits_.max_daily_loss <= 0) return 0.0;
+        const double consumed = daily_pnl_ < 0.0 ? -daily_pnl_ : 0.0;
+        const double pct = consumed / static_cast<double>(limits_.max_daily_loss) * 100.0;
+        return pct > 100.0 ? 100.0 : pct;
+    }
     uint64_t get_total_checks()               const noexcept { return total_checks_; }
     uint64_t get_total_rejects()              const noexcept { return total_rejects_; }
     // check_reject_rate: odsetek kontroli check_order zakonczonych odrzuceniem

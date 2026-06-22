@@ -3492,6 +3492,13 @@ void test_risk_price_band() {
     rlp.update_pnl(500.0);                  // zysk zwieksza budzet -> 1500
     ASSERT(std::fabs(rlp.remaining_loss_budget() - 1500.0) < 1e-6, "rlb_profit_extends");
 
+    // #307 loss_budget_utilization_pct (same 1000 limit).
+    ASSERT(std::fabs(rlb.loss_budget_utilization_pct() - 100.0) < 1e-6, "lbu_clamped_full"); // -1100/1000
+    ASSERT(rlp.loss_budget_utilization_pct() == 0.0, "lbu_profit_zero");        // in profit
+    RiskManager rlu(lbl);
+    rlu.update_pnl(-250.0);                  // 250 of 1000 -> 25%
+    ASSERT(std::fabs(rlu.loss_budget_utilization_pct() - 25.0) < 1e-6, "lbu_quarter");
+
     // #221 daily_turnover_pct (limit obrotu 100000).
     RiskLimits tnl; tnl.max_daily_traded_notional = 100000.0;
     RiskManager rtn(tnl);
