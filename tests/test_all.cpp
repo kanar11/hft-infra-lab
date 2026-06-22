@@ -50,6 +50,7 @@
 #include "../strategy/cmo.hpp"
 #include "../strategy/zscore.hpp"
 #include "../strategy/tsi.hpp"
+#include "../strategy/dpo.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2546,6 +2547,19 @@ void test_tsi() {
     ASSERT(std::fabs(dn.value() - (-100.0)) < 1e-6, "tsi_downtrend_neg100");
 }
 
+// DPO #292 — Detrended Price Oscillator.
+void test_dpo() {
+    SECTION("DPO (#292)");
+    DPO c(4);
+    for (int i = 0; i < 4; ++i) c.update(50.0);          // flat -> price == SMA -> 0
+    ASSERT(c.ready(), "dpo_ready");
+    ASSERT(std::fabs(c.value() - 0.0) < 1e-9, "dpo_flat_zero");
+    DPO d(4);
+    d.update(1.0); d.update(2.0); d.update(3.0); d.update(4.0);   // window {1,2,3,4}
+    // SMA = 2.5, shift = 3, price 3 ago = window[0] = 1 -> DPO = 1 - 2.5 = -1.5
+    ASSERT(std::fabs(d.value() - (-1.5)) < 1e-9, "dpo_known");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4273,6 +4287,7 @@ int main() {
     test_cmo();
     test_zscore();
     test_tsi();
+    test_dpo();
     test_backtest();
     test_ensemble();
     test_trailing_stop();
