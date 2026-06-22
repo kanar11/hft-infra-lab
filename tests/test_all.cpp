@@ -2192,6 +2192,15 @@ void test_multicast_gap_recovery() {
     ASSERT(std::fabs(ias.mean_gap() - (200.0 / 3.0)) < 1e-9, "ias_mean");  // (50+10+140)/3
     ASSERT(ias.jitter() == 130, "ias_jitter");                            // 140 - 10
 
+    // #313 PacketStats — wire-level packet/byte accounting.
+    multicast::PacketStats ps;
+    ps.on_packet(100); ps.on_packet(300); ps.on_packet(200);
+    ASSERT(ps.packets == 3 && ps.total_bytes == 600, "ps_count_bytes");
+    ASSERT(ps.max_bytes == 300, "ps_max");
+    ASSERT(std::fabs(ps.mean_bytes() - 200.0) < 1e-9, "ps_mean");
+    ps.reset();
+    ASSERT(ps.packets == 0 && ps.mean_bytes() == 0.0, "ps_reset");
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

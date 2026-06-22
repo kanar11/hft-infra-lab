@@ -794,6 +794,30 @@ struct InterArrivalStats {
 };
 
 
+// PacketStats — wire-level accounting for a feed (expansion #313).
+//
+// The sequence-oriented structs (dedup, reorder, gap recovery) all reason about
+// MESSAGE numbers; PacketStats is the orthogonal NETWORK view — how many packets and
+// bytes arrived, the largest packet seen, and the mean size. These are the raw
+// throughput numbers an ops dashboard charts (bytes/sec capacity, MTU pressure from
+// max_bytes). No sequence logic — purely the wire.
+struct PacketStats {
+    std::uint64_t packets = 0;
+    std::uint64_t total_bytes = 0;
+    std::uint32_t max_bytes = 0;
+
+    void on_packet(std::uint32_t bytes) noexcept {
+        ++packets;
+        total_bytes += bytes;
+        if (bytes > max_bytes) max_bytes = bytes;
+    }
+    double mean_bytes() const noexcept {
+        return packets > 0 ? static_cast<double>(total_bytes) / static_cast<double>(packets) : 0.0;
+    }
+    void reset() noexcept { packets = 0; total_bytes = 0; max_bytes = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
