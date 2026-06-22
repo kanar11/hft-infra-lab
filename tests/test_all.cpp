@@ -2950,6 +2950,24 @@ void test_router_ewma_partial() {
         ASSERT(empt.avg_venue_latency_ns() == 0.0, "avglat_empty_zero");
     }
 
+    // --- #294 nbbo_bid_venue / nbbo_ask_venue ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("NYSE", 100, 0.0));
+        r.add_venue(Venue("NSDQ", 100, 0.0));
+        r.add_venue(Venue("BATS", 100, 0.0));
+        r.update_quote("NYSE", 99.98, 100.04, 100, 100);
+        r.update_quote("NSDQ", 100.00, 100.02, 100, 100);   // best bid AND best ask
+        r.update_quote("BATS", 99.99, 100.03, 100, 100);
+        ASSERT(std::strcmp(r.nbbo_bid_venue(), "NSDQ") == 0, "nbbo_bid_venue_nsdq");
+        ASSERT(std::strcmp(r.nbbo_ask_venue(), "NSDQ") == 0, "nbbo_ask_venue_nsdq");
+        r.update_quote("BATS", 100.01, 100.02, 100, 100);   // BATS now best bid
+        ASSERT(std::strcmp(r.nbbo_bid_venue(), "BATS") == 0, "nbbo_bid_venue_bats");
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.nbbo_bid_venue() == nullptr && empt.nbbo_ask_venue() == nullptr,
+               "nbbo_venue_empty_null");
+    }
+
     // --- #262 venue_liquidity_share (current displayed concentration) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);

@@ -377,6 +377,28 @@ public:
         }
         return found ? best : 0.0;
     }
+    // nbbo_bid_venue / nbbo_ask_venue: which active venue holds the NBB / NBO (#294)
+    // — the route target for each side. Mirrors national_best_bid/ask but returns the
+    // venue name instead of the price. nullptr when no venue shows liquidity on that
+    // side. Distinct from cheapest_venue (fee-adjusted) — this is the raw best quote.
+    const char* nbbo_bid_venue() const noexcept {
+        const char* who = nullptr; double best = 0.0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (v.is_active && v.bid_size > 0 && v.best_bid > best) { best = v.best_bid; who = v.name; }
+        }
+        return who;
+    }
+    const char* nbbo_ask_venue() const noexcept {
+        const char* who = nullptr; double best = 0.0; bool found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (v.is_active && v.ask_size > 0 && (!found || v.best_ask < best)) {
+                best = v.best_ask; found = true; who = v.name;
+            }
+        }
+        return who;
+    }
     double nbbo_mid() const noexcept {
         const double b = national_best_bid(), a = national_best_ask();
         return (b > 0.0 && a > 0.0) ? (b + a) / 2.0 : 0.0;
