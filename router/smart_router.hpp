@@ -591,6 +591,21 @@ public:
         }
         return total;
     }
+    // available_liquidity_notional: total $ value of top-of-book liquidity across
+    // active venues on the order side (#310) — buy hits asks (sum best_ask*ask_size),
+    // sell hits bids (sum best_bid*bid_size). The $ companion to available_liquidity
+    // (#109, shares): how much capital sits at the touch you can sweep immediately,
+    // a more comparable size gate across symbols of different prices.
+    double available_liquidity_notional(bool is_buy) const noexcept {
+        double total = 0.0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (is_buy) { if (v.best_ask > 0 && v.ask_size > 0) total += v.best_ask * v.ask_size; }
+            else        { if (v.best_bid > 0 && v.bid_size > 0) total += v.best_bid * v.bid_size; }
+        }
+        return total;
+    }
     // fill_shortfall: ile akcji zlecenia NIE pokryje wyswietlona plynnosc (#224) =
     // max(0, shares - available_liquidity). Reszta musialaby odlezec w ksiazce /
     // poczekac na nowy quote. Pre-route sizing.

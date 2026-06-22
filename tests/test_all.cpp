@@ -3058,6 +3058,23 @@ void test_router_ewma_partial() {
         ASSERT(r.internally_crossed_count() == 0, "intcross_repaired");
     }
 
+    // --- #310 available_liquidity_notional ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        r.update_quote("A", 99.98, 100.02, 100, 200);    // bid 99.98x100, ask 100.02x200
+        r.update_quote("B", 100.00, 100.04, 150, 100);   // bid 100.00x150, ask 100.04x100
+        // buy hits asks: 100.02*200 + 100.04*100 = 20004 + 10004 = 30008
+        ASSERT(std::fabs(r.available_liquidity_notional(true) - 30008.0) < 1e-6, "alnot_buy");
+        // sell hits bids: 99.98*100 + 100.00*150 = 9998 + 15000 = 24998
+        ASSERT(std::fabs(r.available_liquidity_notional(false) - 24998.0) < 1e-6, "alnot_sell");
+        r.set_venue_active("B", false);
+        ASSERT(std::fabs(r.available_liquidity_notional(true) - 20004.0) < 1e-6, "alnot_one_active");
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.available_liquidity_notional(true) == 0.0, "alnot_empty_zero");
+    }
+
     // --- #262 venue_liquidity_share (current displayed concentration) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
