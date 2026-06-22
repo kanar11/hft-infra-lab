@@ -180,6 +180,15 @@ public:
         for (const auto& [tok, rec] : orders_) if (rec.pending_cancel) ++c;
         return c;
     }
+    // status_count: how many tracked orders are CURRENTLY in a given state (#296).
+    // A point-in-time snapshot (vs the cumulative live_/filled_/... event counters,
+    // which only ever go up). Mirrors the OMS count_by_status (#290 family) — e.g.
+    // status_count(LIVE) is the live resting book right now.
+    size_t status_count(OrderState st) const noexcept {
+        size_t c = 0;
+        for (const auto& [tok, rec] : orders_) if (rec.state == st) ++c;
+        return c;
+    }
     double  fill_rate() const noexcept {
         return ordered_shares_ > 0
             ? static_cast<double>(total_filled_shares()) / static_cast<double>(ordered_shares_)

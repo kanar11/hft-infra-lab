@@ -4048,6 +4048,20 @@ void test_ouch_order_state() {
     ff.on_response(OUCHMessage::parse_response(buf, n));       // filled 60 / remaining 40
     ASSERT(std::fabs(ff.filled_fraction("A") - 0.6) < 1e-9, "ouch_ff_partial");
     ASSERT(ff.filled_fraction("UNKNOWN") == 0.0, "ouch_ff_unknown");
+
+    // #296 status_count — point-in-time snapshot by state.
+    ouch::OUCHOrderTracker sc;
+    sc.on_new("A", 100); sc.on_new("B", 100); sc.on_new("C", 100);   // all NEW
+    n = OUCHMessage::encode_accepted(buf, "A", 'B', 100, "AAPL", 150.25, 99101);
+    sc.on_response(OUCHMessage::parse_response(buf, n));              // A -> LIVE
+    n = OUCHMessage::encode_accepted(buf, "B", 'B', 100, "AAPL", 150.25, 99102);
+    sc.on_response(OUCHMessage::parse_response(buf, n));              // B -> LIVE
+    ASSERT(sc.status_count(ouch::OrderState::NEW) == 1, "ouch_sc_new");   // C
+    ASSERT(sc.status_count(ouch::OrderState::LIVE) == 2, "ouch_sc_live"); // A, B
+    n = OUCHMessage::encode_cancelled(buf, "A", 100, 'U');
+    sc.on_response(OUCHMessage::parse_response(buf, n));              // A -> CANCELLED
+    ASSERT(sc.status_count(ouch::OrderState::LIVE) == 1, "ouch_sc_live_after_cxl");
+    ASSERT(sc.status_count(ouch::OrderState::CANCELLED) == 1, "ouch_sc_cancelled");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
