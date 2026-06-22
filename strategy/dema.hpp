@@ -1,12 +1,12 @@
 /*
  * DEMA — Double Exponential Moving Average (expansion #214).
  *
- * Konstrukcja Mulloya, zbudowana na EMA (#173):
+ * Mulloy's construction, built on the EMA (#173):
  *   DEMA = 2 * EMA(price) - EMA(EMA(price))
  *
- * Drugi czlon (EMA z EMA) szacuje opoznienie pierwszej EMA; odejmujac je dwukrotnie
- * DEMA prawie kasuje zwloke, pozostajac gladka. W odroznieniu od HullMA (oparta na
- * WMA) robi to wykladniczo i bez okna — O(1) pamieci, dwie EMA. Header-only.
+ * The second term (EMA of EMA) estimates the lag of the first EMA; by subtracting it
+ * twice DEMA almost cancels the lag while staying smooth. Unlike HullMA (based on the
+ * WMA) it does this exponentially and windowless — O(1) memory, two EMAs. Header-only.
  */
 #pragma once
 
@@ -23,7 +23,7 @@ public:
 
     void update(double price) noexcept {
         ema1_.update(price);
-        ema2_.update(ema1_.value());   // EMA z biezacej EMA
+        ema2_.update(ema1_.value());   // EMA of the current EMA
     }
 
     double value() const noexcept { return 2.0 * ema1_.value() - ema2_.value(); }

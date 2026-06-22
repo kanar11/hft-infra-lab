@@ -28,7 +28,6 @@ static int tests_total = 0;
 
 
 // Helper: feed N identical prices to fill the window, then return strategy
-// Pomocnik: podaj N identycznych cen aby wypełnić okno
 void fill_window(MeanReversionStrategy& strat, const char* stock,
                  double price, int count) {
     for (int i = 0; i < count; ++i) {
@@ -39,7 +38,6 @@ void fill_window(MeanReversionStrategy& strat, const char* stock,
 
 void test_hold_during_warmup() {
     // During warmup (window not full), all signals should be HOLD (invalid)
-    // Podczas rozgrzewki (okno niepełne), wszystkie sygnały powinny być HOLD
     MeanReversionStrategy strat(20, 0.1, 100);
     for (int i = 0; i < 19; ++i) {
         auto sig = strat.on_market_data("AAPL", 150.0);
@@ -49,7 +47,6 @@ void test_hold_during_warmup() {
 
 void test_hold_at_mean() {
     // Price exactly at SMA → HOLD (no deviation)
-    // Cena dokładnie na SMA → HOLD (brak odchylenia)
     MeanReversionStrategy strat(5, 0.1, 100);
     fill_window(strat, "AAPL", 150.0, 5);
     auto sig = strat.on_market_data("AAPL", 150.0);
@@ -58,7 +55,6 @@ void test_hold_at_mean() {
 
 void test_buy_signal() {
     // Price drops well below SMA → BUY
-    // Cena spada znacznie poniżej SMA → KUP
     MeanReversionStrategy strat(5, 0.1, 100);
     fill_window(strat, "AAPL", 150.0, 5);
     // SMA = 150.0, price = 149.0 → deviation = -0.67% (below -0.1% threshold)
@@ -71,7 +67,6 @@ void test_buy_signal() {
 
 void test_sell_signal() {
     // Price rises well above SMA → SELL
-    // Cena rośnie znacznie powyżej SMA → SPRZEDAJ
     MeanReversionStrategy strat(5, 0.1, 100);
     fill_window(strat, "AAPL", 150.0, 5);
     // SMA = 150.0, price = 151.0 → deviation = +0.67% (above +0.1% threshold)
@@ -83,7 +78,6 @@ void test_sell_signal() {
 
 void test_sma_updates() {
     // SMA should shift as new prices arrive (circular buffer works)
-    // SMA powinno się zmieniać gdy przychodzą nowe ceny (bufor kołowy działa)
     MeanReversionStrategy strat(3, 0.1, 100);
     // Prices: 100, 100, 100 → SMA = 100
     fill_window(strat, "X", 100.0, 3);
@@ -96,7 +90,6 @@ void test_sma_updates() {
 
 void test_multiple_stocks() {
     // Strategy should track multiple stocks independently
-    // Strategia powinna śledzić wiele akcji niezależnie
     MeanReversionStrategy strat(5, 0.1, 100);
     fill_window(strat, "AAPL", 150.0, 5);
     fill_window(strat, "TSLA", 250.0, 5);
@@ -137,7 +130,6 @@ void test_custom_order_size() {
 
 void test_custom_threshold() {
     // High threshold (1%) — small move should NOT trigger
-    // Wysoki próg (1%) — mały ruch NIE powinien wyzwolić sygnału
     MeanReversionStrategy strat(5, 1.0, 100);  // 1.0% threshold
     fill_window(strat, "AAPL", 150.0, 5);
     // 0.5% move — below 1% threshold
@@ -187,7 +179,6 @@ void benchmark(int num_ticks) {
 
     // Simple pseudo-random price generator (LCG — linear congruential generator)
     // Like /dev/urandom but deterministic — same seed always gives same sequence
-    // Prosty pseudo-losowy generator cen — deterministyczny, zawsze ta sama sekwencja
     uint64_t seed = 42;
     double price = 150.0;
 

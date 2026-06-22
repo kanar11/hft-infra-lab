@@ -1,34 +1,34 @@
 /*
- * MarketMaker — symetryczny dwustronny quoter z inventory skew.
+ * MarketMaker — a symmetric two-sided quoter with inventory skew.
  *
- * Mean reversion (mean_reversion.hpp) jest REAKTYWNY — czeka aż cena
- * odbiegnie od średniej i wystawia 1 zlecenie. Market maker jest PROAKTYWNY:
- * kwotuje cały czas obie strony book'a, zarabia spread × wolumen który
- * przecina jego kwotowania i jednocześnie zarządza powstałym inventory.
+ * Mean reversion (mean_reversion.hpp) is REACTIVE — it waits until price
+ * deviates from the average and submits 1 order. A market maker is PROACTIVE:
+ * it quotes both sides of the book all the time, earns the spread × the volume that
+ * crosses its quotes, and at the same time manages the resulting inventory.
  *
- * Algorytm per tick:
+ * Algorithm per tick:
  *   mid  = (best_bid + best_ask) / 2
- *   skew = -position * risk_aversion_ticks         [w tickach]
+ *   skew = -position * risk_aversion_ticks         [in ticks]
  *
- *     long inventory  → ujemny skew → kwotowania w DÓŁ
- *       (zachęca egzekucje na ASK makera, zniechęca BID-y które
- *        rozszerzyłyby long jeszcze bardziej)
- *     short inventory → dodatni skew → kwotowania w GÓRĘ
+ *     long inventory  → negative skew → quotes DOWN
+ *       (encourages execution on the maker's ASK, discourages BIDs that
+ *        would extend the long even further)
+ *     short inventory → positive skew → quotes UP
  *
  *   target_bid = mid - half_spread + skew
  *   target_ask = mid + half_spread + skew
  *
- * Limity inventory:
- *   position >=  max_inventory → BID wyłączony (nie rośniemy w long)
- *   position <= -max_inventory → ASK wyłączony (nie rośniemy w short)
+ * Inventory limits:
+ *   position >=  max_inventory → BID disabled (we do not grow the long)
+ *   position <= -max_inventory → ASK disabled (we do not grow the short)
  *
- * Model P&L:
- *   cash_ kumuluje signed ticks × shares każdego fila. Mark-to-market
- *   P&L = (cash_ + position * mid) / 100 dolarów.
+ * P&L model:
+ *   cash_ accumulates signed ticks × shares of each fill. Mark-to-market
+ *   P&L = (cash_ + position * mid) / 100 dollars.
  *
- * Klasa integration-agnostic — udostępnia czyste quote() / apply_fill().
- * Wywołujący (mm_demo albo przyszły OMS-runner) jest odpowiedzialny za
- * faktyczne submit/cancel zleceń przez OMS i wpinanie fillsów z powrotem.
+ * The class is integration-agnostic — it exposes clean quote() / apply_fill().
+ * The caller (mm_demo or a future OMS runner) is responsible for the
+ * actual submit/cancel of orders through the OMS and for feeding fills back.
  */
 #pragma once
 
@@ -42,14 +42,14 @@ namespace mm {
 
 struct MMConfig {
     int32_t quote_size          = 10;     // shares per side
-    int32_t half_spread_ticks   = 2;      // odległość od mid (1 tick = $0.01)
-    int32_t max_inventory       = 1000;   // hard cap na net position
-    double  risk_aversion_ticks = 0.05;   // skew (ticki) na share net inventory
+    int32_t half_spread_ticks   = 2;      // distance from mid (1 tick = $0.01)
+    int32_t max_inventory       = 1000;   // hard cap on net position
+    double  risk_aversion_ticks = 0.05;   // skew (ticks) per share of net inventory
 };
 
 
 struct Quote {
-    int32_t bid_price;   // 0 = strona wyłączona (np. przy max_inventory)
+    int32_t bid_price;   // 0 = side disabled (e.g. at max_inventory)
     int32_t ask_price;
     int32_t bid_size;
     int32_t ask_size;
@@ -61,7 +61,7 @@ class MarketMaker {
     char     symbol_[9];
 
     int32_t  position_     = 0;
-    int64_t  cash_ticks_   = 0;   // signed cumulative cash flow w ticks*shares
+    int64_t  cash_ticks_   = 0;   // signed cumulative cash flow in ticks*shares
     int32_t  last_bid_     = 0;
     int32_t  last_ask_     = 0;
 
@@ -69,9 +69,9 @@ class MarketMaker {
     std::uint64_t quotes_cancelled_ = 0;
     std::uint64_t fills_received_   = 0;
 
-    // Adverse selection tracking — patrz mark_post_fill_move().
+    // Adverse selection tracking — see mark_post_fill_move().
     Side          last_fill_side_       = Side::BUY;
-    int32_t       last_fill_price_ticks_ = 0;  // 0 = nie ma "pending" fill'u
+    int32_t       last_fill_price_ticks_ = 0;  // 0 = no "pending" fill
     int64_t       adverse_total_ticks_   = 0;  // signed cumulative
 
 public:
@@ -85,8 +85,8 @@ public:
     MarketMaker(MarketMaker&&)                 = delete;
     MarketMaker& operator=(MarketMaker&&)      = delete;
 
-    // quote: oblicz docelowe kwotowania na ten tick przy danym best_bid/best_ask
-    // rynku. Oba w tickach (1 tick = $0.01).
+    // quote: compute the target quotes for this tick given the market's best_bid/best_ask.
+    // Both in ticks (1 tick = $0.01).
     Quote quote(int32_t best_bid, int32_t best_ask) noexcept {
         Quote q{0, 0, 0, 0};
         if (best_bid <= 0 || best_ask <= 0 || best_ask <= best_bid) return q;
@@ -98,7 +98,7 @@ public:
         const int32_t bid_target = mid - cfg_.half_spread_ticks + skew;
         const int32_t ask_target = mid + cfg_.half_spread_ticks + skew;
 
-        // BID wyłączony gdy przy long-limicie; ASK wyłączony gdy przy short-limicie.
+        // BID disabled when at the long limit; ASK disabled when at the short limit.
         if (position_ < cfg_.max_inventory) {
             q.bid_price = bid_target;
             q.bid_size  = cfg_.quote_size;
@@ -108,7 +108,7 @@ public:
             q.ask_size  = cfg_.quote_size;
         }
 
-        // Quote churn: każda zmiana którejkolwiek strony liczy się jako cancel+replace.
+        // Quote churn: any change of either side counts as a cancel+replace.
         if (q.bid_price != last_bid_ || q.ask_price != last_ask_) {
             if (last_bid_ != 0 || last_ask_ != 0) ++quotes_cancelled_;
             ++quotes_placed_;
@@ -118,13 +118,13 @@ public:
         return q;
     }
 
-    // apply_fill: wywołujący mówi nam że jedno z naszych kwotowań zostało egzekutowane.
-    //   side == BUY  → maker kupił   (inventory ↑, cash ↓)
-    //   side == SELL → maker sprzedał (inventory ↓, cash ↑)
+    // apply_fill: the caller tells us that one of our quotes was executed.
+    //   side == BUY  → the maker bought (inventory ↑, cash ↓)
+    //   side == SELL → the maker sold   (inventory ↓, cash ↑)
     //
-    // Po egzekucji wywołujący POWINIEN później wywołać mark_post_fill_move()
-    // gdy następny mid jest znany — dzięki temu śledzimy adverse selection
-    // (informed traderzy biją MM tuż przed ruchem ceny w ich stronę).
+    // After execution the caller SHOULD later call mark_post_fill_move()
+    // when the next mid is known — this lets us track adverse selection
+    // (informed traders hit the MM just before price moves their way).
     void apply_fill(Side side, int32_t qty, int32_t price_ticks) noexcept {
         if (qty <= 0) return;
         ++fills_received_;
@@ -139,34 +139,34 @@ public:
         }
     }
 
-    // mark_post_fill_move: model **adverse selection**. W realu kiedy MM
-    // dostaje fill, większość counterparties to *informed traders* (mają
-    // lepszą info niż MM) → cena CZĘŚCIEJ rusza dalej w ich stronę zaraz po
-    // egzekucji. Klasyczny problem MM "kiedy mnie biją to częściej źle dla
-    // mnie".
+    // mark_post_fill_move: a model of **adverse selection**. In reality when an MM
+    // gets a fill, most counterparties are *informed traders* (they have
+    // better info than the MM) → price MORE OFTEN moves further their way right after
+    // execution. The classic MM problem "when I get hit it's more often bad for
+    // me".
     //
-    // Wywołujący przekazuje aktualny mid po fillu. Liczymy "adverse move":
-    //   - jeśli MM kupił (BUY) a cena spadła → adverse (mid < fill_price)
-    //   - jeśli MM sprzedał (SELL) a cena wzrosła → adverse (mid > fill_price)
-    // adverse_total_ticks_ kumuluje signed adverse ticks per fill.
+    // The caller passes the current mid after a fill. We compute the "adverse move":
+    //   - if the MM bought (BUY) and price fell → adverse (mid < fill_price)
+    //   - if the MM sold (SELL) and price rose → adverse (mid > fill_price)
+    // adverse_total_ticks_ accumulates signed adverse ticks per fill.
     void mark_post_fill_move(int32_t new_mid_ticks) noexcept {
-        if (last_fill_price_ticks_ <= 0) return;   // brak ostatniego fill'a
+        if (last_fill_price_ticks_ <= 0) return;   // no last fill
         const int32_t delta = new_mid_ticks - last_fill_price_ticks_;
         const int32_t adverse = (last_fill_side_ == Side::BUY) ? -delta : delta;
         adverse_total_ticks_ += adverse;
-        last_fill_price_ticks_ = 0;   // konsumed
+        last_fill_price_ticks_ = 0;   // consumed
     }
 
-    // avg_adverse_ticks_per_fill: średnia liczba ticków "ruchu przeciwko"
-    // po fillu. Dodatnia liczba = informed flow nas bije, ujemna = lucky
-    // (counterparties tracili na nas).
+    // avg_adverse_ticks_per_fill: the average number of ticks of "move against us"
+    // after a fill. A positive number = informed flow is hitting us, negative = lucky
+    // (counterparties lost on us).
     double avg_adverse_ticks_per_fill() const noexcept {
         return fills_received_ > 0
             ? static_cast<double>(adverse_total_ticks_) / fills_received_ : 0.0;
     }
     int64_t adverse_total_ticks() const noexcept { return adverse_total_ticks_; }
 
-    // pnl: mark-to-market w dolarach przy danym mid (w tickach).
+    // pnl: mark-to-market in dollars at the given mid (in ticks).
     double pnl(int32_t mid_ticks) const noexcept {
         const int64_t inv_value_ticks = static_cast<int64_t>(position_) * mid_ticks;
         return static_cast<double>(cash_ticks_ + inv_value_ticks) / 100.0;

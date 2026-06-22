@@ -1,25 +1,25 @@
 /*
- * VWAPTracker — sledzenie rynkowego VWAP + slippage egzekucji (expansion #113).
+ * VWAPTracker — tracking the market VWAP + execution slippage (expansion #113).
  *
- * VWAP (volume-weighted average price) to standardowy benchmark jakosci
- * egzekucji: "czy kupilem taniej niz srednia wazona wolumenem rynku?". Tracker
- * akumuluje notional i wolumen z printow rynku (TradeMsg/Executed) i liczy:
- *   - vwap()                — biezacy VWAP
- *   - slippage_bps(px, buy) — o ile gorsza (>0) / lepsza (<0) byla nasza cena
- *                             wzgledem VWAP, w punktach bazowych
+ * VWAP (volume-weighted average price) is the standard benchmark for execution
+ * quality: "did I buy cheaper than the market's volume-weighted average?". The tracker
+ * accumulates notional and volume from market prints (TradeMsg/Executed) and computes:
+ *   - vwap()                — the current VWAP
+ *   - slippage_bps(px, buy) — how much worse (>0) / better (<0) our price was
+ *                             relative to VWAP, in basis points
  *
- * Jeden tracker per symbol (caller trzyma mape). Header-only, O(1) per print.
+ * One tracker per symbol (the caller keeps a map). Header-only, O(1) per print.
  */
 #pragma once
 
 #include <cstdint>
 
 class VWAPTracker {
-    double  notional_ = 0.0;   // Sigma price*volume
-    int64_t volume_   = 0;     // Sigma volume
+    double  notional_ = 0.0;   // Σ price*volume
+    int64_t volume_   = 0;     // Σ volume
 
 public:
-    // on_trade: dolicz print rynkowy (cena, wolumen).
+    // on_trade: add a market print (price, volume).
     void on_trade(double price, int64_t vol) noexcept {
         if (price > 0.0 && vol > 0) {
             notional_ += price * static_cast<double>(vol);
@@ -30,9 +30,9 @@ public:
     double  vwap()   const noexcept { return volume_ > 0 ? notional_ / static_cast<double>(volume_) : 0.0; }
     int64_t volume() const noexcept { return volume_; }
 
-    // slippage_bps: jakosc egzekucji wzgledem VWAP, w bps. Dla BUY zaplacenie
-    // POWYZEJ VWAP = dodatnie (gorzej); dla SELL sprzedaz PONIZEJ VWAP = dodatnie.
-    // <0 = pobilismy VWAP (lepiej). 0 gdy brak danych VWAP.
+    // slippage_bps: execution quality relative to VWAP, in bps. For a BUY paying
+    // ABOVE VWAP = positive (worse); for a SELL selling BELOW VWAP = positive.
+    // <0 = we beat VWAP (better). 0 when there is no VWAP data.
     double slippage_bps(double exec_price, bool is_buy) const noexcept {
         const double v = vwap();
         if (v <= 0.0) return 0.0;

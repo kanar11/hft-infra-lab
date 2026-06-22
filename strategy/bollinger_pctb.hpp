@@ -1,14 +1,14 @@
 /*
  * Bollinger %B (expansion #246).
  *
- * %B = (cena - dolne_pasmo) / (gorne_pasmo - dolne_pasmo), gdzie pasma =
- * SMA +/- k * odchylenie standardowe (populacyjne) po oknie N. Normalizuje
- * polozenie ceny WZGLEDEM pasm Bollingera:
- *   0.0 = na dolnym pasmie, 0.5 = na sredniej, 1.0 = na gornym;
- *   > 1.0 = powyzej gornego (wykupienie), < 0.0 = ponizej dolnego (wyprzedanie).
+ * %B = (price - lower_band) / (upper_band - lower_band), where the bands =
+ * SMA +/- k * standard deviation (population) over a window of N. Normalizes
+ * the position of price RELATIVE to the Bollinger bands:
+ *   0.0 = on the lower band, 0.5 = on the average, 1.0 = on the upper;
+ *   > 1.0 = above the upper (overbought), < 0.0 = below the lower (oversold).
  *
- * W odroznieniu od strategii Bollinger (sygnaly wejscia) %B to ciagly WSKAZNIK
- * pozycji — wygodny do filtrow i ensemble. Plaskie okno (sd=0) -> 0.5. Header-only.
+ * Unlike the Bollinger strategy (entry signals) %B is a continuous position
+ * INDICATOR — handy for filters and ensembles. Flat window (sd=0) -> 0.5. Header-only.
  */
 #pragma once
 
@@ -38,11 +38,11 @@ public:
         const double mean = sum / n;
         double var = 0.0;
         for (double p : window_) { const double d = p - mean; var += d * d; }
-        var /= n;                                   // wariancja populacyjna
+        var /= n;                                   // population variance
         const double sd = std::sqrt(var);
-        if (sd == 0.0) return 0.5;                  // plaskie okno -> srodek
+        if (sd == 0.0) return 0.5;                  // flat window -> middle
         const double lower = mean - k_ * sd;
-        const double width = 2.0 * k_ * sd;         // gorne - dolne
+        const double width = 2.0 * k_ * sd;         // upper - lower
         return (window_.back() - lower) / width;
     }
 

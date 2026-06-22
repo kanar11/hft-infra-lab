@@ -1,18 +1,18 @@
 /*
- * MomentumStrategy — strategia podążania za trendem (expansion #85).
+ * MomentumStrategy — a trend-following strategy (expansion #85).
  *
- * Przeciwienstwo mean-reversion: zamiast stawiac na powrot do sredniej, gramy
- * KONTYNUACJE ruchu. Gdy cena wybija ponad SMA o prog -> trend w gore -> BUY;
- * ponizej -> SELL. Klasyczna "trend-following" alpha; pokazuje ze pipeline i
- * harness backtestu hostuja wiele rodzin strategii, nie jedna.
+ * The opposite of mean-reversion: instead of betting on a return to the average, we play
+ * the CONTINUATION of the move. When price breaks above the SMA by a threshold -> uptrend
+ * -> BUY; below -> SELL. Classic "trend-following" alpha; it shows that the pipeline and
+ * the backtest harness host many strategy families, not one.
  *
- *   cena > SMA + threshold -> BUY  (breakout w gore, jedziemy z trendem)
- *   cena < SMA - threshold -> SELL (breakdown, gramy spadek)
- *   inaczej               -> HOLD
+ *   price > SMA + threshold -> BUY  (upside breakout, ride the trend)
+ *   price < SMA - threshold -> SELL (breakdown, play the drop)
+ *   otherwise              -> HOLD
  *
- * Reuzywa Signal + PriceWindow z mean_reversion.hpp (ta sama infrastruktura
- * SMA O(1), te same MAX_STOCKS/MAX_WINDOW), wiec wpina sie w istniejacy
- * pipeline/backtest bez zmian w callerze — rozni sie TYLKO znakiem decyzji.
+ * Reuses Signal + PriceWindow from mean_reversion.hpp (the same O(1) SMA
+ * infrastructure, the same MAX_STOCKS/MAX_WINDOW), so it plugs into the existing
+ * pipeline/backtest with no caller changes — it differs ONLY in the sign of the decision.
  */
 #pragma once
 
@@ -76,8 +76,8 @@ public:
         if (sma <= 0.0) { ++stats_.holds; stats_.total_latency_ns += (mono_ns() - t0); return sig; }
         const double deviation = (price - sma) / sma;
 
-        // Trend-following: znak DECYZJI odwrotny do mean-reversion.
-        if (deviation > threshold_) {          // breakout w gore -> jedziemy long
+        // Trend-following: the DECISION sign is opposite to mean-reversion.
+        if (deviation > threshold_) {          // upside breakout -> go long
             emit(sig, stock, Side::BUY, price, sma, deviation, timestamp_ns);
             ++stats_.buys; ++stats_.signals_generated;
         } else if (deviation < -threshold_) {  // breakdown -> short

@@ -1,14 +1,14 @@
 /*
- * SignalThrottle — dławik nadmiernego handlu (expansion #104).
+ * SignalThrottle — a throttle for excessive trading (expansion #104).
  *
- * Strategie (mean-reversion, momentum, bollinger) potrafia generowac sygnal na
- * KAZDYM ticku gdy warunek trzyma sie dluzej — to przehandlowanie: prowizje
- * zjadaja edge, a kolejne zlecenia w te sama strone tylko powiekszaja pozycje.
- * Throttle wymusza MINIMALNY odstep (w "tickach"/sekwencji) miedzy przyjetymi
- * sygnalami per symbol. Reuzywalny: owija dowolna strategie po stronie callera.
+ * Strategies (mean-reversion, momentum, bollinger) can generate a signal on
+ * EVERY tick while the condition holds — that is overtrading: commissions
+ * eat the edge, and more orders on the same side only grow the position.
+ * The throttle enforces a MINIMUM gap (in "ticks"/sequence) between accepted
+ * signals per symbol. Reusable: it wraps any strategy on the caller's side.
  *
- *   allow(sym, seq) -> true gdy od ostatniego przyjetego sygnalu dla `sym`
- *   uplynelo >= cooldown; wtedy zapamietuje seq. Inaczej false (stlumione).
+ *   allow(sym, seq) -> true when >= cooldown has elapsed since the last accepted
+ *   signal for `sym`; then it remembers seq. Otherwise false (suppressed).
  */
 #pragma once
 
@@ -19,15 +19,15 @@
 
 class SignalThrottle {
     int64_t cooldown_;
-    std::unordered_map<uint64_t, int64_t> last_fire_;   // sym_key -> seq ostatniego sygnalu
+    std::unordered_map<uint64_t, int64_t> last_fire_;   // sym_key -> seq of the last signal
     uint64_t suppressed_ = 0;
 
 public:
     explicit SignalThrottle(int64_t cooldown) noexcept
         : cooldown_(cooldown > 0 ? cooldown : 0) {}
 
-    // allow: czy przepuscic sygnal dla `sym` przy biezacej sekwencji `seq`.
-    // Pierwszy sygnal zawsze przechodzi; kolejne dopiero po cooldown.
+    // allow: whether to let a signal through for `sym` at the current sequence `seq`.
+    // The first signal always passes; subsequent ones only after the cooldown.
     bool allow(const char* sym, int64_t seq) {
         const uint64_t k = sym_to_key(sym);
         const auto it = last_fire_.find(k);
@@ -39,7 +39,7 @@ public:
         return false;
     }
 
-    // reset_symbol: zapomnij stan dla symbolu (np. po flacie pozycji).
+    // reset_symbol: forget the state for a symbol (e.g. after the position goes flat).
     void reset_symbol(const char* sym) noexcept { last_fire_.erase(sym_to_key(sym)); }
     void reset() noexcept { last_fire_.clear(); suppressed_ = 0; }
 

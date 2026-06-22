@@ -1,12 +1,12 @@
 /*
  * CCI — Commodity Channel Index (expansion #238).
  *
- * CCI = (cena - SMA) / (0.015 * srednie_odchylenie_bezwzgledne), po oknie N.
- * Mierzy jak DALEKO biezaca cena odchyla sie od swojej sredniej, w jednostkach
- * typowego odchylenia. Stala 0.015 sprawia, ze ~70-80% wartosci miesci sie w
- * [-100, +100]; |CCI| > 100 = ruch nietypowo silny: > +100 wykupienie / poczatek
- * trendu wzrostowego, < -100 wyprzedanie. W odroznieniu od oscylatorow opartych na
- * min/max (Stochastic) bazuje na sredniej i srednim odchyleniu. Header-only.
+ * CCI = (price - SMA) / (0.015 * mean_absolute_deviation), over a window of N.
+ * Measures how FAR the current price deviates from its average, in units of the
+ * typical deviation. The 0.015 constant makes ~70-80% of values fall within
+ * [-100, +100]; |CCI| > 100 = an unusually strong move: > +100 overbought / start
+ * of an uptrend, < -100 oversold. Unlike oscillators based on min/max (Stochastic)
+ * it is based on the mean and the mean deviation. Header-only.
  */
 #pragma once
 
@@ -35,7 +35,7 @@ public:
         double mad = 0.0;
         for (double p : window_) mad += std::fabs(p - mean);
         mad /= n;
-        if (mad == 0.0) return 0.0;                 // plaskie okno — brak sygnalu
+        if (mad == 0.0) return 0.0;                 // flat window — no signal
         return (window_.back() - mean) / (0.015 * mad);
     }
 

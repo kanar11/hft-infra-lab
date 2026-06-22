@@ -1,17 +1,17 @@
 /*
- * BollingerStrategy — mean-reversion adaptacyjny do zmiennosci (expansion #93).
+ * BollingerStrategy — mean-reversion adaptive to volatility (expansion #93).
  *
- * MeanReversionStrategy uzywa STALEGO progu % od SMA — ten sam prog na spokojnym
- * i rozchwianym rynku, wiec albo za duzo sygnalow na zmiennym, albo za malo na
- * spokojnym. Bollinger skaluje prog ZMIENNOSCIA: pasma = SMA +/- k*sigma
- * (odchylenie standardowe okna). Sygnal dopiero gdy cena wybije poza pasmo.
+ * MeanReversionStrategy uses a FIXED % threshold from the SMA — the same threshold in
+ * a calm and a turbulent market, so either too many signals when volatile, or too few
+ * when calm. Bollinger scales the threshold by VOLATILITY: bands = SMA +/- k*sigma
+ * (the window's standard deviation). A signal only when price breaks outside a band.
  *
- *   cena > SMA + k*sigma -> SELL (przewartosciowane wzgledem zmiennosci)
- *   cena < SMA - k*sigma -> BUY
- *   inaczej             -> HOLD
+ *   price > SMA + k*sigma -> SELL (overvalued relative to volatility)
+ *   price < SMA - k*sigma -> BUY
+ *   otherwise            -> HOLD
  *
- * Reuzywa Signal/StrategyStats/limity z mean_reversion.hpp. Wlasne okno bo
- * PriceWindow nie trzyma sumy kwadratow potrzebnej do sigma O(1).
+ * Reuses Signal/StrategyStats/limits from mean_reversion.hpp. Its own window because
+ * PriceWindow does not keep the sum of squares needed for sigma in O(1).
  */
 #pragma once
 
@@ -26,8 +26,8 @@ class BollingerStrategy {
     struct VarWindow {
         char   symbol[9];
         double prices[MAX_WINDOW];
-        double sum;        // Sigma cen
-        double sum_sq;     // Sigma cen^2 — do sigma w O(1)
+        double sum;        // Σ prices
+        double sum_sq;     // Σ prices^2 — for sigma in O(1)
         int    count, head, window_size;
         bool   active;
     };
@@ -35,7 +35,7 @@ class BollingerStrategy {
     VarWindow     windows_[MAX_STOCKS];
     int           stock_count_;
     int           window_size_;
-    double        num_std_;       // k — ile sigma od SMA (np. 2.0)
+    double        num_std_;       // k — how many sigma from the SMA (e.g. 2.0)
     int32_t       order_size_;
     StrategyStats stats_;
 
@@ -51,7 +51,7 @@ class BollingerStrategy {
     }
 
     static void add(VarWindow& w, double price) noexcept {
-        if (w.count == w.window_size) {            // eviction najstarszej
+        if (w.count == w.window_size) {            // evict the oldest
             const double old = w.prices[w.head];
             w.sum -= old; w.sum_sq -= old * old;
         }
@@ -70,9 +70,9 @@ class BollingerStrategy {
 
 public:
     BollingerStrategy(int window = 20, double num_std = 2.0, int32_t order_size = 100) noexcept
-        : windows_{},                                              // value-init slotow (active=false)
+        : windows_{},                                              // value-init slots (active=false)
           stock_count_(0),
-          window_size_(std::max(2, std::min(window, MAX_WINDOW))),  // >=2 do wariancji
+          window_size_(std::max(2, std::min(window, MAX_WINDOW))),  // >=2 for variance
           num_std_(num_std > 0.0 ? num_std : 2.0),
           order_size_(order_size) {}
 

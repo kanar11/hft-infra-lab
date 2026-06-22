@@ -1,13 +1,13 @@
 /*
  * Stochastic Oscillator — %K (expansion #190).
  *
- * %K = (close - lowest_low) / (highest_high - lowest_low) * 100, po oknie N
- * obserwacji. Mierzy POLOZENIE biezacej ceny w zakresie okna: ~100 = przy szczycie
- * (wykupienie), ~0 = przy dnie (wyprzedanie). W odroznieniu od RSI (oparty na
- * sredniej zyskow/strat) patrzy na zakres min-max — szybciej reaguje na ekstrema.
+ * %K = (close - lowest_low) / (highest_high - lowest_low) * 100, over a window of N
+ * observations. Measures the POSITION of the current price within the window's range:
+ * ~100 = near the top (overbought), ~0 = near the bottom (oversold). Unlike RSI (based
+ * on average gains/losses) it looks at the min-max range — reacting faster to extremes.
  *
- * Konwencja: overbought > 80, oversold < 20; przy plaskim oknie (hi==lo) zwraca 50.
- * Header-only, okno w std::deque.
+ * Convention: overbought > 80, oversold < 20; on a flat window (hi==lo) it returns 50.
+ * Header-only, window in a std::deque.
  */
 #pragma once
 
@@ -27,13 +27,13 @@ public:
         while (static_cast<int>(window_.size()) > period_) window_.pop_front();
     }
 
-    // percent_k: pozycja ostatniej ceny w zakresie [min,max] okna, 0..100.
+    // percent_k: position of the last price in the window's [min,max] range, 0..100.
     double percent_k() const noexcept {
         if (window_.empty()) return 50.0;
         double lo = window_.front();
         double hi = window_.front();
         for (double p : window_) { if (p < lo) lo = p; if (p > hi) hi = p; }
-        if (hi <= lo) return 50.0;                 // plaskie okno — neutralnie
+        if (hi <= lo) return 50.0;                 // flat window — neutral
         return (window_.back() - lo) / (hi - lo) * 100.0;
     }
 

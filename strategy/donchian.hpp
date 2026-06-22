@@ -1,15 +1,15 @@
 /*
- * DonchianBreakout — strategia wybicia z kanalu (expansion #124).
+ * DonchianBreakout — channel-breakout strategy (expansion #124).
  *
- * Kanal Donchiana = najwyzsza i najnizsza cena z ostatnich N obserwacji.
- * Sygnal pojawia sie gdy biezaca cena PRZEBIJA kanal zbudowany z N POPRZEDNICH:
- *   cena > prior_high -> BUY  (wybicie gora — nowy trend wzrostowy)
- *   cena < prior_low  -> SELL (wybicie dol)
- *   inaczej          -> HOLD
+ * A Donchian channel = the highest and lowest price of the last N observations.
+ * A signal appears when the current price BREAKS a channel built from the N PREVIOUS:
+ *   price > prior_high -> BUY  (upside breakout — a new uptrend)
+ *   price < prior_low  -> SELL (downside breakout)
+ *   otherwise         -> HOLD
  *
- * Rozni sie od momentum (prog wzgledem SMA) i bollingera (pasma sigma): tu
- * liczy sie czyste przebicie ekstremum okna — klasyczny trend-following/turtle.
- * Reuzywa Signal/StrategyStats z mean_reversion.hpp.
+ * Differs from momentum (a threshold relative to the SMA) and Bollinger (sigma bands):
+ * here only a clean break of the window's extreme matters — classic trend-following/turtle.
+ * Reuses Signal/StrategyStats from mean_reversion.hpp.
  */
 #pragma once
 
@@ -71,7 +71,7 @@ public:
         Win* w = (std::isfinite(price) && price > 0.0) ? find_or_create(stock) : nullptr;
         if (!w) { ++stats_.holds; stats_.total_latency_ns += (mono_ns() - t0); return sig; }
 
-        // Kanal liczony z N POPRZEDNICH cen; sygnal gdy biezaca je przebija.
+        // Channel computed from the N PREVIOUS prices; signal when the current one breaks it.
         if (w->count >= w->size) {
             double hi = -1e300, lo = 1e300;
             for (int i = 0; i < w->count; ++i) {

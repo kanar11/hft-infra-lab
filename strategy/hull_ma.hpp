@@ -1,13 +1,13 @@
 /*
  * Hull Moving Average (HMA) — expansion #206.
  *
- * Konstrukcja Alana Hulla, zbudowana na WMA (#198):
- *   raw = 2 * WMA(price, n/2) - WMA(price, n)     (odejmuje opoznienie)
- *   HMA = WMA(raw, sqrt(n))                        (wygladza)
+ * Alan Hull's construction, built on the WMA (#198):
+ *   raw = 2 * WMA(price, n/2) - WMA(price, n)     (subtracts lag)
+ *   HMA = WMA(raw, sqrt(n))                        (smooths)
  *
- * Efekt: prawie zerowe opoznienie przy gladkosci porownywalnej z SMA — szybciej
- * lapie zwroty trendu niz EMA/WMA, mniej szumu niz krotka SMA. Header-only,
- * trzy WMA w srodku.
+ * Effect: near-zero lag with smoothness comparable to an SMA — catches trend
+ * turns faster than an EMA/WMA, with less noise than a short SMA. Header-only,
+ * three WMAs inside.
  */
 #pragma once
 
@@ -18,7 +18,7 @@
 class HullMA {
     WMA half_;     // WMA(n/2)
     WMA full_;     // WMA(n)
-    WMA smooth_;   // WMA(sqrt(n)) nad surowa seria
+    WMA smooth_;   // WMA(sqrt(n)) over the raw series
 
     static int half_period(int n) noexcept { const int h = n / 2; return h < 1 ? 1 : h; }
     static int sqrt_period(int n) noexcept {
@@ -35,11 +35,11 @@ public:
     void update(double price) {
         half_.update(price);
         full_.update(price);
-        smooth_.update(2.0 * half_.value() - full_.value());   // raw -> wygladzenie
+        smooth_.update(2.0 * half_.value() - full_.value());   // raw -> smoothing
     }
 
     double value() const noexcept { return smooth_.value(); }
-    // gotowa gdy pelne okno WMA(n) ma komplet danych.
+    // ready when the full WMA(n) window has a complete set of data.
     bool   ready() const noexcept { return full_.ready(); }
     void   reset() noexcept { half_.reset(); full_.reset(); smooth_.reset(); }
 };

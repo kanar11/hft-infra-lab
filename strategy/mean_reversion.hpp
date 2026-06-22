@@ -1,25 +1,25 @@
 /*
- * MeanReversionStrategy — strategia powrotu do średniej (mean reversion).
+ * MeanReversionStrategy — a mean-reversion strategy.
  *
- * Logika: gdy cena odbiega od krótkookresowej średniej ruchomej (SMA) o więcej
- * niż próg, stawiamy na powrót do średniej. To klasyczna strategia "reactive"
- * — czekamy na rynek, reagujemy na odchylenie. Market_maker.hpp pokazuje
- * wariant proactive (kwotujemy zawsze, zbieramy spread).
+ * Logic: when price deviates from a short-term simple moving average (SMA) by more
+ * than a threshold, we bet on a return to the average. This is the classic "reactive"
+ * strategy — we wait for the market and react to a deviation. market_maker.hpp shows
+ * the proactive variant (we always quote, collecting the spread).
  *
- *   cena > SMA + threshold → SELL (przewartościowane, spodziewamy się spadku)
- *   cena < SMA - threshold → BUY  (niedowartościowane, spodziewamy się wzrostu)
- *   inaczej               → HOLD (brak akcji)
+ *   price > SMA + threshold → SELL (overvalued, we expect a drop)
+ *   price < SMA - threshold → BUY  (undervalued, we expect a rise)
+ *   otherwise              → HOLD (no action)
  *
- * Pipeline: ITCH feed → parser → STRATEGY (sygnały) → router → risk → OMS.
+ * Pipeline: ITCH feed → parser → STRATEGY (signals) → router → risk → OMS.
  *
- * Wydajność (lab): ~8M decyzji/sec, p50=100ns, p99=121ns na ticku.
+ * Performance (lab): ~8M decisions/sec, p50=100ns, p99=121ns per tick.
  *
- * Decyzje projektowe:
- *   - PriceWindow trzyma running_sum → sma() jest O(1) zamiast O(window).
- *   - Stała tablica MAX_STOCKS×PriceWindow, zero heap na hot path.
- *   - find_or_create() to liniowy skan, ale N≤64 mieści się w 1 linii cache.
- *   - Symbol jako char[9] + std::strcmp — szybsze niż std::string dla N≤8 chr.
- *   - NaN/Inf guard żeby zepsuty feed nie propagował się w deviation_pct.
+ * Design decisions:
+ *   - PriceWindow keeps running_sum → sma() is O(1) instead of O(window).
+ *   - A fixed MAX_STOCKS×PriceWindow array, zero heap on the hot path.
+ *   - find_or_create() is a linear scan, but N≤64 fits in 1 cache line.
+ *   - Symbol as char[9] + std::strcmp — faster than std::string for N≤8 chars.
+ *   - NaN/Inf guard so a broken feed does not propagate into deviation_pct.
  */
 #pragma once
 
@@ -33,23 +33,23 @@
 #include <cstring>
 
 
-// Maks. liczba symboli śledzonych jednocześnie (stała tablica, no heap).
+// Max number of symbols tracked at once (fixed array, no heap).
 static constexpr int MAX_STOCKS = 64;
 
-// Maks. rozmiar okna SMA (ile ostatnich cen trzymamy per symbol).
+// Max SMA window size (how many recent prices we keep per symbol).
 static constexpr int MAX_WINDOW = 128;
 
 
-// Sygnał handlowy — generowany gdy cena wystarczająco odbiega od średniej.
+// A trading signal — generated when price deviates enough from the average.
 struct Signal {
-    int64_t timestamp_ns;      // czas wygenerowania sygnału
+    int64_t timestamp_ns;      // time the signal was generated
     char    stock[9];          // ticker
-    Side    side;              // BUY/SELL (znaczące tylko gdy valid=true)
-    double  price;             // bieżąca cena
-    int32_t quantity;          // rozmiar zlecenia
-    double  sma;               // SMA w momencie sygnału
-    double  deviation_pct;     // jak daleko od średniej (%)
-    bool    valid;             // false = HOLD (brak sygnału)
+    Side    side;              // BUY/SELL (meaningful only when valid=true)
+    double  price;             // current price
+    int32_t quantity;          // order size
+    double  sma;               // SMA at the moment of the signal
+    double  deviation_pct;     // how far from the average (%)
+    bool    valid;             // false = HOLD (no signal)
 
     Signal() noexcept
         : timestamp_ns(0), side(Side::BUY), price(0), quantity(0),
@@ -59,7 +59,7 @@ struct Signal {
 };
 
 
-// Liczniki strategii (do print_stats / benchmarków).
+// Strategy counters (for print_stats / benchmarks).
 struct StrategyStats {
     uint64_t signals_generated;
     uint64_t buys;
@@ -77,25 +77,25 @@ struct StrategyStats {
 };
 
 
-// PriceWindow — circular buffer cen jednego symbolu z incremental running_sum
-// żeby sma() pozostała O(1) (zamiast O(window) sumowania per tick).
+// PriceWindow — circular buffer of one symbol's prices with an incremental running_sum
+// so that sma() stays O(1) (instead of O(window) summation per tick).
 struct PriceWindow {
     char   symbol[9];
     double prices[MAX_WINDOW];
-    double running_sum;        // suma cen w oknie — utrzymywana incrementally
-    int    count;              // ile cen zapisanych (do window_size)
-    int    head;               // pozycja zapisu w circular buf
-    int    window_size;        // docelowy rozmiar okna (np. 20)
-    bool   active;             // czy slot jest używany?
+    double running_sum;        // sum of prices in the window — kept incrementally
+    int    count;              // how many prices stored (up to window_size)
+    int    head;               // write position in the circular buf
+    int    window_size;        // target window size (e.g. 20)
+    bool   active;             // is the slot in use?
 
     PriceWindow() noexcept
         : prices{}, running_sum(0.0), count(0), head(0), window_size(20), active(false) {
         symbol[0] = '\0';
     }
 
-    // add: dopisz cenę, utrzymuj running_sum (eviction najstarszej gdy okno pełne).
+    // add: append a price, maintain running_sum (evict the oldest when the window is full).
     void add(double price) noexcept {
-        if (count == window_size) running_sum -= prices[head];  // eviction
+        if (count == window_size) running_sum -= prices[head];  // evict
         prices[head] = price;
         running_sum += price;
         head = (head + 1) % window_size;
@@ -111,18 +111,18 @@ class MeanReversionStrategy {
     PriceWindow   windows_[MAX_STOCKS];
     int           stock_count_;
     int           window_size_;
-    double        threshold_;        // próg odchylenia (np. 0.001 = 0.1%)
+    double        threshold_;        // deviation threshold (e.g. 0.001 = 0.1%)
     int32_t       order_size_;
     StrategyStats stats_;
-    bool          overflow_warned_ = false;  // ostrzeż raz na run o pełnej tablicy
+    bool          overflow_warned_ = false;  // warn once per run about a full array
 
-    // find_or_create: znajdź lub utwórz okno cen dla symbolu.
-    // Linear scan, ale N≤64 mieści się w 1-2 liniach cache → szybkie.
+    // find_or_create: find or create the price window for a symbol.
+    // Linear scan, but N≤64 fits in 1-2 cache lines → fast.
     PriceWindow* find_or_create(const char* stock) noexcept {
         for (int i = 0; i < stock_count_; ++i) {
             if (std::strcmp(windows_[i].symbol, stock) == 0) return &windows_[i];
         }
-        // Wyczerpana pula slotów — ostrzeż raz, inaczej cicho gubimy sygnały.
+        // The slot pool is exhausted — warn once, otherwise we silently drop signals.
         if (stock_count_ >= MAX_STOCKS) {
             if (!overflow_warned_) {
                 printf("[Strategy] WARNING: MAX_STOCKS=%d reached; '%.*s' ignored\n",
@@ -141,7 +141,7 @@ class MeanReversionStrategy {
         return &w;
     }
 
-    // emit_signal: wspólne wypełnienie pól dla BUY i SELL (DRY).
+    // emit_signal: shared field population for BUY and SELL (DRY).
     void emit_signal(Signal& sig, const char* stock, Side side, double price,
                      double sma, double deviation, int64_t ts) const noexcept {
         sig.valid         = true;
@@ -156,9 +156,9 @@ class MeanReversionStrategy {
     }
 
 public:
-    // window: okno SMA (clamped do [1, MAX_WINDOW] — 0 / ujemne dawało div-by-zero w add()/sma()).
-    // threshold_pct: próg odchylenia w procentach (0.1 = 0.1%).
-    // order_size: domyślna ilość per sygnał.
+    // window: SMA window (clamped to [1, MAX_WINDOW] — 0 / negative caused div-by-zero in add()/sma()).
+    // threshold_pct: deviation threshold in percent (0.1 = 0.1%).
+    // order_size: default quantity per signal.
     MeanReversionStrategy(int window = 20, double threshold_pct = 0.1,
                            int32_t order_size = 100) noexcept
         : stock_count_(0),
@@ -166,14 +166,14 @@ public:
           threshold_(threshold_pct / 100.0),
           order_size_(order_size) {}
 
-    // on_market_data — HOT PATH, wywoływane na każdy tick.
-    // Zwraca Signal (valid=true gdy BUY/SELL, valid=false gdy HOLD).
+    // on_market_data — HOT PATH, called on every tick.
+    // Returns a Signal (valid=true for BUY/SELL, valid=false for HOLD).
     Signal on_market_data(const char* stock, double price,
                           int64_t timestamp_ns = 0) noexcept {
         const int64_t t0 = mono_ns();
         Signal sig;
 
-        // NaN/Inf guard — zepsuty feed nie powinien generować bzdurnych sygnałów.
+        // NaN/Inf guard — a broken feed should not generate nonsense signals.
         PriceWindow* w = (std::isfinite(price) && price > 0.0) ? find_or_create(stock) : nullptr;
         if (!w) {
             ++stats_.holds;
@@ -183,7 +183,7 @@ public:
 
         w->add(price);
 
-        // Bez pełnego okna nie generujemy sygnałów (SMA byłaby unreliable).
+        // Without a full window we do not generate signals (the SMA would be unreliable).
         if (!w->full()) {
             ++stats_.holds;
             stats_.total_latency_ns += (mono_ns() - t0);
@@ -191,12 +191,12 @@ public:
         }
 
         const double sma = w->sma();
-        if (sma <= 0.0) {  // defensive — wszystkie ceny w oknie były ≤0
+        if (sma <= 0.0) {  // defensive — all prices in the window were ≤0
             ++stats_.holds;
             stats_.total_latency_ns += (mono_ns() - t0);
             return sig;
         }
-        const double deviation = (price - sma) / sma;  // np. 0.01 = 1% powyżej SMA
+        const double deviation = (price - sma) / sma;  // e.g. 0.01 = 1% above SMA
 
         if (deviation > threshold_) {
             emit_signal(sig, stock, Side::SELL, price, sma, deviation, timestamp_ns);

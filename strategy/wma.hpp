@@ -1,11 +1,11 @@
 /*
  * WMA — Weighted Moving Average (expansion #198).
  *
- * Liniowo wazona srednia: w oknie N najstarsza obserwacja ma wage 1, najnowsza N
- * (WMA = Σ w_i*x_i / Σ w_i). W przeciwienstwie do SMA (rowne wagi) i EMA
- * (wykladnicze, nieskonczony ogon) wazy liniowo i ma SKONCZONE okno — krotsze
- * opoznienie niz SMA przy mniejszym szumie niz EMA. Baza pod Hull MA.
- * Header-only, okno w std::deque.
+ * Linearly weighted average: in a window of N the oldest observation has weight 1,
+ * the newest N (WMA = Σ w_i*x_i / Σ w_i). Unlike an SMA (equal weights) and an EMA
+ * (exponential, infinite tail) it weights linearly and has a FINITE window — shorter
+ * lag than an SMA with less noise than an EMA. The basis for the Hull MA.
+ * Header-only, window in a std::deque.
  */
 #pragma once
 
@@ -24,7 +24,7 @@ public:
         while (static_cast<int>(window_.size()) > period_) window_.pop_front();
     }
 
-    // value: Σ (waga_i * x_i) / Σ waga_i, waga rosnie 1..k od najstarszej.
+    // value: Σ (weight_i * x_i) / Σ weight_i, weight grows 1..k from the oldest.
     double value() const noexcept {
         if (window_.empty()) return 0.0;
         double num = 0.0;

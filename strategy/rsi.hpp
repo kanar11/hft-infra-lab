@@ -1,15 +1,15 @@
 /*
  * RSIStrategy — Relative Strength Index (expansion #135).
  *
- * RSI to oscylator pedu w [0,100] z usrednionych zyskow/strat z N okresow:
+ * RSI is a momentum oscillator in [0,100] from averaged gains/losses over N periods:
  *   RSI = 100 - 100/(1 + avg_gain/avg_loss)
- * Klasyczna interpretacja mean-reversion:
- *   RSI > overbought (70) -> SELL (przewartosciowane, spodziewany spadek)
- *   RSI < oversold  (30) -> BUY  (niedowartosciowane)
- *   inaczej             -> HOLD
+ * Classic mean-reversion interpretation:
+ *   RSI > overbought (70) -> SELL (overvalued, expected drop)
+ *   RSI < oversold  (30) -> BUY  (undervalued)
+ *   otherwise           -> HOLD
  *
- * Rozni sie od bollingera (pasma sigma) i mean-reversion (% od SMA): RSI patrzy
- * na STOSUNEK sily wzrostow do spadkow, nie na poziom ceny. Reuzywa Signal.
+ * Differs from Bollinger (sigma bands) and mean-reversion (% from SMA): RSI looks
+ * at the RATIO of up-strength to down-strength, not the price level. Reuses Signal.
  */
 #pragma once
 
@@ -67,7 +67,7 @@ public:
         Win* w = (std::isfinite(price) && price > 0.0) ? find_or_create(stock) : nullptr;
         if (!w) { ++stats_.holds; stats_.total_latency_ns += (mono_ns() - t0); return sig; }
 
-        if (!w->has_prev) {                          // pierwsza cena = baseline
+        if (!w->has_prev) {                          // first price = baseline
             w->prev_price = price; w->has_prev = true;
             ++stats_.holds; stats_.total_latency_ns += (mono_ns() - t0); return sig;
         }

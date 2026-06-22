@@ -1,13 +1,13 @@
 /*
  * TEMA — Triple Exponential Moving Average (expansion #222).
  *
- * Rozszerzenie DEMA (#214) o trzeci stopien wygladzenia:
+ * An extension of DEMA (#214) with a third smoothing stage:
  *   EMA1 = EMA(price), EMA2 = EMA(EMA1), EMA3 = EMA(EMA2)
  *   TEMA = 3*EMA1 - 3*EMA2 + EMA3
  *
- * Kombinacja trzech EMA niemal calkowicie kasuje zwloke, dajac jeszcze szybszy
- * sygnal niz DEMA przy zachowaniu gladkosci. Kosztem wiekszej wrazliwosci na szum.
- * Header-only, trzy EMA, O(1) pamieci.
+ * Combining three EMAs almost completely cancels the lag, giving an even faster
+ * signal than DEMA while keeping smoothness. At the cost of more sensitivity to noise.
+ * Header-only, three EMAs, O(1) memory.
  */
 #pragma once
 

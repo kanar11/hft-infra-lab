@@ -1,14 +1,14 @@
 /*
- * MACrossover — przeciecie srednich kroczacych (expansion #157).
+ * MACrossover — moving-average crossover (expansion #157).
  *
- * Dwie SMA: szybka (fast) i wolna (slow). Sygnal na PRZECIECIU:
- *   fast przecina slow OD DOLU  -> BUY  (golden cross, poczatek trendu wzrost.)
- *   fast przecina slow OD GORY  -> SELL (death cross)
- *   brak przeciecia            -> HOLD
+ * Two SMAs: fast and slow. A signal on the CROSSOVER:
+ *   fast crosses slow FROM BELOW -> BUY  (golden cross, start of an uptrend)
+ *   fast crosses slow FROM ABOVE -> SELL (death cross)
+ *   no crossing                 -> HOLD
  *
- * Rozni sie od momentum (prog od jednej SMA) i donchiana (ekstrema kanalu):
- * tu liczy sie MOMENT zmiany relacji dwoch srednich. Klasyczny trend-following.
- * Reuzywa Signal/StrategyStats z mean_reversion.hpp.
+ * Differs from momentum (a threshold from a single SMA) and Donchian (channel extremes):
+ * here the MOMENT the relationship of the two averages changes is what matters. Classic
+ * trend-following. Reuses Signal/StrategyStats from mean_reversion.hpp.
  */
 #pragma once
 
@@ -22,7 +22,7 @@
 class MACrossover {
     struct Win {
         char   symbol[9];
-        double prices[MAX_WINDOW];   // ring rozmiaru slow_
+        double prices[MAX_WINDOW];   // ring of size slow_
         int    count, head;
         bool   has_prev;
         bool   prev_fast_above;
@@ -44,7 +44,7 @@ class MACrossover {
         return &w;
     }
 
-    // mean ostatnich k cen (k <= count). Ring rozmiaru slow_.
+    // mean of the last k prices (k <= count). Ring of size slow_.
     double mean_last(const Win& w, int k) const noexcept {
         double s = 0.0; int idx = w.head;
         for (int i = 0; i < k; ++i) { idx = (idx - 1 + slow_) % slow_; s += w.prices[idx]; }

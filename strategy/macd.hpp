@@ -1,14 +1,14 @@
 /*
  * MACD — Moving Average Convergence Divergence (expansion #182).
  *
- * Klasyczny wskaznik momentum, zbudowany na trzech EMA (#173):
- *   MACD     = EMA(fast) - EMA(slow)      (zbieznosc/rozbieznosc dwoch srednich)
- *   signal   = EMA(MACD, signal_period)   (wygladzona linia MACD)
- *   histogram= MACD - signal              (przyspieszenie momentum)
+ * A classic momentum indicator, built on three EMAs (#173):
+ *   MACD     = EMA(fast) - EMA(slow)      (convergence/divergence of two averages)
+ *   signal   = EMA(MACD, signal_period)   (smoothed MACD line)
+ *   histogram= MACD - signal              (momentum acceleration)
  *
- * Interpretacja: histogram > 0 (MACD nad sygnalem) = momentum byczy; przeciecie
- * przez zero (zmiana znaku histogramu) = sygnal kupna/sprzedazy. Domyslne okresy
- * 12/26/9 to konwencja Appela. Header-only, O(1) stanu (trzy EMA).
+ * Interpretation: histogram > 0 (MACD above the signal) = bullish momentum; a zero
+ * crossing (the histogram changing sign) = a buy/sell signal. The default periods
+ * 12/26/9 are Appel's convention. Header-only, O(1) state (three EMAs).
  */
 #pragma once
 
@@ -27,7 +27,7 @@ public:
           slow_(EMA::from_period(slow_period)),
           signal_(EMA::from_period(signal_period)) {}
 
-    // update: dolicz cene, przelicz MACD i linie sygnalu.
+    // update: add a price, recompute MACD and the signal line.
     void update(double price) noexcept {
         const double f = fast_.update(price);
         const double s = slow_.update(price);
@@ -38,7 +38,7 @@ public:
     double macd()      const noexcept { return fast_.value() - slow_.value(); }
     double signal()    const noexcept { return signal_.value(); }
     double histogram() const noexcept { return macd() - signal(); }
-    // bullish: MACD nad linia sygnalu (histogram dodatni).
+    // bullish: MACD above the signal line (positive histogram).
     bool   bullish()   const noexcept { return histogram() > 0.0; }
     bool   ready()     const noexcept { return ready_; }
 

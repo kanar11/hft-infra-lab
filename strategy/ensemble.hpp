@@ -1,16 +1,16 @@
 /*
- * combine_signals — ensemble/glosowanie sygnalow (expansion #140).
+ * combine_signals — signal ensemble/voting (expansion #140).
  *
- * Pojedyncza strategia bywa zaszumiona; laczenie kilku (mean-reversion, momentum,
- * RSI, donchian...) i wymaganie ZGODY redukuje falszywe sygnaly. combine_signals
- * zlicza wazne sygnaly BUY vs SELL i emituje kierunek tylko gdy:
- *   - co najmniej `min_agree` sygnalow wskazuje te strone, ORAZ
- *   - ta strona ma przewage (wiecej niz przeciwna)
- * Inaczej -> HOLD (invalid). Ilosc = suma qty zgadzajacej sie strony; cena/stock
- * z pierwszego sygnalu tej strony.
+ * A single strategy can be noisy; combining several (mean-reversion, momentum,
+ * RSI, donchian...) and requiring AGREEMENT reduces false signals. combine_signals
+ * counts valid BUY vs SELL signals and emits a direction only when:
+ *   - at least `min_agree` signals point that way, AND
+ *   - that side has the majority (more than the opposite)
+ * Otherwise -> HOLD (invalid). Quantity = sum of qty of the agreeing side; price/stock
+ * from the first signal of that side.
  *
- * Header-only, czysta funkcja — caller zbiera sygnaly z N strategii dla tego
- * samego symbolu/ticku i woła raz.
+ * Header-only, a pure function — the caller gathers signals from N strategies for the
+ * same symbol/tick and calls it once.
  */
 #pragma once
 
@@ -20,7 +20,7 @@
 
 
 inline Signal combine_signals(const Signal* sigs, int n, int min_agree) noexcept {
-    Signal out;   // domyslnie invalid (HOLD)
+    Signal out;   // invalid by default (HOLD)
     if (!sigs || n <= 0 || min_agree <= 0) return out;
 
     int     buys = 0, sells = 0;
