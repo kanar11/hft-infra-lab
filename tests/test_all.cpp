@@ -2120,6 +2120,18 @@ void test_multicast_gap_recovery() {
     ASSERT(ssb.dropped == 1 && ssb.pending_replay() == 2, "ssb_dropped_one");
     ASSERT(ssb.on_increment(8), "ssb_live_apply");        // now live -> apply directly
 
+    // #289 FeedHealth — composite 0-100 score from loss/reorder/staleness.
+    multicast::FeedHealth fh;                             // defaults loss 200, ooo 100, stale 50, min 70
+    ASSERT(std::fabs(fh.score(0.0, 0.0, false) - 100.0) < 1e-9 && fh.is_healthy(0.0, 0.0, false),
+           "fh_perfect");
+    ASSERT(std::fabs(fh.score(0.05, 0.0, false) - 90.0) < 1e-9, "fh_5pct_loss"); // 100 - 0.05*200
+    // 10% loss + 10% ooo -> 100 - 20 - 10 = 70 (exactly the threshold -> healthy)
+    ASSERT(std::fabs(fh.score(0.10, 0.10, false) - 70.0) < 1e-9 && fh.is_healthy(0.10, 0.10, false),
+           "fh_threshold");
+    ASSERT(std::fabs(fh.score(0.0, 0.0, true) - 50.0) < 1e-9 && !fh.is_healthy(0.0, 0.0, true),
+           "fh_stale_unhealthy");
+    ASSERT(std::fabs(fh.score(0.6, 0.0, false) - 0.0) < 1e-9, "fh_clamped_zero"); // 100 - 120 -> 0
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

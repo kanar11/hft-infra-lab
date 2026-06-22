@@ -706,6 +706,32 @@ struct SnapshotSyncBuffer {
 };
 
 
+// FeedHealth — composite feed-health score (expansion #289).
+//
+// The various meters each measure ONE impairment (LossRateMeter #187, OutOfOrder
+// Meter #195, FeedStalenessMonitor #98). For a failover / alert decision an
+// operator wants ONE number. FeedHealth combines them into a 0-100 score: start at
+// 100 and deduct weighted penalties for loss, reordering, and staleness. Decoupled
+// from the meter structs — feed it the rates so it stays a pure, configurable
+// scoring policy. is_healthy() applies a threshold for a go/no-go.
+struct FeedHealth {
+    double loss_weight   = 200.0;   // penalty per unit loss_rate (1.0 == 100% loss)
+    double ooo_weight    = 100.0;   // penalty per unit out-of-order rate
+    double stale_penalty = 50.0;    // flat deduction when the feed is stale
+    double min_healthy   = 70.0;    // is_healthy threshold
+
+    // score: 0..100 composite from loss rate, out-of-order rate, staleness flag.
+    double score(double loss_rate, double ooo_rate, bool stale) const noexcept {
+        double s = 100.0 - loss_rate * loss_weight - ooo_rate * ooo_weight;
+        if (stale) s -= stale_penalty;
+        return s < 0.0 ? 0.0 : (s > 100.0 ? 100.0 : s);
+    }
+    bool is_healthy(double loss_rate, double ooo_rate, bool stale) const noexcept {
+        return score(loss_rate, ooo_rate, stale) >= min_healthy;
+    }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
