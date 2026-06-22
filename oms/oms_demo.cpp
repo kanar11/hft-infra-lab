@@ -1,6 +1,5 @@
 /*
  * OMS Demo & Benchmark — C++ Order Management System
- * Demo i Benchmark OMS — System Zarządzania Zleceniami w C++
  *
  * Demonstrates:
  *   1. Full order lifecycle (submit → risk check → fill → P&L)
@@ -9,10 +8,10 @@
  *   4. Realized P&L calculation
  *   5. Throughput benchmark (millions of orders/sec)
  *
- * Compile / Kompilacja:
+ * Compile:
  *   g++ -O2 -std=c++17 -Wall -Wextra -o oms_demo oms_demo.cpp
  *
- * Run / Uruchomienie:
+ * Run:
  *   ./oms_demo [number_of_orders]   # default: 1,000,000
  */
 
@@ -23,7 +22,6 @@
 
 
 // === Functional Tests ===
-// === Testy Funkcjonalne ===
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -70,19 +68,19 @@ void test_fill_order() {
     ASSERT(filled->filled_qty == 100, "test_fill_qty");
 }
 
-// Over-fill protection: venue ack > pozostałe qty → clamp do remaining,
-// zwracane "ile faktycznie zaaplikowano" mniejsze niż żądane.
+// Over-fill protection: venue ack > remaining qty → clamp to remaining,
+// the returned "how much was actually applied" is smaller than requested.
 void test_overfill_clamped() {
     OMS oms;
     auto* order = oms.submit_order("AAPL", Side::BUY, 150.00, 100);
     uint64_t id = order->order_id;
     oms.fill_order(id, 60, 150.00);  // partial 60/100
-    uint32_t applied = oms.fill_order(id, 200, 150.00);  // próba over-fill — clamp do 40
+    uint32_t applied = oms.fill_order(id, 200, 150.00);  // over-fill attempt — clamp to 40
     ASSERT(applied == 40,                        "overfill_clamped_to_remaining");
     auto* o = oms.get_order(id);
     ASSERT(o->filled_qty == 100,                 "overfill_total_eq_quantity");
     ASSERT(o->status == OrderStatus::FILLED,     "overfill_status_filled");
-    uint32_t after = oms.fill_order(id, 50, 150.00);  // już wypełnione → 0
+    uint32_t after = oms.fill_order(id, 50, 150.00);  // already filled → 0
     ASSERT(after == 0,                           "overfill_post_filled_zero");
 }
 
@@ -158,7 +156,6 @@ void test_pnl_multiple_buys() {
 
 
 // === Throughput Benchmark ===
-// === Benchmark Przepustowości ===
 
 void benchmark(int num_orders) {
     printf("\n=== OMS Throughput Benchmark ===\n");
@@ -169,7 +166,6 @@ void benchmark(int num_orders) {
     latencies.reserve(num_orders);
 
     // Benchmark: submit + fill cycle
-    // Benchmark: cykl submit + fill
     auto total_start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < num_orders; ++i) {

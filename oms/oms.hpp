@@ -1,26 +1,26 @@
 /*
  * Order Management System (OMS) — C++.
  *
- * OMS leży na krytycznej ścieżce między strategią a giełdą: każde zlecenie
- * jest tutaj walidowane, pre-trade-checkowane, zapisywane do mapy po ID,
- * a po fillu uaktualnia pozycję i realizowane P&L.
+ * The OMS sits on the critical path between strategy and exchange: every order
+ * is validated here, pre-trade-checked, stored in a map by ID, and after a
+ * fill it updates the position and realized P&L.
  *
- * Wydajność: ~10-50 M zleceń/sek (Python equivalent ~100-500 K/s).
+ * Performance: ~10-50 M orders/sec (Python equivalent ~100-500 K/s).
  *
- * Cykl życia: NEW → SENT → FILLED | PARTIAL | CANCELLED | REJECTED.
+ * Lifecycle: NEW → SENT → FILLED | PARTIAL | CANCELLED | REJECTED.
  *
- * Kluczowe decyzje projektowe:
- *   - Header-only — wystarczy #include "oms.hpp".
- *   - Ceny stałoprzecinkowe int64 (× 10000) — bez float na hot-pathie,
- *     unika błędów zaokrąglania.
- *   - Tickery jako char[9] (max 8 znaków + null) — bez alokacji
- *     std::string.
- *   - Map kluczowane przez sym_to_key(symbol) — packed uint64_t,
- *     ten sam schemat co RiskManager.
- *   - Pending exposure (Position::pending_qty) trackowany w submit /
- *     fill / cancel — pre-trade check liczy realized + pending + new,
- *     zapobiega over-commit gdy wiele submitów ściga się z fillami.
- *   - noexcept na hot-pathie — kompilator nie generuje stack-unwind.
+ * Key design decisions:
+ *   - Header-only — just #include "oms.hpp".
+ *   - Fixed-point int64 prices (× 10000) — no float on the hot path,
+ *     avoids rounding errors.
+ *   - Tickers as char[9] (max 8 chars + null) — no std::string
+ *     allocation.
+ *   - Map keyed by sym_to_key(symbol) — packed uint64_t,
+ *     same scheme as RiskManager.
+ *   - Pending exposure (Position::pending_qty) tracked in submit /
+ *     fill / cancel — the pre-trade check counts realized + pending + new,
+ *     preventing over-commit when many submits race with fills.
+ *   - noexcept on the hot path — the compiler generates no stack-unwind.
  */
 #pragma once
 
@@ -36,29 +36,29 @@
 #include "../common/time_utils.hpp"
 
 
-// Mnożnik dla cen stałoprzecinkowych: $150.25 → 1502500.
+// Multiplier for fixed-point prices: $150.25 → 1502500.
 static constexpr int64_t PRICE_SCALE = 10000;
 
-// to_fixed: cena double → int64 fixed-point. Zaokrąglenie half-up.
+// to_fixed: double price → int64 fixed-point. Half-up rounding.
 inline int64_t to_fixed(double price) noexcept {
     return static_cast<int64_t>(price * PRICE_SCALE + 0.5);
 }
 
-// to_float: int64 fixed-point → double (tylko do wyświetlania).
+// to_float: int64 fixed-point → double (display only).
 inline double to_float(int64_t fixed_price) noexcept {
     return static_cast<double>(fixed_price) / PRICE_SCALE;
 }
 
 
-// Status w cyklu życia zlecenia. uint8_t — w OMS z milionami zleceń
-// oszczędność 3 bajtów per Order się sumuje.
+// Order lifecycle status. uint8_t — in an OMS with millions of orders
+// the 3-byte-per-Order saving adds up.
 enum class OrderStatus : uint8_t {
-    NEW       = 0,   // utworzone lokalnie, jeszcze nie wysłane
-    SENT      = 1,   // wysłane na giełdę (lub do symulatora)
-    FILLED    = 2,   // w pełni zrealizowane
-    PARTIAL   = 3,   // część zrealizowana, reszta wciąż aktywna
-    CANCELLED = 4,   // anulowane (przez nas)
-    REJECTED  = 5    // odrzucone (przez giełdę / risk manager)
+    NEW       = 0,   // created locally, not yet sent
+    SENT      = 1,   // sent to the exchange (or simulator)
+    FILLED    = 2,   // fully executed
+    PARTIAL   = 3,   // partially executed, remainder still active
+    CANCELLED = 4,   // cancelled (by us)
+    REJECTED  = 5    // rejected (by the exchange / risk manager)
 };
 
 inline const char* status_str(OrderStatus s) noexcept {
@@ -73,15 +73,15 @@ inline const char* status_str(OrderStatus s) noexcept {
     }
 }
 
-// (Side enum + side_str są w common/types.hpp.)
+// (Side enum + side_str are in common/types.hpp.)
 
 
-// OMSReject — powód odrzucenia w submit_order (#88). Wcześniej submit zwracał
-// tylko nullptr bez informacji DLACZEGO — caller nie mógł rozróżnić błędu inputu
-// od limitu wartości czy pozycji. Mirror RejectReason z orderbook_pro.
+// OMSReject — reason an order was rejected in submit_order (#88). Previously submit
+// returned just nullptr with no info on WHY — the caller could not tell an input
+// error from a value or position limit. Mirrors RejectReason from orderbook_pro.
 enum class OMSReject : uint8_t {
-    NONE           = 0,   // brak odrzucenia (sukces)
-    INVALID_INPUT  = 1,   // NaN / cena≤0 / qty=0 / pusty symbol
+    NONE           = 0,   // no rejection (success)
+    INVALID_INPUT  = 1,   // NaN / price≤0 / qty=0 / empty symbol
     ORDER_VALUE    = 2,   // price × qty > max_order_value
     POSITION_LIMIT = 3,   // |realized + pending + new| > max_position
 };
@@ -97,23 +97,23 @@ inline const char* oms_reject_str(OMSReject r) noexcept {
 }
 
 
-// Order — pojedyncze zlecenie. Trzymane w OMS::orders_ pod kluczem order_id.
+// Order — a single order. Stored in OMS::orders_ keyed by order_id.
 //
-// Wszystkie czasy w nanosekundach z CLOCK_MONOTONIC (mono_ns). Pomiar
-// latency od submit do fill wystarczy odjąć filled_ns - sent_ns.
+// All times are nanoseconds from CLOCK_MONOTONIC (mono_ns). To measure
+// submit-to-fill latency just subtract filled_ns - sent_ns.
 struct Order {
     uint64_t    order_id;
-    char        symbol[9];      // fixed-size, NASDAQ tickery to max 8 znaków
+    char        symbol[9];      // fixed-size, NASDAQ tickers are max 8 chars
     Side        side;
     int64_t     price;          // fixed-point: $150.25 → 1502500
     uint32_t    quantity;
-    uint32_t    filled_qty;     // ile do tej pory zrealizowano
+    uint32_t    filled_qty;     // how much has been executed so far
     OrderStatus status;
-    int64_t     created_ns;     // moment przyjęcia w submit_order
-    int64_t     sent_ns;        // moment wysłania (status → SENT)
-    int64_t     filled_ns;      // moment ostatniego fillu
-    int64_t     fill_notional;  // Σ fill_qty × fill_price (#141) — do avg fill price
-    int64_t     expire_ns;      // GTD: wygasniecie (#172); 0 = bez wygasniecia (DAY/GTC)
+    int64_t     created_ns;     // time accepted in submit_order
+    int64_t     sent_ns;        // time sent (status → SENT)
+    int64_t     filled_ns;      // time of the last fill
+    int64_t     fill_notional;  // Σ fill_qty × fill_price (#141) — for avg fill price
+    int64_t     expire_ns;      // GTD: expiry (#172); 0 = no expiry (DAY/GTC)
 
     Order() noexcept
         : order_id(0), side(Side::BUY), price(0), quantity(0),
@@ -130,28 +130,28 @@ struct Order {
         symbol[8] = '\0';
     }
 
-    // avg_fill_price: srednia cena wykonania (fixed-point) — zlecenie moze byc
-    // wypelniane po roznych cenach; 0 gdy brak fillu. (#141)
+    // avg_fill_price: average execution price (fixed-point) — an order can be
+    // filled at different prices; 0 when there is no fill. (#141)
     int64_t avg_fill_price() const noexcept {
         return filled_qty > 0 ? fill_notional / static_cast<int64_t>(filled_qty) : 0;
     }
 };
 
 
-// Position — agregowana ekspozycja na jeden symbol. Trzymana w OMS::positions_
-// pod kluczem sym_to_key(symbol).
+// Position — aggregated exposure to one symbol. Stored in OMS::positions_
+// keyed by sym_to_key(symbol).
 //
-// net_qty aktualizuje się tylko w fill_order; pending_qty rośnie w submit
-// i maleje w fill/cancel. Suma (net + pending) to "całkowity zaangażowany
-// limit", którego pilnujemy w pre-trade checku.
+// net_qty updates only in fill_order; pending_qty grows in submit and
+// shrinks in fill/cancel. The sum (net + pending) is the "total committed
+// limit" we guard in the pre-trade check.
 struct Position {
     char    symbol[9];
-    int32_t net_qty;         // zrealizowane (dodatnie = long, ujemne = short)
-    int32_t pending_qty;     // w locie (BUY+, SELL-)
-    int64_t avg_price;       // średnia cena zrealizowanego long'a, fixed-point
-    int64_t realized_pnl;    // skumulowany P&L (brutto) × PRICE_SCALE
-    int64_t total_cost;      // suma qty × cena dla aktualnego long'a
-    int64_t fees;            // skumulowane prowizje × PRICE_SCALE (#83)
+    int32_t net_qty;         // realized (positive = long, negative = short)
+    int32_t pending_qty;     // in flight (BUY+, SELL-)
+    int64_t avg_price;       // average price of the realized long, fixed-point
+    int64_t realized_pnl;    // cumulative P&L (gross) × PRICE_SCALE
+    int64_t total_cost;      // sum of qty × price for the current long
+    int64_t fees;            // cumulative commissions × PRICE_SCALE (#83)
 
     Position() noexcept
         : net_qty(0), pending_qty(0), avg_price(0), realized_pnl(0), total_cost(0), fees(0) {
@@ -164,27 +164,27 @@ struct Position {
         symbol[8] = '\0';
     }
 
-    // net_pnl: P&L po odjęciu prowizji (to co realnie zostaje w kieszeni).
+    // net_pnl: P&L after subtracting commissions (what you actually keep).
     int64_t net_pnl() const noexcept { return realized_pnl - fees; }
 
-    // unrealized_pnl: mark-to-market otwartej pozycji przy cenie mark (#96).
-    // Signed: long (net>0) zarabia gdy mark>avg; short (net<0) gdy mark<avg —
-    // oba pokrywa net_qty * (mark - avg). Fixed-point (×PRICE_SCALE).
+    // unrealized_pnl: mark-to-market of the open position at the mark price (#96).
+    // Signed: a long (net>0) profits when mark>avg; a short (net<0) when mark<avg —
+    // net_qty * (mark - avg) covers both. Fixed-point (×PRICE_SCALE).
     int64_t unrealized_pnl(int64_t mark_price) const noexcept {
         return static_cast<int64_t>(net_qty) * (mark_price - avg_price);
     }
 
-    // total_pnl: realized (brutto) + unrealized - fees przy danej cenie mark.
+    // total_pnl: realized (gross) + unrealized - fees at the given mark price.
     int64_t total_pnl(int64_t mark_price) const noexcept {
         return realized_pnl + unrealized_pnl(mark_price) - fees;
     }
 };
 
 
-// OMS — główna klasa. Hot-path API:
-//   submit_order  — pre-trade check + utworzenie + rezerwacja pending
-//   fill_order    — przepływ pending → realized + przeliczenie P&L
-//   cancel_order  — zwolnienie pending dla niezrealizowanej reszty
+// OMS — the main class. Hot-path API:
+//   submit_order  — pre-trade check + creation + pending reservation
+//   fill_order    — pending → realized flow + P&L recomputation
+//   cancel_order  — release pending for the unfilled remainder
 //
 // Read-only accessors: get_order, get_position, order_count, position_count.
 class OMS {
@@ -193,21 +193,21 @@ class OMS {
 
     uint64_t next_id_;
     int32_t  max_position_;     // limit |net + pending + new| per symbol
-    int64_t  max_order_value_;  // limit price × qty na jedno zlecenie (w dolarach)
-    int64_t  commission_fp_;    // prowizja per akcja, fixed-point (×PRICE_SCALE)
-    int64_t  total_fees_;       // skumulowane prowizje całego OMS, fixed-point
-    OMSReject last_reject_ = OMSReject::NONE;  // powód ostatniego odrzucenia (#88)
-    uint64_t  reject_counts_[4] = {0, 0, 0, 0}; // licznik odrzuceń per OMSReject (#136)
-    uint64_t  total_submitted_ = 0;  // przyjete submity (#160)
-    uint64_t  total_fills_    = 0;   // liczniki operacji cyklu zycia (#151)
+    int64_t  max_order_value_;  // limit price × qty per single order (in dollars)
+    int64_t  commission_fp_;    // commission per share, fixed-point (×PRICE_SCALE)
+    int64_t  total_fees_;       // cumulative commissions for the whole OMS, fixed-point
+    OMSReject last_reject_ = OMSReject::NONE;  // reason for the last rejection (#88)
+    uint64_t  reject_counts_[4] = {0, 0, 0, 0}; // rejection counter per OMSReject (#136)
+    uint64_t  total_submitted_ = 0;  // accepted submits (#160)
+    uint64_t  total_fills_    = 0;   // lifecycle operation counters (#151)
     uint64_t  total_cancels_  = 0;
     uint64_t  total_replaces_ = 0;
-    uint64_t  total_ordered_shares_ = 0;  // suma zleconych akcji (#228)
-    uint64_t  total_filled_shares_  = 0;  // suma wykonanych akcji (#228)
+    uint64_t  total_ordered_shares_ = 0;  // sum of ordered shares (#228)
+    uint64_t  total_filled_shares_  = 0;  // sum of executed shares (#228)
     double    total_traded_notional_ = 0.0; // cumulative $ value of all fills (#266)
 
 public:
-    // commission_per_share: np. 0.0035 = $0.0035/akcja (typowy taker fee).
+    // commission_per_share: e.g. 0.0035 = $0.0035/share (typical taker fee).
     OMS(int32_t max_pos = 1000, double max_val = 100000.0,
         double commission_per_share = 0.0) noexcept
         : next_id_(1),
@@ -216,10 +216,10 @@ public:
           commission_fp_(static_cast<int64_t>(commission_per_share * PRICE_SCALE + 0.5)),
           total_fees_(0) {}
 
-    // submit_order: walidacja inputów, dwa pre-trade checki, utworzenie
-    // Order'a, rezerwacja pending w Position. Zwraca pointer do zlecenia
-    // w mapie (stabilny dopóki OMS żyje) lub nullptr przy odrzuceniu.
-    // out_reason (opcjonalny, #88): przy nullptr dostaje powód odrzucenia.
+    // submit_order: input validation, two pre-trade checks, Order creation,
+    // pending reservation in Position. Returns a pointer to the order in the
+    // map (stable while the OMS lives) or nullptr on rejection.
+    // out_reason (optional, #88): on nullptr it receives the rejection reason.
     Order* submit_order(const char* symbol, Side side, double price_f,
                         uint32_t quantity, OMSReject* out_reason = nullptr,
                         int64_t expire_ns = 0) noexcept {
@@ -227,23 +227,23 @@ public:
         const int64_t price = to_fixed(price_f);
         auto fail = [&](OMSReject r) -> Order* {
             last_reject_ = r;
-            ++reject_counts_[static_cast<int>(r)];   // #136 statystyki per powód
+            ++reject_counts_[static_cast<int>(r)];   // #136 stats per reason
             if (out_reason) *out_reason = r;
             return nullptr;
         };
 
-        // Walidacja inputów. NaN, ujemna/zerowa cena, zero shares,
-        // pusty/null symbol — odrzuć od razu.
+        // Input validation. NaN, negative/zero price, zero shares,
+        // empty/null symbol — reject immediately.
         if (std::isnan(price_f) || price <= 0 || quantity == 0
             || symbol == nullptr || symbol[0] == '\0') {
             return fail(OMSReject::INVALID_INPUT);
         }
 
-        // Pre-trade check #1: wartość zlecenia w dolarach.
+        // Pre-trade check #1: order value in dollars.
         const int64_t order_value = (price / PRICE_SCALE) * static_cast<int64_t>(quantity);
         if (order_value > max_order_value_) return fail(OMSReject::ORDER_VALUE);
 
-        // Pre-trade check #2: limit pozycji (realized + pending + new).
+        // Pre-trade check #2: position limit (realized + pending + new).
         const uint64_t sym_key  = sym_to_key(symbol);
         const int32_t  signed_n = signed_qty(side, quantity);
         auto           pos_it   = positions_.find(sym_key);
@@ -255,7 +255,7 @@ public:
         last_reject_ = OMSReject::NONE;
         if (out_reason) *out_reason = OMSReject::NONE;
 
-        // Utwórz Order, ustaw status SENT, zapisz w mapie.
+        // Create the Order, set status SENT, store it in the map.
         const uint64_t id = next_id_++;
         Order order(id, symbol, side, price, quantity);
         order.created_ns = t0;
@@ -264,9 +264,9 @@ public:
         order.expire_ns  = expire_ns;   // #172 GTD
         auto it = orders_.emplace(id, order).first;
 
-        // Zarezerwuj pending. Tworzymy Position leniwie tutaj (a nie dopiero
-        // przy pierwszym fillu) żeby księgowanie pending było spójne na
-        // każdej ścieżce.
+        // Reserve pending. We create the Position lazily here (rather than at
+        // the first fill) so that pending accounting is consistent on every
+        // path.
         if (pos_it == positions_.end()) {
             pos_it = positions_.emplace(sym_key, Position(symbol)).first;
         }
@@ -276,11 +276,11 @@ public:
         return &it->second;
     }
 
-    // fill_order: raport wykonania z giełdy. Aktualizuje filled_qty + status
-    // w Order, przepływa qty z pending do net w Position, przelicza avg_price
-    // (BUY) lub realized_pnl (SELL). Zwraca rzeczywiście zaaplikowane qty
-    // (0 gdy zlecenie nieznane / już wypełnione / fill_qty=0); może być MNIEJSZE
-    // niż żądane gdy próba over-fill (clamp do remaining + warn).
+    // fill_order: execution report from the exchange. Updates filled_qty + status
+    // in Order, flows qty from pending to net in Position, recomputes avg_price
+    // (BUY) or realized_pnl (SELL). Returns the qty actually applied
+    // (0 when the order is unknown / already filled / fill_qty=0); may be SMALLER
+    // than requested on an over-fill attempt (clamp to remaining + warn).
     uint32_t fill_order(uint64_t order_id, uint32_t fill_qty, double fill_price_f) noexcept {
         if (fill_qty == 0) return 0;
         auto it = orders_.find(order_id);
@@ -291,16 +291,16 @@ public:
         Order& order = it->second;
         const int64_t fill_price = to_fixed(fill_price_f);
 
-        // Over-fill protection — venue ack > pozostałe qty = bug po stronie
-        // giełdy / drugi raz ten sam fill / strategy bug. Clamp do remaining,
-        // wpisz tylko valid część, loguj jako anomalię (audit + regression).
+        // Over-fill protection — venue ack > remaining qty = a bug on the
+        // exchange side / the same fill twice / a strategy bug. Clamp to remaining,
+        // record only the valid part, log it as an anomaly (audit + regression).
         const uint32_t remaining = (order.filled_qty < order.quantity)
             ? (order.quantity - order.filled_qty) : 0;
         if (fill_qty > remaining) {
             printf("[OMS] WARNING: over-fill on order_id=%lu (req=%u, remaining=%u) — clamping\n",
                    (unsigned long)order_id, fill_qty, remaining);
             fill_qty = remaining;
-            if (fill_qty == 0) return 0;  // już całkowicie wypełnione
+            if (fill_qty == 0) return 0;  // already fully filled
         }
 
         order.filled_qty    += fill_qty;
@@ -313,9 +313,9 @@ public:
                             : OrderStatus::PARTIAL;
         order.filled_ns   = mono_ns();
 
-        // Pobierz / utwórz Position dla tego symbolu. Normalnie Position
-        // już istnieje (stworzony w submit_order), ale fallback dla
-        // ścieżek omijających submit (np. legacy testy).
+        // Get / create the Position for this symbol. Normally the Position
+        // already exists (created in submit_order), but this is a fallback for
+        // paths that bypass submit (e.g. legacy tests).
         const uint64_t sym_key = sym_to_key(order.symbol);
         auto pos_it = positions_.find(sym_key);
         if (pos_it == positions_.end()) {
@@ -323,25 +323,25 @@ public:
         }
         Position& pos = pos_it->second;
 
-        // Przepływ qty z pending do net. pos.net_qty + pos.pending_qty
-        // pozostaje niezmienione, więc niezmiennik łącznej ekspozycji jest
-        // automatycznie zachowany.
+        // Flow qty from pending to net. pos.net_qty + pos.pending_qty stays
+        // unchanged, so the total-exposure invariant is automatically
+        // preserved.
         const int32_t signed_fill = signed_qty(order.side, fill_qty);
         pos.pending_qty -= signed_fill;
         apply_fill_to_position(pos, signed_fill, static_cast<int64_t>(fill_qty), fill_price);
 
-        // Prowizja: naliczana od każdej zrealizowanej akcji (taker fee). Zmniejsza
-        // P&L netto, nie brutto — realized_pnl pozostaje "czysty" do atrybucji.
+        // Commission: charged on every executed share (taker fee). It reduces
+        // net P&L, not gross — realized_pnl stays "clean" for attribution.
         if (commission_fp_ != 0) {
             const int64_t fee = static_cast<int64_t>(fill_qty) * commission_fp_;
             pos.fees    += fee;
             total_fees_ += fee;
         }
-        return fill_qty;  // ile faktycznie zaaplikowano (po clampie)
+        return fill_qty;  // how much was actually applied (after clamp)
     }
 
-    // cancel_order: zwalnia niezrealizowaną resztę z pending. Tylko dla
-    // statusów SENT lub PARTIAL — pozostałe są błędem i zostają zgłoszone.
+    // cancel_order: releases the unfilled remainder from pending. Only for
+    // SENT or PARTIAL statuses — the rest are errors and get reported.
     void cancel_order(uint64_t order_id) noexcept {
         auto it = orders_.find(order_id);
         if (it == orders_.end()) {
@@ -350,8 +350,8 @@ public:
         }
         Order& order = it->second;
         if (order.status != OrderStatus::SENT && order.status != OrderStatus::PARTIAL) {
-            // FILLED / CANCELLED / REJECTED — milcząca zgoda ukryłaby
-            // double-cancel bug po stronie wywołującego. Zaloguj.
+            // FILLED / CANCELLED / REJECTED — silently accepting would hide a
+            // double-cancel bug on the caller's side. Log it.
             printf("[OMS] WARNING: cancel for inactive order_id=%lu (status=%s)\n",
                    (unsigned long)order_id, status_str(order.status));
             return;
@@ -367,17 +367,17 @@ public:
         ++total_cancels_;   // #151
     }
 
-    // replace_order: amend (cancel/replace) ceny i/lub ilości otwartego zlecenia.
-    // Mapuje na OUCH 'U' (Replace) i FIX 'G' (OrderCancelReplaceRequest).
+    // replace_order: amend (cancel/replace) the price and/or quantity of an open order.
+    // Maps to OUCH 'U' (Replace) and FIX 'G' (OrderCancelReplaceRequest).
     //
-    // Reguły:
-    //   - tylko SENT / PARTIAL (jak cancel)
-    //   - nowa ilość ≥ filled_qty (nie można "od-wypełnić"); ==filled → FILLED
-    //   - re-walidacja pre-trade: wartość zlecenia + limit pozycji na NOWEJ
-    //     pozostałej ekspozycji; breach → amend odrzucony, zlecenie bez zmian
-    //   - pending przesuwany o (new_remaining - old_remaining)
+    // Rules:
+    //   - only SENT / PARTIAL (like cancel)
+    //   - new quantity ≥ filled_qty (cannot "un-fill"); ==filled → FILLED
+    //   - pre-trade re-validation: order value + position limit on the NEW
+    //     remaining exposure; breach → amend rejected, order unchanged
+    //   - pending shifted by (new_remaining - old_remaining)
     //
-    // Zwraca true gdy amend zaaplikowany, false przy odrzuceniu / błędzie.
+    // Returns true when the amend is applied, false on rejection / error.
     bool replace_order(uint64_t order_id, double new_price_f, uint32_t new_quantity) noexcept {
         auto it = orders_.find(order_id);
         if (it == orders_.end()) {
@@ -396,11 +396,11 @@ public:
             return false;
         }
 
-        // Pre-trade #1: wartość zlecenia na nowej cenie/ilości.
+        // Pre-trade #1: order value at the new price/quantity.
         const int64_t order_value = (new_price / PRICE_SCALE) * static_cast<int64_t>(new_quantity);
         if (order_value > max_order_value_) return false;
 
-        // Pre-trade #2: limit pozycji na zamienionej pozostałej ekspozycji.
+        // Pre-trade #2: position limit on the replaced remaining exposure.
         const uint64_t sym_key       = sym_to_key(order.symbol);
         const int32_t  old_remaining = static_cast<int32_t>(order.quantity) - static_cast<int32_t>(order.filled_qty);
         const int32_t  new_remaining = static_cast<int32_t>(new_quantity)   - static_cast<int32_t>(order.filled_qty);
@@ -412,7 +412,7 @@ public:
         const int32_t  projected     = cur_real + (cur_pend - old_pend + new_pend);
         if (std::abs(projected) > max_position_) return false;
 
-        // Commit: przesuń pending, podmień cenę/ilość, przelicz status.
+        // Commit: shift pending, swap price/quantity, recompute status.
         if (pos_it != positions_.end()) pos_it->second.pending_qty += (new_pend - old_pend);
         order.price    = new_price;
         order.quantity = new_quantity;
@@ -423,26 +423,26 @@ public:
         return true;
     }
 
-    // amend_quantity: REDUKCJA ilosci w miejscu, ta sama cena (#188). Reduce-only
-    // amend zwykle ZACHOWUJE priorytet w kolejce na gieldzie (inaczej niz pelny
-    // cancel/replace ze zmiana ceny). Wymusza: zlecenie aktywne, nowa ilosc
-    // mniejsza od biezacej i nie ponizej juz wykonanej. Deleguje do replace_order
-    // (ta sama cena), wiec ksiegowosc pending/pozycji jest spojna.
+    // amend_quantity: in-place quantity REDUCTION, same price (#188). A reduce-only
+    // amend usually KEEPS queue priority on the exchange (unlike a full
+    // cancel/replace that changes price). Enforces: order active, new quantity
+    // smaller than the current one and not below what is already filled. Delegates
+    // to replace_order (same price), so pending/position accounting stays consistent.
     bool amend_quantity(uint64_t order_id, uint32_t new_quantity) noexcept {
         auto it = orders_.find(order_id);
         if (it == orders_.end()) return false;
         const Order& order = it->second;
         if (order.status != OrderStatus::SENT && order.status != OrderStatus::PARTIAL) return false;
-        if (new_quantity >= order.quantity)   return false;   // tylko redukcja
-        if (new_quantity <  order.filled_qty) return false;   // nie ponizej wykonanego
+        if (new_quantity >= order.quantity)   return false;   // reduction only
+        if (new_quantity <  order.filled_qty) return false;   // not below what is filled
         return replace_order(order_id, to_float(order.price), new_quantity);
     }
 
-    // cancel_all: masowe anulowanie wszystkich AKTYWNYCH zleceń (#100). Risk-off
-    // / panic button — przy kill switchu albo końcu sesji zdejmujemy wszystkie
-    // otwarte zlecenia (zwalnia pending). Zwraca ile anulowano. Iteracja po
-    // orders_ jest bezpieczna: cancel_order zmienia tylko status + pending_,
-    // nie strukturę mapy orders_.
+    // cancel_all: mass-cancel all ACTIVE orders (#100). Risk-off / panic button —
+    // on a kill switch or at end of session we pull all open orders (releases
+    // pending). Returns how many were cancelled. Iterating over orders_ is safe:
+    // cancel_order only changes status + pending_, not the structure of the
+    // orders_ map.
     size_t cancel_all() noexcept {
         size_t n = 0;
         for (auto& [id, o] : orders_) {
@@ -454,9 +454,9 @@ public:
         return n;
     }
 
-    // purge_expired: anuluj wszystkie AKTYWNE zlecenia GTD ktorych czas
-    // wygasniecia minal (#172; expire_ns > 0 && <= now_ns). Zwraca ile anulowano.
-    // Wolaj z petli sesji z biezacym mono_ns().
+    // purge_expired: cancel all ACTIVE GTD orders whose expiry time has passed
+    // (#172; expire_ns > 0 && <= now_ns). Returns how many were cancelled.
+    // Call from the session loop with the current mono_ns().
     size_t purge_expired(int64_t now_ns) noexcept {
         size_t n = 0;
         for (auto& [id, o] : orders_) {
@@ -469,10 +469,10 @@ public:
         return n;
     }
 
-    // open_order_notional: laczny nominal ($) NIEZREALIZOWANEJ czesci wszystkich
-    // pracujacych zlecen (SENT/PARTIAL) (#180). Kapital zwiazany w ksiazce zlecen
-    // — widok pre-trade exposure niezalezny od pozycji (te pokrywa unrealized_pnl).
-    // Liczy tylko reszte (quantity - filled_qty), wiec partiale licza sie uczciwie.
+    // open_order_notional: total notional ($) of the UNFILLED part of all working
+    // orders (SENT/PARTIAL) (#180). Capital tied up in the order book — a pre-trade
+    // exposure view independent of positions (those are covered by unrealized_pnl).
+    // Counts only the remainder (quantity - filled_qty), so partials count fairly.
     double open_order_notional() const noexcept {
         double sum = 0.0;
         for (const auto& [id, o] : orders_) {
@@ -485,26 +485,26 @@ public:
         return sum;
     }
 
-    // open_position_count: liczba symboli z NIEZEROWA pozycja netto (#196).
-    // Inaczej niz position_count() (= liczba wpisow w mapie, w tym zamknietych na
-    // 0): to faktyczna szerokosc portfela — ile instrumentow realnie trzymamy.
+    // open_position_count: number of symbols with a NON-ZERO net position (#196).
+    // Unlike position_count() (= number of map entries, including ones closed to
+    // 0): this is the true breadth of the portfolio — how many instruments we hold.
     size_t open_position_count() const noexcept {
         size_t c = 0;
         for (const auto& [key, p] : positions_) if (p.net_qty != 0) ++c;
         return c;
     }
 
-    // gross_position_shares: suma |net_qty| po wszystkich symbolach (#220) — laczna
-    // BRUTTO ekspozycja kierunkowa w akcjach (long + |short|). Inaczej niz netto
-    // (gdzie long i short by sie znosily) — miara calkowitego rozmiaru ksiazki.
+    // gross_position_shares: sum of |net_qty| over all symbols (#220) — total GROSS
+    // directional exposure in shares (long + |short|). Unlike net (where long and
+    // short would cancel) — a measure of the total size of the book.
     int64_t gross_position_shares() const noexcept {
         int64_t s = 0;
         for (const auto& [key, p] : positions_) s += std::abs(static_cast<int64_t>(p.net_qty));
         return s;
     }
 
-    // largest_position: najwieksza POJEDYNCZA pozycja |net_qty| (#220) — koncentracja
-    // ryzyka w jednym instrumencie (do limitow/dashboardu). 0 gdy plasko.
+    // largest_position: the largest SINGLE position |net_qty| (#220) — risk
+    // concentration in one instrument (for limits/dashboard). 0 when flat.
     int32_t largest_position() const noexcept {
         int32_t m = 0;
         for (const auto& [key, p] : positions_) {
@@ -539,8 +539,8 @@ public:
         return s;
     }
 
-    // is_flat: brak otwartych pozycji ORAZ brak pracujacych zlecen (#196).
-    // Kontrola end-of-day / rekoncyliacji: czy desk jest w pelni zamkniety.
+    // is_flat: no open positions AND no working orders (#196).
+    // End-of-day / reconciliation check: whether the desk is fully closed.
     bool is_flat() const noexcept {
         if (open_position_count() != 0) return false;
         for (const auto& [id, o] : orders_)
@@ -548,8 +548,8 @@ public:
         return true;
     }
 
-    // cancel_all_symbol: jak cancel_all, ale tylko dla jednego tickera (np. po
-    // halt'cie konkretnego symbolu).
+    // cancel_all_symbol: like cancel_all, but only for one ticker (e.g. after a
+    // halt of a specific symbol).
     size_t cancel_all_symbol(const char* symbol) noexcept {
         const uint64_t key = sym_to_key(symbol);
         size_t n = 0;
@@ -563,7 +563,7 @@ public:
         return n;
     }
 
-    // Accessory (read-only).
+    // Accessors (read-only).
     const Order*    get_order(uint64_t id)         const noexcept {
         auto it = orders_.find(id);
         return (it != orders_.end()) ? &it->second : nullptr;
@@ -574,8 +574,8 @@ public:
     }
     size_t order_count()    const noexcept { return orders_.size(); }
     size_t position_count() const noexcept { return positions_.size(); }
-    // count_by_status: ile zlecen w danym stanie (#128) — observability/monitoring
-    // (np. ile aktywnych SENT/PARTIAL, ile odrzuconych).
+    // count_by_status: how many orders are in a given state (#128) — observability/
+    // monitoring (e.g. how many active SENT/PARTIAL, how many rejected).
     size_t count_by_status(OrderStatus st) const noexcept {
         size_t n = 0;
         for (const auto& kv : orders_) if (kv.second.status == st) ++n;
@@ -598,18 +598,18 @@ public:
                 || o.status == OrderStatus::REJECTED) ++n;
         return n;
     }
-    // total_fees: skumulowane prowizje całego OMS (fixed-point ×PRICE_SCALE).
+    // total_fees: cumulative commissions for the whole OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
-    // avg_commission_per_share: srednia prowizja ($) na WYKONANA akcje (#236) =
-    // total_fees / total_filled_shares. Miara TCA kosztu egzekucji po stronie OMS
-    // (lustro router avg_fee_per_share #232). 0 gdy nic nie wykonano.
+    // avg_commission_per_share: average commission ($) per EXECUTED share (#236) =
+    // total_fees / total_filled_shares. A TCA measure of execution cost on the OMS
+    // side (mirror of router avg_fee_per_share #232). 0 when nothing was executed.
     double  avg_commission_per_share() const noexcept {
         return total_filled_shares_ > 0
             ? to_float(total_fees_) / static_cast<double>(total_filled_shares_)
             : 0.0;
     }
-    // Runtime zmiana prowizji (#166) — harmonogram oplat moze sie zmienic w sesji
-    // (tier po wolumenie, promocja). Kolejne fille uzywaja nowej stawki.
+    // Runtime commission change (#166) — the fee schedule can change during a session
+    // (volume tier, promotion). Subsequent fills use the new rate.
     void   set_commission(double per_share) noexcept {
         commission_fp_ = static_cast<int64_t>(per_share * PRICE_SCALE + 0.5);
     }
@@ -617,22 +617,22 @@ public:
         return static_cast<double>(commission_fp_) / PRICE_SCALE;
     }
 
-    // Agregaty P&L portfela (#120) — suma po wszystkich pozycjach. Fixed-point
-    // (×PRICE_SCALE); to_float dla dolarow. Zastepuje reczne petle po stronie
-    // wolajacego (sim/backtest sumowal pozycje sam).
+    // Portfolio P&L aggregates (#120) — sum over all positions. Fixed-point
+    // (×PRICE_SCALE); to_float for dollars. Replaces a manual loop on the caller's
+    // side (sim/backtest used to sum positions itself).
     int64_t total_realized_pnl() const noexcept {
         int64_t s = 0;
         for (const auto& kv : positions_) s += kv.second.realized_pnl;
         return s;
     }
-    int64_t total_net_pnl() const noexcept {     // realized - fees po portfelu
+    int64_t total_net_pnl() const noexcept {     // realized - fees across the portfolio
         int64_t s = 0;
         for (const auto& kv : positions_) s += kv.second.net_pnl();
         return s;
     }
-    // winning_symbols / losing_symbols: liczba symboli z dodatnim / ujemnym
-    // zrealizowanym P&L (#244) — hit-rate na poziomie instrumentu (atrybucja:
-    // ile nazw zarabia vs traci). Symbole na zero pomijane w obu.
+    // winning_symbols / losing_symbols: number of symbols with positive / negative
+    // realized P&L (#244) — instrument-level hit rate (attribution: how many names
+    // make money vs lose). Symbols at zero are skipped in both.
     size_t winning_symbols() const noexcept {
         size_t c = 0;
         for (const auto& [key, p] : positions_) if (p.realized_pnl > 0) ++c;
@@ -652,24 +652,24 @@ public:
         const size_t decided = w + losing_symbols();
         return decided > 0 ? static_cast<double>(w) / static_cast<double>(decided) : 0.0;
     }
-    // last_reject: powód ostatniego odrzucenia submit_order (#88).
+    // last_reject: reason for the last submit_order rejection (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
-    // reject_count: ile zlecen odrzucono z danego powodu (#136, observability).
+    // reject_count: how many orders were rejected for a given reason (#136, observability).
     uint64_t reject_count(OMSReject r) const noexcept { return reject_counts_[static_cast<int>(r)]; }
-    // total_rejects: laczna liczba odrzuconych submitow (#212) — sumuje wszystkie
-    // powody POZA NONE (indeks 0 to sukces, nigdy nie inkrementowany w fail()).
+    // total_rejects: total number of rejected submits (#212) — sums all reasons
+    // EXCEPT NONE (index 0 is success, never incremented in fail()).
     uint64_t total_rejects() const noexcept {
         return reject_counts_[1] + reject_counts_[2] + reject_counts_[3];
     }
-    // submit_reject_rate: odsetek prob submitu zakonczonych odrzuceniem (#212) =
-    // rejects / (przyjete + rejects). Observability jakosci pre-trade (zly tuning
-    // limitow / runaway algo daja wysoki wskaznik). 0 gdy brak prob.
+    // submit_reject_rate: fraction of submit attempts that ended in rejection (#212) =
+    // rejects / (accepted + rejects). Observability of pre-trade quality (bad limit
+    // tuning / a runaway algo give a high rate). 0 when there are no attempts.
     double submit_reject_rate() const noexcept {
         const uint64_t rej = total_rejects();
         const uint64_t tot = total_submitted_ + rej;
         return tot ? static_cast<double>(rej) / static_cast<double>(tot) : 0.0;
     }
-    // Liczniki operacji cyklu zycia (#151/#160, observability/dashboard).
+    // Lifecycle operation counters (#151/#160, observability/dashboard).
     uint64_t total_submitted() const noexcept { return total_submitted_; }
     uint64_t total_fills()    const noexcept { return total_fills_; }
     // avg_fill_size: average shares per fill (#274) = total_filled_shares /
@@ -717,19 +717,19 @@ public:
             ? total_traded_notional_ / static_cast<double>(total_filled_shares_)
             : 0.0;
     }
-    // fill_ratio: jaka czesc ZLECONEGO wolumenu (akcji) sie wykonala (#228) =
-    // wykonane / zlecone. Jakosc egzekucji: nisko = duzo niewypelnionych /
-    // anulowanych zlecen (zle ceny limit, slaba plynnosc). 0 gdy nic nie zlecono.
+    // fill_ratio: what fraction of ORDERED volume (shares) was executed (#228) =
+    // filled / ordered. Execution quality: low = many unfilled / cancelled orders
+    // (bad limit prices, poor liquidity). 0 when nothing was ordered.
     double fill_ratio() const noexcept {
         return total_ordered_shares_
             ? static_cast<double>(total_filled_shares_) / static_cast<double>(total_ordered_shares_)
             : 0.0;
     }
 
-    // reset_session_counters: wyzeruj liczniki cyklu zycia (submitted/fills/cancels/
-    // replaces) ORAZ odrzucen per-powod na nowa sesje (#204). NIE rusza pozycji ani
-    // aktywnych zlecen — tylko statystyki observability (analogicznie do router
-    // reset_session_stats #192). Wolaj raz na otwarcie dnia.
+    // reset_session_counters: zero the lifecycle counters (submitted/fills/cancels/
+    // replaces) AND per-reason rejections for a new session (#204). Does NOT touch
+    // positions or active orders — only observability stats (analogous to router
+    // reset_session_stats #192). Call once at the open of the day.
     void reset_session_counters() noexcept {
         total_submitted_ = 0;
         total_fills_     = 0;
@@ -762,25 +762,25 @@ public:
     }
 
 private:
-    // signed_qty: zamiana (side, qty) na sygnowaną ilość. BUY → +qty, SELL → -qty.
-    // Używane 3× w klasie (submit, fill, cancel) — wyciągnięte żeby nie powtarzać.
+    // signed_qty: convert (side, qty) to a signed quantity. BUY → +qty, SELL → -qty.
+    // Used 3× in the class (submit, fill, cancel) — extracted to avoid repetition.
     static int32_t signed_qty(Side side, uint32_t qty) noexcept {
         return (side == Side::BUY) ? static_cast<int32_t>(qty) : -static_cast<int32_t>(qty);
     }
 
-    // apply_fill_to_position: jeden, symetryczny model księgowania dla long,
-    // short i FLIP (przejście long↔short jednym fillem). avg_price trzyma
-    // średnią cenę WEJŚCIA bieżącej nogi (dodatniej lub ujemnej); realized_pnl
-    // księgowany dopiero przy redukcji/zamknięciu.
+    // apply_fill_to_position: one symmetric accounting model for long,
+    // short and FLIP (long↔short crossing in a single fill). avg_price holds
+    // the average ENTRY price of the current leg (positive or negative); realized_pnl
+    // is booked only on reduction/close.
     //
-    //   - otwarcie / powiększenie tej samej strony → ważona średnia wejścia
-    //   - redukcja / zamknięcie → realize: long zamknięty sprzedażą = (sell-avg),
-    //     short zamknięty kupnem = (avg-buy), na min(|net|, fill) akcjach
-    //   - flip: resztka po zamknięciu otwiera nową nogę po cenie fillu
+    //   - open / increase the same side → weighted average entry
+    //   - reduce / close → realize: a long closed by a sell = (sell-avg),
+    //     a short closed by a buy = (avg-buy), on min(|net|, fill) shares
+    //   - flip: the remainder after closing opens a new leg at the fill price
     //
-    // Wszystko fixed-point (×PRICE_SCALE); realized_pnl w dolarach×PRICE_SCALE.
-    // total_cost utrzymywany jako basis bieżącej nogi (= avg×|net|) — pole
-    // wystawiane przez Python binding, więc musi pozostać spójne.
+    // Everything fixed-point (×PRICE_SCALE); realized_pnl in dollars×PRICE_SCALE.
+    // total_cost is kept as the basis of the current leg (= avg×|net|) — a field
+    // exposed by the Python binding, so it must stay consistent.
     static void apply_fill_to_position(Position& pos, int32_t signed_fill,
                                        int64_t fill_qty, int64_t fill_price) noexcept {
         const int32_t old_net = pos.net_qty;
@@ -788,23 +788,23 @@ private:
 
         const bool same_dir = (old_net == 0) || ((old_net > 0) == (signed_fill > 0));
         if (same_dir) {
-            // Ważona średnia wejścia po stronie powiększanej nogi.
+            // Weighted average entry on the side of the leg being increased.
             const int64_t old_abs = std::abs(old_net);
             const int64_t tot_abs = old_abs + fill_qty;
             pos.avg_price = (pos.avg_price * old_abs + fill_price * fill_qty + tot_abs / 2) / tot_abs;
             pos.net_qty   = new_net;
         } else {
-            // Redukcja/zamknięcie/flip — realize na zamykanej części.
+            // Reduce/close/flip — realize on the part being closed.
             const int64_t close_qty = std::min<int64_t>(std::abs(old_net), fill_qty);
             if (old_net > 0) pos.realized_pnl += close_qty * (fill_price - pos.avg_price);
             else             pos.realized_pnl += close_qty * (pos.avg_price - fill_price);
             pos.net_qty = new_net;
             if (new_net == 0) {
-                pos.avg_price = 0;                       // płasko — czysta średnia
+                pos.avg_price = 0;                       // flat — clean average
             } else if ((old_net > 0) != (new_net > 0)) {
-                pos.avg_price = fill_price;              // flip — nowa noga po cenie fillu
+                pos.avg_price = fill_price;              // flip — new leg at the fill price
             }
-            // inaczej: ta sama strona, tylko zmniejszona → avg_price bez zmian
+            // otherwise: same side, just reduced → avg_price unchanged
         }
         pos.total_cost = pos.avg_price * std::abs(pos.net_qty);
     }
