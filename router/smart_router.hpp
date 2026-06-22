@@ -431,6 +431,19 @@ public:
         const double b = national_best_bid(), a = national_best_ask();
         return b > 0.0 && a > 0.0 && b > a;
     }
+    // internally_crossed_count: active venues posting a crossed quote on their OWN
+    // book — best_bid > best_ask on the same venue (#302). A single venue should
+    // never be self-crossed, so this is a hard data-quality red flag (stale/garbled
+    // feed for that venue), distinct from nbbo_crossed (#270) which is a cross-venue
+    // NBBO condition. Only counts venues quoting both sides.
+    int internally_crossed_count() const noexcept {
+        int c = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (v.is_active && v.best_bid > 0.0 && v.best_ask > 0.0 && v.best_bid > v.best_ask) ++c;
+        }
+        return c;
+    }
 
     // effective_spread_bps: RZECZYWISTY koszt przejscia spreadu Z OPLATAMI (#240) =
     // best all-in ask (quote+fee) - best all-in bid (quote-fee), w bps. Wiekszy niz

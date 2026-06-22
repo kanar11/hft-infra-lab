@@ -3006,6 +3006,18 @@ void test_router_ewma_partial() {
                "nbbo_venue_empty_null");
     }
 
+    // --- #302 internally_crossed_count ---
+    {
+        SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
+        r.add_venue(Venue("A", 100, 0.0));
+        r.add_venue(Venue("B", 100, 0.0));
+        r.update_quote("A", 100.00, 100.02, 100, 100);   // normal
+        r.update_quote("B", 100.05, 100.03, 100, 100);   // self-crossed: bid > ask
+        ASSERT(r.internally_crossed_count() == 1, "intcross_one");        // B only
+        r.update_quote("B", 100.01, 100.03, 100, 100);   // repaired
+        ASSERT(r.internally_crossed_count() == 0, "intcross_repaired");
+    }
+
     // --- #262 venue_liquidity_share (current displayed concentration) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
