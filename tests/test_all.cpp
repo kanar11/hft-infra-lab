@@ -2089,6 +2089,16 @@ void test_multicast_gap_recovery() {
     ASSERT(dfr.a_wins == 2 && dfr.b_wins == 1 && dfr.duplicates == 2, "dfr_counts");
     ASSERT(std::fabs(dfr.a_win_rate() - 2.0/3.0) < 1e-9, "dfr_a_win_rate");
 
+    // #281 SnapshotSyncBuffer — snapshot + incremental join.
+    multicast::SnapshotSyncBuffer ssb;
+    ASSERT(!ssb.on_increment(5), "ssb_buffer_5");        // before snapshot -> buffer
+    ASSERT(!ssb.on_increment(6), "ssb_buffer_6");
+    ASSERT(!ssb.on_increment(7), "ssb_buffer_7");
+    ASSERT(ssb.pending_replay() == 3, "ssb_buffered_three");
+    ASSERT(ssb.apply_snapshot(5) == 2, "ssb_replay_two");  // snapshot@5 drops 5, replay 6,7
+    ASSERT(ssb.dropped == 1 && ssb.pending_replay() == 2, "ssb_dropped_one");
+    ASSERT(ssb.on_increment(8), "ssb_live_apply");        // now live -> apply directly
+
     // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);

@@ -667,6 +667,45 @@ struct DualFeedReconciler {
 };
 
 
+// SnapshotSyncBuffer — snapshot + incremental join (expansion #281).
+//
+// The standard L2 recovery pattern (CME, most crypto venues): you request a book
+// SNAPSHOT while the INCREMENTAL feed keeps streaming. Increments that arrive
+// before the snapshot lands must be BUFFERED; once the snapshot (valid up to
+// sequence S) is applied, you drop buffered increments with seq <= S (already
+// reflected in the snapshot) and REPLAY the rest (S+1, S+2, ...) to reach a
+// consistent live book. After that, increments apply directly.
+struct SnapshotSyncBuffer {
+    bool          applied = false;
+    std::uint64_t snapshot_seq = 0;
+    std::set<std::uint64_t> buffered;   // increments held while the snapshot loads
+    std::uint64_t dropped = 0;          // increments already covered by the snapshot
+
+    // on_increment: an incremental update with sequence `seq` arrived. Returns true
+    // if the caller should apply it NOW (snapshot already in sync), false if it was
+    // buffered to be replayed after the snapshot.
+    bool on_increment(std::uint64_t seq) {
+        if (applied) return true;       // live: apply directly
+        buffered.insert(seq);
+        return false;                   // buffered until the snapshot lands
+    }
+    // apply_snapshot: the snapshot valid up to `snap_seq` landed. Drop buffered
+    // increments <= snap_seq (already in the snapshot), keep the rest. Returns the
+    // number of buffered increments left to REPLAY.
+    std::size_t apply_snapshot(std::uint64_t snap_seq) {
+        snapshot_seq = snap_seq;
+        applied = true;
+        for (auto it = buffered.begin(); it != buffered.end(); ) {
+            if (*it <= snap_seq) { ++dropped; it = buffered.erase(it); }
+            else ++it;
+        }
+        return buffered.size();
+    }
+    std::size_t pending_replay() const noexcept { return buffered.size(); }
+    void reset() noexcept { applied = false; snapshot_seq = 0; buffered.clear(); dropped = 0; }
+};
+
+
 // FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
 //
 // Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
