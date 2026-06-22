@@ -3627,6 +3627,18 @@ void test_fix_session() {
                && std::fabs(mq.get_double_nth(132, 1) - 200.00) < 1e-6, "fix_massq_bids");
         ASSERT(std::fabs(mq.get_double_nth(133, 1) - 200.10) < 1e-6, "fix_massq_ask2");
 
+        // #287 TradeCaptureReport (35=AE) — post-trade record (multi-char msg type).
+        s.build_trade_capture_report(buf, sizeof(buf), "TR1", "AAPL", Side::BUY,
+                                     100, 150.25, "20260622", '|');
+        FIXMessage tcr; tcr.parse(buf);
+        ASSERT(tcr.is_valid() && std::strcmp(tcr.get_msg_type(), "AE") == 0, "fix_tcr_AE_valid");
+        ASSERT(std::strcmp(tcr.get_field(571), "TR1") == 0
+               && std::strcmp(tcr.get_symbol(), "AAPL") == 0, "fix_tcr_id_symbol");
+        ASSERT(tcr.get_int(32) == 100 && std::fabs(tcr.get_double(31) - 150.25) < 1e-6,
+               "fix_tcr_qty_px");
+        ASSERT(std::strcmp(tcr.get_field(75), "20260622") == 0, "fix_tcr_trade_date");
+        ASSERT(!tcr.is_admin(), "fix_tcr_application");   // AE is multi-char -> application
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");

@@ -624,6 +624,23 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // TradeCaptureReport (35=AE): a post-trade record for clearing / regulatory
+    // reporting (#287). 571=TradeReportID, 55=Symbol, 54=Side, 32=LastQty,
+    // 31=LastPx, 75=TradeDate. Used to report or confirm executed trades to the
+    // clearing/post-trade layer, independent of the order-entry ExecutionReport.
+    int build_trade_capture_report(char* out, int cap, const char* trade_report_id,
+                                   const char* symbol, Side side, int32_t qty, double px,
+                                   const char* trade_date, char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=AE%c49=%s%c56=%s%c34=%u%c571=%s%c55=%s%c54=%c%c32=%d%c31=%.2f%c75=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            trade_report_id, delim, symbol, delim, fix_side(side), delim, qty, delim, px, delim,
+            trade_date, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.
