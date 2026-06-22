@@ -53,6 +53,7 @@
 #include "../strategy/dpo.hpp"
 #include "../strategy/kama.hpp"
 #include "../strategy/linreg.hpp"
+#include "../strategy/rolling_stddev.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2657,6 +2658,20 @@ void test_linreg() {
     ASSERT(std::fabs(dn.value() - 1.0) < 1e-9, "linreg_lsma_down");
 }
 
+// RollingStdDev #316 — rolling sample standard deviation (volatility primitive).
+void test_rolling_stddev() {
+    SECTION("RollingStdDev (#316)");
+    RollingStdDev fl(4);
+    for (int i = 0; i < 4; ++i) fl.update(5.0);                 // constant -> zero dispersion
+    ASSERT(fl.ready(), "rsd_ready");
+    ASSERT(std::fabs(fl.value() - 0.0) < 1e-9, "rsd_constant_zero");
+    RollingStdDev sd(4);
+    sd.update(2.0); sd.update(4.0); sd.update(4.0); sd.update(6.0);  // mean 4, dev^2 4+0+0+4=8
+    ASSERT(std::fabs(sd.mean() - 4.0) < 1e-9, "rsd_mean");
+    ASSERT(std::fabs(sd.variance() - (8.0 / 3.0)) < 1e-9, "rsd_sample_variance"); // 8/(4-1)
+    ASSERT(std::fabs(sd.value() - std::sqrt(8.0 / 3.0)) < 1e-9, "rsd_sample_std");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4533,6 +4548,7 @@ int main() {
     test_dpo();
     test_kama();
     test_linreg();
+    test_rolling_stddev();
     test_backtest();
     test_ensemble();
     test_trailing_stop();
