@@ -3707,6 +3707,16 @@ void test_fix_session() {
         ASSERT(std::strcmp(tcr.get_field(75), "20260622") == 0, "fix_tcr_trade_date");
         ASSERT(!tcr.is_admin(), "fix_tcr_application");   // AE is multi-char -> application
 
+        // #295 BusinessMessageReject (35=j) — application-level rejection.
+        s.build_business_reject(buf, sizeof(buf), 42, "D", 2, "Unknown symbol", '|');
+        FIXMessage bmr; bmr.parse(buf);
+        ASSERT(bmr.is_valid() && bmr.get_msg_type()[0] == 'j', "fix_bizrej_j_valid");
+        ASSERT(bmr.get_int(45) == 42 && std::strcmp(bmr.get_field(372), "D") == 0,
+               "fix_bizrej_ref");
+        ASSERT(bmr.get_int(380) == 2 && std::strcmp(bmr.get_field(58), "Unknown symbol") == 0,
+               "fix_bizrej_reason_text");
+        ASSERT(!bmr.is_admin(), "fix_bizrej_application");  // business reject is application
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");

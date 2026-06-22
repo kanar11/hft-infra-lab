@@ -641,6 +641,23 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // BusinessMessageReject (35=j): reject an application message that passed session
+    // checks but can't be processed at the business layer (#295) — e.g. unknown
+    // security, unsupported request type, a conditionally-required field missing.
+    // 45=RefSeqNum, 372=RefMsgType, 380=BusinessRejectReason, 58=Text. Distinct from
+    // the session-level Reject (35=3) which handles malformed/out-of-sequence frames.
+    int build_business_reject(char* out, int cap, uint32_t ref_seq, const char* ref_msg_type,
+                              int reject_reason, const char* text,
+                              char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=j%c49=%s%c56=%s%c34=%u%c45=%u%c372=%s%c380=%d%c58=%s%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            ref_seq, delim, ref_msg_type, delim, reject_reason, delim, text, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.
