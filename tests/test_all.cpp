@@ -3777,6 +3777,14 @@ void test_fix_session() {
                "fix_bizrej_reason_text");
         ASSERT(!bmr.is_admin(), "fix_bizrej_application");  // business reject is application
 
+        // #303 TradingSessionStatus (35=h) — venue session phase.
+        s.build_trading_session_status(buf, sizeof(buf), "REG", 2, '|');  // 2 = Open
+        FIXMessage tss; tss.parse(buf);
+        ASSERT(tss.is_valid() && tss.get_msg_type()[0] == 'h', "fix_tss_h_valid");
+        ASSERT(std::strcmp(tss.get_field(336), "REG") == 0 && tss.get_int(340) == 2,
+               "fix_tss_id_status");
+        ASSERT(!tss.is_admin(), "fix_tss_application");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");

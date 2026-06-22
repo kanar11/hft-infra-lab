@@ -658,6 +658,22 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // TradingSessionStatus (35=h): the exchange broadcasts the trading session phase
+    // (#303) — 336=TradingSessionID, 340=TradSesStatus (1=Halted, 2=Open, 3=Closed,
+    // 4=PreOpen, 5=PreClose). Lets a trading app gate order flow on the venue's state
+    // (e.g. stop quoting during a halt). Counterpart to TradingSessionStatusRequest
+    // (35=g) the client would send to ask for it.
+    int build_trading_session_status(char* out, int cap, const char* session_id,
+                                     int status, char delim = FIXMessage::SOH) noexcept {
+        char body[160];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=h%c49=%s%c56=%s%c34=%u%c336=%s%c340=%d%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            session_id, delim, status, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
     // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
     // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.
