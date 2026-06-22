@@ -434,6 +434,18 @@ public:
         return slippage_bps('B', shares) + slippage_bps('S', shares);
     }
 
+    // fill_shortfall: how many of `shares` a marketable order would leave UNFILLED
+    // after sweeping all available depth on that side (#301) = shares - filled, via
+    // expected_fill (#199). 0 means the book fully covers the order; a positive
+    // value is the remainder that would rest or go unfilled. Unlike fillable_shares
+    // (limit-price bounded) this is bounded only by total displayed depth.
+    int64_t fill_shortfall(char side, int64_t shares) const noexcept {
+        if (shares <= 0) return 0;
+        double vwap = 0.0;
+        const int64_t filled = expected_fill(side, shares, vwap);
+        return shares - filled;
+    }
+
     // top_levels: skopiuj do n NAJLEPSZYCH poziomow po danej stronie (BUY: bids
     // malejaco od best; SELL: asks rosnaco) — cena + zagregowana qty. Zwraca ile
     // poziomow faktycznie wypelniono (<= n). L2 depth dla strategii/wyswietlania.

@@ -1896,6 +1896,12 @@ void test_itch_book() {
     ASSERT(nla.cumulative_qty('B', 1) == 150, "itchbook_cumqty_bid1");   // best bid only
     ASSERT(nla.cumulative_qty('B', 5) == 400, "itchbook_cumqty_bid_all"); // 150 + 250
 
+    // #301 fill_shortfall (unfilled remainder after sweeping depth).
+    ASSERT(nla.fill_shortfall('B', 250) == 0, "itchbook_shortfall_buy_covered");  // <= 600 asks
+    ASSERT(nla.fill_shortfall('B', 700) == 100, "itchbook_shortfall_buy_short");  // 700 - 600
+    ASSERT(nla.fill_shortfall('S', 300) == 0, "itchbook_shortfall_sell_covered"); // <= 400 bids
+    ASSERT(nla.fill_shortfall('S', 500) == 100, "itchbook_shortfall_sell_short"); // 500 - 400
+
     // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
     itch::ITCHOrderBook ni;
     ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 szt.
