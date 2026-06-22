@@ -52,6 +52,7 @@
 #include "../strategy/tsi.hpp"
 #include "../strategy/dpo.hpp"
 #include "../strategy/kama.hpp"
+#include "../strategy/linreg.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2618,6 +2619,25 @@ void test_kama() {
     ASSERT(v20 > 15.0 && v20 < 20.0, "kama_fast_adapt_lag");  // fast adaptation, slight lag
 }
 
+// LinReg #308 — least-squares regression slope + LSMA endpoint.
+void test_linreg() {
+    SECTION("LinReg (#308)");
+    LinReg up(14);
+    for (int i = 1; i <= 14; ++i) up.update(static_cast<double>(i));   // perfect +1 ramp
+    ASSERT(up.ready(), "linreg_ready");
+    ASSERT(std::fabs(up.slope() - 1.0) < 1e-9, "linreg_slope_up");
+    ASSERT(std::fabs(up.value() - 14.0) < 1e-9, "linreg_lsma_endpoint");  // line at last bar
+    LinReg fl(5);
+    for (int i = 0; i < 5; ++i) fl.update(50.0);                        // flat
+    ASSERT(std::fabs(fl.slope() - 0.0) < 1e-9, "linreg_slope_flat");
+    ASSERT(std::fabs(fl.value() - 50.0) < 1e-9, "linreg_value_flat");
+    LinReg dn(5);
+    const double seq[] = {5.0, 4.0, 3.0, 2.0, 1.0};                     // perfect -1 ramp
+    for (double p : seq) dn.update(p);
+    ASSERT(std::fabs(dn.slope() - (-1.0)) < 1e-9, "linreg_slope_down");
+    ASSERT(std::fabs(dn.value() - 1.0) < 1e-9, "linreg_lsma_down");
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4442,6 +4462,7 @@ int main() {
     test_tsi();
     test_dpo();
     test_kama();
+    test_linreg();
     test_backtest();
     test_ensemble();
     test_trailing_stop();
