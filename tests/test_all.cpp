@@ -354,6 +354,17 @@ void test_oms_short_and_replace() {
         ASSERT(oms.open_position_count() == 0 && oms.is_flat(), "flat_after_close");
     }
 
+    {   // #290 working_order_count / done_order_count.
+        OMS oms(1000000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);   // SENT
+        Order* b = oms.submit_order("BBB", Side::BUY, 10.0, 100);   // SENT
+        oms.fill_order(a->order_id, 100, 10.0);                     // A FILLED
+        oms.fill_order(b->order_id, 50, 10.0);                      // B PARTIAL
+        ASSERT(oms.working_order_count() == 1 && oms.done_order_count() == 1, "wo_partial_split");
+        oms.cancel_order(b->order_id);                             // B CANCELLED
+        ASSERT(oms.working_order_count() == 0 && oms.done_order_count() == 2, "wo_after_cancel");
+    }
+
     {   // #204 reset_session_counters (zeruje statystyki, zostawia pozycje/zlecenia).
         OMS oms(100000, 1000000000.0);
         Order* o = oms.submit_order("AAA", Side::BUY, 10.0, 100);

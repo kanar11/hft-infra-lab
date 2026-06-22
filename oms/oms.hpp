@@ -571,6 +571,23 @@ public:
         for (const auto& kv : orders_) if (kv.second.status == st) ++n;
         return n;
     }
+    // working_order_count / done_order_count: live working orders (SENT or PARTIAL,
+    // still resting on the exchange) vs terminal ones (FILLED/CANCELLED/REJECTED)
+    // (#290). A one-call view of the order book's state — working is what the desk
+    // still has exposure to; the two together split order_count.
+    size_t working_order_count() const noexcept {
+        size_t n = 0;
+        for (const auto& [id, o] : orders_)
+            if (o.status == OrderStatus::SENT || o.status == OrderStatus::PARTIAL) ++n;
+        return n;
+    }
+    size_t done_order_count() const noexcept {
+        size_t n = 0;
+        for (const auto& [id, o] : orders_)
+            if (o.status == OrderStatus::FILLED || o.status == OrderStatus::CANCELLED
+                || o.status == OrderStatus::REJECTED) ++n;
+        return n;
+    }
     // total_fees: skumulowane prowizje całego OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
     // avg_commission_per_share: srednia prowizja ($) na WYKONANA akcje (#236) =
