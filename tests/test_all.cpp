@@ -3875,6 +3875,17 @@ void test_ouch_order_state() {
     n = OUCHMessage::encode_cancelled(buf, "B", 50, 'U');
     ac.on_response(OUCHMessage::parse_response(buf, n));       // B CANCELLED
     ASSERT(ac.active_count() == 0, "ouch_active_after_cancel");
+
+    // #280 cancel_pending_count — cancels sent, awaiting confirmation.
+    ouch::OUCHOrderTracker cpt;
+    cpt.on_new("A", 100); cpt.on_new("B", 100);
+    n = OUCHMessage::encode_accepted(buf, "A", 'B', 100, "AAPL", 150.25, 99001);
+    cpt.on_response(OUCHMessage::parse_response(buf, n));      // A -> LIVE
+    cpt.on_cancel_sent("A");                                   // cancel sent, awaiting C
+    ASSERT(cpt.cancel_pending_count() == 1 && cpt.is_pending_cancel("A"), "ouch_cxlpend_one");
+    n = OUCHMessage::encode_cancelled(buf, "A", 100, 'U');
+    cpt.on_response(OUCHMessage::parse_response(buf, n));      // C confirms -> flag cleared
+    ASSERT(cpt.cancel_pending_count() == 0, "ouch_cxlpend_cleared");
 }
 
 // OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.

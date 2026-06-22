@@ -161,6 +161,15 @@ public:
                 && rec.state != OrderState::REJECTED) ++c;
         return c;
     }
+    // cancel_pending_count: orders with a cancel SENT but not yet confirmed (#280) —
+    // the pending_cancel flag (#159), set by on_cancel_sent and cleared by a
+    // Cancelled ('C') response. These are in-flight cancels the desk is waiting on;
+    // a growing count signals the exchange is slow to ack or cancels are being lost.
+    size_t cancel_pending_count() const noexcept {
+        size_t c = 0;
+        for (const auto& [tok, rec] : orders_) if (rec.pending_cancel) ++c;
+        return c;
+    }
     double  fill_rate() const noexcept {
         return ordered_shares_ > 0
             ? static_cast<double>(total_filled_shares()) / static_cast<double>(ordered_shares_)
