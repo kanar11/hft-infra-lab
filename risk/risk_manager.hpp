@@ -735,6 +735,17 @@ public:
         for (const auto& [key, v] : pending_) s += std::abs(v);
         return s;
     }
+    // net_exposure: SIGNED total shares across the book (#299) = sum(positions) +
+    // sum(pending), keeping direction. Positive = net long, negative = net short —
+    // the book's directional tilt, the opposite view to get_total_exposure() which
+    // is gross |.| and hides offsetting longs/shorts. A market-neutral book nets ~0
+    // even with large gross exposure.
+    int64_t  net_exposure() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, v] : positions_) s += v;
+        for (const auto& [key, v] : pending_)   s += v;
+        return s;
+    }
     // exposure_utilization_pct: ekspozycja portfela jako % limitu (#181). Ile
     // budzetu ryzyka jest zuzyte — portfelowy odpowiednik is_near_position_limit.
     // 0 gdy limit wylaczony. Moze przekroczyc 100 tylko przy stanie sprzed limitu.

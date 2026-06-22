@@ -3333,6 +3333,16 @@ void test_risk_price_band() {
     rpe2.on_order_sent("BBB", Side::SELL, 200);                     // pending -200
     ASSERT(rpe2.total_pending_exposure() == 500, "pending_exp_sum");  // 300 + 200
 
+    // #299 net_exposure (signed tilt) vs get_total_exposure (gross).
+    RiskManager nex;
+    nex.on_order_sent("AAPL", Side::BUY, 300);                      // +300
+    nex.on_order_sent("MSFT", Side::SELL, 200);                     // -200
+    ASSERT(nex.net_exposure() == 100, "netexp_long_tilt");          // +300 -200 = net long 100
+    ASSERT(nex.get_total_exposure() == 500, "netexp_gross_500");    // |300| + |200|
+    nex.on_order_sent("AAPL", Side::SELL, 600);                     // AAPL pending 300-600 = -300
+    ASSERT(nex.net_exposure() == -500, "netexp_short_tilt");        // -300 -200
+    ASSERT(nex.get_total_exposure() == 500, "netexp_gross_still_500"); // |-300| + |-200|
+
     // #237 position_utilization_pct (per symbol, cap 1000).
     RiskLimits pul; pul.max_position_per_symbol = 1000;
     RiskManager rpu(pul);
