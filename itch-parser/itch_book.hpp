@@ -305,6 +305,17 @@ public:
         return qty > 0 ? notional / static_cast<double>(qty) : 0.0;
     }
 
+    // depth_weighted_mid: fair value that averages the depth-VWAP of both sides over
+    // the top N levels (#285) = (vwap_depth('B', n) + vwap_depth('S', n)) / 2. Unlike
+    // mid_price (touch only) or microprice (size-weighted touch) this folds in N
+    // levels of depth on EACH side, so a large resting wall a few levels deep pulls
+    // the fair value toward it. 0 when either side lacks liquidity.
+    double  depth_weighted_mid(int n) const noexcept {
+        const double bv = vwap_depth('B', n);
+        const double av = vwap_depth('S', n);
+        return (bv > 0.0 && av > 0.0) ? (bv + av) / 2.0 : 0.0;
+    }
+
     // depth_imbalance: order-book imbalance po TOP-N poziomach (#148), uogolnienie
     // top-of-book imbalance (#87, n=1). (Σbid - Σask)/(Σbid+Σask) z n najlepszych
     // poziomow kazdej strony. Glebszy obraz presji niz sam touch.

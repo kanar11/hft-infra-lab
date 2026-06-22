@@ -1764,6 +1764,18 @@ void test_itch_book() {
     ASSERT(close(vd.vwap_depth('S', 2), 100.015), "itchbook_vwap_depth");
     ASSERT(close(vd.vwap_depth('S', 1), 100.00), "itchbook_vwap_depth_top1");
 
+    // #285 depth_weighted_mid (averages both sides' depth-VWAP).
+    itch::ITCHOrderBook dm;
+    dm.on_add(1, 'B', 100.00, 100); dm.on_add(2, 'B', 99.98, 200);   // bids
+    dm.on_add(3, 'S', 100.02, 100); dm.on_add(4, 'S', 100.04, 200);  // asks
+    // vwap_bid(2)=29996/300=99.98667, vwap_ask(2)=30010/300=100.03333 -> mid 100.01
+    ASSERT(close(dm.depth_weighted_mid(2), 100.01), "itchbook_dwm_depth2");
+    // n=1: touch only -> (100.00 + 100.02)/2 = 100.01
+    ASSERT(close(dm.depth_weighted_mid(1), 100.01), "itchbook_dwm_touch");
+    itch::ITCHOrderBook dmo;
+    dmo.on_add(1, 'B', 100.00, 100);                                 // one-sided
+    ASSERT(dmo.depth_weighted_mid(1) == 0.0, "itchbook_dwm_onesided");
+
     // #164 liquidity_within (N ticks od best).
     itch::ITCHOrderBook lw;
     lw.on_add(1, 'S', 100.00, 100); lw.on_add(2, 'S', 100.01, 200); lw.on_add(3, 'S', 100.05, 300);
