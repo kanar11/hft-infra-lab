@@ -657,6 +657,15 @@ public:
             ? static_cast<double>(total_cancels_) / static_cast<double>(total_submitted_)
             : 0.0;
     }
+    // replace_rate: fraction of submitted orders that were amended (#282) =
+    // total_replaces / total_submitted. High = lots of repricing/resizing (chasing
+    // the market, quote churn, message-rate cost). Completes the OMS ratio family
+    // alongside cancel_rate (#258), submit_reject_rate (#212), fill_ratio (#228).
+    double replace_rate() const noexcept {
+        return total_submitted_ > 0
+            ? static_cast<double>(total_replaces_) / static_cast<double>(total_submitted_)
+            : 0.0;
+    }
     uint64_t total_filled_shares()  const noexcept { return total_filled_shares_; }
     // total_traded_notional: cumulative $ value of every fill (Σ fill_qty *
     // fill_price) (#266) — session turnover. Basis for commission/turnover

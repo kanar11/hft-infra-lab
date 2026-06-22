@@ -437,6 +437,14 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.cancel_rate(), 0.5), "cancel_rate_half"); // 1/2
     }
 
+    {   // #282 replace_rate (replaces / submitted).
+        OMS oms(1000000, 1000000000.0);
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);  // submitted 1
+        oms.replace_order(a->order_id, 11.0, 80);                  // replaces 1
+        oms.submit_order("BBB", Side::BUY, 10.0, 100);             // submitted 2
+        ASSERT(close(oms.replace_rate(), 0.5), "replace_rate_half"); // 1/2
+    }
+
     {   // #266 total_traded_notional (cumulative $ of all fills).
         OMS oms(1000000, 1000000000.0);
         Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
