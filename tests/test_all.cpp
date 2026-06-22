@@ -3213,6 +3213,12 @@ void test_risk_price_band() {
     reh.on_order_sent("CCC", Side::BUY, 400);                       // 1200 > cap
     ASSERT(reh.exposure_headroom() == 0, "exph_clamped_zero");
 
+    // #283 total_pending_exposure (working-order exposure).
+    RiskManager rpe2;
+    rpe2.on_order_sent("AAA", Side::BUY, 300);                      // pending +300
+    rpe2.on_order_sent("BBB", Side::SELL, 200);                     // pending -200
+    ASSERT(rpe2.total_pending_exposure() == 500, "pending_exp_sum");  // 300 + 200
+
     // #237 position_utilization_pct (per symbol, cap 1000).
     RiskLimits pul; pul.max_position_per_symbol = 1000;
     RiskManager rpu(pul);

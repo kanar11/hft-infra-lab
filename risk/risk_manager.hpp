@@ -726,6 +726,15 @@ public:
     }
     // get_total_exposure: laczna ekspozycja portfela — utrzymywany niezmiennik O(1).
     int64_t  get_total_exposure() const noexcept { return total_abs_exposure_; }
+    // total_pending_exposure: sum of |pending| shares across symbols (#283) — the
+    // exposure tied up in WORKING (not-yet-filled) orders, isolated from filled
+    // positions (total_abs_exposure_ counts both). How much is at risk in orders
+    // still resting on the book.
+    int64_t  total_pending_exposure() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, v] : pending_) s += std::abs(v);
+        return s;
+    }
     // exposure_utilization_pct: ekspozycja portfela jako % limitu (#181). Ile
     // budzetu ryzyka jest zuzyte — portfelowy odpowiednik is_near_position_limit.
     // 0 gdy limit wylaczony. Moze przekroczyc 100 tylko przy stanie sprzed limitu.
