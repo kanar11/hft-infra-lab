@@ -397,6 +397,10 @@ void test_oms_short_and_replace() {
         oms.fill_order(b->order_id, 60, 20.0);                  // -60 (short)
         ASSERT(oms.gross_position_shares() == 160, "gross_long_plus_abs_short"); // 100 + 60
         ASSERT(oms.largest_position() == 100, "largest_is_AAA");
+        // #314 inventory_value — cost basis: 100*10 (long) + 60*20 (short) = 2200.
+        ASSERT(close(to_float(oms.inventory_value()), 2200.0), "inventory_value_cost");
+        OMS empt(1000000, 1000000000.0);
+        ASSERT(empt.inventory_value() == 0, "inventory_value_flat_zero");
     }
 
     {   // #228 fill_ratio (wykonane / zlecone akcje).

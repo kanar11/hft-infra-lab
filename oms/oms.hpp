@@ -513,6 +513,16 @@ public:
         }
         return m;
     }
+    // inventory_value: cost basis ($) of all open inventory (#314) = Σ |net_qty| *
+    // avg_price across positions, fixed-point (×PRICE_SCALE). The capital deployed
+    // in HELD positions, vs open_order_notional (#180, capital in WORKING orders).
+    // Longs and shorts both add (absolute commitment). 0 when flat.
+    int64_t inventory_value() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, p] : positions_)
+            s += std::abs(static_cast<int64_t>(p.net_qty)) * p.avg_price;
+        return s;
+    }
 
     // pending_buy_shares / pending_sell_shares: total working (pending) shares per
     // side across all symbols (#251). pending_qty is signed (buy +, sell -); these
