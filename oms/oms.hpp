@@ -633,6 +633,15 @@ public:
         for (const auto& [key, p] : positions_) if (p.realized_pnl < 0) ++c;
         return c;
     }
+    // symbol_win_rate: fraction of symbols with positive realized P&L among those
+    // that ended non-flat (#298) = winning_symbols / (winning + losing). The
+    // instrument-level hit rate as a ratio (vs the raw counts in #244). Symbols at
+    // exactly zero realized P&L are excluded from both. 0 when none have realized.
+    double symbol_win_rate() const noexcept {
+        const size_t w = winning_symbols();
+        const size_t decided = w + losing_symbols();
+        return decided > 0 ? static_cast<double>(w) / static_cast<double>(decided) : 0.0;
+    }
     // last_reject: powód ostatniego odrzucenia submit_order (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
     // reject_count: ile zlecen odrzucono z danego powodu (#136, observability).

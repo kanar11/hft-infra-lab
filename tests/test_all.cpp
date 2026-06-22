@@ -429,6 +429,10 @@ void test_oms_short_and_replace() {
         Order* c2 = oms.submit_order("CCC", Side::SELL, 10.0, 100); oms.fill_order(c2->order_id, 100, 10.0);
         ASSERT(oms.winning_symbols() == 1, "winsym_one");   // AAA
         ASSERT(oms.losing_symbols() == 1, "losesym_one");   // BBB (CCC = 0, pominiety)
+        // #298 symbol_win_rate — 1 winner / (1 winner + 1 loser) = 0.5 (CCC flat excluded).
+        ASSERT(close(oms.symbol_win_rate(), 0.5), "symwinrate_half");
+        OMS empt(1000000, 1000000000.0);
+        ASSERT(empt.symbol_win_rate() == 0.0, "symwinrate_empty_zero");
     }
 
     {   // #251 pending_buy_shares / pending_sell_shares (working orders per side).
