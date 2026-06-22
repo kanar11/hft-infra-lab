@@ -51,6 +51,7 @@
 #include "../strategy/zscore.hpp"
 #include "../strategy/tsi.hpp"
 #include "../strategy/dpo.hpp"
+#include "../strategy/kama.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2580,6 +2581,23 @@ void test_dpo() {
     ASSERT(std::fabs(d.value() - (-1.5)) < 1e-9, "dpo_known");
 }
 
+// KAMA #300 — Kaufman Adaptive Moving Average (milestone).
+void test_kama() {
+    SECTION("KAMA (#300)");
+    KAMA c(10);
+    for (int i = 0; i < 15; ++i) c.update(50.0);     // flat: ER=0, but price==KAMA -> stays
+    ASSERT(c.ready(), "kama_ready");
+    ASSERT(std::fabs(c.value() - 50.0) < 1e-9, "kama_constant_stays");
+    // Clean uptrend: ER ~ 1 -> fast smoothing -> KAMA tracks price closely but lags.
+    KAMA t(10);
+    for (int i = 1; i <= 19; ++i) t.update(static_cast<double>(i));
+    const double v19 = t.value();
+    t.update(20.0);
+    const double v20 = t.value();
+    ASSERT(v20 > v19, "kama_tracks_uptrend");                 // moves with the trend
+    ASSERT(v20 > 15.0 && v20 < 20.0, "kama_fast_adapt_lag");  // fast adaptation, slight lag
+}
+
 // Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4360,6 +4378,7 @@ int main() {
     test_zscore();
     test_tsi();
     test_dpo();
+    test_kama();
     test_backtest();
     test_ensemble();
     test_trailing_stop();
