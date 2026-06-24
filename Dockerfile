@@ -4,7 +4,7 @@ LABEL maintainer="Kasper Kanarek"
 LABEL description="HFT Infrastructure Lab — low-latency trading systems (C++)"
 
 # Install build tools (no Python needed)
-# Zainstaluj narzędzia do kompilacji (Python niepotrzebny)
+# Install compilation tools (Python not needed)
 RUN microdnf install -y gcc-c++ make && \
     microdnf clean all
 

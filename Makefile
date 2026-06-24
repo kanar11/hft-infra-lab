@@ -139,9 +139,9 @@ simulate: build
 backtest: backtest/backtest_demo
 	./backtest/backtest_demo 50000
 
-# wss_demo — opcjonalny target wymagający OpenSSL (libssl-dev / openssl-devel).
-# Nie jest w SRCS żeby domyślny build nie wymagał OpenSSL'a w CI.
-# Użycie: make wss        — buduje feed/wss_demo
+# wss_demo — an optional target requiring OpenSSL (libssl-dev / openssl-devel).
+# Not in SRCS so the default build does not require OpenSSL in CI.
+# Usage: make wss        — builds feed/wss_demo
 #         ./feed/wss_demo stream.binance.com 9443 /ws/btcusdt@trade
 .PHONY: wss
 wss: feed/wss_demo

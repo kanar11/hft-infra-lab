@@ -17,8 +17,8 @@ jobs:
 
       - name: Static analysis (cppcheck)
         run: |
-          # Wyłączamy feed/wss_client.hpp i feed/wss_demo.cpp — wymagają
-          # -DHFT_USE_OPENSSL + nagłówków OpenSSL. Compile-check leci osobno
+          # We exclude feed/wss_client.hpp and feed/wss_demo.cpp — they need
+          # -DHFT_USE_OPENSSL + OpenSSL headers. The compile-check runs separately
           # w build-and-test job z apt-installed libssl-dev.
           cppcheck --enable=warning,performance \
                    --std=c++17 --error-exitcode=1 \
@@ -117,7 +117,7 @@ jobs:
           sudo apt-get install -y libssl-dev
           make wss CXX=${{ matrix.compiler }}
           test -x feed/wss_demo
-          echo "wss_demo built OK (not run — wymaga połączenia z giełdą)"
+          echo "wss_demo built OK (not run — needs a connection to the exchange)"
 
       - name: Run lockfree correctness stress (all 6 primitives, no sanitizers)
         run: ./lockfree/lockfree_stress

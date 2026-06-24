@@ -1,12 +1,12 @@
 # Gnuplot script for Ping-Pong Latency Distribution
-# Skrypt gnuplot dla rozkładu opóźnień Ping-Pong
+# gnuplot script for the Ping-Pong latency distribution
 #
-# Usage / Użycie:
+# Usage:
 #   gnuplot plot_latency.gnuplot
 #
 # Produces: latency_distribution.png
 # NOTE: gnuplot is optional — the CSV data is the primary output
-#       gnuplot jest opcjonalny — dane CSV są głównym wynikiem
+#       gnuplot is optional — the CSV data is the primary output
 
 set terminal png size 800,500 enhanced font "Arial,12"
 set output 'latency_distribution.png'

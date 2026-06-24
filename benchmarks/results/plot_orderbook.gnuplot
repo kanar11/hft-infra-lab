@@ -1,7 +1,7 @@
 # Gnuplot script for Orderbook Operation Latencies
-# Skrypt gnuplot dla opóźnień operacji orderbooka
+# gnuplot script for orderbook operation latencies
 #
-# Usage / Użycie:
+# Usage:
 #   gnuplot plot_orderbook.gnuplot
 #
 # Produces: orderbook_latency.png

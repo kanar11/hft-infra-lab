@@ -1,6 +1,6 @@
 #!/bin/bash
 # Display kernel, memory, CPU, and network configuration parameters to verify HFT tuning was applied correctly
-# Wyświetlić parametry konfiguracji jądra, pamięci, CPU i sieci aby zweryfikować czy dostrojenie HFT zostało zastosowane prawidłowo
+# Print kernel, memory, CPU and network configuration parameters to verify the HFT tuning was applied correctly
 
 echo "=== HFT Infra Lab - System Verification ==="
 echo ""
