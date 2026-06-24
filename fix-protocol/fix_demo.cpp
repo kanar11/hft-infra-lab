@@ -61,7 +61,6 @@ void test_parse_execution() {
 
 void test_malformed_tags() {
     // Malformed tags should not crash — parser skips invalid entries
-    // Nieprawidłowe tagi nie powinny crashować — parser pomija je
     FIXMessage msg;
     msg.parse("abc=xyz|35=D|=empty|55=AAPL|bad|44=100.0");
     ASSERT(std::strcmp(msg.get_msg_type(), "D") == 0, "test_malformed_type");
@@ -102,7 +101,6 @@ void test_generic_field_lookup() {
 
 void test_multiple_messages() {
     // Parse two different messages into separate objects
-    // Parsuj dwie różne wiadomości do oddzielnych obiektów
     FIXMessage buy, sell;
     buy.parse("8=FIX.4.2|35=D|55=AAPL|54=1|44=150.25|38=100");
     sell.parse("8=FIX.4.2|35=D|55=TSLA|54=2|44=250.00|38=200");
@@ -113,7 +111,7 @@ void test_multiple_messages() {
     ASSERT(std::strcmp(sell.get_side(), "SELL") == 0, "test_multi_sell_side");
 }
 
-// Walidacja sesji FIX — CheckSum (tag 10) + BodyLength (tag 9) + SOH delimiter.
+// FIX session validation — CheckSum (tag 10) + BodyLength (tag 9) + SOH delimiter.
 
 void test_checksum_valid() {
     char msg[256];
@@ -127,7 +125,7 @@ void test_checksum_valid() {
     ASSERT(m.body_length_valid(),   "bodylen_valid_on_built_msg");
     ASSERT(m.has_required_header(), "required_header_present");
     ASSERT(m.is_valid(),            "built_msg_is_valid");
-    // Pola parsują się też przy delimiterze SOH (nie tylko '|').
+    // Fields also parse with the SOH delimiter (not only '|').
     ASSERT(std::strcmp(m.get_symbol(), "AAPL") == 0, "soh_symbol_parsed");
     ASSERT(m.get_quantity() == 100,                  "soh_qty_parsed");
 }
@@ -138,7 +136,7 @@ void test_checksum_detects_corruption() {
         "35=D\x01" "55=AAPL\x01" "38=100\x01");
     ASSERT(n > 0, "build_for_corruption");
 
-    // Uszkodź body (100 → 900) BEZ przeliczenia checksumu → mismatch.
+    // Corrupt the body (100 → 900) WITHOUT recomputing the checksum → mismatch.
     char* p = std::strstr(msg, "38=100");
     if (p) p[3] = '9';
 
@@ -149,8 +147,8 @@ void test_checksum_detects_corruption() {
 }
 
 void test_pipe_message_not_full_session() {
-    // Human-readable '|' bez tagów 9/10 — pola parsują się, ale to nie jest
-    // kompletna wiadomość sesji (brak wymaganego nagłówka).
+    // Human-readable '|' without tags 9/10 — fields parse, but this is not
+    // a complete session message (missing the required header).
     FIXMessage m;
     m.parse("8=FIX.4.2|35=D|55=AAPL|54=1|44=150.25|38=100");
     ASSERT(!m.has_required_header(), "pipe_msg_no_required_header");
@@ -183,12 +181,12 @@ void test_session_inbound_gap() {
     fix::FIXSession s;
     auto g1 = s.observe_inbound(1, /*now*/0);
     ASSERT(!g1.valid, "session_in_seq_1_no_gap");
-    auto g2 = s.observe_inbound(5, /*now*/100);   // skok 1→5
+    auto g2 = s.observe_inbound(5, /*now*/100);   // jump 1→5
     ASSERT(g2.valid,                 "session_gap_detected");
     ASSERT(g2.expected == 2,         "session_gap_expected");
     ASSERT(g2.received == 5,         "session_gap_received");
     ASSERT(s.gaps_detected() == 1,   "session_gap_counter");
-    auto g3 = s.observe_inbound(3, /*now*/200);   // duplikat / late
+    auto g3 = s.observe_inbound(3, /*now*/200);   // duplicate / late
     ASSERT(!g3.valid,                "session_dup_no_new_gap");
 }
 
@@ -206,9 +204,9 @@ void test_session_heartbeat_timer() {
     fix::FIXSession s;
     s.mark_logon_sent(0);
     s.mark_logon_received(30, /*now*/0);
-    // Krótko po Logon — żadnej akcji.
+    // Shortly after Logon — no action.
     ASSERT(s.tick(1000) == fix::FIXSession::Action::NONE, "session_tick_quiet");
-    // 35 sek po Logon, my byliśmy cicho — wyślij heartbeat.
+    // 35 sec after Logon, we were silent — send a heartbeat.
     auto a = s.tick(35'000);
     ASSERT(a == fix::FIXSession::Action::SEND_HEARTBEAT, "session_tick_send_hb");
     ASSERT(s.heartbeats_sent() == 1,                      "session_hb_counter");
@@ -218,11 +216,11 @@ void test_session_test_request_then_disconnect() {
     fix::FIXSession s;
     s.mark_logon_sent(0);
     s.mark_logon_received(30, /*now*/0);
-    s.mark_outbound(/*now*/0);   // żebyśmy nie odpalili SEND_HEARTBEAT po naszej stronie
-    // 70 sek bez wiadomości od counterparty (> 2×30) — TestRequest.
+    s.mark_outbound(/*now*/0);   // so we don't trigger SEND_HEARTBEAT on our side
+    // 70 sec with no message from the counterparty (> 2×30) — TestRequest.
     auto a = s.tick(70'000);
     ASSERT(a == fix::FIXSession::Action::SEND_TEST_REQUEST, "session_test_request");
-    // Druga ciza po test_request → disconnect.
+    // More silence after test_request → disconnect.
     s.mark_outbound(70'000);
     auto b = s.tick(140'000);
     ASSERT(b == fix::FIXSession::Action::DISCONNECT, "session_disconnect_after_no_response");
@@ -244,7 +242,6 @@ void benchmark(int num_parses) {
     printf("Parses: %d\n\n", num_parses);
 
     // 4 sample messages (cycle through them for realistic mix)
-    // 4 przykładowe wiadomości (cyklicznie dla realistycznego miksu)
     const char* messages[] = {
         "8=FIX.4.2|35=D|49=TRADER1|56=EXCHANGE|55=AAPL|54=1|44=150.25|38=100",
         "8=FIX.4.2|35=D|49=TRADER1|56=EXCHANGE|55=MSFT|54=2|44=380.50|38=50",

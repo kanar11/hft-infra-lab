@@ -1,33 +1,33 @@
 /*
- * FIXMessage — parser protokołu FIX 4.2 z walidacją sesji.
+ * FIXMessage — a FIX 4.2 protocol parser with session validation.
  *
- * FIX (Financial Information eXchange) to standard komunikacji handlowej
- * broker↔giełda. Wiadomość to pary tag=value rozdzielone delimiterem:
+ * FIX (Financial Information eXchange) is the standard for trading communication
+ * broker↔exchange. A message is tag=value pairs separated by a delimiter:
  *
  *   8=FIX.4.2 | 9=65 | 35=D | 49=TRADER1 | 56=EXCH | 55=AAPL | ... | 10=123
  *
- * WAŻNE — prawdziwy wire FIX używa delimitera SOH (ASCII 0x01), nie '|'.
- * Pionowa kreska to konwencja human-readable (do logów/testów). Parser
- * auto-wykrywa: jeśli w wiadomości jest SOH → używa SOH, inaczej '|'.
+ * IMPORTANT — the real FIX wire uses the SOH delimiter (ASCII 0x01), not '|'.
+ * The vertical bar is a human-readable convention (for logs/tests). The parser
+ * auto-detects: if a message contains SOH → it uses SOH, otherwise '|'.
  *
- * Kluczowe tagi:
- *   8  = BeginString  (wersja protokołu, ZAWSZE pierwszy)
- *   9  = BodyLength   (liczba bajtów body, ZAWSZE drugi)
+ * Key tags:
+ *   8  = BeginString  (protocol version, ALWAYS first)
+ *   9  = BodyLength   (number of body bytes, ALWAYS second)
  *   35 = MsgType      (D=NewOrder, G=Modify, F=Cancel, 8=Execution, 0=Heartbeat)
- *   34 = MsgSeqNum    (numer sekwencyjny sesji)
+ *   34 = MsgSeqNum    (session sequence number)
  *   49 = SenderCompID / 56 = TargetCompID
  *   55 = Symbol, 54 = Side (1=Buy 2=Sell), 44 = Price, 38 = OrderQty
- *   10 = CheckSum     (ZAWSZE ostatni, suma modulo-256, 3 cyfry)
+ *   10 = CheckSum     (ALWAYS last, modulo-256 sum, 3 digits)
  *
- * Walidacja na poziomie standardu (czego brakowało wcześniej):
- *   - CheckSum (tag 10): suma WSZYSTKICH bajtów aż do delimitera przed "10="
- *     modulo 256. Każdy zgodny silnik FIX MUSI to sprawdzać — wykrywa
- *     uszkodzenie transmisji. checksum_valid().
- *   - BodyLength (tag 9): liczba bajtów od pola PO tagu 9 do (włącznie)
- *     delimitera przed "10=". body_length_valid().
- *   - Obecność wymaganych pól nagłówka (8, 9, 35, 10). has_required_header().
+ * Standard-level validation (what was missing before):
+ *   - CheckSum (tag 10): the sum of ALL bytes up to the delimiter before "10="
+ *     modulo 256. Every conformant FIX engine MUST check this — it detects
+ *     transmission corruption. checksum_valid().
+ *   - BodyLength (tag 9): the number of bytes from the field AFTER tag 9 up to (and including)
+ *     the delimiter before "10=". body_length_valid().
+ *   - Presence of the required header fields (8, 9, 35, 10). has_required_header().
  *
- * Wydajność (lab): ~5.5M msg/sec, p50=150ns, p99=250ns.
+ * Performance (lab): ~5.5M msg/sec, p50=150ns, p99=250ns.
  */
 #pragma once
 
@@ -38,12 +38,12 @@
 #include <chrono>
 
 
-// Maks. tagów na wiadomość (większość ma <20). Stała tablica = zero heap.
+// Max tags per message (most have <20). A fixed array = zero heap.
 static constexpr int MAX_FIX_TAGS  = 32;
-static constexpr int MAX_FIX_VALUE = 32;   // maks. długość wartości per tag
+static constexpr int MAX_FIX_VALUE = 32;   // max value length per tag
 
 
-// FIXField — jedna para tag=value.
+// FIXField — one tag=value pair.
 struct FIXField {
     int  tag;
     char value[MAX_FIX_VALUE];
@@ -56,7 +56,7 @@ class FIXMessage {
     FIXField fields_[MAX_FIX_TAGS];
     int      field_count_;
 
-    // Stan walidacji (ustawiany w parse()).
+    // Validation state (set in parse()).
     bool     cksum_present_   = false;
     bool     cksum_valid_     = false;
     bool     bodylen_present_ = false;
@@ -64,7 +64,7 @@ class FIXMessage {
     int      computed_cksum_  = -1;
     int      computed_bodylen_ = -1;
 
-    // find_field: liniowy skan po tagu — O(N), ale N≤32 (1 linia cache).
+    // find_field: linear scan by tag — O(N), but N≤32 (1 cache line).
     const FIXField* find_field(int tag) const noexcept {
         for (int i = 0; i < field_count_; ++i) {
             if (fields_[i].tag == tag) return &fields_[i];
@@ -78,11 +78,11 @@ class FIXMessage {
     }
 
 public:
-    static constexpr char SOH = '\x01';   // standardowy delimiter wire FIX
+    static constexpr char SOH = '\x01';   // the standard FIX wire delimiter
 
     FIXMessage() noexcept : field_count_(0) {}
 
-    // compute_checksum: suma modulo-256 bajtów [0, len). Algorytm CheckSum (tag 10).
+    // compute_checksum: modulo-256 sum of bytes [0, len). The CheckSum algorithm (tag 10).
     static uint8_t compute_checksum(const char* data, int len) noexcept {
         unsigned sum = 0;
         for (int i = 0; i < len; ++i)
@@ -90,8 +90,8 @@ public:
         return static_cast<uint8_t>(sum & 0xFF);
     }
 
-    // parse: rozbij wiadomość na pary tag=value + zwaliduj CheckSum/BodyLength.
-    // Auto-wykrywa delimiter (SOH albo '|'). Zwraca czas parsowania (ns).
+    // parse: split the message into tag=value pairs + validate CheckSum/BodyLength.
+    // Auto-detects the delimiter (SOH or '|'). Returns the parse time (ns).
     int64_t parse(const char* raw_msg) noexcept {
         const int64_t t0 = now_ns();
         field_count_      = 0;
@@ -104,8 +104,8 @@ public:
 
         if (!raw_msg || raw_msg[0] == '\0') return now_ns() - t0;
 
-        // Kopia robocza. memchr ogranicza scan do 1024 B — niezaufana wiadomość
-        // bez null-terminatora nie zmusi nas do czytania poza buforem.
+        // Working copy. memchr bounds the scan to 1024 B — an untrusted message
+        // without a null terminator can't force us to read past the buffer.
         char buf[1024];
         const void* nul = std::memchr(raw_msg, '\0', sizeof(buf));
         const int len = nul
@@ -114,13 +114,13 @@ public:
         std::memcpy(buf, raw_msg, static_cast<size_t>(len));
         buf[len] = '\0';
 
-        // Delimiter: SOH gdy obecny (prawdziwy wire FIX), inaczej '|' (human-readable).
+        // Delimiter: SOH when present (real FIX wire), otherwise '|' (human-readable).
         const char delim_char =
             std::memchr(raw_msg, SOH, static_cast<size_t>(len)) ? SOH : '|';
 
-        // Offsety potrzebne do walidacji (względem buf == względem raw_msg).
-        int  cksum_off = -1;     // gdzie zaczyna się "10="
-        int  body_off  = -1;     // gdzie zaczyna się pole PO tagu 9
+        // Offsets needed for validation (relative to buf == relative to raw_msg).
+        int  cksum_off = -1;     // where "10=" begins
+        int  body_off  = -1;     // where the field AFTER tag 9 begins
         bool pending_body = false;
 
         char* pos = buf;
@@ -128,11 +128,11 @@ public:
             const int field_off = static_cast<int>(pos - buf);
             if (pending_body) { body_off = field_off; pending_body = false; }
 
-            // Znajdź następny delimiter lub koniec.
+            // Find the next delimiter or the end.
             char* delim = pos;
             while (*delim && *delim != delim_char) ++delim;
 
-            // Znajdź '=' w tym segmencie.
+            // Find '=' in this segment.
             char* eq = pos;
             while (eq < delim && *eq != '=') ++eq;
 
@@ -149,8 +149,8 @@ public:
                     f.value[val_len] = '\0';
                     ++field_count_;
 
-                    if (tag == 9)  pending_body = true;       // body zaczyna się od następnego pola
-                    if (tag == 10) cksum_off    = field_off;  // checksum liczona do tego miejsca
+                    if (tag == 9)  pending_body = true;       // body starts at the next field
+                    if (tag == 10) cksum_off    = field_off;  // checksum is computed up to this point
                 }
             }
 
@@ -168,13 +168,13 @@ public:
         return f ? f->value : "UNKNOWN";
     }
 
-    // is_admin_msg_type: czy typ (tag 35) to wiadomosc SESYJNA (admin) (#177).
+    // is_admin_msg_type: whether the type (tag 35) is a SESSION (admin) message (#177).
     // Admin: 0=Heartbeat 1=TestRequest 2=ResendRequest 3=Reject 4=SequenceReset
-    // 5=Logout A=Logon (wszystkie jednoznakowe). Reszta = aplikacyjna (biznesowa,
-    // np. D/F/G/8). Silnik routuje admin do warstwy sesji, app do OMS; istotne
-    // tez przy ResendRequest (admin -> gap-fill, app -> retransmisja).
+    // 5=Logout A=Logon (all single-char). The rest = application (business,
+    // e.g. D/F/G/8). The engine routes admin to the session layer, app to the OMS; also relevant
+    // for ResendRequest (admin -> gap-fill, app -> retransmission).
     static bool is_admin_msg_type(const char* t) noexcept {
-        if (!t || t[0] == '\0' || t[1] != '\0') return false;  // admin typy sa jednoznakowe
+        if (!t || t[0] == '\0' || t[1] != '\0') return false;  // admin types are single-char
         switch (t[0]) {
             case '0': case '1': case '2': case '3': case '4': case '5': case 'A':
                 return true;
@@ -183,7 +183,7 @@ public:
         }
     }
 
-    // is_admin: czy TA wiadomosc jest sesyjna (admin) wg tag 35.
+    // is_admin: whether THIS message is a session (admin) message per tag 35.
     bool is_admin() const noexcept {
         const FIXField* f = find_field(35);
         return f && is_admin_msg_type(f->value);
@@ -249,14 +249,14 @@ public:
         return f ? std::atoi(f->value) : 0;
     }
 
-    // get_field: generyczny lookup po tagu (nullptr gdy brak).
+    // get_field: generic lookup by tag (nullptr when absent).
     const char* get_field(int tag) const noexcept {
         const FIXField* f = find_field(tag);
         return f ? f->value : nullptr;
     }
 
-    // get_int / get_double: typowane odczyty dowolnego taga (#168). 0 gdy brak
-    // taga — wygodne dla pol numerycznych (qty, seq, ceny, kody) bez recznego atoi.
+    // get_int / get_double: typed reads of any tag (#168). 0 when the tag is
+    // absent — convenient for numeric fields (qty, seq, prices, codes) without manual atoi.
     int32_t get_int(int tag) const noexcept {
         const FIXField* f = find_field(tag);
         return f ? std::atoi(f->value) : 0;
@@ -268,7 +268,7 @@ public:
 
     int field_count() const noexcept { return field_count_; }
 
-    // Walidacja sesji FIX.
+    // FIX session validation.
     bool checksum_present()    const noexcept { return cksum_present_; }
     bool checksum_valid()      const noexcept { return cksum_valid_; }
     bool body_length_present() const noexcept { return bodylen_present_; }
@@ -276,21 +276,21 @@ public:
     int  computed_checksum()   const noexcept { return computed_cksum_; }
     int  computed_body_length() const noexcept { return computed_bodylen_; }
 
-    // has_required_header: minimalny zgodny nagłówek FIX — 8, 9, 35, 10.
+    // has_required_header: the minimal conformant FIX header — 8, 9, 35, 10.
     bool has_required_header() const noexcept {
         return find_field(8) && find_field(9) && find_field(35) && find_field(10);
     }
 
-    // is_valid: kompletna, dobrze uformowana wiadomość sesji FIX.
+    // is_valid: a complete, well-formed FIX session message.
     bool is_valid() const noexcept {
         return has_required_header() && cksum_valid_ && bodylen_valid_;
     }
 
-    // build_message: zbuduj POPRAWNĄ wiadomość FIX z body (pola od 35= dalej,
-    // każde zakończone delimiterem). Dokleja 8=BeginString, 9=BodyLength i
-    // 10=CheckSum z policzoną sumą. Zwraca długość lub 0 gdy bufor za mały.
+    // build_message: build a CORRECT FIX message from a body (fields from 35= onward,
+    // each terminated by a delimiter). Prepends 8=BeginString, 9=BodyLength and
+    // appends 10=CheckSum with the computed sum. Returns the length or 0 if the buffer is too small.
     //
-    // Przykład: body = "35=D\x0155=AAPL\x0154=1\x01" → pełna wiadomość z 8/9/10.
+    // Example: body = "35=D\x0155=AAPL\x0154=1\x01" → a full message with 8/9/10.
     static int build_message(char* out, int cap, const char* body,
                              const char* begin_string = "FIX.4.2",
                              char delim = SOH) noexcept {
@@ -304,8 +304,8 @@ public:
         std::memcpy(out + off, head, static_cast<size_t>(hlen)); off += hlen;
         std::memcpy(out + off, body, static_cast<size_t>(blen)); off += blen;
 
-        // CheckSum liczona po wszystkich bajtach do tej pory (włącznie z
-        // delimiterem kończącym body — czyli bajtem przed "10=").
+        // CheckSum computed over all bytes so far (including the
+        // delimiter terminating the body — i.e. the byte before "10=").
         const uint8_t ck = compute_checksum(out, off);
         const int clen = std::snprintf(out + off, static_cast<size_t>(cap - off),
                                        "10=%03u%c", static_cast<unsigned>(ck), delim);
@@ -314,10 +314,10 @@ public:
         return off;
     }
 
-    // validate_new_order: walidacja NewOrderSingle (35=D) po stronie acceptora
-    // (#116). Sprawdza obecnosc wymaganych tagow i sensownosc wartosci. Zwraca
-    // nullptr gdy OK, albo string z powodem odrzucenia. Nie wymaga CheckSum —
-    // to walidacja warstwy aplikacyjnej, nie transportu.
+    // validate_new_order: acceptor-side validation of a NewOrderSingle (35=D)
+    // (#116). Checks the presence of required tags and the sanity of values. Returns
+    // nullptr when OK, or a string with the rejection reason. Does not require CheckSum —
+    // this is application-layer validation, not transport.
     const char* validate_new_order() const noexcept {
         const FIXField* mt = find_field(35);
         if (!mt || mt->value[0] != 'D')   return "not a NewOrderSingle (35!=D)";
@@ -329,7 +329,7 @@ public:
         const FIXField* q = find_field(38);
         if (!q)                           return "missing OrderQty (38)";
         if (std::atoi(q->value) <= 0)     return "non-positive OrderQty (38)";
-        // Limit (40=2) musi miec dodatnia cene (44).
+        // A limit order (40=2) must have a positive price (44).
         const FIXField* ot = find_field(40);
         if (ot && ot->value[0] == '2') {
             const FIXField* px = find_field(44);
@@ -338,7 +338,7 @@ public:
         return nullptr;
     }
 
-    // print: wyświetl wiadomość (debug).
+    // print: display the message (debug).
     void print() const {
         const char* mt = get_msg_type();
         const char* name = "UNKNOWN";
@@ -353,9 +353,9 @@ public:
     }
 
 private:
-    // validate: policz CheckSum i BodyLength z offsetów zebranych w parse()
-    // i porównaj z wartościami w wiadomości. Liczone na ORYGINALNYCH bajtach
-    // (raw_msg), bo buf ma '\0' wstawione w miejsce '='.
+    // validate: compute CheckSum and BodyLength from the offsets gathered in parse()
+    // and compare with the values in the message. Computed on the ORIGINAL bytes
+    // (raw_msg), because buf has '\0' inserted in place of '='.
     void validate(const char* raw_msg, int cksum_off, int body_off) noexcept {
         const FIXField* f10 = find_field(10);
         if (f10 && cksum_off >= 0) {

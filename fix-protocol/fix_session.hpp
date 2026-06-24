@@ -1,42 +1,42 @@
 /*
- * FIXSession — warstwa sesji FIX (Logon/Logout/Heartbeat/SeqNum tracking).
+ * FIXSession — the FIX session layer (Logon/Logout/Heartbeat/SeqNum tracking).
  *
- * Po co osobno od FIXMessage (parser)? FIXMessage to "co JEDNA wiadomość znaczy"
- * (parsing + walidacja CheckSum/BodyLength). FIXSession to "jak STAN SESJI się
- * zmienia" — multi-message protocol: kto-do-kogo, sequence in/out, heartbeats,
- * resend requests przy lukach. Bez tego nie podpiniesz się do realnej giełdy.
+ * Why separate from FIXMessage (the parser)? FIXMessage is "what ONE message means"
+ * (parsing + CheckSum/BodyLength validation). FIXSession is "how the SESSION STATE
+ * changes" — a multi-message protocol: who-to-whom, sequence in/out, heartbeats,
+ * resend requests on gaps. Without it you can't connect to a real exchange.
  *
- * Cykl życia sesji FIX:
+ * FIX session lifecycle:
  *
- *   1. Initiator (client): wysyła Logon (35=A) z HeartBtInt (108=30)
- *   2. Acceptor (broker/exch): odpowiada Logon — sesja UP
- *   3. Obie strony: wysyłają wiadomości aplikacyjne (D=NewOrder, 8=Execution...)
- *      Każda z monotonicznym MsgSeqNum (tag 34). Pierwsza = 1, +1 per wiadomość.
- *   4. Każda strona: wysyła Heartbeat (35=0) co HeartBtInt sekund gdy idle.
- *      Brak heartbeat'a przez 2× HeartBtInt → druga strona wysyła TestRequest
- *      (35=1), jeszcze przez HeartBtInt brak odpowiedzi → disconnect.
- *   5. Gdy odebrany MsgSeqNum > expected → ResendRequest (35=2) "od X do Y".
- *      Druga strona wysyła zaległe albo SequenceReset-GapFill (35=4) jeśli
- *      zaginione były administracyjne (nie do replay'u).
+ *   1. Initiator (client): sends Logon (35=A) with HeartBtInt (108=30)
+ *   2. Acceptor (broker/exch): replies with Logon — the session is UP
+ *   3. Both sides: send application messages (D=NewOrder, 8=Execution...)
+ *      Each with a monotonic MsgSeqNum (tag 34). First = 1, +1 per message.
+ *   4. Each side: sends a Heartbeat (35=0) every HeartBtInt seconds when idle.
+ *      No heartbeat for 2× HeartBtInt → the other side sends a TestRequest
+ *      (35=1); another HeartBtInt with no reply → disconnect.
+ *   5. When a received MsgSeqNum > expected → ResendRequest (35=2) "from X to Y".
+ *      The other side resends the missing ones or a SequenceReset-GapFill (35=4) if
+ *      the lost ones were administrative (not to be replayed).
  *   6. Logout (35=5) → graceful close.
  *
- * Co tu mamy:
+ * What we have here:
  *   - inbound seq tracking + gap detection
- *   - outbound seq counter (do wstrzykiwania w wiadomości wychodzące)
- *   - timer logika do heartbeat'ów (caller wywołuje tick(now_ms) i pyta
- *     czy trzeba wysłać heartbeat / czy disconnect)
- *   - flagi stanu sesji: DISCONNECTED → LOGON_SENT → LOGGED_IN → LOGOUT
+ *   - outbound seq counter (to inject into outgoing messages)
+ *   - timer logic for heartbeats (the caller calls tick(now_ms) and asks
+ *     whether to send a heartbeat / whether to disconnect)
+ *   - session state flags: DISCONNECTED → LOGON_SENT → LOGGED_IN → LOGOUT
  *
- * Co domyka pętlę sesji (expansion #78):
- *   - serializacja admin messages: build_logon/heartbeat/test_request/
- *     resend_request/sequence_reset/logout — generują poprawny wire FIX
- *     (z 8/9/10) i wstrzykują outbound MsgSeqNum (tag 34)
- *   - persistencja sequence numbers: persist_seq/load_persisted_seq (atomic
- *     write jak RiskManager) — restart procesu nie reużyje już-wysłanego seq
+ * What closes the session loop (expansion #78):
+ *   - serialization of admin messages: build_logon/heartbeat/test_request/
+ *     resend_request/sequence_reset/logout — generate correct FIX wire
+ *     (with 8/9/10) and inject the outbound MsgSeqNum (tag 34)
+ *   - sequence-number persistence: persist_seq/load_persisted_seq (atomic
+ *     write like RiskManager) — a process restart won't reuse an already-sent seq
  *
- * Czego NADAL NIE robimy (poza scope): faktyczne wysyłanie po TCP (warstwa
- * wyżej, np. network/epoll_server) i pełny store-and-forward replay zaległych
- * wiadomości aplikacyjnych (build_sequence_reset GapFill pokrywa stronę admin).
+ * What we STILL do NOT do (out of scope): actually sending over TCP (a higher
+ * layer, e.g. network/epoll_server) and full store-and-forward replay of missed
+ * application messages (build_sequence_reset GapFill covers the admin side).
  */
 #pragma once
 
@@ -54,41 +54,41 @@ namespace fix {
 
 
 enum class SessionState : uint8_t {
-    DISCONNECTED = 0,   // przed Logon albo po Logout
-    LOGON_SENT   = 1,   // wysłaliśmy Logon, czekamy na odpowiedź
-    LOGGED_IN    = 2,   // sesja w pełni up — wymiana aplikacyjnych wiadomości
-    LOGOUT       = 3,   // jedna ze stron wysłała Logout
+    DISCONNECTED = 0,   // before Logon or after Logout
+    LOGON_SENT   = 1,   // we sent Logon, waiting for the reply
+    LOGGED_IN    = 2,   // session fully up — exchanging application messages
+    LOGOUT       = 3,   // one of the sides sent Logout
 };
 
 
 struct GapDetected {
-    uint32_t expected;   // numer którego oczekiwaliśmy
-    uint32_t received;   // numer który przyszedł (> expected)
-    bool     valid;      // true gdy luka rzeczywiście istnieje
+    uint32_t expected;   // the number we expected
+    uint32_t received;   // the number that arrived (> expected)
+    bool     valid;      // true when a gap really exists
 };
 
 
 class FIXSession {
     SessionState state_ = SessionState::DISCONNECTED;
 
-    uint32_t expected_in_seq_  = 1;   // następny oczekiwany MsgSeqNum (przychodzący)
-    uint32_t next_out_seq_     = 1;   // następny do nadania w wychodzącej wiadomości
-    int32_t  heartbeat_int_sec_ = 30; // negocjowane w Logon (tag 108)
+    uint32_t expected_in_seq_  = 1;   // next expected MsgSeqNum (inbound)
+    uint32_t next_out_seq_     = 1;   // next to send in an outgoing message
+    int32_t  heartbeat_int_sec_ = 30; // negotiated in Logon (tag 108)
     int64_t  last_inbound_ms_  = 0;
     int64_t  last_outbound_ms_ = 0;
     bool     test_request_pending_ = false;
 
-    // Tożsamość sesji (tag 49/56) — wstawiana w wychodzące admin messages.
+    // Session identity (tag 49/56) — inserted into outgoing admin messages.
     char sender_comp_[32] = "SENDER";
     char target_comp_[32] = "TARGET";
-    char pending_test_req_id_[32] = {0};   // niepusty = otrzymano TestRequest (#158)
+    char pending_test_req_id_[32] = {0};   // non-empty = a TestRequest was received (#158)
 
-    // Persistencja sequence numbers. Pusty = wyłączona (zachowanie wstecz
-    // kompatybilne). Production MUSI to mieć — restart procesu nie może
-    // wysłać już-użytego MsgSeqNum ani prosić o resend od złego miejsca.
+    // Sequence-number persistence. Empty = disabled (backward-compatible
+    // behavior). Production MUST have it — a process restart cannot
+    // send an already-used MsgSeqNum or ask for a resend from the wrong place.
     std::string persist_path_;
 
-    // Statystyki
+    // Statistics
     uint64_t gaps_detected_   = 0;
     uint64_t heartbeats_sent_ = 0;
     uint64_t resends_requested_ = 0;
@@ -96,8 +96,8 @@ class FIXSession {
 public:
     FIXSession() noexcept = default;
 
-    // set_comp_ids: ustaw SenderCompID (tag 49) i TargetCompID (tag 56)
-    // wstawiane do wszystkich budowanych admin messages.
+    // set_comp_ids: set the SenderCompID (tag 49) and TargetCompID (tag 56)
+    // inserted into all built admin messages.
     void set_comp_ids(const char* sender, const char* target) noexcept {
         if (sender) { std::strncpy(sender_comp_, sender, sizeof(sender_comp_) - 1);
                       sender_comp_[sizeof(sender_comp_) - 1] = '\0'; }
@@ -105,21 +105,21 @@ public:
                       target_comp_[sizeof(target_comp_) - 1] = '\0'; }
     }
 
-    // === Stan ===
+    // === State ===
     SessionState state()      const noexcept { return state_; }
     bool         is_logged_in() const noexcept { return state_ == SessionState::LOGGED_IN; }
 
     // === Outbound sequence ===
-    // Wywołaj PRZED zbudowaniem każdej wychodzącej wiadomości — zwraca numer
-    // do wstawienia w tag 34, atomowo inkrementuje wewnętrzny licznik.
+    // Call BEFORE building each outgoing message — returns the number
+    // to insert in tag 34, atomically increments the internal counter.
     uint32_t next_outbound_seq() noexcept { return next_out_seq_++; }
     uint32_t peek_outbound_seq() const noexcept { return next_out_seq_; }
 
     // === Inbound sequence + gap detection ===
-    // observe_inbound: wywołaj na każdej przychodzącej wiadomości APLIKACYJNEJ
-    // z parsowanym tag 34. Zwraca GapDetected (valid=true gdy luka), aktualizuje
-    // expected_in_seq_. Duplikat (seq < expected) zwraca valid=false (caller
-    // może zignorować).
+    // observe_inbound: call on every incoming APPLICATION message
+    // with the parsed tag 34. Returns GapDetected (valid=true on a gap), updates
+    // expected_in_seq_. A duplicate (seq < expected) returns valid=false (the caller
+    // can ignore it).
     GapDetected observe_inbound(uint32_t msg_seq_num, int64_t now_ms) noexcept {
         last_inbound_ms_ = now_ms;
         test_request_pending_ = false;
@@ -132,34 +132,34 @@ public:
             g.expected = expected_in_seq_;
             g.valid    = true;
             ++gaps_detected_;
-            expected_in_seq_ = msg_seq_num + 1;  // przyjmujemy wiadomość, ale notujemy lukę
+            expected_in_seq_ = msg_seq_num + 1;  // we accept the message but note the gap
             return g;
         }
-        // msg_seq_num < expected — duplikat / spóźnione, ignoruj.
+        // msg_seq_num < expected — a duplicate / late, ignore.
         return g;
     }
 
-    // mark_resend_requested: caller po wykryciu gapDetected wysyła ResendRequest
-    // (35=2) i woła to żeby zaktualizować staty.
+    // mark_resend_requested: after detecting GapDetected the caller sends a ResendRequest
+    // (35=2) and calls this to update stats.
     void mark_resend_requested() noexcept { ++resends_requested_; }
 
-    // expected_inbound_seq: nastepny oczekiwany MsgSeqNum (tag 34) przychodzacy.
+    // expected_inbound_seq: the next expected inbound MsgSeqNum (tag 34).
     uint32_t expected_inbound_seq() const noexcept { return expected_in_seq_; }
 
-    // apply_inbound_sequence_reset: po odebraniu SequenceReset (35=4) z NewSeqNo
-    // (tag 36) ustaw oczekiwany inbound seq — druga strona przeskakuje numeracje
-    // (GapFill administracyjnych albo twardy Reset). Domyka recovery po stronie
-    // inbound (parze do build_sequence_reset, ktory go wysyla). Ignoruje numer
-    // wsteczny (< expected) — SequenceReset nie cofa numeracji w trybie GapFill.
+    // apply_inbound_sequence_reset: after receiving a SequenceReset (35=4) with NewSeqNo
+    // (tag 36) set the expected inbound seq — the other side skips numbering
+    // (GapFill of administrative ones or a hard Reset). Closes recovery on the
+    // inbound side (paired with build_sequence_reset that sends it). Ignores a
+    // backward number (< expected) — SequenceReset does not roll numbering back in GapFill mode.
     void apply_inbound_sequence_reset(uint32_t new_seq_no) noexcept {
         if (new_seq_no >= expected_in_seq_) expected_in_seq_ = new_seq_no;
     }
 
-    // process_inbound (#150): jednolity dispatcher przychodzacej wiadomosci —
-    // spina parser (FIXMessage) z sesja. SequenceReset (35=4) -> reset oczekiwanego
-    // seq (tag 36). Inne: obserwuj MsgSeqNum (34) -> wykryj luke; potem side-effect
-    // wg typu: Logon (A) -> LOGGED_IN + HeartBtInt (108), Logout (5) -> LOGOUT.
-    // Zwraca GapDetected (valid=true -> caller wysyla ResendRequest).
+    // process_inbound (#150): a unified dispatcher for an incoming message —
+    // ties the parser (FIXMessage) to the session. SequenceReset (35=4) -> reset the expected
+    // seq (tag 36). Others: observe MsgSeqNum (34) -> detect a gap; then a side-effect
+    // by type: Logon (A) -> LOGGED_IN + HeartBtInt (108), Logout (5) -> LOGOUT.
+    // Returns GapDetected (valid=true -> the caller sends a ResendRequest).
     GapDetected process_inbound(const FIXMessage& m, int64_t now_ms) noexcept {
         const char* mt = m.get_msg_type();
         if (mt[0] == '4') {                              // SequenceReset
@@ -180,8 +180,8 @@ public:
         } else if (mt[0] == '5') {                       // Logout
             mark_logout(now_ms);
         } else if (mt[0] == '1') {                       // TestRequest (#158)
-            // Counterparty zada dowodu zycia — zapamietaj TestReqID, caller
-            // odpowie Heartbeatem (35=0) z tym samym 112.
+            // The counterparty asks for proof of life — remember the TestReqID, the caller
+            // replies with a Heartbeat (35=0) carrying the same 112.
             if (const char* tri = m.get_field(112)) {
                 std::strncpy(pending_test_req_id_, tri, sizeof(pending_test_req_id_) - 1);
                 pending_test_req_id_[sizeof(pending_test_req_id_) - 1] = '\0';
@@ -190,20 +190,20 @@ public:
         return gap;
     }
 
-    // pending_test_req_id: niepusty -> przyszedl TestRequest, odpowiedz
-    // build_heartbeat(pending_test_req_id()) i wywolaj clear_pending_test_req (#158).
+    // pending_test_req_id: non-empty -> a TestRequest arrived, reply with
+    // build_heartbeat(pending_test_req_id()) and call clear_pending_test_req (#158).
     const char* pending_test_req_id() const noexcept { return pending_test_req_id_; }
     void clear_pending_test_req() noexcept { pending_test_req_id_[0] = '\0'; }
 
     // === Transitions ===
-    // mark_logon_sent: wywołaj po wysłaniu Logon (35=A). State → LOGON_SENT.
+    // mark_logon_sent: call after sending Logon (35=A). State → LOGON_SENT.
     void mark_logon_sent(int64_t now_ms) noexcept {
         state_           = SessionState::LOGON_SENT;
         last_outbound_ms_ = now_ms;
     }
 
-    // mark_logon_received: wywołaj gdy odebrano Logon od counterparty.
-    // hb_int_sec to wartość z tag 108. State → LOGGED_IN.
+    // mark_logon_received: call when a Logon was received from the counterparty.
+    // hb_int_sec is the value from tag 108. State → LOGGED_IN.
     void mark_logon_received(int32_t hb_int_sec, int64_t now_ms) noexcept {
         state_             = SessionState::LOGGED_IN;
         heartbeat_int_sec_ = (hb_int_sec > 0) ? hb_int_sec : 30;
@@ -220,30 +220,30 @@ public:
     }
 
     // === Heartbeat timer ===
-    // Action — co caller ma zrobić po wywołaniu tick().
+    // Action — what the caller should do after calling tick().
     enum class Action : uint8_t {
-        NONE,                  // nic
-        SEND_HEARTBEAT,        // wyślij 35=0 (idle za długo po naszej stronie)
-        SEND_TEST_REQUEST,     // wyślij 35=1 (cisza od counterparty)
-        DISCONNECT,            // brak reakcji na test request — zerwij
+        NONE,                  // nothing
+        SEND_HEARTBEAT,        // send 35=0 (idle too long on our side)
+        SEND_TEST_REQUEST,     // send 35=1 (silence from the counterparty)
+        DISCONNECT,            // no reaction to the test request — drop
     };
 
-    // tick: wywołuj co sekundę albo z głównej pętli. now_ms = monotonic ms.
-    // Zwraca akcję jaką trzeba podjąć (NONE w 99% wywołań).
+    // tick: call every second or from the main loop. now_ms = monotonic ms.
+    // Returns the action to take (NONE in 99% of calls).
     Action tick(int64_t now_ms) noexcept {
         if (state_ != SessionState::LOGGED_IN) return Action::NONE;
 
         const int64_t hb_ms = static_cast<int64_t>(heartbeat_int_sec_) * 1000;
 
-        // 1. Cisza od counterparty > 2×HeartBtInt — wyślij TestRequest.
-        //    Jeśli już wysłaliśmy i nadal cisza → disconnect.
+        // 1. Silence from the counterparty > 2×HeartBtInt — send a TestRequest.
+        //    If we already sent one and there's still silence → disconnect.
         if (now_ms - last_inbound_ms_ > 2 * hb_ms) {
             if (test_request_pending_) return Action::DISCONNECT;
             test_request_pending_ = true;
             return Action::SEND_TEST_REQUEST;
         }
 
-        // 2. My byliśmy za długo cicho (HeartBtInt) — wyślij Heartbeat.
+        // 2. We were silent too long (HeartBtInt) — send a Heartbeat.
         if (now_ms - last_outbound_ms_ > hb_ms) {
             ++heartbeats_sent_;
             last_outbound_ms_ = now_ms;
@@ -253,20 +253,20 @@ public:
         return Action::NONE;
     }
 
-    // Wywołaj po każdej WYSŁANEJ wiadomości żeby zresetować nasz timer idle.
+    // Call after every SENT message to reset our idle timer.
     void mark_outbound(int64_t now_ms) noexcept { last_outbound_ms_ = now_ms; }
 
 
-    // === Persistencja sequence numbers ===
-    // Atomic write (tmp + fsync + rename) — pad procesu w trakcie zapisu nie
-    // zostawia uszkodzonego pliku. Ten sam wzorzec co RiskManager::persist_state.
+    // === Sequence-number persistence ===
+    // Atomic write (tmp + fsync + rename) — a process crash mid-write does not
+    // leave a corrupted file. The same pattern as RiskManager::persist_state.
     void set_persist_path(const char* path) noexcept {
         if (path && *path) persist_path_ = path;
         else               persist_path_.clear();
     }
 
-    // persist_seq: zapisz next_out i expected_in. Wywołuj po zmianie seq
-    // (production: PRZED wysłaniem wiadomości — restart nie może reużyć numeru).
+    // persist_seq: save next_out and expected_in. Call after a seq change
+    // (production: BEFORE sending a message — a restart must not reuse a number).
     void persist_seq() const noexcept {
         if (persist_path_.empty()) return;
         const std::string tmp = persist_path_ + ".tmp";
@@ -279,8 +279,8 @@ public:
         std::rename(tmp.c_str(), persist_path_.c_str());
     }
 
-    // load_persisted_seq: wczytaj seq z pliku (PO set_persist_path, PRZED
-    // przyjmowaniem/wysyłaniem). Zwraca true gdy wczytano.
+    // load_persisted_seq: load seq from the file (AFTER set_persist_path, BEFORE
+    // accepting/sending). Returns true when loaded.
     bool load_persisted_seq() noexcept {
         if (persist_path_.empty()) return false;
         FILE* f = std::fopen(persist_path_.c_str(), "r");
@@ -295,11 +295,11 @@ public:
     }
 
 
-    // === Buildery admin messages (35=A/0/1/2/4/5) ===
-    // Składają poprawną wiadomość FIX (z 8/9/10) do bufora out. Każde wołanie
-    // KONSUMUJE outbound seq (tag 34) — bo każda wysłana wiadomość zżera numer.
-    // delim '|' = human-readable (testy/logi), SOH = prawdziwy wire.
-    // Zwracają długość lub 0 gdy bufor za mały.
+    // === Admin message builders (35=A/0/1/2/4/5) ===
+    // They assemble a correct FIX message (with 8/9/10) into the buffer out. Each call
+    // CONSUMES an outbound seq (tag 34) — because every sent message eats a number.
+    // delim '|' = human-readable (tests/logs), SOH = the real wire.
+    // They return the length or 0 if the buffer is too small.
 
     int build_logon(char* out, int cap, int hb_int_sec, char delim = FIXMessage::SOH) noexcept {
         char body[160];
@@ -315,7 +315,7 @@ public:
                         char delim = FIXMessage::SOH) noexcept {
         char body[160];
         int n;
-        if (test_req_id && *test_req_id) {   // odpowiedź na TestRequest niesie 112
+        if (test_req_id && *test_req_id) {   // a reply to a TestRequest carries 112
             n = std::snprintf(body, sizeof(body),
                 "35=0%c49=%s%c56=%s%c34=%u%c112=%s%c",
                 delim, sender_comp_, delim, target_comp_, delim,
@@ -342,8 +342,8 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // ResendRequest (35=2): "od BeginSeqNo (7) do EndSeqNo (16)". 0 w EndSeqNo
-    // = "do najnowszej" (konwencja FIX). Wołaj po wykryciu GapDetected.
+    // ResendRequest (35=2): "from BeginSeqNo (7) to EndSeqNo (16)". 0 in EndSeqNo
+    // = "up to the latest" (FIX convention). Call after detecting GapDetected.
     int build_resend_request(char* out, int cap, uint32_t begin_seq, uint32_t end_seq,
                              char delim = FIXMessage::SOH) noexcept {
         char body[160];
@@ -357,8 +357,8 @@ public:
     }
 
     // SequenceReset (35=4): NewSeqNo (36) + GapFillFlag (123=Y/N). gap_fill=true
-    // (GapFill mode) wypełnia lukę administracyjną bez replayu; false (Reset mode)
-    // twardo przestawia oczekiwany numer.
+    // (GapFill mode) fills an administrative gap without replay; false (Reset mode)
+    // hard-sets the expected number.
     int build_sequence_reset(char* out, int cap, uint32_t new_seq_no, bool gap_fill,
                              char delim = FIXMessage::SOH) noexcept {
         char body[160];
@@ -389,9 +389,9 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // === Buildery order-entry (35=D/F/G) — strona aplikacyjna (#90) ===
-    // Admin messages (#78) utrzymuja sesje; te skladaja faktyczne zlecenia.
-    // Mapuja 1:1 na OMS: D=submit, F=cancel, G=replace. Side: BUY→'1', SELL→'2'.
+    // === Order-entry builders (35=D/F/G) — the application side (#90) ===
+    // Admin messages (#78) keep the session alive; these assemble actual orders.
+    // They map 1:1 to OMS: D=submit, F=cancel, G=replace. Side: BUY→'1', SELL→'2'.
 
     // NewOrderSingle (35=D): 11=ClOrdID, 55=Symbol, 54=Side, 38=Qty, 44=Price,
     // 40=OrdType (2=Limit).
@@ -407,7 +407,7 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // OrderCancelRequest (35=F): 41=OrigClOrdID identyfikuje zlecenie do anulowania.
+    // OrderCancelRequest (35=F): 41=OrigClOrdID identifies the order to cancel.
     int build_cancel_order(char* out, int cap, const char* cl_ord_id,
                            const char* orig_cl_ord_id, const char* symbol,
                            Side side, int32_t qty, char delim = FIXMessage::SOH) noexcept {
@@ -420,7 +420,7 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // OrderCancelReplaceRequest (35=G): amend ceny/ilosci (mapuje na OMS replace).
+    // OrderCancelReplaceRequest (35=G): amend price/quantity (maps to OMS replace).
     int build_cancel_replace(char* out, int cap, const char* cl_ord_id,
                              const char* orig_cl_ord_id, const char* symbol,
                              Side side, int32_t qty, double price,
@@ -435,10 +435,10 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // OrderStatusRequest (35=H): klient pyta o biezacy status pracujacego zlecenia
-    // (#185). Uzywane do REKONCYLIACJI po reconnekcie / luce sekwencji — klient
-    // nie wie czy fille przyszly w czasie rozlaczenia. 11=ClOrdID + 55=Symbol +
-    // 54=Side. Gielda odpowiada ExecutionReport (35=8) z biezacym OrdStatus.
+    // OrderStatusRequest (35=H): the client asks for the current status of a working order
+    // (#185). Used for RECONCILIATION after a reconnect / sequence gap — the client
+    // does not know whether fills arrived during the disconnect. 11=ClOrdID + 55=Symbol +
+    // 54=Side. The exchange replies with an ExecutionReport (35=8) with the current OrdStatus.
     int build_order_status_request(char* out, int cap, const char* cl_ord_id,
                                    const char* symbol, Side side,
                                    char delim = FIXMessage::SOH) noexcept {
@@ -451,10 +451,10 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // OrderMassCancelRequest (35=q): masowe anulowanie pracujacych zlecen (#193) —
-    // panic button ryzyka/ops. request_type: '1' = po symbolu (wymaga symbol),
-    // '7' = WSZYSTKIE zlecenia firmy. 530=MassCancelRequestType. Gielda odpowiada
-    // OrderMassCancelReport (35=r). symbol ignorowany dla typu '7'.
+    // OrderMassCancelRequest (35=q): mass-cancel working orders (#193) —
+    // a risk/ops panic button. request_type: '1' = by symbol (requires symbol),
+    // '7' = ALL of the firm's orders. 530=MassCancelRequestType. The exchange replies with
+    // an OrderMassCancelReport (35=r). symbol is ignored for type '7'.
     int build_mass_cancel(char* out, int cap, const char* cl_ord_id, char request_type,
                           const char* symbol = nullptr, char delim = FIXMessage::SOH) noexcept {
         char body[256];
@@ -474,10 +474,10 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // OrderMassCancelReport (35=r): odpowiedz gieldy na OrderMassCancelRequest
-    // (35=q, #193) — domyka petle masowego anulowania (#201). response =
-    // 531=MassCancelResponse ('0'=odrzucono, '1'=po symbolu, '7'=wszystkie);
-    // affected = 533=TotalAffectedOrders (ile zlecen faktycznie anulowano).
+    // OrderMassCancelReport (35=r): the exchange's reply to OrderMassCancelRequest
+    // (35=q, #193) — closes the mass-cancel loop (#201). response =
+    // 531=MassCancelResponse ('0'=rejected, '1'=by symbol, '7'=all);
+    // affected = 533=TotalAffectedOrders (how many orders were actually cancelled).
     int build_mass_cancel_report(char* out, int cap, const char* cl_ord_id,
                                  char response, int32_t affected,
                                  char delim = FIXMessage::SOH) noexcept {
@@ -490,10 +490,10 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // MarketDataRequest (35=V): subskrypcja danych rynkowych dla symbolu (#209).
+    // MarketDataRequest (35=V): subscribe to market data for a symbol (#209).
     // 263=SubscriptionRequestType ('0'=snapshot, '1'=snapshot+updates, '2'=
-    // unsubscribe), 264=MarketDepth (0=pelna ksiazka, 1=top-of-book), 146=1 sym +
-    // 55. Klient wysyla na starcie sesji aby dostawac kwotowania danego instrumentu.
+    // unsubscribe), 264=MarketDepth (0=full book, 1=top-of-book), 146=1 sym +
+    // 55. The client sends it at session start to receive quotes for that instrument.
     int build_market_data_request(char* out, int cap, const char* md_req_id,
                                   char sub_type, int depth, const char* symbol,
                                   char delim = FIXMessage::SOH) noexcept {
@@ -506,10 +506,10 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // MarketDataSnapshotFullRefresh (35=W): odpowiedz na MarketDataRequest (35=V,
-    // #209) — pelny snapshot top-of-book (#217). 262=MDReqID, 55=Symbol, 268=
-    // NoMDEntries (tu 2), nastepnie powtarzalna grupa: 269=MDEntryType ('0'=bid,
-    // '1'=offer), 270=MDEntryPx, 271=MDEntrySize. Domyka petle danych rynkowych.
+    // MarketDataSnapshotFullRefresh (35=W): a reply to MarketDataRequest (35=V,
+    // #209) — a full top-of-book snapshot (#217). 262=MDReqID, 55=Symbol, 268=
+    // NoMDEntries (here 2), then a repeating group: 269=MDEntryType ('0'=bid,
+    // '1'=offer), 270=MDEntryPx, 271=MDEntrySize. Closes the market-data loop.
     int build_md_snapshot(char* out, int cap, const char* md_req_id, const char* symbol,
                           double bid_px, int32_t bid_sz, double ask_px, int32_t ask_sz,
                           char delim = FIXMessage::SOH) noexcept {
@@ -524,10 +524,10 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // MarketDataIncrementalRefresh (35=X): przyrostowa aktualizacja po snapshocie
-    // (35=W, #217) — gielda przysyla TYLKO zmiany (#225), nie caly book. 262=
+    // MarketDataIncrementalRefresh (35=X): an incremental update after the snapshot
+    // (35=W, #217) — the exchange sends ONLY changes (#225), not the whole book. 262=
     // MDReqID, 268=1, 279=MDUpdateAction ('0'=new, '1'=change, '2'=delete), 269=
-    // MDEntryType ('0'=bid/'1'=offer), 55, 270=Px, 271=Size. Strumien po subskrypcji.
+    // MDEntryType ('0'=bid/'1'=offer), 55, 270=Px, 271=Size. A stream after subscription.
     int build_md_incremental(char* out, int cap, const char* md_req_id, char update_action,
                              char entry_type, const char* symbol, double px, int32_t sz,
                              char delim = FIXMessage::SOH) noexcept {
@@ -541,10 +541,10 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // MarketDataRequestReject (35=Y): gielda ODRZUCA MarketDataRequest (35=V,
-    // #209) (#233) — np. nieznany symbol, brak uprawnien, nieobslugiwana glebokosc.
+    // MarketDataRequestReject (35=Y): the exchange REJECTS a MarketDataRequest (35=V,
+    // #209) (#233) — e.g. unknown symbol, no permission, unsupported depth.
     // 262=MDReqID (echo), 281=MDReqRejReason ('0'=unknown symbol, '1'=duplicate,
-    // '4'=unsupported depth, '5'=unsupported sub type). Domyka handshake V -> Y.
+    // '4'=unsupported depth, '5'=unsupported sub type). Closes the V -> Y handshake.
     int build_md_request_reject(char* out, int cap, const char* md_req_id, char reason,
                                 char delim = FIXMessage::SOH) noexcept {
         char body[256];
@@ -690,9 +690,9 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // build_execution_report (35=8) — raport giełda→klient domykajacy cykl FIX
-    // (#101): po NewOrderSingle (D) acceptor odsyla ExecutionReport z ExecType
-    // (150) i OrdStatus (39). Tu wariant FILL/PARTIAL z last/cum/leaves qty.
+    // build_execution_report (35=8) — an exchange→client report closing the FIX cycle
+    // (#101): after a NewOrderSingle (D) the acceptor sends back an ExecutionReport with ExecType
+    // (150) and OrdStatus (39). Here a FILL/PARTIAL variant with last/cum/leaves qty.
     //   exec_type/ord_status: '0'=New, '1'=Partial, '2'=Fill, '4'=Canceled, '8'=Rejected
     int build_exec_report(char* out, int cap, const char* cl_ord_id, const char* order_id,
                           const char* exec_id, char exec_type, char ord_status,
@@ -711,7 +711,7 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // ExecReport — kluczowe pola ExecutionReport (35=8) w typowanej strukturze (#241).
+    // ExecReport — the key ExecutionReport (35=8) fields in a typed struct (#241).
     struct ExecReport {
         char    ord_status = '\0';   // 39
         char    exec_type  = '\0';   // 150
@@ -719,15 +719,15 @@ public:
         double  last_px    = 0.0;    // 31
         int32_t cum_qty    = 0;      // 14
         int32_t leaves_qty = 0;      // 151
-        bool    valid      = false;  // true gdy wiadomosc to faktycznie 35=8
+        bool    valid      = false;  // true when the message really is 35=8
     };
 
-    // parse_exec_report: wyciaga ExecReport ze sparsowanej wiadomosci (#241). Klient
-    // konsumuje raporty wykonania bez recznego grzebania w tagach. valid=false gdy
-    // to nie 35=8. Symetria do build_exec_report (#101) — domyka roundtrip.
+    // parse_exec_report: extract ExecReport from a parsed message (#241). The client
+    // consumes execution reports without manually digging through tags. valid=false when
+    // it is not 35=8. Symmetric to build_exec_report (#101) — closes the round-trip.
     static ExecReport parse_exec_report(const FIXMessage& m) noexcept {
         ExecReport r;
-        if (m.get_msg_type()[0] != '8') return r;     // valid pozostaje false
+        if (m.get_msg_type()[0] != '8') return r;     // valid stays false
         const char* os = m.get_field(39);
         const char* et = m.get_field(150);
         r.ord_status = os ? os[0] : '\0';
@@ -740,10 +740,10 @@ public:
         return r;
     }
 
-    // build_reject (35=3) — Session-level Reject (#126). Acceptor odsyla gdy
-    // przychodzaca wiadomosc lamie regule sesji (brak tagu, zla wartosc, zly
-    // typ) — np. po negatywnym validate_new_order. Rozni sie od business reject
-    // (ExecutionReport 150=8): to odrzucenie na poziomie PROTOKOLU.
+    // build_reject (35=3) — a Session-level Reject (#126). The acceptor sends it when
+    // an incoming message breaks a session rule (missing tag, bad value, wrong
+    // type) — e.g. after a negative validate_new_order. Differs from a business reject
+    // (ExecutionReport 150=8): this is a PROTOCOL-level rejection.
     //   45=RefSeqNum, 372=RefMsgType, 373=SessionRejectReason, 58=Text
     int build_reject(char* out, int cap, uint32_t ref_seq_num, const char* ref_msg_type,
                      int reject_reason, const char* text,
@@ -758,10 +758,10 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // build_business_reject (35=j) — BusinessMessageReject (#133). Odrzucenie na
-    // poziomie BIZNESOWYM (np. nieznany symbol, konto bez uprawnien, rynek
-    // zamkniety) — wiadomosc byla POPRAWNA skladniowo, ale aplikacja jej nie
-    // przyjmuje. Odrebne od session-level Reject 35=3 (#126: zlamana regula sesji).
+    // build_business_reject (35=j) — BusinessMessageReject (#133). A rejection at the
+    // BUSINESS level (e.g. unknown symbol, an account without permission, a closed
+    // market) — the message was syntactically CORRECT, but the application does not
+    // accept it. Separate from the session-level Reject 35=3 (#126: a broken session rule).
     //   372=RefMsgType, 379=BusinessRejectRefID, 380=BusinessRejectReason, 58=Text
     int build_business_reject(char* out, int cap, const char* ref_msg_type,
                               const char* business_reject_ref_id, int reject_reason,
@@ -777,9 +777,9 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
-    // build_cancel_reject (35=9) — OrderCancelReject (#143). Gielda odrzuca
-    // KONKRETNIE request Cancel (F) lub Replace (G) — np. za pozno (zlecenie juz
-    // wypelnione), nieznane OrigClOrdID. Odrebne od session (35=3) / business
+    // build_cancel_reject (35=9) — OrderCancelReject (#143). The exchange rejects
+    // SPECIFICALLY a Cancel (F) or Replace (G) request — e.g. too late (the order is already
+    // filled), unknown OrigClOrdID. Separate from session (35=3) / business
     // (35=j) reject. 434=CxlRejResponseTo ('1'=Cancel, '2'=Replace),
     // 102=CxlRejReason (0=too late, 1=unknown order, ...).
     int build_cancel_reject(char* out, int cap, const char* cl_ord_id,
