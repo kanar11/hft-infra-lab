@@ -1,31 +1,31 @@
 /*
- * VarlenRingBuffer<SIZE> — ring SPSC bajtów dla wiadomości o ZMIENNEJ długości,
- *                          z 4-bajtowym prefiksem długości na rekord.
+ * VarlenRingBuffer<SIZE> — an SPSC byte ring for VARIABLE-length messages,
+ *                          with a 4-byte length prefix per record.
  *
- * Różnica względem SPSCQueue<T, SIZE> (sloty fixed-size T) i Sequencer<T, SIZE>
- * (fixed slots + explicit claim/publish): VarlenRing to właściwy prymityw gdy
- * wiadomości nie mają jednego stałego kształtu — linie loga, serializowane
- * ramki protokołu, rekordy audit o różnej długości payloadu.
+ * The difference from SPSCQueue<T, SIZE> (fixed-size T slots) and Sequencer<T, SIZE>
+ * (fixed slots + explicit claim/publish): VarlenRing is the right primitive when
+ * messages don't share one fixed shape — log lines, serialized protocol
+ * frames, audit records with a payload of varying length.
  *
- * Format wire wewnątrz ringu:
- *   [ uint32_t len ][ payload `len` bajtów ][ uint32_t len ][ payload ] ...
+ * Wire format inside the ring:
+ *   [ uint32_t len ][ payload `len` bytes ][ uint32_t len ][ payload ] ...
  *
- *   - len trzymane w native byte order (nie idziemy przez sieć, host-only).
- *   - Ramka NIE straddle'uje granicy SIZE — przy wrapie memcpy dzieli na 2
- *     kawałki (pierwszy do końca buforu, drugi od 0). Zarówno write_at jak
- *     i read_at obsługują wrap symetrycznie.
+ *   - len is kept in native byte order (we don't go over the network, host-only).
+ *   - A frame does NOT straddle the SIZE boundary — on a wrap the memcpy splits into 2
+ *     pieces (the first to the end of the buffer, the second from 0). Both write_at
+ *     and read_at handle the wrap symmetrically.
  *
- * Założenia:
- *   - SIZE to potęga dwójki ≥ 64 (header ma 4 bajty; przy małym SIZE heurystyka
- *     wrapu się rozjeżdża).
- *   - Dokładnie JEDEN wątek wywołuje write(); dokładnie JEDEN (inny) — read().
- *   - Pojedynczy payload musi mieścić się w SIZE - sizeof(uint32_t) - 1 bajtach
- *     (minus 1 bo SPSC traci slot na empty/full).
+ * Assumptions:
+ *   - SIZE is a power of two ≥ 64 (the header is 4 bytes; with a small SIZE the
+ *     wrap heuristic breaks down).
+ *   - Exactly ONE thread calls write(); exactly ONE (other) — read().
+ *   - A single payload must fit in SIZE - sizeof(uint32_t) - 1 bytes
+ *     (minus 1 because SPSC loses a slot to empty/full).
  *
  * Memory ordering:
- *   Producent release-store'uje head_ PO zapisaniu payloadu; konsument
- *   acquire-load'uje head_ PRZED czytaniem. Ta sama para release/acquire co
- *   w SPSCQueue — ring trzyma po prostu bajty zamiast typowanych slotów.
+ *   The producer release-stores head_ AFTER writing the payload; the consumer
+ *   acquire-loads head_ BEFORE reading. The same release/acquire pair as
+ *   in SPSCQueue — the ring simply holds bytes instead of typed slots.
  */
 #pragma once
 
@@ -54,7 +54,7 @@ class VarlenRingBuffer {
     alignas(kCacheLineVarlen) std::atomic<std::size_t> tail_{0};   // consumer
 
     static std::size_t free_space(std::size_t h, std::size_t t) noexcept {
-        // Jeden slot "tracony" żeby empty (h==t) i full były rozróżnialne.
+        // One slot is "lost" so that empty (h==t) and full are distinguishable.
         return (t - h - 1) & MASK;
     }
 
@@ -70,8 +70,8 @@ public:
     VarlenRingBuffer(VarlenRingBuffer&&)                 = delete;
     VarlenRingBuffer& operator=(VarlenRingBuffer&&)      = delete;
 
-    // write: zakolejkuj payload `len` bajtów. Zwraca false gdy wiadomość
-    // nie zmieści się w aktualnie wolnej przestrzeni, lub gdy `len` to 0 / za duże.
+    // write: enqueue a payload of `len` bytes. Returns false when the message
+    // does not fit in the currently free space, or when `len` is 0 / too large.
     bool write(const void* payload, LenT len) noexcept {
         if (len == 0 || len + HDR > SIZE - 1) return false;
 
@@ -79,16 +79,16 @@ public:
         const std::size_t t = tail_.load(std::memory_order_acquire);
         if (free_space(h, t) < len + HDR) return false;
 
-        // Najpierw header, potem payload tuż za nim.
+        // Header first, then the payload right after it.
         write_at(h, &len, HDR);
         write_at((h + HDR) & MASK, payload, len);
         head_.store((h + HDR + len) & MASK, std::memory_order_release);
         return true;
     }
 
-    // read: odczytaj do `out` (bufor musi mieć ≥ max_len bajtów). Zwraca
-    // długość payloadu, 0 gdy pusty albo gdy następna wiadomość jest większa
-    // niż max_len (wtedy NIC nie jest konsumowane — tail bez zmiany).
+    // read: read into `out` (the buffer must have ≥ max_len bytes). Returns
+    // the payload length, 0 when empty or when the next message is larger
+    // than max_len (then NOTHING is consumed — tail unchanged).
     LenT read(void* out, LenT max_len) noexcept {
         const std::size_t t = tail_.load(std::memory_order_relaxed);
         const std::size_t h = head_.load(std::memory_order_acquire);
@@ -97,7 +97,7 @@ public:
         LenT len = 0;
         read_at(t, &len, HDR);
         if (len == 0 || available(h, t) < HDR + len) return 0;  // partial/corrupt
-        if (len > max_len) return 0;                              // bufor wywołującego za mały
+        if (len > max_len) return 0;                              // the caller's buffer is too small
 
         read_at((t + HDR) & MASK, out, len);
         tail_.store((t + HDR + len) & MASK, std::memory_order_release);
@@ -109,7 +109,7 @@ public:
             == head_.load(std::memory_order_acquire);
     }
 
-    // przybliżone — dwa load'y atomic, ±HDR slop przy kontencji.
+    // approximate — two atomic loads, ±HDR slop under contention.
     std::size_t bytes_used() const noexcept {
         const std::size_t h = head_.load(std::memory_order_acquire);
         const std::size_t t = tail_.load(std::memory_order_acquire);

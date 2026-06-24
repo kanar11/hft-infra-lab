@@ -1,5 +1,5 @@
 // SPSC queue benchmark + demo. Class itself lives in spsc_queue.hpp so other
-// modules can reuse it. / Klasa w spsc_queue.hpp dla reuse w innych modułach.
+// modules can reuse it.
 
 #include <iostream>
 #include <thread>
@@ -16,7 +16,6 @@ struct MarketData {
 };
 
 // Benchmark queue throughput with producer-consumer pattern
-// Benchmark przepustowości kolejki w schemacie producent-konsument
 void benchmark_throughput() {
     lockfree::SPSCQueue<MarketData, 65536> queue;
     const int NUM_MESSAGES = 10000000;
@@ -25,7 +24,6 @@ void benchmark_throughput() {
     int received = 0;
 
     // Consumer thread (trading logic)
-    // Wątek konsumenta (logika handlu)
     auto consumer = std::thread([&]() {
         MarketData msg{};
         while (!done.load(std::memory_order_relaxed) || !queue.empty()) {
@@ -38,7 +36,6 @@ void benchmark_throughput() {
     });
 
     // Producer thread (market data)
-    // Wątek producenta (dane rynkowe)
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < NUM_MESSAGES; i++) {
@@ -49,7 +46,6 @@ void benchmark_throughput() {
             std::chrono::high_resolution_clock::now().time_since_epoch().count()
         };
         while (!queue.push(msg)) {}  // spin until space available
-        // obracaj się aż do dostępu miejsca
     }
 
     done = true;
@@ -76,13 +72,11 @@ void benchmark_throughput() {
 }
 
 // Demonstrate basic queue operations
-// Zademonstruj podstawowe operacje kolejki
 void demo() {
     std::cout << "=== SPSC Queue Demo ===" << std::endl;
     lockfree::SPSCQueue<MarketData, 1024> queue;
 
     // Simulate market data producer
-    // Symuluj producenta danych rynkowych
     for (int i = 0; i < 5; i++) {
         MarketData msg{i, 150.25 + i * 0.01, 100, 0};
         queue.push(msg);
@@ -92,7 +86,6 @@ void demo() {
     std::cout << "  Queue size: " << queue.size() << std::endl;
 
     // Simulate trading logic consumer
-    // Symuluj konsumenta logiki handlu
     MarketData msg;
     while (queue.pop(msg)) {
         std::cout << "  POP:  seq=" << msg.seq << " price=" << msg.price << std::endl;

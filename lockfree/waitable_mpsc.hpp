@@ -1,20 +1,20 @@
 /*
- * WaitableMPSCQueue<T, SIZE> — MPSCQueue z blokującym pop_wait(timeout).
+ * WaitableMPSCQueue<T, SIZE> — an MPSCQueue with a blocking pop_wait(timeout).
  *
- * Wrapper na lockfree::MPSCQueue + opcjonalny condition variable żeby
- * konsument mógł spać gdy kolejka pusta, zamiast busy-spinować.
+ * A wrapper over lockfree::MPSCQueue + an optional condition variable so the
+ * consumer can sleep when the queue is empty, instead of busy-spinning.
  *
- * Fast path pozostaje lock-free: push() robi push do MPSCQueue, potem
- * jeden atomic-load na has_waiter_ — jeśli nikt nie czeka, pomijamy
- * notify (zero syscalli, zero mutexa). Tylko slow path (konsument który
- * zasypia) bierze mutex.
+ * The fast path stays lock-free: push() pushes into the MPSCQueue, then
+ * one atomic-load on has_waiter_ — if nobody is waiting, we skip the
+ * notify (zero syscalls, zero mutex). Only the slow path (a consumer that
+ * goes to sleep) takes the mutex.
  *
- * Use case: wątki flush'ujące audit/journal — wątki tradingowe push'ują
- * na hot-path speed, flush thread śpi gdy nic się nie dzieje i budzi się
- * w mikrosekundach gdy spadnie event.
+ * Use case: threads flushing audit/journal — trading threads push at
+ * hot-path speed, the flush thread sleeps when nothing happens and wakes
+ * in microseconds when an event arrives.
  *
- * Jeśli nie potrzebujesz blokującej semantyki, użyj MPSCQueue bezpośrednio
- * — notify-load w push() jest tani ale nie za darmo (1 cache miss).
+ * If you don't need the blocking semantics, use MPSCQueue directly
+ * — the notify-load in push() is cheap but not free (1 cache miss).
  */
 #pragma once
 
@@ -56,7 +56,7 @@ public:
 
     template <typename Rep, typename Period>
     bool pop_wait(T& out, std::chrono::duration<Rep, Period> timeout) {
-        if (q_.pop(out)) return true;  // fast path — nie idziemy spać
+        if (q_.pop(out)) return true;  // fast path — we don't go to sleep
 
         std::unique_lock<std::mutex> lk(mtx_);
         has_waiter_.store(true, std::memory_order_release);

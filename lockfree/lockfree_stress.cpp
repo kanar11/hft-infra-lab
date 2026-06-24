@@ -1,32 +1,32 @@
 /*
- * lockfree_stress — testy stresowe wszystkich prymitywów lock-free
- *                   POD THREAD SANITIZER.
+ * lockfree_stress — stress tests for all the lock-free primitives
+ *                   UNDER THREAD SANITIZER.
  *
- * Po co? TSAN to narzędzie kompilatora które przy uruchomieniu wyłapuje
- * **wyścigi danych** (dwa wątki piszą do tej samej pamięci bez synchronizacji).
- * Bugi tego typu są wyjątkowo paskudne — działają w 99% przypadków, padają
- * raz na milion przy konkretnym timing'u. Statyczne narzędzia (cppcheck,
- * clang-tidy) ich NIE łapią — trzeba zaobserwować runtime żeby wiedzieć.
+ * Why? TSAN is a compiler tool that at runtime catches
+ * **data races** (two threads writing the same memory without synchronization).
+ * Bugs of this kind are exceptionally nasty — they work 99% of the time and fail
+ * one in a million on a specific timing. Static tools (cppcheck,
+ * clang-tidy) do NOT catch them — you have to observe the runtime to know.
  *
- * Co testujemy:
- *   - SPSCQueue          (1 prod, 1 kons)   ←już w spsc_queue.cpp, dla kompletności
- *   - MPSCQueue          (N prod, 1 kons)
- *   - MPMCQueue          (N prod, N kons)
- *   - WaitableMPSCQueue  (N prod, 1 kons z blokującym pop_wait)
- *   - Sequencer          (1 prod, 1 kons, LMAX-style zero-copy)
- *   - VarlenRingBuffer   (1 prod, 1 kons, ramki o zmiennej długości)
+ * What we test:
+ *   - SPSCQueue          (1 prod, 1 cons)   ← already in spsc_queue.cpp, for completeness
+ *   - MPSCQueue          (N prod, 1 cons)
+ *   - MPMCQueue          (N prod, N cons)
+ *   - WaitableMPSCQueue  (N prod, 1 cons with a blocking pop_wait)
+ *   - Sequencer          (1 prod, 1 cons, LMAX-style zero-copy)
+ *   - VarlenRingBuffer   (1 prod, 1 cons, variable-length frames)
  *
- * Każdy test:
- *   1. Spawn'uje wątki producenta/konsumenta.
- *   2. Pompuje N wiadomości (każda z unikalnym monotonicznym sequence).
- *   3. Konsument sprawdza że seq monotonicznie rośnie i że nie ma luk.
- *   4. Asercja: producenci wysłali == konsumenci odebrali.
+ * Each test:
+ *   1. Spawns producer/consumer threads.
+ *   2. Pumps N messages (each with a unique monotonic sequence).
+ *   3. The consumer checks that seq increases monotonically and there are no gaps.
+ *   4. Assertion: producers sent == consumers received.
  *
- * Build dla TSAN (patrz .github/workflows/tests.yml):
+ * Build for TSAN (see .github/workflows/tests.yml):
  *   g++ -O1 -g -fsanitize=thread -fno-omit-frame-pointer -std=c++17 \
  *       -Wall -Wextra -pthread -o lockfree/lockfree_stress lockfree/lockfree_stress.cpp
  *
- * Uruchomienie:
+ * Run:
  *   TSAN_OPTIONS=halt_on_error=1 ./lockfree/lockfree_stress
  */
 #include "spsc_queue.hpp"
@@ -47,16 +47,16 @@
 
 namespace {
 
-constexpr int N_MESSAGES_PER_TEST = 50'000;   // Wystarczająco żeby TSAN złapał race
-constexpr int N_PRODUCERS         = 4;        // Dla MPSC/MPMC
-constexpr int N_CONSUMERS         = 4;        // Dla MPMC
+constexpr int N_MESSAGES_PER_TEST = 50'000;   // Enough for TSAN to catch a race
+constexpr int N_PRODUCERS         = 4;        // For MPSC/MPMC
+constexpr int N_CONSUMERS         = 4;        // For MPMC
 
 
-// Pojedyncza wiadomość z sekwencją + checksum (do detekcji corruption'u).
+// A single message with a sequence + checksum (for corruption detection).
 struct Msg {
     std::uint64_t seq;
     std::uint64_t producer_id;
-    std::uint64_t checksum;   // = seq ^ producer_id ^ 0xDEADBEEF — wykryje torn write
+    std::uint64_t checksum;   // = seq ^ producer_id ^ 0xDEADBEEF — detects a torn write
 };
 
 inline std::uint64_t msg_checksum(std::uint64_t seq, std::uint64_t pid) noexcept {
@@ -184,7 +184,7 @@ bool test_mpmc() {
         });
     }
     for (auto& t : producers) t.join();
-    // Czekaj aż konsumenci wybiorą wszystko.
+    // Wait until the consumers have taken everything.
     while (received.load() < N_PRODUCERS * per_producer) std::this_thread::yield();
     stop_consumers.store(true, std::memory_order_release);
     for (auto& t : consumers) t.join();
@@ -216,7 +216,7 @@ bool test_waitable_mpsc() {
                 received.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        // Drain reszty.
+        // Drain the rest.
         Msg leftover{};
         while (q.try_pop(leftover)) {
             if (leftover.checksum != msg_checksum(leftover.seq, leftover.producer_id)) {
@@ -241,7 +241,7 @@ bool test_waitable_mpsc() {
         });
     }
     for (auto& t : producers) t.join();
-    // Daj konsumentowi czas na drain.
+    // Give the consumer time to drain.
     while (received.load() < N_PRODUCERS * per_producer) std::this_thread::yield();
     stop_consumer.store(true, std::memory_order_release);
     cons.join();
@@ -312,7 +312,7 @@ bool test_varlen_ring() {
         while (!prod_done.load(std::memory_order_acquire) || !ring.empty()) {
             const std::uint32_t len = ring.read(buf, sizeof(buf));
             if (len > 0) {
-                // Wiadomość zaczyna się od 8-bajtowego seq, potem padding.
+                // The message starts with an 8-byte seq, then padding.
                 std::uint64_t got_seq;
                 std::memcpy(&got_seq, buf, sizeof(got_seq));
                 if (got_seq != expected_seq) corrupted.store(true, std::memory_order_relaxed);
@@ -322,11 +322,11 @@ bool test_varlen_ring() {
         }
     });
 
-    std::uint8_t payload[64] = {};  // zero-init żeby memcpy nie czytał uninit bajtów
+    std::uint8_t payload[64] = {};  // zero-init so memcpy doesn't read uninitialized bytes
     for (int i = 0; i < N_MESSAGES_PER_TEST; ++i) {
         const std::uint64_t s = static_cast<std::uint64_t>(i);
         std::memcpy(payload, &s, sizeof(s));
-        // Zmienna długość — testuje wrap przy różnych offsetach (16..64 B).
+        // Variable length — tests the wrap at different offsets (16..64 B).
         const std::uint32_t len = 16 + static_cast<std::uint32_t>(i % 49);
         while (!ring.write(payload, len)) { std::this_thread::yield(); }
     }
