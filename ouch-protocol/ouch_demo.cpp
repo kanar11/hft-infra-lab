@@ -54,7 +54,6 @@ void test_replace_order_encoding() {
 
 void test_parse_accepted() {
     // Build an Accepted response manually (41 bytes)
-    // Zbuduj odpowiedź Accepted ręcznie (41 bajtów)
     uint8_t data[64] = {0};
     data[0] = 'A';                                  // msg type
     // token "ORD001" padded to 14
@@ -131,7 +130,6 @@ void test_price_precision() {
 
 void test_roundtrip_encode_decode() {
     // Encode an enter order, then build a matching Accepted response and decode it
-    // Zakoduj zlecenie, zbuduj pasującą odpowiedź Accepted i zdekoduj
     uint8_t order_buf[64];
     OUCHMessage::enter_order(order_buf, "ROUNDTRIP", 'S', 250, "MSFT", 380.50);
 
@@ -206,11 +204,11 @@ void test_soupbin_login_request() {
 }
 
 void test_soupbin_partial_buffer() {
-    // TCP może dostarczyć część pakietu — parse_packet powinno powiedzieć invalid
-    // żeby caller poczekał na resztę.
+    // TCP may deliver part of a packet — parse_packet should report invalid
+    // so the caller waits for the rest.
     uint8_t pkt[8];
     std::size_t n = soupbin::pack_heartbeat(pkt, true);
-    auto p_partial = soupbin::parse_packet(pkt, n - 1);   // o bajt za mało
+    auto p_partial = soupbin::parse_packet(pkt, n - 1);   // one byte short
     ASSERT(!p_partial.valid, "soupbin_partial_invalid");
     auto p_full = soupbin::parse_packet(pkt, n);
     ASSERT(p_full.valid,     "soupbin_full_valid");

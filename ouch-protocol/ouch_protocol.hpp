@@ -1,25 +1,25 @@
 /*
  * OUCHMessage — NASDAQ OUCH 4.2 order entry protocol (encoder/decoder).
  *
- * OUCH to binarny protokół — surowe bajty przez TCP. Na produkcji opakowane
- * w SoupBinTCP (patrz soupbin.hpp dla framingu, sequence, login/heartbeat).
+ * OUCH is a binary protocol — raw bytes over TCP. In production it is wrapped
+ * in SoupBinTCP (see soupbin.hpp for framing, sequence, login/heartbeat).
  *
- * Typy wiadomości:
+ * Message types:
  *   Client → Exchange:
- *     O = Enter Order   (33 B)  — nowe zlecenie
- *     X = Cancel Order  (19 B)  — anuluj istniejące
- *     U = Replace Order (37 B)  — zmień cenę/ilość
+ *     O = Enter Order   (33 B)  — a new order
+ *     X = Cancel Order  (19 B)  — cancel an existing one
+ *     U = Replace Order (37 B)  — change price/quantity
  *
  *   Exchange → Client:
- *     A = Accepted  (41 B)  — zlecenie przyjęte
- *     C = Cancelled (20 B)  — zlecenie anulowane
- *     E = Executed  (31 B)  — zlecenie zrealizowane
+ *     A = Accepted  (41 B)  — order accepted
+ *     C = Cancelled (20 B)  — order cancelled
+ *     E = Executed  (31 B)  — order executed
  *
- * Kodowanie ceny: fixed-point × 10000 ($150.25 → 1502500).
+ * Price encoding: fixed-point × 10000 ($150.25 → 1502500).
  *
  * Pipeline: Strategy → Router → Risk → OMS → OUCH → Exchange.
  *
- * Wydajność (lab): ~19.9M msg/sec encoding, p50=30ns, p99=40ns.
+ * Performance (lab): ~19.9M msg/sec encoding, p50=30ns, p99=40ns.
  */
 
 #pragma once
@@ -29,7 +29,7 @@
 #include <cstdio>
 #include <chrono>
 
-// Helpery big-endian (network byte order). OUCH używa BE — jak htonl() w gniazdach.
+// Big-endian helpers (network byte order). OUCH uses BE — like htonl() in sockets.
 
 inline void write_u32_be(uint8_t* dst, uint32_t val) noexcept {
     dst[0] = (val >> 24) & 0xFF;
@@ -60,7 +60,6 @@ inline uint64_t read_u64_be(const uint8_t* src) noexcept {
 }
 
 // Copy string left-justified, padded with spaces (like OUCH spec requires)
-// Kopiuj string wyrównany do lewej, dopełniony spacjami (jak wymaga specyfikacja OUCH)
 inline void write_padded(uint8_t* dst, const char* src, int len) noexcept {
     std::memset(dst, ' ', len);
     int slen = std::strlen(src);
@@ -69,7 +68,7 @@ inline void write_padded(uint8_t* dst, const char* src, int len) noexcept {
 }
 
 
-// OUCHResponse — sparsowana odpowiedź giełdy.
+// OUCHResponse — a parsed exchange response.
 
 struct OUCHResponse {
     char    type[12];       // "ACCEPTED", "CANCELLED", "EXECUTED", "ERROR", "UNKNOWN"
@@ -82,7 +81,7 @@ struct OUCHResponse {
     int64_t match_number;   // match number (Executed only)
     char    reason[2];      // cancel reason (Cancelled only)
     char    error_msg[64];  // error description (Error only)
-    char    prev_token[15]; // poprzedni token (Replaced only) — token, ktory zostal zastapiony
+    char    prev_token[15]; // previous token (Replaced only) — the token that was replaced
 
     OUCHResponse() noexcept
         : shares(0), price(0), order_ref(0), match_number(0) {
@@ -97,7 +96,7 @@ struct OUCHResponse {
 };
 
 
-// OUCHOrder — zdekodowane zlecenie KLIENTA (strona giełdy parsuje O/X/U). (#152)
+// OUCHOrder — a decoded CLIENT order (the exchange side parses O/X/U). (#152)
 struct OUCHOrder {
     char    type;           // 'O'=Enter, 'X'=Cancel, 'U'=Replace, 'E'=error
     char    token[15];      // Enter/Cancel: token; Replace: EXISTING token
@@ -115,7 +114,7 @@ struct OUCHOrder {
 };
 
 
-// OUCHMessage — encoder klienta + decoder odpowiedzi giełdy + decoder zleceń.
+// OUCHMessage — client encoder + exchange-response decoder + order decoder.
 
 class OUCHMessage {
     static int64_t now_ns() noexcept {
@@ -132,7 +131,6 @@ class OUCHMessage {
     }
 
     // Strip trailing spaces from a padded field
-    // Usuń końcowe spacje z dopełnionego pola
     static void strip_padding(char* dst, const uint8_t* src, int len) noexcept {
         std::memcpy(dst, src, len);
         // Find last non-space character
@@ -146,7 +144,7 @@ public:
 
     // enter_order: build Enter Order message (33 bytes)
     // Like 'echo -ne "\x4f..." | nc exchange 1234' — raw binary on the wire
-    // Returns number of bytes written / Zwraca liczbę zapisanych bajtów
+    // Returns number of bytes written
     static int enter_order(uint8_t* buf, const char* token, char side,
                            int32_t shares, const char* stock,
                            double price, char tif = 'D') noexcept {
@@ -181,10 +179,10 @@ public:
         return 37;
     }
 
-    // modify_order: build Modify Order message (19 bytes) — REDUKCJA wolumenu
-    // (decrease-only) (#226). W odroznieniu od Replace ('U') zachowuje priorytet w
-    // kolejce: zmniejsza tylko shares, nie zmienia ceny ani tokenu. new_shares to
-    // nowa (mniejsza) liczba akcji.
+    // modify_order: build Modify Order message (19 bytes) — volume REDUCTION
+    // (decrease-only) (#226). Unlike Replace ('U') it keeps queue priority:
+    // it only reduces shares, does not change price or token. new_shares is
+    // the new (smaller) number of shares.
     static int modify_order(uint8_t* buf, const char* token, int32_t new_shares) noexcept {
         buf[0] = 'M';
         write_padded(buf + 1, token, 14);
@@ -193,11 +191,11 @@ public:
     }
 
     // === ENCODING (Exchange → Client) ===
-    // Symetria do enter_order/cancel_order: strona giełdy buduje raporty, które
-    // parse_response() po stronie klienta dekoduje. Domyka OUCH (encode obu
-    // stron + decode) i pozwala na pełny roundtrip przez SoupBinTCP.
+    // Symmetric to enter_order/cancel_order: the exchange side builds reports that
+    // parse_response() on the client side decodes. Closes OUCH (encode of both
+    // sides + decode) and allows a full round-trip over SoupBinTCP.
 
-    // encode_accepted: Accepted (41 B) — giełda potwierdza przyjęcie zlecenia.
+    // encode_accepted: Accepted (41 B) — the exchange confirms order acceptance.
     static int encode_accepted(uint8_t* buf, const char* token, char side,
                                int32_t shares, const char* stock, double price,
                                int64_t order_ref, char tif = 'D') noexcept {
@@ -212,7 +210,7 @@ public:
         return 41;
     }
 
-    // encode_executed: Executed (31 B) — giełda raportuje (częściowe) wykonanie.
+    // encode_executed: Executed (31 B) — the exchange reports a (partial) execution.
     static int encode_executed(uint8_t* buf, const char* token, int32_t shares,
                                double price, int64_t match_number) noexcept {
         buf[0] = 'E';
@@ -223,7 +221,7 @@ public:
         return 31;
     }
 
-    // encode_cancelled: Cancelled (20 B) — giełda potwierdza anulowanie.
+    // encode_cancelled: Cancelled (20 B) — the exchange confirms a cancellation.
     static int encode_cancelled(uint8_t* buf, const char* token, int32_t shares,
                                 char reason = 'U') noexcept {
         buf[0] = 'C';
@@ -233,8 +231,8 @@ public:
         return 20;
     }
 
-    // encode_rejected: Order Rejected (16 B) — giełda odrzuca zlecenie (np. zly
-    // symbol, zamkniety rynek). reason: kod 1-znakowy.
+    // encode_rejected: Order Rejected (16 B) — the exchange rejects the order (e.g. a bad
+    // symbol, a closed market). reason: a 1-char code.
     static int encode_rejected(uint8_t* buf, const char* token, char reason) noexcept {
         buf[0] = 'J';
         write_padded(buf + 1, token, 14);
@@ -242,10 +240,10 @@ public:
         return 16;
     }
 
-    // encode_cancel_reject: Cancel Reject (16 B) — gielda ODRZUCA probe anulowania
-    // ('X'), bo zlecenia nie da sie anulowac (juz w pelni wykonane, nieznany token,
-    // albo cancel-pending). Rozni sie od 'C' (Cancelled = sukces): tu nic sie nie
-    // zmienilo, klient nie moze zalozyc ze pozycja zmalala. reason: kod 1-znakowy
+    // encode_cancel_reject: Cancel Reject (16 B) — the exchange REJECTS a cancel attempt
+    // ('X'), because the order can't be cancelled (already fully executed, unknown token,
+    // or cancel-pending). Differs from 'C' (Cancelled = success): here nothing
+    // changed, the client must not assume the position shrank. reason: a 1-char code
     // (#178).
     static int encode_cancel_reject(uint8_t* buf, const char* token, char reason) noexcept {
         buf[0] = 'I';
@@ -254,20 +252,20 @@ public:
         return 16;
     }
 
-    // encode_cancel_pending: Cancel Pending (15 B) — gielda PRZYJELA prosbe o
-    // anulowanie, ale jeszcze nie weszla w zycie (zlecenie w stanie blokujacym:
-    // aukcja, cross, halt). Stan POSREDNI: jeszcze nie 'C' (gotowe) ani 'I'
-    // (odrzucone). Klient czeka na finalne C/I; nie redukuje pozycji (#186).
+    // encode_cancel_pending: Cancel Pending (15 B) — the exchange ACCEPTED the cancel
+    // request, but it has not taken effect yet (the order is in a blocking state:
+    // auction, cross, halt). An INTERMEDIATE state: not yet 'C' (done) nor 'I'
+    // (rejected). The client waits for a final C/I; it does not reduce the position (#186).
     static int encode_cancel_pending(uint8_t* buf, const char* token) noexcept {
         buf[0] = 'P';
         write_padded(buf + 1, token, 14);
         return 15;
     }
 
-    // encode_aiq_canceled: AIQ Canceled (20 B) — gielda zdjela CZESC zlecenia, bo
-    // matchowalaby sie z WLASNYM spoczywajacym zleceniem firmy (Anti-Internalization
-    // Quantity / self-match prevention). Nie blad: zlecenie zyje dalej z mniejsza
-    // iloscia. decrement_shares = ile zdjeto; reason kod 1-znakowy (#194).
+    // encode_aiq_canceled: AIQ Canceled (20 B) — the exchange removed PART of the order, because
+    // it would match the firm's OWN resting order (Anti-Internalization
+    // Quantity / self-match prevention). Not an error: the order lives on with a smaller
+    // quantity. decrement_shares = how much was removed; reason a 1-char code (#194).
     static int encode_aiq_canceled(uint8_t* buf, const char* token, int32_t decrement_shares,
                                    char reason = 'Q') noexcept {
         buf[0] = 'D';
@@ -277,10 +275,10 @@ public:
         return 20;
     }
 
-    // encode_system_event: System Event (10 B) — zdarzenie sesji gieldy (#202):
-    // 'S'=start dnia, 'E'=koniec dnia, 'O'=otwarcie rynku, 'C'=zamkniecie, 'A'=
-    // halt awaryjny, 'R'=wznowienie. Klient BRAMKUJE handel wg tych zdarzen
-    // (np. nie wysyla zlecen przed 'O' / po 'C'). timestamp = nanosekundy.
+    // encode_system_event: System Event (10 B) — an exchange session event (#202):
+    // 'S'=start of day, 'E'=end of day, 'O'=market open, 'C'=close, 'A'=
+    // emergency halt, 'R'=resume. The client GATES trading on these events
+    // (e.g. does not send orders before 'O' / after 'C'). timestamp = nanoseconds.
     static int encode_system_event(uint8_t* buf, int64_t timestamp, char event_code) noexcept {
         buf[0] = 'S';
         write_u64_be(buf + 1, static_cast<uint64_t>(timestamp));
@@ -288,10 +286,10 @@ public:
         return 10;
     }
 
-    // encode_restated: Restated (24 B) — gielda zmienila parametry zlecenia BEZ
-    // prosby klienta (#210): reprice zgodnosciowy (locked/crossed market), redukcja
-    // display, korekta. Zlecenie zyje dalej z NOWYMI shares/price. reason: kod
-    // 1-znakowy (np. 'P'=reprice, 'D'=display). Klient aktualizuje swoj obraz.
+    // encode_restated: Restated (24 B) — the exchange changed the order's parameters WITHOUT
+    // a client request (#210): a compliance reprice (locked/crossed market), display
+    // reduction, a correction. The order lives on with NEW shares/price. reason: a
+    // 1-char code (e.g. 'P'=reprice, 'D'=display). The client updates its picture.
     static int encode_restated(uint8_t* buf, const char* token, int32_t shares,
                                double price, char reason = 'P') noexcept {
         buf[0] = 'R';
@@ -302,8 +300,8 @@ public:
         return 24;
     }
 
-    // encode_replaced: Order Replaced (45 B) — giełda potwierdza Replace ('U').
-    // Niesie NOWY token (replacement) + POPRZEDNI (zastapiony) + nowe parametry.
+    // encode_replaced: Order Replaced (45 B) — the exchange confirms a Replace ('U').
+    // Carries the NEW token (replacement) + the PREVIOUS (replaced) + the new parameters.
     static int encode_replaced(uint8_t* buf, const char* repl_token, const char* prev_token,
                                int32_t shares, double price, int64_t order_ref) noexcept {
         buf[0] = 'U';
@@ -315,8 +313,8 @@ public:
         return 45;
     }
 
-    // encode_broken_trade: Broken Trade (28 B) — gielda UNIEWAZNIA wczesniej
-    // wykonany trade (bust/DK). Klient musi odwrocic fill po swojej stronie.
+    // encode_broken_trade: Broken Trade (28 B) — the exchange VOIDS a previously
+    // executed trade (bust/DK). The client must reverse the fill on its side.
     static int encode_broken_trade(uint8_t* buf, const char* token, int32_t shares,
                                    int64_t match_number, char reason = 'E') noexcept {
         buf[0] = 'B';
@@ -327,10 +325,10 @@ public:
         return 28;
     }
 
-    // expected_length: oczekiwana dlugosc bajtowa komunikatu gielda->klient danego
-    // typu (#218). Parser strumienia (SoupBin/OUCH) musi znac granice ramki ZANIM
-    // sparsuje tresc — przy stalej dlugosci wystarczy typ z pierwszego bajtu.
-    // 0 dla nieznanego typu (blad ramki / desync). Spina wszystkie komunikaty.
+    // expected_length: the expected byte length of an exchange->client message of a given
+    // type (#218). A stream parser (SoupBin/OUCH) must know the frame boundary BEFORE
+    // it parses the content — with fixed lengths the type from the first byte is enough.
+    // 0 for an unknown type (frame error / desync). Ties all the messages together.
     static int expected_length(char type) noexcept {
         switch (type) {
             case 'A': return 41;   // Accepted
@@ -344,7 +342,7 @@ public:
             case 'D': return 20;   // AIQ Canceled (#194)
             case 'S': return 10;   // System Event (#202)
             case 'R': return 24;   // Restated (#210)
-            default:  return 0;    // nieznany
+            default:  return 0;    // unknown
         }
     }
 
@@ -374,7 +372,6 @@ public:
 
     // parse_response: decode exchange response from raw bytes
     // Like reading binary data from recv() — need to know the wire format
-    // Jak czytanie binarnych danych z recv() — trzeba znać format na kablu
     static OUCHResponse parse_response(const uint8_t* data, int len) noexcept {
         OUCHResponse resp;
 
@@ -473,7 +470,7 @@ public:
                               "CANCEL_PENDING too short: %d < 15 bytes", len);
                 return resp;
             }
-            safe_copy(resp.type, "CXL_PEND");   // <=10 znakow: unik stringop-truncation (sanitizer -O1)
+            safe_copy(resp.type, "CXL_PEND");   // <=10 chars: avoids stringop-truncation (sanitizer -O1)
             strip_padding(resp.token, data + 1, 14);
 
         } else if (msg_type == 'D') {  // AIQ Canceled (#194)
@@ -485,7 +482,7 @@ public:
             }
             safe_copy(resp.type, "AIQ_CXL");
             strip_padding(resp.token, data + 1, 14);
-            resp.shares    = read_u32_be(data + 15);    // ile zdjeto
+            resp.shares    = read_u32_be(data + 15);    // how much was removed
             resp.reason[0] = static_cast<char>(data[19]);
             resp.reason[1] = '\0';
 
@@ -498,7 +495,7 @@ public:
             }
             safe_copy(resp.type, "SYS_EVENT");
             resp.match_number = static_cast<int64_t>(read_u64_be(data + 1));  // timestamp
-            resp.reason[0]    = static_cast<char>(data[9]);                   // kod zdarzenia
+            resp.reason[0]    = static_cast<char>(data[9]);                   // event code
             resp.reason[1]    = '\0';
 
         } else if (msg_type == 'R') {  // Restated (#210)
@@ -523,8 +520,8 @@ public:
                 return resp;
             }
             safe_copy(resp.type, "REPLACED");
-            strip_padding(resp.token,      data + 1,  14);  // nowy (replacement)
-            strip_padding(resp.prev_token, data + 15, 14);  // zastapiony
+            strip_padding(resp.token,      data + 1,  14);  // new (replacement)
+            strip_padding(resp.prev_token, data + 15, 14);  // replaced
             resp.shares    = read_u32_be(data + 29);
             resp.price     = read_u32_be(data + 33) / 10000.0;
             resp.order_ref = read_u64_be(data + 37);
@@ -536,10 +533,10 @@ public:
         return resp;
     }
 
-    // === DECODING zlecen KLIENTA (Client → Exchange) — strona gieldy (#152) ===
-    // Symetria do enter_order/cancel_order/replace_order: gateway gieldy parsuje
-    // surowe bajty 'O'/'X'/'U' z recv() na strukture. valid=false przy za krotkim
-    // buforze / nieznanym typie.
+    // === DECODING CLIENT orders (Client → Exchange) — the exchange side (#152) ===
+    // Symmetric to enter_order/cancel_order/replace_order: the exchange gateway parses
+    // raw 'O'/'X'/'U' bytes from recv() into a struct. valid=false on too short a
+    // buffer / an unknown type.
     static OUCHOrder parse_order(const uint8_t* data, int len) noexcept {
         OUCHOrder o;
         if (!data || len < 1) return o;
@@ -572,15 +569,15 @@ public:
             if (len < 19) return o;
             o.type = 'M';
             strip_padding(o.token, data + 1, 14);
-            o.shares = static_cast<int32_t>(read_u32_be(data + 15));   // nowa (mniejsza) ilosc
+            o.shares = static_cast<int32_t>(read_u32_be(data + 15));   // new (smaller) quantity
             o.valid  = true;
         }
         return o;
     }
 
-    // validate_order: walidacja zlecenia KLIENTA po stronie gieldy (#169). Zwraca
-    // nullptr gdy OK, albo powod odrzucenia. Pairs z parse_order — gateway
-    // sprawdza zanim przekaze do matchingu.
+    // validate_order: exchange-side validation of a CLIENT order (#169). Returns
+    // nullptr when OK, or a rejection reason. Pairs with parse_order — the gateway
+    // checks before passing to matching.
     static const char* validate_order(const OUCHOrder& o) noexcept {
         if (!o.valid)        return "malformed";
         if (o.token[0] == '\0') return "empty token";

@@ -1,19 +1,19 @@
 /*
- * SoupBinOuch session glue (expansion #78) — spina warstwę transportu
- * (soupbin.hpp) z warstwą aplikacyjną (ouch_protocol.hpp) w JEDEN strumień:
+ * SoupBinOuch session glue (expansion #78) — ties the transport layer
+ * (soupbin.hpp) to the application layer (ouch_protocol.hpp) into ONE stream:
  *
  *   Client → Server:  L (login) , U (Enter/Cancel/Replace Order, payload=OUCH)
  *   Server → Client:  A (login accepted) , S (sequenced data, payload=OUCH
  *                      Accepted/Executed/Cancelled) , H (heartbeat) , Z (end)
  *
- * Wcześniej soupbin.hpp miał prymitywy (pack/parse/seq), a ouch_protocol.hpp
- * encode/decode — ale nic nie demonstrowało pełnego roundtripu login→order→exec.
- * Tu są dwie strony:
- *   - OuchSessionClient — stanowa maszyna klienta: konsumuje strumień TCP
- *     (wiele pakietów per recv), dekoduje OUCH z pakietów 'S', liczy raporty.
- *   - mock_exchange_respond — minimalna giełda: na 'L' odsyła 'A', na każde 'U'
- *     (Enter Order) odsyła 'S'(Accepted) + 'S'(Executed). Pozwala przejść całą
- *     pętlę in-process (jak mock server w feed/feed_demo).
+ * Previously soupbin.hpp had primitives (pack/parse/seq), and ouch_protocol.hpp
+ * encode/decode — but nothing demonstrated the full login→order→exec round-trip.
+ * Here are the two sides:
+ *   - OuchSessionClient — the client's stateful machine: consumes the TCP stream
+ *     (many packets per recv), decodes OUCH from 'S' packets, counts reports.
+ *   - mock_exchange_respond — a minimal exchange: on 'L' it replies 'A', on every 'U'
+ *     (Enter Order) it replies 'S'(Accepted) + 'S'(Executed). Lets the whole
+ *     loop run in-process (like the mock server in feed/feed_demo).
  */
 #pragma once
 
@@ -28,7 +28,7 @@
 
 namespace soupbin {
 
-// parse_seqnum: ASCII numeric (spacja-padded) → uint64. Ignoruje spacje.
+// parse_seqnum: ASCII numeric (space-padded) → uint64. Ignores spaces.
 inline uint64_t parse_seqnum(const uint8_t* p, std::size_t n) noexcept {
     uint64_t v = 0;
     for (std::size_t i = 0; i < n; ++i) {
@@ -38,8 +38,8 @@ inline uint64_t parse_seqnum(const uint8_t* p, std::size_t n) noexcept {
     return v;
 }
 
-// strip_field: usuń końcowe spacje z dopełnionego pola OUCH (OUCHMessage::
-// strip_padding jest prywatne, więc lokalny odpowiednik dla mock giełdy).
+// strip_field: strip trailing spaces from a padded OUCH field (OUCHMessage::
+// strip_padding is private, so this is a local equivalent for the mock exchange).
 inline void strip_field(char* dst, const uint8_t* src, int n) noexcept {
     std::memcpy(dst, src, static_cast<std::size_t>(n));
     int end = n;
@@ -48,9 +48,9 @@ inline void strip_field(char* dst, const uint8_t* src, int n) noexcept {
 }
 
 
-// Wrappery wychodzace klienta (expansion #145): encode OUCH + framing w pakiet
-// 'U' (Unsequenced Data) jednym wywolaniem. Bez nich caller musi recznie zlozyc
-// enter_order + pack_data (jak w #78). Zwracaja laczny rozmiar pakietu lub 0.
+// Client outgoing wrappers (expansion #145): encode OUCH + framing into a
+// 'U' (Unsequenced Data) packet in one call. Without them the caller must manually assemble
+// enter_order + pack_data (as in #78). Return the total packet size or 0.
 inline std::size_t pack_enter_order(uint8_t* out, std::size_t cap, const char* token,
                                     char side, int32_t shares, const char* stock,
                                     double price, char tif = 'D') noexcept {
@@ -72,15 +72,15 @@ inline std::size_t pack_replace_order(uint8_t* out, std::size_t cap, const char*
 }
 
 
-// HeartbeatTimer — timer heartbeatow SoupBinTCP (expansion #118).
+// HeartbeatTimer — the SoupBinTCP heartbeat timer (expansion #118).
 //
-// SoupBin wymaga heartbeatow w OBIE strony: server wysyla 'H', klient 'R' co ~1s
-// gdy idle — tak wykrywa sie half-open connection (NAT/firewall ucina idle TCP).
-// Brak heartbeatu/danych od drugiej strony przez ~15s => zerwij i reconnect.
-//   on_tx(now) — wywolaj po KAZDEJ wyslanej ramce (reset naszego idle)
-//   on_rx(now) — wywolaj po KAZDEJ odebranej ramce (reset zegara peera)
-//   need_send(now, interval) — czy czas wyslac nasz heartbeat
-//   peer_timed_out(now, timeout) — czy druga strona milczy za dlugo
+// SoupBin requires heartbeats in BOTH directions: the server sends 'H', the client 'R' every ~1s
+// when idle — this is how a half-open connection is detected (NAT/firewall cuts idle TCP).
+// No heartbeat/data from the other side for ~15s => drop and reconnect.
+//   on_tx(now) — call after EVERY sent frame (resets our idle)
+//   on_rx(now) — call after EVERY received frame (resets the peer's clock)
+//   need_send(now, interval) — whether it's time to send our heartbeat
+//   peer_timed_out(now, timeout) — whether the other side has been silent too long
 struct HeartbeatTimer {
     int64_t last_tx = 0;
     int64_t last_rx = 0;
@@ -99,8 +99,8 @@ struct HeartbeatTimer {
 };
 
 
-// OuchSessionClient — stan sesji po stronie klienta. Karmiony strumieniem
-// bajtów z TCP; rozbija na pakiety SoupBin i dekoduje OUCH z 'S'.
+// OuchSessionClient — the client-side session state. Fed a byte stream
+// from TCP; splits it into SoupBin packets and decodes OUCH from 'S'.
 class OuchSessionClient {
     bool            logged_in_     = false;
     bool            session_ended_ = false;
@@ -115,13 +115,13 @@ class OuchSessionClient {
     std::uint64_t   errors_     = 0;
 
 public:
-    // on_packet: zaaplikuj jeden sparsowany pakiet server→client.
+    // on_packet: apply one parsed server→client packet.
     void on_packet(const ParsedPacket& p) noexcept {
         if (!p.valid) { ++errors_; return; }
         switch (p.type) {
             case PacketType::LOGIN_ACCEPTED:
                 logged_in_ = true;
-                // payload: session(10) + sequence(20). Ustaw oczekiwany seq.
+                // payload: session(10) + sequence(20). Set the expected seq.
                 if (p.payload_len >= SESSION_LEN + SEQNUM_LEN) {
                     const uint64_t s = parse_seqnum(p.payload + SESSION_LEN, SEQNUM_LEN);
                     seq_.reset_to(s == 0 ? 1 : s);
@@ -129,7 +129,7 @@ public:
                 break;
             case PacketType::LOGIN_REJECTED:
                 logged_in_ = false; ++errors_;
-                if (p.payload_len >= 1)              // #139: powod odmowy logowania
+                if (p.payload_len >= 1)              // #139: login rejection reason
                     login_reject_reason_ = static_cast<char>(p.payload[0]);
                 break;
             case PacketType::SEQUENCED_DATA: {
@@ -146,20 +146,20 @@ public:
             }
             case PacketType::SERVER_HEARTBEAT: ++heartbeats_; break;
             case PacketType::END_OF_SESSION:   session_ended_ = true; break;
-            case PacketType::DEBUG:            break;   // ignorujemy debug
+            case PacketType::DEBUG:            break;   // ignore debug
             default:                           ++errors_; break;
         }
     }
 
-    // consume: przetwórz strumień TCP (może zawierać wiele pakietów). Zwraca
-    // liczbę w pełni przetworzonych bajtów; reszta (niepełny pakiet) zostaje
-    // u wołającego do doklejenia kolejnego recv.
+    // consume: process a TCP stream (may contain several packets). Returns
+    // the number of bytes fully processed; the rest (an incomplete packet) stays
+    // with the caller to prepend to the next recv.
     std::size_t consume(const uint8_t* buf, std::size_t len) noexcept {
         std::size_t off = 0;
         while (off < len) {
             std::size_t used = 0;
             const ParsedPacket p = parse_packet(buf + off, len - off, &used);
-            if (!p.valid) break;   // niepełny pakiet — czekaj na więcej
+            if (!p.valid) break;   // incomplete packet — wait for more
             on_packet(p);
             off += used;
         }
@@ -180,10 +180,10 @@ public:
 };
 
 
-// mock_exchange_respond — minimalna giełda zamykająca pętlę. Parsuje strumień
-// klienta (L/U/O/R) i pisze odpowiedzi server→client do out. Na każde Enter
-// Order ('U' z OUCH 'O') odsyła Accepted + Executed (pełny fill). Zwraca liczbę
-// zapisanych bajtów. start_seq = "Requested Sequence Number" do Login Accepted.
+// mock_exchange_respond — a minimal exchange closing the loop. Parses the client's
+// stream (L/U/O/R) and writes server→client responses into out. On every Enter
+// Order ('U' with OUCH 'O') it replies Accepted + Executed (a full fill). Returns the number
+// of bytes written. start_seq = the "Requested Sequence Number" for Login Accepted.
 inline std::size_t mock_exchange_respond(uint8_t* out, std::size_t cap,
                                          const uint8_t* client_stream, std::size_t len,
                                          uint64_t start_seq = 1) noexcept {
@@ -199,7 +199,7 @@ inline std::size_t mock_exchange_respond(uint8_t* out, std::size_t cap,
         in_off += used;
 
         if (p.type == PacketType::LOGIN_REQUEST) {
-            // Login Accepted: session(10) + sequence(20), spacja-padded.
+            // Login Accepted: session(10) + sequence(20), space-padded.
             const std::size_t payload = SESSION_LEN + SEQNUM_LEN;
             if (!room(HEADER_SIZE + payload)) break;
             pack_header(out + out_off, PacketType::LOGIN_ACCEPTED, payload);
@@ -214,8 +214,8 @@ inline std::size_t mock_exchange_respond(uint8_t* out, std::size_t cap,
 
         } else if (p.type == PacketType::UNSEQUENCED_DATA &&
                    p.payload_len >= 1 && p.payload[0] == 'O') {
-            // Enter Order — odczytaj pola, odeślij Accepted + Executed.
-            // Layout 'O' (z enter_order): token(14)@1, side@15, shares@16,
+            // Enter Order — read the fields, send back Accepted + Executed.
+            // Layout of 'O' (from enter_order): token(14)@1, side@15, shares@16,
             // stock(8)@20, price@28, tif@32.
             char token[15]; strip_field(token, p.payload + 1, 14);
             const char    side   = static_cast<char>(p.payload[15]);
@@ -231,7 +231,7 @@ inline std::size_t mock_exchange_respond(uint8_t* out, std::size_t cap,
             if (!room(HEADER_SIZE + static_cast<std::size_t>(mlen))) break;
             out_off += pack_data(out + out_off, cap - out_off, msg,
                                  static_cast<std::size_t>(mlen), /*client_side=*/false);
-            // Executed (pełny fill) → 'S'
+            // Executed (full fill) → 'S'
             mlen = OUCHMessage::encode_executed(msg, token, shares, price, match_no++);
             if (!room(HEADER_SIZE + static_cast<std::size_t>(mlen))) break;
             out_off += pack_data(out + out_off, cap - out_off, msg,
@@ -242,7 +242,7 @@ inline std::size_t mock_exchange_respond(uint8_t* out, std::size_t cap,
             pack_header(out + out_off, PacketType::END_OF_SESSION, 0);
             out_off += HEADER_SIZE;
         }
-        // 'R' (client heartbeat) — milcząco ignorujemy (mógłby odbić 'H').
+        // 'R' (client heartbeat) — silently ignored (could bounce back an 'H').
     }
     return out_off;
 }
