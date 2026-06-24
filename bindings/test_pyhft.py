@@ -1,9 +1,9 @@
 """
-test_pyhft.py — testy jednostkowe bindingów pyhft. Standalone (bez pytest),
-zwraca exit code 0/1 żeby CI mogło wpiąć bez instalacji dodatkowych paczek.
+test_pyhft.py — unit tests for the pyhft bindings. Standalone (no pytest),
+returns exit code 0/1 so CI can wire it in without installing extra packages.
 
-Pokrywa to czego demo.py nie pokrywa: error handling, edge cases, overflow,
-ścieżki rejection. Cel: pewność że bindingi reagują rozsądnie na złe inputy.
+Covers what demo.py does not: error handling, edge cases, overflow,
+rejection paths. Goal: confidence that the bindings react sensibly to bad inputs.
 
 Run from repo root after building:
     python3 bindings/setup.py build_ext --inplace
@@ -34,19 +34,19 @@ def check(cond, label):
 
 
 def test_oms_zero_quantity():
-    """submit_order z qty=0 powinno być odrzucone albo zwrócić None."""
+    """submit_order with qty=0 should be rejected or return None."""
     oms = pyhft.OMS(max_position=1000, max_order_value=100_000.0)
     o = oms.submit_order("AAPL", pyhft.Side.BUY, 150.0, 0)
     check(o is None or o.quantity == 0, "oms_zero_qty_handled_gracefully")
 
 
 def test_oms_partial_then_overfill():
-    """Over-fill ma być clamped do remaining_qty (test critical hardening)."""
+    """Over-fill should be clamped to remaining_qty (critical hardening test)."""
     oms = pyhft.OMS(max_position=1000, max_order_value=100_000.0)
     o = oms.submit_order("AAPL", pyhft.Side.BUY, 150.0, 100)
     assert o is not None
     oms.fill_order(o.order_id, 60, 150.0)
-    # Próba over-fill: poprosić o 200, dostać <=40
+    # Over-fill attempt: ask for 200, get <=40
     oms.fill_order(o.order_id, 200, 150.0)
     o2 = oms.get_order(o.order_id)
     check(o2.filled_qty == 100, "oms_overfill_clamped_via_python")
@@ -54,7 +54,7 @@ def test_oms_partial_then_overfill():
 
 
 def test_oms_unknown_order_id():
-    """fill_order dla nieznanego order_id nie powinno crashować."""
+    """fill_order for an unknown order_id should not crash."""
     oms = pyhft.OMS(max_position=1000, max_order_value=100_000.0)
     try:
         oms.fill_order(999999, 100, 150.0)
@@ -64,7 +64,7 @@ def test_oms_unknown_order_id():
 
 
 def test_risk_kill_switch_blocks():
-    """Kill switch (ręczny) musi rejectować zlecenia."""
+    """Kill switch (manual) must reject orders."""
     risk = pyhft.RiskManager()
     risk.activate_kill_switch()
     r = risk.check_order("AAPL", pyhft.Side.BUY, 10.0, 1)
@@ -73,7 +73,7 @@ def test_risk_kill_switch_blocks():
 
 
 def test_risk_circuit_breaker():
-    """Limit dziennej straty trip'uje kill switch."""
+    """The daily loss limit trips the kill switch."""
     lim = pyhft.RiskLimits()
     lim.max_daily_loss = 1000
     risk = pyhft.RiskManager(lim)
@@ -84,14 +84,14 @@ def test_risk_circuit_breaker():
 
 
 def test_risk_unknown_symbol():
-    """get_position dla niezładowanego symbolu zwraca 0 (nie crash)."""
+    """get_position for an unloaded symbol returns 0 (no crash)."""
     risk = pyhft.RiskManager()
     pos = risk.get_position("UNKNOWN")
     check(pos == 0, "risk_unknown_symbol_returns_zero")
 
 
 def test_orderbook_basic_match():
-    """FlatOrderBook: add buy + add sell po tej samej cenie → 1 trade."""
+    """FlatOrderBook: add buy + add sell at the same price → 1 trade."""
     book = pyhft.FlatOrderBook()
     book.add_buy(10100, 100)
     book.add_sell(10100, 100)
@@ -99,7 +99,7 @@ def test_orderbook_basic_match():
 
 
 def test_orderbook_no_cross_no_trade():
-    """Bid < Ask → brak match'u."""
+    """Bid < Ask → no match."""
     book = pyhft.FlatOrderBook()
     book.add_buy(10050, 100)
     book.add_sell(10100, 100)
@@ -109,14 +109,14 @@ def test_orderbook_no_cross_no_trade():
 
 
 def test_oms_get_position_after_fills():
-    """Net qty + avg cost po dwóch fills."""
+    """Net qty + avg cost after two fills."""
     oms = pyhft.OMS(max_position=1000, max_order_value=1_000_000.0)
     o1 = oms.submit_order("MSFT", pyhft.Side.BUY, 400.0, 50)
     oms.fill_order(o1.order_id, 50, 400.0)
     o2 = oms.submit_order("MSFT", pyhft.Side.BUY, 410.0, 50)
     oms.fill_order(o2.order_id, 50, 410.0)
     pos = oms.get_position("MSFT")
-    # avg = (400*50 + 410*50)/100 = 405, w tickach: 4050000
+    # avg = (400*50 + 410*50)/100 = 405, in ticks: 4050000
     check(pos.net_qty == 100, "oms_net_qty_after_2_fills")
     check(abs(pos.avg_price - 4050000) < 100, "oms_avg_price_correct")
 

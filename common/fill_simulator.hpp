@@ -1,31 +1,31 @@
 /*
- * FillSimulator — modeluje realne zachowanie giełdy przy egzekucji zleceń.
+ * FillSimulator — models realistic exchange behavior when executing orders.
  *
- * Domyślny model w labie ("każdy submit = fill 100% po quoted price") jest
- * KOMPLETNIE NIEREALISTYCZNY. Prawdziwa giełda:
+ * The lab's default model ("every submit = 100% fill at the quoted price") is
+ * COMPLETELY UNREALISTIC. A real exchange has:
  *
- *   1. Partial fills      — venue daje 60 akcji na request 100, reszta resting.
- *   2. Slippage           — egzekucja po gorszej cenie niż quote (market moved
- *                            między wysłaniem zlecenia a wykonaniem).
- *   3. Market impact      — DUŻE zlecenie samo rusza cenę. Model Almgren-Chriss:
+ *   1. Partial fills      — the venue gives 60 shares on a request for 100, the rest resting.
+ *   2. Slippage           — execution at a worse price than the quote (the market moved
+ *                            between sending the order and execution).
+ *   3. Market impact      — a LARGE order moves the price itself. Almgren-Chriss model:
  *                            impact_bps = coefficient * sqrt(qty / ADV)
  *                            (ADV = Average Daily Volume).
- *   4. Rejection          — venue odrzuca: price out of band, locked market,
+ *   4. Rejection          — the venue rejects: price out of band, locked market,
  *                            throttle (>N orders/sec), credit check, halt.
  *
- * Klasa udostępnia czysty model probabilistyczny — deterministyczny przy
- * stałym seed (do testów / replay) i konfigurowalny do różnych warunków
- * rynkowych (calm vs volatile).
+ * The class exposes a clean probabilistic model — deterministic with a
+ * fixed seed (for tests / replay) and configurable for different market
+ * conditions (calm vs volatile).
  *
- * Użycie:
+ * Usage:
  *   FillSimulator sim(config, seed=42);
  *   FillResult r = sim.simulate(side, requested_qty, quoted_price_ticks,
  *                                displayed_size, urgency);
  *   if (r.rejected) // venue REJECT — log + skip
  *   else            // r.fill_qty <= requested_qty, r.fill_price_ticks ±slippage
  *
- * To pass-through component — nie ma persistent state poza RNG. Konsument
- * (OMS / strategy demo) decyduje co zrobić z resztą (zostawić jako rest /
+ * A pass-through component — no persistent state besides the RNG. The consumer
+ * (OMS / strategy demo) decides what to do with the remainder (leave as rest /
  * cancel / retry).
  */
 #pragma once
@@ -33,58 +33,58 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>   // std::llabs (POSIX/C-style; nie w <cmath>)
+#include <cstdlib>   // std::llabs (POSIX/C-style; not in <cmath>)
 
 #include "types.hpp"   // Side enum
 
 
 namespace common {
 
-// `Side` żyje w globalnym namespace (common/types.hpp) — używamy bezpośrednio.
+// `Side` lives in the global namespace (common/types.hpp) — used directly.
 
 
 struct FillSimulatorConfig {
-    // Partial fill — prawdopodobieństwo że dostaniemy MNIEJ niż request.
-    // 0.0 = zawsze full fill, 0.3 = 30% szans na partial.
+    // Partial fill — the probability that we get LESS than requested.
+    // 0.0 = always full fill, 0.3 = 30% chance of a partial.
     double partial_fill_prob   = 0.20;
 
-    // Min ratio wypełnienia przy partial — 0.5 = dostajemy 50-100% requested.
+    // Min fill ratio on a partial — 0.5 = we get 50-100% of requested.
     double min_partial_ratio   = 0.50;
 
-    // Slippage — losowy offset ceny w tickach (gęstość rozkładu wykładnicza).
-    // mean = średnia w tickach; przy mean=0 brak slippage'u.
-    // urgency mnoży ten parametr: marketable=aggressive idzie do księgi i je
-    // jadowicie wybiera; passive limit czeka → mniej slippage.
+    // Slippage — a random price offset in ticks (exponential distribution density).
+    // mean = the average in ticks; with mean=0 there is no slippage.
+    // urgency multiplies this parameter: marketable=aggressive goes into the book and
+    // sweeps it viciously; a passive limit waits → less slippage.
     double slippage_mean_ticks = 1.0;
 
-    // Market impact — coefficient w Almgren-Chriss permanent impact formula.
-    // impact_bps = coeff * sqrt(qty / typical_size). Typical_size ~ widoczna
-    // płynność. Dla zleceń << displayed_size impact ~0, dla >> rośnie ostro.
+    // Market impact — coefficient in the Almgren-Chriss permanent impact formula.
+    // impact_bps = coeff * sqrt(qty / typical_size). typical_size ~ visible
+    // liquidity. For orders << displayed_size impact ~0, for >> it rises sharply.
     double market_impact_coeff = 5.0;   // bps per sqrt(qty_ratio)
 
-    // Rejection — prawdopodobieństwo REJECT z giełdy. Realne giełdy mają
-    // baseline 1-2% (locked market, throttle, halt).
+    // Rejection — the probability of a REJECT from the exchange. Real exchanges have a
+    // baseline of 1-2% (locked market, throttle, halt).
     double reject_prob         = 0.02;
 };
 
 
 struct FillResult {
-    bool     rejected;            // true → venue REJECT, nic się nie wykonało
-    int32_t  fill_qty;            // ile faktycznie wypełnione (≤ requested)
-    int64_t  fill_price_ticks;    // cena egzekucji w tickach (z slippage + impact)
-    int64_t  slippage_ticks;      // ile odjechało od quote (signed: + = gorzej dla nas)
-    double   impact_bps;          // market impact w basis points (informational)
+    bool     rejected;            // true → venue REJECT, nothing executed
+    int32_t  fill_qty;            // how much was actually filled (≤ requested)
+    int64_t  fill_price_ticks;    // execution price in ticks (with slippage + impact)
+    int64_t  slippage_ticks;      // how far it moved from the quote (signed: + = worse for us)
+    double   impact_bps;          // market impact in basis points (informational)
 
     FillResult() noexcept : rejected(false), fill_qty(0), fill_price_ticks(0),
                              slippage_ticks(0), impact_bps(0.0) {}
 };
 
 
-// Urgency — jak agresywne jest nasze zlecenie. Wpływa głównie na slippage.
+// Urgency — how aggressive our order is. Mainly affects slippage.
 enum class Urgency : uint8_t {
-    PASSIVE      = 0,   // limit order, czekamy na fill (mały slippage)
+    PASSIVE      = 0,   // limit order, we wait for a fill (small slippage)
     MARKETABLE   = 1,   // limit price = best bid/ask (default)
-    AGGRESSIVE   = 2,   // limit przebija → market order (większy slippage)
+    AGGRESSIVE   = 2,   // limit crosses → market order (larger slippage)
 };
 
 
@@ -92,7 +92,7 @@ class FillSimulator {
     FillSimulatorConfig cfg_;
     uint64_t            rng_state_;
 
-    // LCG — deterministyczny, szybki, bez zależności (replay-friendly).
+    // LCG — deterministic, fast, no dependencies (replay-friendly).
     uint64_t next() noexcept {
         rng_state_ = rng_state_ * 6364136223846793005ULL + 1442695040888963407ULL;
         return rng_state_ >> 16;
@@ -102,7 +102,7 @@ class FillSimulator {
         return static_cast<double>(next() & 0xFFFFFFFF) / 4294967296.0;
     }
 
-    // exp_random: próbka z rozkładu wykładniczego ze średnią `mean`.
+    // exp_random: a sample from an exponential distribution with mean `mean`.
     double exp_random(double mean) noexcept {
         const double u = rand01();
         return -std::log(u > 1e-12 ? u : 1e-12) * mean;
@@ -112,12 +112,12 @@ public:
     explicit FillSimulator(const FillSimulatorConfig& cfg = {}, uint64_t seed = 42) noexcept
         : cfg_(cfg), rng_state_(seed ? seed : 1) {}
 
-    // simulate: jedna potencjalna egzekucja. Zwraca FillResult.
+    // simulate: one potential execution. Returns a FillResult.
     //
-    //   side              — BUY/SELL (kierunek slippage'u: BUY płaci więcej, SELL dostaje mniej)
-    //   requested_qty     — ile akcji chcemy wykonać
-    //   quoted_price_ticks — cena z quote'a (mid albo best bid/ask)
-    //   displayed_size    — widoczna płynność na tym poziomie (do impactu)
+    //   side              — BUY/SELL (slippage direction: BUY pays more, SELL gets less)
+    //   requested_qty     — how many shares we want to execute
+    //   quoted_price_ticks — the price from the quote (mid or best bid/ask)
+    //   displayed_size    — visible liquidity at this level (for impact)
     //   urgency           — passive/marketable/aggressive
     FillResult simulate(Side side, int32_t requested_qty, int64_t quoted_price_ticks,
                         int32_t displayed_size = 1000,
@@ -131,7 +131,7 @@ public:
             return r;
         }
 
-        // 2. Partial fill — z prawdopodobieństwem partial_fill_prob, qty redukcja.
+        // 2. Partial fill — with probability partial_fill_prob, a qty reduction.
         int32_t fill_qty = requested_qty;
         if (rand01() < cfg_.partial_fill_prob) {
             const double ratio = cfg_.min_partial_ratio
@@ -150,10 +150,10 @@ public:
         const double ratio_to_displayed = (displayed_size > 0)
             ? static_cast<double>(requested_qty) / displayed_size : 0.0;
         const double impact_bps = cfg_.market_impact_coeff * std::sqrt(ratio_to_displayed);
-        // Konwersja bps → ticki: 1 bp = 0.01% ceny. cena=22381 ticków, 1 bp = 2.24 ticka.
+        // bps → ticks conversion: 1 bp = 0.01% of price. price=22381 ticks, 1 bp = 2.24 ticks.
         const double impact_ticks_d = (impact_bps / 10000.0) * static_cast<double>(quoted_price_ticks);
 
-        // Slippage + impact zawsze NA NIEKORZYŚĆ. BUY → cena wyższa, SELL → niższa.
+        // Slippage + impact always AGAINST us. BUY → higher price, SELL → lower.
         const int64_t signed_offset = static_cast<int64_t>(slippage + impact_ticks_d);
         const int64_t penalty = (side == Side::BUY) ? signed_offset : -signed_offset;
 

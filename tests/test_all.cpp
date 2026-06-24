@@ -236,7 +236,7 @@ void test_oms() {
 }
 
 
-// OMS #77 — P&L pozycji krótkich, flip long↔short, replace_order (amend).
+// OMS #77 — short-position P&L, flip long↔short, replace_order (amend).
 void test_oms_short_and_replace() {
     SECTION("OMS Short P&L + Replace");
     auto close = [](double a, double b) { const double d = a - b; return (d < 0 ? -d : d) < 0.01; };
@@ -253,7 +253,7 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(p->realized_pnl), 200.0), "short_pnl_profit_200");  // (50-48)*100
     }
 
-    // --- Flip long→short jednym fillem + dokończenie covera ---
+    // --- Flip long→short in one fill + finishing the cover ---
     {
         OMS oms(10000, 100000000.0);
         oms.fill_order((oms.submit_order("X", Side::BUY, 10.00, 100))->order_id, 100, 10.00);
@@ -270,7 +270,7 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(p->realized_pnl), 250.0), "flip_total_realized_250");
     }
 
-    // --- replace_order: amend ceny/ilości ---
+    // --- replace_order: amend price/quantity ---
     {
         OMS oms(1000, 1000000.0);
         Order* o = oms.submit_order("AAPL", Side::BUY, 100.00, 50);
@@ -562,7 +562,7 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(sp->total_pnl(to_fixed(48.00))), 200.0), "mtm_total_short");       // realized 0 + unrl 200
     }
 
-    {   // #88 reject reasons — caller rozróżnia DLACZEGO odrzucono.
+    {   // #88 reject reasons — the caller distinguishes WHY it was rejected.
         OMS oms(/*max_pos=*/100, /*max_val=*/1000.0);
         OMSReject why = OMSReject::NONE;
         ASSERT(oms.submit_order("AAPL", Side::BUY, -1.0, 10, &why) == nullptr
@@ -957,7 +957,7 @@ void test_fill_simulator() {
     // Default config — partial 20%, slippage mean 1 tick, reject 2%.
     common::FillSimulator sim({}, /*seed*/42);
 
-    // 1000 prób → niezerowy reject rate, partial rate i slippage.
+    // 1000 attempts → non-zero reject rate, partial rate and slippage.
     int rejected = 0, partial = 0, exact = 0;
     int64_t total_slippage = 0;
     for (int i = 0; i < 1000; ++i) {
@@ -982,7 +982,7 @@ void test_fill_simulator() {
            a.fill_price_ticks == b.fill_price_ticks &&
            a.rejected         == b.rejected,         "fillsim_deterministic_seed");
 
-    // Aggressive urgency → większy slippage od passive (statystycznie).
+    // Aggressive urgency → larger slippage than passive (statistically).
     common::FillSimulator agg({}, 11);
     common::FillSimulator pas({}, 11);
     int64_t agg_slip = 0, pas_slip = 0;
@@ -1747,7 +1747,7 @@ void test_itch_book() {
     ah.on_add(1, 'B', 100.00, 100); ah.on_add(2, 'S', 100.02, 300);     // ask-heavy -0.5
     ASSERT(ah.imbalance_signal(0.3) == -1, "itchbook_imb_signal_down");
 
-    // #95 pre-trade impact: walk księgi → VWAP marketowego zlecenia.
+    // #95 pre-trade impact: walk the book → VWAP of a market order.
     itch::ITCHOrderBook fb;
     fb.on_add(1, 'S', 100.00, 100);
     fb.on_add(2, 'S', 100.01, 200);
@@ -1756,7 +1756,7 @@ void test_itch_book() {
     int64_t f = fb.expected_fill('B', 250, v);                  // 100@100.00 + 150@100.01
     ASSERT(f == 250, "itchbook_fill_qty_250");
     ASSERT(close(v, 100.006), "itchbook_fill_vwap");            // (100*100.00+150*100.01)/250
-    int64_t f2 = fb.expected_fill('B', 1000, v);                // tylko 600 płynności
+    int64_t f2 = fb.expected_fill('B', 1000, v);                // only 600 liquidity
     ASSERT(f2 == 600, "itchbook_fill_partial_600");
 
     // #123 top_levels: top N poziomow po stronie.
@@ -1964,7 +1964,7 @@ void test_multicast_gap_recovery() {
     ASSERT(!gr.on_retransmit(99), "gaprec_unknown_retransmit_false");
 
     gr.observe(8);                               // luka: brak 6,7
-    gr.observe(6);                               // spóźniony primary wypełnia 6
+    gr.observe(6);                               // a late primary fills 6
     ASSERT(gr.missing_count() == 1 && gr.recovered == 3, "gaprec_late_primary_recovers");
 
     // #149 lista zakresow luk (ciagle przedzialy).
@@ -2220,12 +2220,12 @@ void test_multicast_gap_recovery() {
     ASSERT(im.jitter_ns() == 200, "iam_jitter_200");      // 250-50
     ASSERT(std::fabs(im.avg_gap_ns() - 400.0/3.0) < 1e-6, "iam_avg");
 
-    // #91 A/B line arbitration — pierwsza linia wygrywa, druga dedup; B łata lukę A.
+    // #91 A/B line arbitration — the first line wins, the second is deduped; B patches A's gap.
     multicast::ABLineArbitrator arb;
     ASSERT(arb.on_packet(1, true),  "ab_a1_new");
     ASSERT(!arb.on_packet(1, false), "ab_b1_dup");        // B's 1 = duplikat
     ASSERT(arb.on_packet(2, true),  "ab_a2_new");
-    ASSERT(arb.on_packet(4, true),  "ab_a4_gap");          // A skoczyło → brak 3
+    ASSERT(arb.on_packet(4, true),  "ab_a4_gap");          // A jumped → missing 3
     ASSERT(arb.has_gaps() && arb.missing_count() == 1, "ab_gap_3_pending");
     ASSERT(arb.on_packet(3, false), "ab_b3_fills_gap");    // B dostarcza 3
     ASSERT(!arb.has_gaps(), "ab_self_healed");
@@ -2249,7 +2249,7 @@ void test_momentum() {
     MomentumStrategy m(/*window=*/3, /*threshold_pct=*/0.1, /*order_size=*/100);
     m.on_market_data("AAPL", 100.0);
     m.on_market_data("AAPL", 100.0);
-    m.on_market_data("AAPL", 100.0);                 // okno pełne, SMA=100
+    m.on_market_data("AAPL", 100.0);                 // window full, SMA=100
     const Signal up = m.on_market_data("AAPL", 105.0);
     ASSERT(up.valid && up.side == Side::BUY, "momentum_breakout_buys");
 
@@ -2271,7 +2271,7 @@ void test_donchian() {
     DonchianBreakout up(3, 100);                  // kanal z 3 poprzednich
     up.on_market_data("X", 100.0);
     up.on_market_data("X", 101.0);
-    up.on_market_data("X", 99.0);                 // okno pełne: hi=101, lo=99
+    up.on_market_data("X", 99.0);                 // window full: hi=101, lo=99
     const Signal su = up.on_market_data("X", 102.0);
     ASSERT(su.valid && su.side == Side::BUY, "donchian_break_high_buys");
 
@@ -2763,11 +2763,11 @@ void test_vwap_tracker() {
     ASSERT(close(v.slippage_bps(101.0, true), 0.0), "vwap_at_vwap_zero");
 }
 
-// Bollinger #93 — mean-reversion adaptacyjny do zmienności (pasma ±k·σ).
+// Bollinger #93 — mean-reversion adaptive to volatility (±k·σ bands).
 void test_bollinger() {
     SECTION("Bollinger Strategy (#93)");
-    // window=2, k=0.5: dla 2 punktów b-mean == σ, więc b>a o cokolwiek przebija
-    // pasmo (k<1) → deterministyczny sygnał.
+    // window=2, k=0.5: for 2 points b-mean == σ, so b>a by anything breaks
+    // the band (k<1) → a deterministic signal.
     BollingerStrategy up(2, 0.5, 100);
     up.on_market_data("X", 100.0);
     const Signal su = up.on_market_data("X", 102.0);
@@ -2778,7 +2778,7 @@ void test_bollinger() {
     const Signal sd = dn.on_market_data("Y", 98.0);
     ASSERT(sd.valid && sd.side == Side::BUY, "bollinger_below_band_buys");
 
-    // Zero zmienności (σ=0) → brak sygnału (adaptacja: spokojny rynek = cisza).
+    // Zero volatility (σ=0) → no signal (adaptation: a calm market = silence).
     BollingerStrategy flat(2, 0.5, 100);
     flat.on_market_data("Z", 100.0);
     const Signal sf = flat.on_market_data("Z", 100.0);
@@ -2805,13 +2805,13 @@ void test_router_ewma_partial() {
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("V", 100, 0.0));
-        r.update_quote("V", 10.0, 11.0, 50, 50);   // tylko 50 dostępne
+        r.update_quote("V", 10.0, 11.0, 50, 50);   // only 50 available
         const RouteDecision d = r.route_order("BUY", 200);
         ASSERT(d.valid && d.quantity == 50, "partial_filled_50");
         ASSERT(d.unfilled_qty == 150, "partial_unfilled_150");
     }
 
-    // --- Split shortfall: Σpłynność < zlecenie ---
+    // --- Split shortfall: Σliquidity < order ---
     {
         SmartOrderRouter r(RoutingStrategy::SPLIT, 100);
         r.add_venue(Venue("X", 100, 0.0));
@@ -2824,7 +2824,7 @@ void test_router_ewma_partial() {
         ASSERT(d.num_venues == 2, "split_two_venues");
     }
 
-    // --- #86 venue health: seria odrzuceń wyłącza venue, sukces reaktywuje ---
+    // --- #86 venue health: a streak of rejects disables a venue, a success reactivates ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.set_failure_threshold(3);
@@ -2865,7 +2865,7 @@ void test_router_ewma_partial() {
         r.update_quote("B", 10.0, 11.0, 300, 250);
         ASSERT(r.available_liquidity(true) == 400, "liq_buy_sum_asks");   // 150+250
         ASSERT(r.available_liquidity(false) == 500, "liq_sell_sum_bids"); // 200+300
-        r.record_reject("A"); r.record_reject("A"); r.record_reject("A"); // A wyłączone
+        r.record_reject("A"); r.record_reject("A"); r.record_reject("A"); // A disabled
         ASSERT(r.available_liquidity(true) == 250, "liq_excludes_inactive");
     }
 
@@ -3219,7 +3219,7 @@ void test_router_ewma_partial() {
 }
 
 
-// Backtester #80 — rdzeń metryk wynikowych (Sharpe/DD/hit-rate/fill-rate).
+// Backtester #80 — the core of result metrics (Sharpe/DD/hit-rate/fill-rate).
 void test_backtester() {
     SECTION("Backtester (#80)");
     backtest::Backtester bt;
@@ -3291,18 +3291,18 @@ void test_risk_price_band() {
     ASSERT(r.check_order("AAPL", Side::BUY, 165.00, 10).action == RiskAction::ALLOW,
            "band_within_10pct_allows");                 // +10% < 20%
     ASSERT(r.check_order("AAPL", Side::BUY, 1500.00, 10).action == RiskAction::REJECT,
-           "band_fat_finger_rejects");                  // +900% — gruba pomyłka
+           "band_fat_finger_rejects");                  // +900% — a gross mistake
     ASSERT(r.check_order("AAPL", Side::SELL, 100.00, 10).action == RiskAction::REJECT,
            "band_far_below_rejects");                   // -33% < -20%
 
-    // Band wyłączony (≤0) → nawet 10× cena przechodzi.
+    // Band disabled (≤0) → even a 10× price passes.
     RiskLimits off = lim; off.max_price_band_pct = 0.0;
     RiskManager r2(off);
     r2.update_reference_price("AAPL", 150.00);
     ASSERT(r2.check_order("AAPL", Side::BUY, 1500.00, 10).action == RiskAction::ALLOW,
            "band_disabled_allows");
 
-    // Atomic kill switch — toggling działa jak wcześniej (typ atomic<bool>).
+    // Atomic kill switch — toggling works as before (atomic<bool> type).
     RiskManager r3(lim);
     ASSERT(!r3.is_kill_switch_active(), "kill_initially_off");
     r3.activate_kill_switch();
@@ -3421,7 +3421,7 @@ void test_risk_price_band() {
     RiskManager rp(pl);
     ASSERT(rp.check_order("TSLA", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
            "symlim_global_ok");                       // 500 < 1000
-    rp.set_symbol_position_limit("TSLA", 100);        // ciaśniej dla TSLA
+    rp.set_symbol_position_limit("TSLA", 100);        // tighter for TSLA
     ASSERT(rp.check_order("TSLA", Side::BUY, 1.0, 500).action == RiskAction::REJECT,
            "symlim_override_rejects");                 // 500 > 100
     ASSERT(rp.check_order("AAPL", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
@@ -3611,7 +3611,7 @@ void test_risk_price_band() {
     ASSERT(rckr.get_total_checks() == 3 && rckr.get_total_rejects() == 2, "crr_counts");
     ASSERT(std::fabs(rckr.check_reject_rate() - 2.0/3.0) < 1e-9, "crr_rate_two_thirds");
 
-    // #94 fat-finger na ilość — qty cap niezależny od notional.
+    // #94 fat-finger on quantity — a qty cap independent of notional.
     RiskLimits ql;
     ql.max_shares_per_order = 1000;
     ql.max_order_value = 100000000;  // hojny notional, izolujemy qty
@@ -3640,7 +3640,7 @@ void test_risk_price_band() {
 void test_fix_session() {
     SECTION("FIX Session (#78)");
 
-    // --- Admin builder: Logon parsuje się jako poprawny FIX z 8/9/10 ---
+    // --- Admin builder: Logon parses as a valid FIX with 8/9/10 ---
     {
         fix::FIXSession s;
         s.set_comp_ids("TRADER1", "EXCH");
@@ -3693,7 +3693,7 @@ void test_fix_session() {
         ASSERT(m.get_field(123)[0] == 'Y', "fix_seqreset_gapfill_Y");
     }
 
-    // --- Persystencja seq: wyślij kilka, persist, nowa sesja, load, kontynuuj ---
+    // --- Seq persistence: send a few, persist, new session, load, continue ---
     {
         const char* path = "/tmp/fix_seq_test.dat";
         std::remove(path);
@@ -3709,7 +3709,7 @@ void test_fix_session() {
         s2.set_persist_path(path);
         ASSERT(s2.load_persisted_seq(), "fix_persist_loaded");
         ASSERT(s2.peek_outbound_seq() == 3, "fix_persist_out_seq_continues");
-        // Po restarcie kolejny build używa seq 3 — nie reużywa 1/2.
+        // After a restart the next build uses seq 3 — does not reuse 1/2.
         s2.build_heartbeat(buf, sizeof(buf), nullptr, '|');
         FIXMessage m; m.parse(buf);
         ASSERT(std::atoi(m.get_field(34)) == 3, "fix_persist_no_seq_reuse");
@@ -4280,12 +4280,12 @@ void test_ouch_order_state() {
     ASSERT(lr.largest_remaining() == 200, "ouch_lr_c_now_largest");  // C 200 > A 100 > B 50
 }
 
-// OUCH ↔ SoupBinTCP #78 — pełny roundtrip login→order→accepted→executed.
+// OUCH ↔ SoupBinTCP #78 — full round-trip login→order→accepted→executed.
 void test_soupbin_ouch_session() {
     SECTION("SoupBin/OUCH Session (#78)");
     using namespace soupbin;
 
-    // Klient buduje strumień: Login Request + Enter Order ('U' z OUCH 'O').
+    // The client builds a stream: Login Request + Enter Order ('U' with OUCH 'O').
     uint8_t cstream[256];
     std::size_t coff = 0;
     coff += pack_login_request(cstream + coff, sizeof(cstream) - coff,
@@ -4295,13 +4295,13 @@ void test_soupbin_ouch_session() {
     coff += pack_data(cstream + coff, sizeof(cstream) - coff,
                       ouch, static_cast<std::size_t>(olen), /*client_side=*/true);
 
-    // Mock giełda odpowiada: A (login accepted) + S(Accepted) + S(Executed).
+    // The mock exchange replies: A (login accepted) + S(Accepted) + S(Executed).
     uint8_t sstream[256];
     const std::size_t slen = mock_exchange_respond(sstream, sizeof(sstream),
                                                     cstream, coff, /*start_seq=*/1);
     ASSERT(slen > 0, "soup_exchange_responded");
 
-    // Klient konsumuje cały strumień TCP (3 pakiety na raz).
+    // The client consumes the whole TCP stream (3 packets at once).
     OuchSessionClient client;
     const std::size_t consumed = client.consume(sstream, slen);
     ASSERT(consumed == slen, "soup_client_consumed_all");

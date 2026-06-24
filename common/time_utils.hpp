@@ -1,6 +1,5 @@
 /*
  * Two-clock timestamping helpers shared across modules.
- * Wspólne pomocniki znaczników czasu z dwóch zegarów.
  *
  *   mono_ns()  — CLOCK_MONOTONIC, latency measurement (never jumps with NTP)
  *   wall_ns()  — CLOCK_REALTIME,  UTC epoch, regulatory timestamps (MiFID II)

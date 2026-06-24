@@ -35,11 +35,11 @@ struct HFTConfig {
         int32_t max_orders_per_second   = 1000;
         double  max_order_value         = 500000.0;
         double  max_drawdown_pct        = 5.0;
-        double  max_price_band_pct      = 20.0;   // fat-finger cena; ≤0 = wyłączony
-        int32_t max_shares_per_order    = 100000; // fat-finger qty; 0 = wyłączony
-        int32_t max_short_per_symbol    = 0;       // ciaśniejszy cap short; 0 = symetria
-        int32_t max_consecutive_losses  = 0;       // breaker serii strat; 0 = wyłączony
-        double  max_daily_traded_notional = 0.0;   // dzienny limit obrotu ($); 0 = wyłączony
+        double  max_price_band_pct      = 20.0;   // fat-finger price; ≤0 = disabled
+        int32_t max_shares_per_order    = 100000; // fat-finger qty; 0 = disabled
+        int32_t max_short_per_symbol    = 0;       // tighter short cap; 0 = symmetric
+        int32_t max_consecutive_losses  = 0;       // loss-streak breaker; 0 = disabled
+        double  max_daily_traded_notional = 0.0;   // daily turnover limit ($); 0 = disabled
     } risk;
 
     struct OmsConfig {
