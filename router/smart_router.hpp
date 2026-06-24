@@ -1,30 +1,30 @@
 /*
- * SmartOrderRouter (SOR) — wybiera na którą giełdę wysłać zlecenie.
+ * SmartOrderRouter (SOR) — chooses which exchange to send an order to.
  *
- * Ta sama akcja handluje się równolegle na wielu giełdach (NYSE, NASDAQ,
- * BATS, IEX, ARCA...). Każda ma inną cenę, inną opłatę i inną latencję.
- * SOR decyduje gdzie posłać zlecenie żeby zrealizować "best execution".
+ * The same stock trades in parallel on many exchanges (NYSE, NASDAQ,
+ * BATS, IEX, ARCA...). Each has a different price, a different fee and a different latency.
+ * The SOR decides where to send the order to achieve "best execution".
  *
- * Trzy strategie:
- *   BEST_PRICE      — najlepsza cena EFEKTYWNA (all-in, z opłatą/rebate)
- *   LOWEST_LATENCY  — najszybsze venue round-trip
- *   SPLIT           — rozbij duże zlecenie między venue wg dostępnej płynności
+ * Three strategies:
+ *   BEST_PRICE      — the best EFFECTIVE price (all-in, with fee/rebate)
+ *   LOWEST_LATENCY  — the fastest venue round-trip
+ *   SPLIT           — split a large order across venues by available liquidity
  *
- * Cena efektywna (all-in) — kluczowy realizm:
- *   Prawdziwy SOR NIE optymalizuje surowej ceny quote, tylko cenę PO opłatach.
- *   Venue z asks $223.48 i opłatą $0.005/akcja daje all-in $223.485 — gorzej
- *   niż $223.49 z rebate -$0.002 (all-in $223.488)... a właściwie lepiej, ale
- *   przy większych opłatach kolejność się odwraca. Maker/taker model: dodatnia
- *   opłata = bierzesz płynność (taker), ujemna = dajesz płynność (maker rebate).
+ * Effective price (all-in) — a key piece of realism:
+ *   A real SOR does NOT optimize the raw quote price, but the price AFTER fees.
+ *   A venue with asks $223.48 and a $0.005/share fee gives all-in $223.485 — worse
+ *   than $223.49 with a -$0.002 rebate (all-in $223.488)... actually better, but
+ *   with larger fees the ordering flips. Maker/taker model: a positive
+ *   fee = you take liquidity (taker), negative = you provide liquidity (maker rebate).
  *
- *     BUY:  all_in = ask + fee   (płacisz; rebate ujemny → płacisz mniej)
- *     SELL: all_in = bid - fee   (dostajesz; rebate ujemny → dostajesz więcej)
+ *     BUY:  all_in = ask + fee   (you pay; a negative rebate → you pay less)
+ *     SELL: all_in = bid - fee   (you receive; a negative rebate → you receive more)
  *
- *   BEST_PRICE dla BUY minimalizuje all_in, dla SELL maksymalizuje all_in.
+ *   BEST_PRICE for a BUY minimizes all_in, for a SELL maximizes all_in.
  *
  * Pipeline: Strategy → Risk → ROUTER → OMS → Exchange.
  *
- * Wydajność (lab): ~9.7M routes/sec, p50=70ns, p99=150ns.
+ * Performance (lab): ~9.7M routes/sec, p50=70ns, p99=150ns.
  */
 #pragma once
 
@@ -35,7 +35,7 @@
 #include <cstring>
 
 
-// Maks. liczba venue (stała tablica, zero heap na hot path).
+// Max number of venues (fixed array, zero heap on the hot path).
 static constexpr int MAX_VENUES = 16;
 
 
@@ -46,12 +46,12 @@ enum class RoutingStrategy : uint8_t {
 };
 
 
-// RouteReject — DLACZEGO route_order nie zwrócił trasy (#125). Caller (OMS /
-// strategia) odróżnia "nie ma gdzie routować" od "brak płynności teraz".
+// RouteReject — WHY route_order did not return a route (#125). The caller (OMS /
+// strategy) distinguishes "nowhere to route" from "no liquidity right now".
 enum class RouteReject : uint8_t {
-    NONE          = 0,   // trasa znaleziona (valid=true)
-    NO_VENUES     = 1,   // zero aktywnych venue w ogóle
-    NO_LIQUIDITY  = 2,   // venue są, ale brak płynności po stronie zlecenia
+    NONE          = 0,   // route found (valid=true)
+    NO_VENUES     = 1,   // zero active venues at all
+    NO_LIQUIDITY  = 2,   // venues exist, but no liquidity on the order's side
 };
 
 inline const char* route_reject_str(RouteReject r) noexcept {
@@ -64,30 +64,30 @@ inline const char* route_reject_str(RouteReject r) noexcept {
 }
 
 
-// Venue — pojedyncza giełda z jej top-of-book quote, opłatą i latencją.
+// Venue — a single exchange with its top-of-book quote, fee and latency.
 //
-// latency_ns (mean): średnia latencja round-trip. Jeśli latency_p99_ns > 0
-// (opt-in), LOWEST_LATENCY wybiera po nim zamiast po mean — to realne
-// zachowanie production SOR'ów, bo ogon ma długi (p99/p50 zwykle 5-10×)
-// i decyduje o jakości egzekucji ważniejszej niż average case.
+// latency_ns (mean): average round-trip latency. If latency_p99_ns > 0
+// (opt-in), LOWEST_LATENCY selects by it instead of by the mean — this is the real
+// behavior of production SORs, because the tail is long (p99/p50 usually 5-10×)
+// and decides execution quality more than the average case.
 struct Venue {
     char    name[16];
-    int64_t latency_ns;          // statyczna średnia (seed z configu / SLA venue)
-    int64_t latency_p99_ns;      // p99 — 0 = nie ustawione, wtedy LOWEST_LATENCY bierze mean
-    double  fee_per_share;       // dodatnia = taker fee, ujemna = maker rebate
+    int64_t latency_ns;          // static mean (seeded from config / venue SLA)
+    int64_t latency_p99_ns;      // p99 — 0 = unset, then LOWEST_LATENCY uses the mean
+    double  fee_per_share;       // positive = taker fee, negative = maker rebate
     double  best_bid;
     double  best_ask;
     int32_t bid_size;
     int32_t ask_size;
     bool    is_active;
-    // EWMA zmierzonej latencji round-trip (0 = brak próbek). Aktualizowana
-    // przez record_latency() z realnych egzekucji — routing adaptuje się do
-    // bieżących warunków zamiast ufać statycznym liczbom z configu.
+    // EWMA of the measured round-trip latency (0 = no samples). Updated
+    // by record_latency() from real executions — routing adapts to
+    // current conditions instead of trusting static numbers from config.
     double  ewma_latency_ns;
     uint32_t latency_samples;
-    uint32_t consecutive_failures;  // health (#86): seria odrzuceń/timeoutów
-    int64_t  routed_shares;         // TCA (#117): laczny zaroutowany wolumen
-    uint64_t routes_count;          // ile razy zlecenie trafilo na to venue
+    uint32_t consecutive_failures;  // health (#86): streak of rejects/timeouts
+    int64_t  routed_shares;         // TCA (#117): total routed volume
+    uint64_t routes_count;          // how many times an order landed on this venue
 
     Venue() noexcept
         : latency_ns(0), latency_p99_ns(0), fee_per_share(0),
@@ -106,10 +106,10 @@ struct Venue {
         name[15] = '\0';
     }
 
-    // selection_latency_ns: która latencja używana przez LOWEST_LATENCY.
-    // Priorytet: zmierzona EWMA (gdy są próbki) > p99 (gdy ustawione) > mean.
-    // Realny SOR woli OBSERWOWANĄ latencję nad deklarowaną — venue zwalnia pod
-    // obciążeniem, a my reagujemy w kolejnych decyzjach.
+    // selection_latency_ns: which latency LOWEST_LATENCY uses.
+    // Priority: measured EWMA (when samples exist) > p99 (when set) > mean.
+    // A real SOR prefers the OBSERVED latency over the declared one — a venue slows
+    // under load and we react in subsequent decisions.
     int64_t selection_latency_ns() const noexcept {
         if (latency_samples > 0) return static_cast<int64_t>(ewma_latency_ns);
         return latency_p99_ns > 0 ? latency_p99_ns : latency_ns;
@@ -117,20 +117,20 @@ struct Venue {
 };
 
 
-// RouteDecision — co router zwraca. Oprócz venue/price/qty wystawia teraz
-// cenę efektywną i łączną opłatę, żeby wywołujący widział PRAWDZIWY koszt
-// (a nie tylko quote). num_venues > 1 dla SPLIT.
+// RouteDecision — what the router returns. Besides venue/price/qty it now exposes
+// the effective price and the total fee, so the caller sees the REAL cost
+// (not just the quote). num_venues > 1 for SPLIT.
 struct RouteDecision {
-    char    venue[16];          // dla SPLIT: venue z największą alokacją
-    double  price;              // średnia cena egzekucji (sam quote, bez opłat)
-    double  effective_price;    // all-in per share (quote ± opłata)
-    double  total_fee;          // łączna opłata za całe zlecenie (może być ujemna = rebate)
-    int32_t quantity;           // ile akcji faktycznie zaroutowano (filled)
-    int32_t unfilled_qty;       // shortfall: brak płynności na pokrycie reszty
-    int32_t num_venues;         // ile venue użyto (SPLIT)
-    int64_t latency_ns;         // czas decyzji routera (nie venue round-trip!)
-    bool    valid;              // false = brak trasy (jak None w Pythonie)
-    RouteReject reject_reason;  // dlaczego brak trasy (#125; NONE gdy valid)
+    char    venue[16];          // for SPLIT: the venue with the largest allocation
+    double  price;              // average execution price (quote only, no fees)
+    double  effective_price;    // all-in per share (quote ± fee)
+    double  total_fee;          // total fee for the whole order (can be negative = rebate)
+    int32_t quantity;           // shares actually routed (filled)
+    int32_t unfilled_qty;       // shortfall: no liquidity to cover the rest
+    int32_t num_venues;         // how many venues used (SPLIT)
+    int64_t latency_ns;         // router decision time (not the venue round-trip!)
+    bool    valid;              // false = no route (like None in Python)
+    RouteReject reject_reason;  // why there is no route (#125; NONE when valid)
 
     RouteDecision() noexcept
         : price(0), effective_price(0), total_fee(0), quantity(0),
@@ -146,20 +146,20 @@ class SmartOrderRouter {
     int             venue_count_;
     RoutingStrategy default_strategy_;
     int32_t         split_threshold_;
-    uint32_t        max_failures_ = 3;   // health (#86): próg auto-wyłączenia venue
+    uint32_t        max_failures_ = 3;   // health (#86): auto-disable threshold for a venue
 
     uint64_t total_routes_;
     uint64_t total_rejected_;
     uint64_t total_latency_ns_;
-    double   total_fees_paid_ = 0.0;   // suma fee/rebate po trasach (#138; <0 = net rebate)
+    double   total_fees_paid_ = 0.0;   // sum of fee/rebate over routes (#138; <0 = net rebate)
 
     static int64_t now_ns() noexcept {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::high_resolution_clock::now().time_since_epoch()).count();
     }
 
-    // Cena efektywna (all-in) — quote skorygowany o opłatę/rebate.
-    // BUY niższa = lepsza, SELL wyższa = lepsza.
+    // Effective price (all-in) — the quote adjusted for fee/rebate.
+    // BUY lower = better, SELL higher = better.
     static double effective_price(const Venue& v, bool is_buy) noexcept {
         return is_buy ? v.best_ask + v.fee_per_share
                       : v.best_bid - v.fee_per_share;
@@ -179,9 +179,9 @@ public:
         if (venue_count_ < MAX_VENUES) venues_[venue_count_++] = v;
     }
 
-    // remove_venue: calkowicie usun venue z routingu (#170) — decommission,
-    // nie tylko wylaczenie (set_venue_active). Przesuwa tablice. Zwraca false
-    // gdy nieznane venue.
+    // remove_venue: completely remove a venue from routing (#170) — decommission,
+    // not just disable (set_venue_active). Shifts the array. Returns false
+    // for an unknown venue.
     bool remove_venue(const char* venue_name) noexcept {
         for (int i = 0; i < venue_count_; ++i) {
             if (std::strcmp(venues_[i].name, venue_name) == 0) {
@@ -193,9 +193,9 @@ public:
         return false;
     }
 
-    // record_latency: zasil EWMA zmierzoną latencją round-trip (ns) z realnej
-    // egzekucji. alpha=0.2 — świeże próbki ważą 20%, wygładza szum ale reaguje
-    // na trend. Po pierwszej próbce EWMA = ona; potem wykładnicze wygładzanie.
+    // record_latency: feed the EWMA a measured round-trip latency (ns) from a real
+    // execution. alpha=0.2 — fresh samples weigh 20%, smooths noise but reacts
+    // to a trend. After the first sample EWMA = it; then exponential smoothing.
     void record_latency(const char* venue_name, int64_t observed_ns) noexcept {
         if (observed_ns <= 0) return;
         constexpr double alpha = 0.2;
@@ -206,7 +206,7 @@ public:
                     ? static_cast<double>(observed_ns)
                     : alpha * static_cast<double>(observed_ns) + (1.0 - alpha) * v.ewma_latency_ns;
                 ++v.latency_samples;
-                v.consecutive_failures = 0;   // udany round-trip = zdrowe venue
+                v.consecutive_failures = 0;   // a successful round-trip = a healthy venue
                 v.is_active = true;
                 return;
             }
@@ -214,16 +214,16 @@ public:
     }
 
     // === Venue health (#86) ===
-    // Realny SOR przestaje routować na venue, które odrzuca/timeoutuje, i wraca
-    // gdy znów odpowiada. record_reject zlicza serię porażek (≥ próg → wyłącz);
-    // record_success / record_latency zerują serię i reaktywują.
+    // A real SOR stops routing to a venue that rejects/times out, and returns
+    // when it responds again. record_reject counts the failure streak (≥ threshold → disable);
+    // record_success / record_latency reset the streak and reactivate.
     void set_failure_threshold(uint32_t n) noexcept { if (n > 0) max_failures_ = n; }
 
     void record_reject(const char* venue_name) noexcept {
         for (int i = 0; i < venue_count_; ++i) {
             if (std::strcmp(venues_[i].name, venue_name) == 0) {
                 if (++venues_[i].consecutive_failures >= max_failures_)
-                    venues_[i].is_active = false;     // wypadł z puli kandydatów
+                    venues_[i].is_active = false;     // dropped from the candidate pool
                 return;
             }
         }
@@ -242,9 +242,9 @@ public:
             if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].is_active;
         return false;
     }
-    // set_venue_active: manualne wlaczenie/wylaczenie venue (#146) — admin control
-    // (maintenance, regulatory halt) niezalezny od auto-health. Wlaczenie zeruje
-    // serie porazek. Zwraca false gdy nieznane venue.
+    // set_venue_active: manual enable/disable of a venue (#146) — admin control
+    // (maintenance, regulatory halt) independent of auto-health. Enabling resets
+    // the failure streak. Returns false for an unknown venue.
     bool set_venue_active(const char* venue_name, bool active) noexcept {
         for (int i = 0; i < venue_count_; ++i) {
             if (std::strcmp(venues_[i].name, venue_name) == 0) {
@@ -255,14 +255,14 @@ public:
         }
         return false;
     }
-    // venue_ewma_latency: zmierzona EWMA latencji venue w ns (#146; 0 = brak probek).
+    // venue_ewma_latency: the measured EWMA of a venue's latency in ns (#146; 0 = no samples).
     double venue_ewma_latency(const char* venue_name) const noexcept {
         for (int i = 0; i < venue_count_; ++i)
             if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].ewma_latency_ns;
         return 0.0;
     }
 
-    // update_quote: aktualizuj top-of-book venue (na każdy market data tick).
+    // update_quote: update a venue's top-of-book (on every market data tick).
     void update_quote(const char* venue_name, double bid, double ask,
                       int32_t bid_size, int32_t ask_size) noexcept {
         for (int i = 0; i < venue_count_; ++i) {
@@ -276,13 +276,13 @@ public:
         }
     }
 
-    // route_order: wybierz venue dla zlecenia. side[0]=='B' → buy.
+    // route_order: choose a venue for the order. side[0]=='B' → buy.
     RouteDecision route_order(const char* side, int32_t quantity,
                                RoutingStrategy strat) noexcept {
         const int64_t t0     = now_ns();
         const bool    is_buy = (side[0] == 'B');
 
-        // Zbierz aktywnych kandydatów z faktyczną płynnością po naszej stronie.
+        // Gather active candidates with actual liquidity on our side.
         Venue* candidates[MAX_VENUES];
         int    num_candidates = 0;
         for (int i = 0; i < venue_count_; ++i) {
@@ -304,18 +304,18 @@ public:
             return split_order(candidates, num_candidates, is_buy, quantity, t0);
         }
 
-        // Single-venue strategie: BEST_PRICE (cena efektywna) lub LOWEST_LATENCY.
+        // Single-venue strategies: BEST_PRICE (effective price) or LOWEST_LATENCY.
         Venue* best = candidates[0];
         if (strat == RoutingStrategy::LOWEST_LATENCY) {
-            // Wybieramy po selection_latency (p99 gdy ustawione, inaczej mean).
-            // Production SOR'y patrzą na ogon rozkładu, nie na średnią — p99
-            // decyduje o jakości egzekucji w warunkach stress'u/burst'u.
+            // Select by selection_latency (p99 when set, otherwise mean).
+            // Production SORs look at the tail of the distribution, not the average — p99
+            // decides execution quality under stress/burst.
             for (int i = 1; i < num_candidates; ++i) {
                 if (candidates[i]->selection_latency_ns() < best->selection_latency_ns())
                     best = candidates[i];
             }
         } else {
-            // BEST_PRICE (i fallback dla SPLIT poniżej progu) — cena efektywna.
+            // BEST_PRICE (and the fallback for SPLIT below the threshold) — effective price.
             double best_eff = effective_price(*best, is_buy);
             for (int i = 1; i < num_candidates; ++i) {
                 const double eff    = effective_price(*candidates[i], is_buy);
@@ -324,9 +324,9 @@ public:
             }
         }
 
-        // Respektuj dostępną płynność na wybranym venue — duże zlecenie może
-        // przekroczyć top-of-book size. Reszta to shortfall (caller re-routuje
-        // albo czeka). Realny SOR nie obiecuje fillu ponad widoczny rozmiar.
+        // Respect the available liquidity on the chosen venue — a large order can
+        // exceed the top-of-book size. The rest is shortfall (the caller re-routes
+        // or waits). A real SOR does not promise a fill beyond the visible size.
         const int32_t available = is_buy ? best->ask_size : best->bid_size;
         const int32_t filled    = std::min(quantity, available);
 
@@ -346,19 +346,19 @@ public:
         ++best->routes_count;
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
-        total_fees_paid_  += d.total_fee;   // #138 kumulatywny koszt
+        total_fees_paid_  += d.total_fee;   // #138 cumulative cost
         return d;
     }
 
-    // Overload: użyj domyślnej strategii.
+    // Overload: use the default strategy.
     RouteDecision route_order(const char* side, int32_t quantity) noexcept {
         return route_order(side, quantity, default_strategy_);
     }
 
     // === NBBO (National Best Bid/Offer) — #97 ===
-    // Najlepsza cena AGREGOWANA po wszystkich aktywnych venue z płynnością.
-    // Referencja do trade-through / best-execution; surowy quote (bez opłat).
-    // Zwraca 0 gdy brak płynności po danej stronie.
+    // The best AGGREGATE price across all active venues with liquidity.
+    // A reference for trade-through / best-execution; the raw quote (no fees).
+    // Returns 0 when there is no liquidity on a given side.
     double national_best_bid() const noexcept {
         double best = 0.0;
         for (int i = 0; i < venue_count_; ++i) {
@@ -403,16 +403,16 @@ public:
         const double b = national_best_bid(), a = national_best_ask();
         return (b > 0.0 && a > 0.0) ? (b + a) / 2.0 : 0.0;
     }
-    // nbbo_spread: skonsolidowany spread NBBO (#208) = NBO - NBB po wszystkich
-    // aktywnych venue. Zwykle CIASNIEJSZY niz na pojedynczej gieldzie (best bid i
-    // best ask moga byc na roznych venue). <=0 sygnalizuje locked/crossed miedzy
-    // venue (cross-venue arbitraz). 0 gdy brak dwustronnej plynnosci.
+    // nbbo_spread: the consolidated NBBO spread (#208) = NBO - NBB across all
+    // active venues. Usually TIGHTER than on a single exchange (the best bid and
+    // best ask can be on different venues). <=0 signals locked/crossed between
+    // venues (cross-venue arbitrage). 0 when there is no two-sided liquidity.
     double nbbo_spread() const noexcept {
         const double b = national_best_bid(), a = national_best_ask();
         return (b > 0.0 && a > 0.0) ? (a - b) : 0.0;
     }
-    // nbbo_spread_bps: nbbo_spread wzgledem nbbo_mid w punktach bazowych — miara
-    // jakosci skonsolidowanego rynku niezalezna od poziomu ceny.
+    // nbbo_spread_bps: nbbo_spread relative to nbbo_mid in basis points — a measure of
+    // consolidated market quality independent of the price level.
     double nbbo_spread_bps() const noexcept {
         const double m = nbbo_mid();
         return m > 0.0 ? nbbo_spread() / m * 10000.0 : 0.0;
@@ -445,26 +445,26 @@ public:
         return c;
     }
 
-    // effective_spread_bps: RZECZYWISTY koszt przejscia spreadu Z OPLATAMI (#240) =
-    // best all-in ask (quote+fee) - best all-in bid (quote-fee), w bps. Wiekszy niz
-    // nbbo_spread_bps (#208, sam quote) o round-trip fees: pokazuje ile naprawde
-    // kosztuje wejscie+wyjscie po cenach takera. 0 bez dwustronnej plynnosci.
+    // effective_spread_bps: the REAL cost of crossing the spread WITH FEES (#240) =
+    // best all-in ask (quote+fee) - best all-in bid (quote-fee), in bps. Larger than
+    // nbbo_spread_bps (#208, quote only) by the round-trip fees: it shows how much it really
+    // costs to enter+exit at taker prices. 0 without two-sided liquidity.
     double effective_spread_bps() const noexcept {
-        const double eff_ask = best_effective_price(true);    // all-in kupna
-        const double eff_bid = best_effective_price(false);   // all-in sprzedazy
+        const double eff_ask = best_effective_price(true);    // all-in buy
+        const double eff_bid = best_effective_price(false);   // all-in sell
         if (eff_ask <= 0.0 || eff_bid <= 0.0) return 0.0;
         const double m = (eff_ask + eff_bid) / 2.0;
         return m > 0.0 ? (eff_ask - eff_bid) / m * 10000.0 : 0.0;
     }
-    // active_venue_count: ile venue jest aktywnych (po health/manual) (#154).
+    // active_venue_count: how many venues are active (after health/manual) (#154).
     int active_venue_count() const noexcept {
         int n = 0;
         for (int i = 0; i < venue_count_; ++i) if (venues_[i].is_active) ++n;
         return n;
     }
-    // best_effective_price: najlepsza cena ALL-IN (quote ± fee) dostepna teraz po
-    // danej stronie, bez routowania (#154). BUY: minimalna; SELL: maksymalna.
-    // 0 gdy brak plynnosci. Inspekcja "ile bym zaplacil" przed decyzja.
+    // best_effective_price: the best ALL-IN price (quote ± fee) available now on a
+    // given side, without routing (#154). BUY: minimum; SELL: maximum.
+    // 0 when there is no liquidity. Inspection of "what would I pay" before deciding.
     double best_effective_price(bool is_buy) const noexcept {
         double best = 0.0; bool found = false;
         for (int i = 0; i < venue_count_; ++i) {
@@ -479,21 +479,21 @@ public:
         return found ? best : 0.0;
     }
 
-    // is_marketable: czy zlecenie z limitem moglo by sie wykonac OD RAZU (#184) —
-    // istnieje aktywne venue, ktorego cena all-in (quote ± fee) jest po wlasciwej
-    // stronie limitu. BUY: najlepszy all-in ask <= limit; SELL: najlepszy all-in
-    // bid >= limit. false gdy brak plynnosci. Pre-route guard dla limit orderow:
-    // niemarketowalne -> odloz do ksiazki zamiast routowac w prozne.
+    // is_marketable: could a limit order execute IMMEDIATELY (#184) — there is
+    // an active venue whose all-in price (quote ± fee) is on the right
+    // side of the limit. BUY: best all-in ask <= limit; SELL: best all-in
+    // bid >= limit. false when there is no liquidity. A pre-route guard for limit orders:
+    // non-marketable -> rest in the book instead of routing into the void.
     bool is_marketable(bool is_buy, double limit_price) const noexcept {
         const double best = best_effective_price(is_buy);
         if (best <= 0.0) return false;
         return is_buy ? (best <= limit_price) : (best >= limit_price);
     }
 
-    // venue_effective_price: cena all-in (quote +/- fee) dla KONKRETNEGO venue po
-    // nazwie (#248). Inspekcja / wycena zlecenia kierowanego (directed order) na
-    // wskazana gielde, niezaleznie od best-price. 0 gdy nieznane, nieaktywne lub
-    // brak plynnosci po danej stronie. Uzupelnia best_effective_price (skan wszystkich).
+    // venue_effective_price: the all-in price (quote +/- fee) for a SPECIFIC venue by
+    // name (#248). Inspection / pricing of a directed order to a
+    // specified exchange, independent of best-price. 0 when unknown, inactive or
+    // no liquidity on a given side. Complements best_effective_price (scan of all).
     double venue_effective_price(const char* venue_name, bool is_buy) const noexcept {
         for (int i = 0; i < venue_count_; ++i) {
             const Venue& v = venues_[i];
@@ -506,10 +506,10 @@ public:
         return 0.0;
     }
 
-    // cheapest_venue: NAZWA venue z najlepsza cena all-in (quote +/- fee) po danej
-    // stronie (#200). Uzupelnia best_effective_price (sama cena) — tu wiadomo
-    // GDZIE. BUY: min all-in ask; SELL: max all-in bid. nullptr gdy brak plynnosci.
-    // Inspekcja/logowanie decyzji routingu bez wykonywania route_order.
+    // cheapest_venue: the NAME of the venue with the best all-in price (quote +/- fee) on a
+    // given side (#200). Complements best_effective_price (the price itself) — here you know
+    // WHERE. BUY: min all-in ask; SELL: max all-in bid. nullptr when there is no liquidity.
+    // Inspection/logging of a routing decision without executing route_order.
     const char* cheapest_venue(bool is_buy) const noexcept {
         const char* best_name = nullptr;
         double best = 0.0; bool found = false;
@@ -578,9 +578,9 @@ public:
         return n > 0 ? static_cast<double>(sum) / static_cast<double>(n) : 0.0;
     }
 
-    // available_liquidity: laczny displayed size top-of-book po stronie zlecenia
-    // (is_buy → asks, sprzedaz → bids), tylko aktywne venue z dodatnim quote.
-    // Pre-route sizing: czy w ogole jest plynnosc na pokrycie zlecenia (#109).
+    // available_liquidity: total displayed top-of-book size on the order's side
+    // (is_buy → asks, sell → bids), only active venues with a positive quote.
+    // Pre-route sizing: whether there is any liquidity to cover the order (#109).
     int32_t available_liquidity(bool is_buy) const noexcept {
         int32_t total = 0;
         for (int i = 0; i < venue_count_; ++i) {
@@ -606,15 +606,15 @@ public:
         }
         return total;
     }
-    // fill_shortfall: ile akcji zlecenia NIE pokryje wyswietlona plynnosc (#224) =
-    // max(0, shares - available_liquidity). Reszta musialaby odlezec w ksiazce /
-    // poczekac na nowy quote. Pre-route sizing.
+    // fill_shortfall: how many shares of the order the displayed liquidity will NOT cover (#224) =
+    // max(0, shares - available_liquidity). The rest would have to rest in the book /
+    // wait for a new quote. Pre-route sizing.
     int32_t fill_shortfall(bool is_buy, int32_t shares) const noexcept {
         const int32_t avail = available_liquidity(is_buy);
         return shares > avail ? shares - avail : 0;
     }
-    // fillable_ratio: jaka czesc zlecenia wykona sie od reki wg displayed (#224),
-    // 0..1. min(avail, shares) / shares. 0 dla shares <= 0.
+    // fillable_ratio: what fraction of the order fills immediately per displayed (#224),
+    // 0..1. min(avail, shares) / shares. 0 for shares <= 0.
     double fillable_ratio(bool is_buy, int32_t shares) const noexcept {
         if (shares <= 0) return 0.0;
         const int32_t avail = available_liquidity(is_buy);
@@ -642,29 +642,29 @@ public:
     }
 
     int venue_count() const noexcept { return venue_count_; }
-    // venue_routed_shares: laczny zaroutowany wolumen na dane venue (TCA, #117).
+    // venue_routed_shares: total routed volume on a given venue (TCA, #117).
     int64_t venue_routed_shares(const char* venue_name) const noexcept {
         for (int i = 0; i < venue_count_; ++i)
             if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].routed_shares;
         return 0;
     }
-    // total_routed_shares: laczny wolumen zaroutowany po wszystkich venue (#130).
+    // total_routed_shares: total volume routed across all venues (#130).
     int64_t total_routed_shares() const noexcept {
         int64_t s = 0;
         for (int i = 0; i < venue_count_; ++i) s += venues_[i].routed_shares;
         return s;
     }
-    // venue_share_pct: jaki % calego zaroutowanego wolumenu trafil na dane venue
-    // (#216) — koncentracja egzekucji do raportowania best-ex / TCA. Wysoki udzial
-    // jednego venue moze wymagac uzasadnienia. 0 dla nieznanego lub przy zerowym
-    // wolumenie.
+    // venue_share_pct: what % of the entire routed volume landed on a given venue
+    // (#216) — execution concentration for best-ex / TCA reporting. A high share of
+    // one venue may require justification. 0 for an unknown venue or at zero
+    // volume.
     double venue_share_pct(const char* venue_name) const noexcept {
         const int64_t total = total_routed_shares();
         if (total <= 0) return 0.0;
         return static_cast<double>(venue_routed_shares(venue_name))
              / static_cast<double>(total) * 100.0;
     }
-    // reset_routing_stats: wyzeruj liczniki TCA per venue (nowa sesja/okno).
+    // reset_routing_stats: zero the per-venue TCA counters (new session/window).
     void reset_routing_stats() noexcept {
         for (int i = 0; i < venue_count_; ++i) {
             venues_[i].routed_shares = 0;
@@ -672,10 +672,10 @@ public:
         }
     }
 
-    // reset_session_stats: PELNY reset TCA na nowa sesje (#192) — zeruje liczniki
-    // globalne (routes/rejects/latency/fees), ktorych reset_routing_stats NIE
-    // ruszal, oraz per-venue. Venue i ich quote'y zostaja (nie trzeba ich na nowo
-    // dodawac/kwotowac). Wolaj raz na otwarcie sesji.
+    // reset_session_stats: a FULL TCA reset for a new session (#192) — zeroes the
+    // global counters (routes/rejects/latency/fees) that reset_routing_stats did NOT
+    // touch, plus per-venue. Venues and their quotes stay (no need to add/quote them
+    // again). Call once at the open of the session.
     void reset_session_stats() noexcept {
         total_routes_     = 0;
         total_rejected_   = 0;
@@ -684,21 +684,21 @@ public:
         reset_routing_stats();
     }
 
-    // total_fees_paid: suma oplat/rebate po wszystkich trasach (#138). Ujemne =
-    // net rebate (maker). Podstawa analizy kosztow egzekucji.
+    // total_fees_paid: sum of fees/rebates over all routes (#138). Negative =
+    // net rebate (maker). The basis for execution-cost analysis.
     double   total_fees_paid()    const noexcept { return total_fees_paid_; }
-    // avg_fee_per_share: srednia ZREALIZOWANA oplata na akcje (#232) = total_fees /
-    // total_routed_shares. Dodatnia = netto taker (placisz za plynnosc), ujemna =
-    // netto maker (zbierasz rebate). Kluczowa miara TCA jakosci routingu. 0 gdy
-    // nic nie zaroutowano.
+    // avg_fee_per_share: average REALIZED fee per share (#232) = total_fees /
+    // total_routed_shares. Positive = net taker (you pay for liquidity), negative =
+    // net maker (you collect rebate). A key TCA measure of routing quality. 0 when
+    // nothing was routed.
     double   avg_fee_per_share() const noexcept {
         const int64_t total = total_routed_shares();
         return total > 0 ? total_fees_paid_ / static_cast<double>(total) : 0.0;
     }
 
-    // set_venue_fee: runtime podmiana taryfy venue (#176). Harmonogramy oplat
-    // zmieniaja sie (tier po wolumenie, promocja maker/taker); routing all-in
-    // (quote ± fee) natychmiast uwzglednia nowa stawke. false gdy nieznane venue.
+    // set_venue_fee: runtime swap of a venue's tariff (#176). Fee schedules
+    // change (volume tier, maker/taker promotion); all-in routing
+    // (quote ± fee) immediately reflects the new rate. false for an unknown venue.
     bool set_venue_fee(const char* venue_name, double fee_per_share) noexcept {
         for (int i = 0; i < venue_count_; ++i)
             if (std::strcmp(venues_[i].name, venue_name) == 0) {
@@ -710,14 +710,14 @@ public:
 
     uint64_t get_total_routes()   const noexcept { return total_routes_; }
     uint64_t get_total_rejected() const noexcept { return total_rejected_; }
-    // reject_rate: odsetek prob routingu zakonczonych odrzuceniem (#162) =
-    // rejected / (routes + rejected). 0 gdy brak prob.
+    // reject_rate: fraction of routing attempts that ended in rejection (#162) =
+    // rejected / (routes + rejected). 0 when there are no attempts.
     double reject_rate() const noexcept {
         const uint64_t total = total_routes_ + total_rejected_;
         return total > 0 ? static_cast<double>(total_rejected_) / static_cast<double>(total) : 0.0;
     }
-    // avg_routing_latency_ns: srednia latencja DECYZJI routera (nie round-trip
-    // venue) na udana trase (#162).
+    // avg_routing_latency_ns: average router DECISION latency (not the venue
+    // round-trip) per successful route (#162).
     double avg_routing_latency_ns() const noexcept {
         return total_routes_ > 0 ? static_cast<double>(total_latency_ns_) / static_cast<double>(total_routes_) : 0.0;
     }
@@ -732,17 +732,17 @@ public:
     }
 
 private:
-    // split_order: rozbij duże zlecenie. Sortuje venue po cenie EFEKTYWNEJ
-    // (nie surowej!) i wypełnia od najtańszego, aż wyczerpiemy zlecenie lub
-    // płynność. Raportuje średnią cenę, łączną opłatę i liczbę użytych venue.
+    // split_order: split a large order. Sorts venues by EFFECTIVE price
+    // (not raw!) and fills from the cheapest until the order or
+    // liquidity is exhausted. Reports the average price, total fee and number of venues used.
     RouteDecision split_order(Venue** candidates, int num, bool is_buy,
                                int32_t quantity, int64_t t0) noexcept {
-        // Selection sort po cenie efektywnej (małe N → O(N²) bez znaczenia).
+        // Selection sort by effective price (small N → O(N²) doesn't matter).
         for (int i = 0; i < num - 1; ++i) {
             for (int j = i + 1; j < num; ++j) {
                 const double a = effective_price(*candidates[i], is_buy);
                 const double b = effective_price(*candidates[j], is_buy);
-                const bool   swap = is_buy ? (b < a) : (b > a);  // najlepsze najpierw
+                const bool   swap = is_buy ? (b < a) : (b > a);  // best first
                 if (swap) std::swap(candidates[i], candidates[j]);
             }
         }
@@ -750,8 +750,8 @@ private:
         int32_t remaining   = quantity;
         int32_t filled      = 0;
         int32_t venues_used = 0;
-        double  price_sum   = 0.0;   // Σ quote × alloc (do średniej ceny)
-        double  fee_sum     = 0.0;   // Σ fee × alloc   (łączna opłata)
+        double  price_sum   = 0.0;   // Σ quote × alloc (for the average price)
+        double  fee_sum     = 0.0;   // Σ fee × alloc   (total fee)
 
         for (int i = 0; i < num && remaining > 0; ++i) {
             const int32_t available = is_buy ? candidates[i]->ask_size
@@ -777,21 +777,21 @@ private:
 
         RouteDecision d;
         d.valid           = true;
-        std::strncpy(d.venue, candidates[0]->name, 15);  // venue z najlepszą ceną = primary
+        std::strncpy(d.venue, candidates[0]->name, 15);  // the best-price venue = primary
         d.venue[15]       = '\0';
         d.price           = price_sum / filled;
-        // all-in średnia: dla BUY koszt rośnie o fee, dla SELL maleje.
+        // all-in average: for BUY the cost rises by fee, for SELL it falls.
         d.effective_price = is_buy ? (price_sum + fee_sum) / filled
                                    : (price_sum - fee_sum) / filled;
         d.total_fee       = fee_sum;
         d.quantity        = filled;
-        d.unfilled_qty    = quantity - filled;   // shortfall gdy Σpłynność < zlecenie
+        d.unfilled_qty    = quantity - filled;   // shortfall when Σliquidity < order
         d.num_venues      = venues_used;
         d.latency_ns      = now_ns() - t0;
 
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
-        total_fees_paid_  += d.total_fee;   // #138 kumulatywny koszt
+        total_fees_paid_  += d.total_fee;   // #138 cumulative cost
         return d;
     }
 };

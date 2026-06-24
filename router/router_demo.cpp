@@ -94,17 +94,17 @@ void test_fee_tiebreaker() {
     router.update_quote("V1", 150.0, 150.10, 500, 500);
     router.update_quote("V2", 150.0, 150.10, 500, 500);  // same ask
     auto d = router.route_order("BUY", 100, RoutingStrategy::BEST_PRICE);
-    // Same ask, V2 ma rebate (niższa cena efektywna) — wygrywa.
+    // Same ask, V2 has a rebate (lower effective price) — it wins.
     ASSERT(std::strcmp(d.venue, "V2") == 0, "test_fee_tiebreaker");
 }
 
-// Kluczowy test realizmu: venue z NAJTAŃSZYM quote przegrywa przez wysoką
-// opłatę. Raw best price wybrałby CHEAP_RAW (150.00), ale cena efektywna
-// (z opłatą) faworyzuje GOOD_NET. Tak działa prawdziwy SOR.
+// A key realism test: the venue with the CHEAPEST quote loses because of a high
+// fee. Raw best price would pick CHEAP_RAW (150.00), but the effective price
+// (with the fee) favors GOOD_NET. This is how a real SOR works.
 void test_effective_price_flips_decision() {
     SmartOrderRouter router;
-    router.add_venue(Venue("CHEAP_RAW", 100,  0.05));   // taniej, ale gruba opłata
-    router.add_venue(Venue("GOOD_NET",  100, -0.01));   // drożej, ale rebate
+    router.add_venue(Venue("CHEAP_RAW", 100,  0.05));   // cheaper, but a fat fee
+    router.add_venue(Venue("GOOD_NET",  100, -0.01));   // pricier, but a rebate
     router.update_quote("CHEAP_RAW", 149.90, 150.00, 500, 500);  // ask 150.00, eff 150.05
     router.update_quote("GOOD_NET",  149.93, 150.03, 500, 500);  // ask 150.03, eff 150.02
     auto d = router.route_order("BUY", 100, RoutingStrategy::BEST_PRICE);
@@ -112,41 +112,41 @@ void test_effective_price_flips_decision() {
     ASSERT(d.effective_price < 150.03, "test_effective_price_value");  // 150.02 all-in
 }
 
-// Nowe pola RouteDecision: total_fee = fee_per_share × quantity.
+// New RouteDecision fields: total_fee = fee_per_share × quantity.
 void test_route_reports_fee() {
     auto router = make_test_router();
     auto d = router.route_order("BUY", 100, RoutingStrategy::BEST_PRICE);  // → NASDAQ, fee -0.002
     ASSERT(d.valid, "test_fee_report_valid");
     ASSERT(d.num_venues == 1, "test_fee_report_single_venue");
-    // NASDAQ rebate -0.002 × 100 = -0.20 (dostajemy rebate).
+    // NASDAQ rebate -0.002 × 100 = -0.20 (we receive a rebate).
     ASSERT(d.total_fee < 0.0, "test_fee_report_rebate_negative");
 }
 
-// SPLIT rozbija na >1 venue gdy jedno nie ma dość płynności.
+// SPLIT splits across >1 venue when one lacks enough liquidity.
 void test_split_reports_multiple_venues() {
     auto router = make_test_router();
-    // 600 akcji: NASDAQ ma 300, BATS 200, NYSE 500 — musi rozbić.
+    // 600 shares: NASDAQ has 300, BATS 200, NYSE 500 — it must split.
     auto d = router.route_order("BUY", 600, RoutingStrategy::SPLIT);
     ASSERT(d.valid, "test_split_multi_valid");
     ASSERT(d.num_venues >= 2, "test_split_multi_venues");
     ASSERT(d.quantity == 600, "test_split_multi_qty");
 }
 
-// LOWEST_LATENCY z p99 — venue z lepszym mean ale gorszym ogonem przegrywa.
-// W produkcji to standard: p99 (ogon) decyduje o jakości egzekucji w stresie.
+// LOWEST_LATENCY with p99 — a venue with a better mean but a worse tail loses.
+// In production this is standard: p99 (the tail) decides execution quality under stress.
 void test_lowest_latency_uses_p99_when_set() {
     SmartOrderRouter router;
     Venue fast_mean_slow_tail("FAST_MEAN", 50, 0.001);   // mean 50ns
-    fast_mean_slow_tail.latency_p99_ns = 2000;            // p99 = 2µs (zły ogon)
+    fast_mean_slow_tail.latency_p99_ns = 2000;            // p99 = 2µs (bad tail)
     Venue stable("STABLE", 100, 0.001);                   // mean 100ns
-    stable.latency_p99_ns = 200;                          // p99 = 200ns (mały jitter)
+    stable.latency_p99_ns = 200;                          // p99 = 200ns (small jitter)
     router.add_venue(fast_mean_slow_tail);
     router.add_venue(stable);
     router.update_quote("FAST_MEAN", 100.0, 100.10, 500, 500);
     router.update_quote("STABLE",    100.0, 100.10, 500, 500);
     auto d = router.route_order("BUY", 100, RoutingStrategy::LOWEST_LATENCY);
     ASSERT(d.valid, "p99_lat_valid");
-    // STABLE wygrywa (p99=200 < 2000), mimo gorszego mean.
+    // STABLE wins (p99=200 < 2000), despite the worse mean.
     ASSERT(std::strcmp(d.venue, "STABLE") == 0, "p99_selects_better_tail_not_better_mean");
 }
 
