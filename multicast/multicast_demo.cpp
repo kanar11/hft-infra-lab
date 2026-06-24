@@ -1,11 +1,10 @@
 /**
  * Multicast Market Data Feed — unit tests + throughput benchmark.
- * Kanał danych rynkowych Multicast — testy jednostkowe + benchmark przepustowości.
  *
- * Compile / Kompilacja:
+ * Compile:
  *   g++ -O2 -std=c++17 -pthread -o multicast/multicast_demo multicast/multicast_demo.cpp
  *
- * Run / Uruchomienie:
+ * Run:
  *   ./multicast/multicast_demo [iterations]
  */
 
@@ -18,7 +17,7 @@
 #include <atomic>
 
 // ============================================================
-// Test helpers / Helpery testowe
+// Test helpers
 // ============================================================
 
 static int tests_passed = 0;
@@ -37,7 +36,7 @@ static int tests_total = 0;
 } while(0)
 
 // ============================================================
-// Unit tests / Testy jednostkowe
+// Unit tests
 // ============================================================
 
 void test_make_message() {
@@ -70,7 +69,7 @@ void test_serialize_deserialize() {
 }
 
 void test_negative_price() {
-    // Negative price for short position / Ujemna cena dla krótkiej pozycji
+    // Negative price for short position
     auto msg = multicast::make_message(0, "TEST", -1500000, 10, 'S', MsgType::QUOTE);
     uint8_t buf[MC_MSG_SIZE];
     multicast::serialize(msg, buf);
@@ -93,7 +92,7 @@ void test_deserialize_empty() {
 }
 
 void test_big_endian_encoding() {
-    // Verify specific byte ordering / Sprawdź kolejność bajtów
+    // Verify specific byte ordering
     MarketDataMessage msg{};
     msg.sequence     = 0x0102030405060708ULL;
     msg.timestamp_ns = 0x1112131415161718ULL;
@@ -106,7 +105,7 @@ void test_big_endian_encoding() {
     uint8_t buf[MC_MSG_SIZE];
     multicast::serialize(msg, buf);
 
-    // Check sequence bytes are big-endian / Sprawdź że bajty sekwencji są big-endian
+    // Check sequence bytes are big-endian
     ASSERT(buf[0] == 0x01 && buf[7] == 0x08, "sequence_big_endian");
     ASSERT(buf[8] == 0x11 && buf[15] == 0x18, "timestamp_big_endian");
     ASSERT(buf[16] == 'A' && buf[23] == 'H', "symbol_copied");
@@ -117,7 +116,7 @@ void test_big_endian_encoding() {
 }
 
 void test_all_msg_types() {
-    // Test each MsgType serializes correctly / Testuj każdy MsgType
+    // Test each MsgType serializes correctly
     MsgType types[] = {MsgType::ADD, MsgType::DELETE, MsgType::TRADE,
                        MsgType::UPDATE, MsgType::QUOTE, MsgType::SYSTEM};
     char expected[] = {'A', 'D', 'T', 'U', 'Q', 'S'};
@@ -134,13 +133,13 @@ void test_all_msg_types() {
 }
 
 void test_symbol_short() {
-    // Short symbol gets space-padded / Krótki symbol dopełniony spacjami
+    // Short symbol gets space-padded
     auto msg = multicast::make_message(0, "FB", 0, 0, 'B', MsgType::ADD);
     ASSERT(std::memcmp(msg.symbol, "FB      ", 8) == 0, "short_symbol_padded");
 }
 
 void test_symbol_exact_8() {
-    // Exactly 8-char symbol / Dokładnie 8-znakowy symbol
+    // Exactly 8-char symbol
     auto msg = multicast::make_message(0, "ABCDEFGH", 0, 0, 'B', MsgType::ADD);
     ASSERT(std::memcmp(msg.symbol, "ABCDEFGH", 8) == 0, "exact_8_symbol");
 }
@@ -163,7 +162,7 @@ void test_large_quantity() {
     ASSERT(decoded.quantity == UINT32_MAX, "max_quantity_roundtrip");
 }
 
-// Sequence tracking — wykrywanie packet loss. Czysta logika, bez gniazd.
+// Sequence tracking — packet loss detection. Pure logic, no sockets.
 
 void test_seqtrack_in_order() {
     multicast::SequenceTracker t;
@@ -180,11 +179,11 @@ void test_seqtrack_gap() {
     multicast::SequenceTracker t;
     t.observe(1);                      // OK, expected=2
     t.observe(2);                      // OK, expected=3
-    auto st = t.observe(7);            // luka: zgubione 3,4,5,6 (4 pakiety)
+    auto st = t.observe(7);            // gap: lost 3,4,5,6 (4 packets)
     ASSERT(st == multicast::SequenceTracker::Status::GAP, "seqtrack_gap_status");
     ASSERT(t.gaps == 1, "seqtrack_gap_count");
     ASSERT(t.lost == 4, "seqtrack_gap_lost_4");
-    // Po luce wracamy do kolejności: 8,9 OK.
+    // After a gap we resync: 8,9 OK.
     ASSERT(t.observe(8) == multicast::SequenceTracker::Status::OK, "seqtrack_gap_resync");
     ASSERT(t.lost == 4, "seqtrack_gap_lost_stable");
 }
@@ -194,7 +193,7 @@ void test_seqtrack_duplicate() {
     t.observe(1);
     t.observe(2);
     t.observe(3);                      // expected=4
-    auto st = t.observe(2);            // spóźniony/duplikat (2 < 4)
+    auto st = t.observe(2);            // late/duplicate (2 < 4)
     ASSERT(st == multicast::SequenceTracker::Status::DUPLICATE, "seqtrack_dup_status");
     ASSERT(t.duplicates == 1, "seqtrack_dup_count");
     ASSERT(t.received == 3, "seqtrack_dup_received_unchanged");
@@ -203,13 +202,13 @@ void test_seqtrack_duplicate() {
 void test_seqtrack_loss_rate() {
     multicast::SequenceTracker t;
     t.observe(0);                      // received=1
-    t.observe(10);                     // luka: lost=9, received=2
+    t.observe(10);                     // gap: lost=9, received=2
     // loss_rate = lost / (received + lost) = 9 / (2 + 9) = 9/11.
     const double expected = 9.0 / 11.0;
     ASSERT(std::fabs(t.loss_rate() - expected) < 1e-9, "seqtrack_loss_rate");
 }
 
-// MoldUDP64 framing — przemysłowy standard (NASDAQ). Wiele wiadomości/pakiet.
+// MoldUDP64 framing — the industrial standard (NASDAQ). Many messages/packet.
 
 void test_mold_roundtrip_packet() {
     MarketDataMessage msgs[3];
@@ -253,29 +252,29 @@ void test_mold_heartbeat() {
 }
 
 void test_mold_packet_gap() {
-    // Gap detection na poziomie pakietu: zgubiony cały datagram (msgs 4..9).
+    // Packet-level gap detection: a whole datagram lost (msgs 4..9).
     multicast::SequenceTracker trk;
     trk.observe_packet(1, 3);    // msgs 1,2,3 → expected 4
-    trk.observe_packet(10, 2);   // luka 4..9 (6 zgubionych), msgs 10,11 → expected 12
+    trk.observe_packet(10, 2);   // gap 4..9 (6 lost), msgs 10,11 → expected 12
     ASSERT(trk.gaps == 1, "mold_gap_count");
     ASSERT(trk.lost == 6, "mold_gap_lost_6");
     ASSERT(trk.expected_seq == 12, "mold_gap_expected");
 }
 
 void test_mold_duplicate_packet() {
-    // Retransmisja / A-B line: ten sam pakiet dwa razy → drugi to duplikat.
+    // Retransmission / A-B line: the same packet twice → the second is a duplicate.
     multicast::SequenceTracker trk;
     trk.observe_packet(1, 3);    // expected 4
-    auto st = trk.observe_packet(1, 3);  // pełny duplikat (1..3 < 4)
+    auto st = trk.observe_packet(1, 3);  // full duplicate (1..3 < 4)
     ASSERT(st == multicast::SequenceTracker::Status::DUPLICATE, "mold_dup_status");
     ASSERT(trk.duplicates == 1, "mold_dup_count");
     ASSERT(trk.expected_seq == 4, "mold_dup_expected_unchanged");
 }
 
-// A/B line arbitration — redundancja feedów (standard branżowy).
+// A/B line arbitration — feed redundancy (industry standard).
 
 void test_arbitration_dedup() {
-    // Linia A i B wysyłają te same pakiety; arbiter bierze pierwszy raz, drop dup.
+    // Lines A and B send the same packets; the arbiter takes the first one, drops the dup.
     multicast::ArbitratedReceiver arb;
     using L = multicast::ArbitratedReceiver::Line;
     using R = multicast::ArbitratedReceiver::Result;
@@ -288,13 +287,13 @@ void test_arbitration_dedup() {
 }
 
 void test_arbitration_failover() {
-    // Linia A gubi pakiet 4-6, linia B go dostarcza — arbiter wybiera FRESH z B.
+    // Line A loses packets 4-6, line B delivers them — the arbiter picks FRESH from B.
     multicast::ArbitratedReceiver arb;
     using L = multicast::ArbitratedReceiver::Line;
     using R = multicast::ArbitratedReceiver::Result;
-    arb.observe(L::A, 1, 3);   // OK z A
+    arb.observe(L::A, 1, 3);   // OK from A
     arb.observe(L::B, 1, 3);   // dup
-    // A nie dostarcza 4-6 — przychodzi tylko z B
+    // A does not deliver 4-6 — it comes only from B
     ASSERT(arb.observe(L::B, 4, 3) == R::FRESH, "arb_b_failover_fresh");
     ASSERT(arb.fresh_from_b() >= 1, "arb_failover_credit_b");
     ASSERT(arb.failover_ratio() > 0.0, "arb_failover_ratio_positive");
@@ -319,9 +318,7 @@ void test_latency_stats_empty() {
 
 void test_udp_loopback() {
     // Send and receive via UDP localhost (not multicast, just basic socket test)
-    // Wyślij i odbierz przez UDP localhost (nie multicast, podstawowy test gniazda)
     // NOTE: Soft test — may not work on restricted CI environments
-    // UWAGA: Miękki test — może nie działać na ograniczonych środowiskach CI
     int send_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
     int recv_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (send_fd < 0 || recv_fd < 0) {
@@ -336,7 +333,7 @@ void test_udp_loopback() {
 
     struct sockaddr_in addr{};
     addr.sin_family      = AF_INET;
-    addr.sin_port        = htons(19876);  // Ephemeral test port / Efemeryczny port testowy
+    addr.sin_port        = htons(19876);  // Ephemeral test port
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     if (::bind(recv_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
@@ -345,18 +342,18 @@ void test_udp_loopback() {
         return;
     }
 
-    // Set receive timeout / Ustaw timeout odbioru
+    // Set receive timeout
     struct timeval tv{0, 100000};  // 100ms
     ::setsockopt(recv_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    // Send a message / Wyślij wiadomość
+    // Send a message
     auto msg = multicast::make_message(777, "NVDA", 9500000, 250, 'B', MsgType::ADD);
     uint8_t buf[MC_MSG_SIZE];
     multicast::serialize(msg, buf);
     ssize_t sent = ::sendto(send_fd, buf, MC_MSG_SIZE, 0,
                             reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
 
-    // Receive it / Odbierz ją
+    // Receive it
     uint8_t recv_buf[MC_MSG_SIZE + 16];
     ssize_t recvd = ::recv(recv_fd, recv_buf, sizeof(recv_buf), 0);
 
@@ -378,25 +375,24 @@ void test_udp_loopback() {
 }
 
 // ============================================================
-// Throughput benchmark / Benchmark przepustowości
+// Throughput benchmark
 // ============================================================
 
 void benchmark_serialize(int iterations) {
-    printf("\n=== Multicast Serialization Benchmark ===\n");
-    printf("=== Benchmark serializacji Multicast ===\n\n");
+    printf("\n=== Multicast Serialization Benchmark ===\n\n");
     printf("  Messages: %d\n", iterations);
 
-    // Pre-build messages / Przygotuj wiadomości
+    // Pre-build messages
     auto msg = multicast::make_message(0, "AAPL", 1502500, 100, 'B', MsgType::ADD);
     uint8_t buf[MC_MSG_SIZE];
 
-    // Warmup / Rozgrzewka
+    // Warmup
     for (int i = 0; i < 1000; ++i) {
         msg.sequence = static_cast<uint64_t>(i);
         multicast::serialize(msg, buf);
     }
 
-    // Benchmark serialize / Benchmark serializacji
+    // Benchmark serialize
     std::vector<uint64_t> latencies(static_cast<size_t>(iterations));
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; ++i) {
@@ -412,7 +408,7 @@ void benchmark_serialize(int iterations) {
 
     std::sort(latencies.begin(), latencies.end());
     size_t n = latencies.size();
-    printf("\n--- Serialize / Serializacja ---\n");
+    printf("\n--- Serialize ---\n");
     printf("  Elapsed:   %.2f ms\n", elapsed_ms);
     printf("  p50:       %lu ns\n", latencies[n * 50 / 100]);
     printf("  p90:       %lu ns\n", latencies[n * 90 / 100]);
@@ -421,7 +417,7 @@ void benchmark_serialize(int iterations) {
     printf("  Throughput: %.1f M msg/sec\n",
            iterations / elapsed_ms / 1000.0);
 
-    // Benchmark deserialize / Benchmark deserializacji
+    // Benchmark deserialize
     MarketDataMessage decoded{};
     start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; ++i) {
@@ -435,7 +431,7 @@ void benchmark_serialize(int iterations) {
     elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
 
     std::sort(latencies.begin(), latencies.end());
-    printf("\n--- Deserialize / Deserializacja ---\n");
+    printf("\n--- Deserialize ---\n");
     printf("  Elapsed:   %.2f ms\n", elapsed_ms);
     printf("  p50:       %lu ns\n", latencies[n * 50 / 100]);
     printf("  p90:       %lu ns\n", latencies[n * 90 / 100]);
@@ -445,7 +441,6 @@ void benchmark_serialize(int iterations) {
            iterations / elapsed_ms / 1000.0);
 
     // Benchmark full roundtrip (serialize + deserialize)
-    // Benchmark pełnego roundtripu (serializacja + deserializacja)
     start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; ++i) {
         auto t0 = std::chrono::high_resolution_clock::now();
@@ -461,7 +456,6 @@ void benchmark_serialize(int iterations) {
 
     std::sort(latencies.begin(), latencies.end());
     printf("\n--- Full Roundtrip (serialize+deserialize) ---\n");
-    printf("--- Pełny roundtrip (serializacja+deserializacja) ---\n");
     printf("  Elapsed:   %.2f ms\n", elapsed_ms);
     printf("  p50:       %lu ns\n", latencies[n * 50 / 100]);
     printf("  p90:       %lu ns\n", latencies[n * 90 / 100]);
@@ -470,7 +464,7 @@ void benchmark_serialize(int iterations) {
     printf("  Throughput: %.1f M msg/sec\n",
            iterations / elapsed_ms / 1000.0);
 
-    // Prevent dead-code optimization / Zapobiegaj optymalizacji martwego kodu
+    // Prevent dead-code optimization
     volatile uint64_t sink = decoded.sequence + decoded.price;
     (void)sink;
 }
@@ -482,8 +476,7 @@ void benchmark_serialize(int iterations) {
 int main(int argc, char* argv[]) {
     int iterations = (argc > 1) ? std::atoi(argv[1]) : 100000;
 
-    printf("=== Multicast Market Data Unit Tests ===\n");
-    printf("=== Testy jednostkowe danych rynkowych Multicast ===\n\n");
+    printf("=== Multicast Market Data Unit Tests ===\n\n");
 
     test_make_message();
     test_serialize_deserialize();

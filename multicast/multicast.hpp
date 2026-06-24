@@ -2,32 +2,32 @@
 /*
  * Multicast Market Data Feed — header-only C++.
  *
- * Binarna serializacja wiadomości dla kanałów danych rynkowych UDP multicast
- * + wykrywanie luk sekwencji (packet loss detection).
+ * Binary message serialization for UDP multicast market data channels
+ * + sequence gap detection (packet loss detection).
  *
- * Cechy:
- *   - binarny wire format (network byte order / big-endian), 40 bajtów/wiadomość
- *   - struktura wiadomości wyrównana do linii cache (alignas(64))
- *   - deserializacja zero-copy gdzie się da
- *   - znaczniki czasu w nanosekundach do pomiaru opóźnień
- *   - nakładki na gniazda UDP multicast (nadajnik/odbiornik)
- *   - SequenceTracker — wykrywanie packet loss / duplikatów / reorderingu
+ * Features:
+ *   - binary wire format (network byte order / big-endian), 40 bytes/message
+ *   - message struct aligned to the cache line (alignas(64))
+ *   - zero-copy deserialization where possible
+ *   - nanosecond timestamps for latency measurement
+ *   - UDP multicast socket wrappers (sender/receiver)
+ *   - SequenceTracker — packet loss / duplicate / reorder detection
  *
- * Dlaczego sequence tracking jest KLUCZOWY:
- *   UDP jest UNRELIABLE — pakiety giną (przepełniony bufor NIC/kernela),
- *   przychodzą nie w kolejności, bywają zdublowane. Prawdziwa giełda numeruje
- *   każdą wiadomość monotonicznym sequence number WŁAŚNIE po to żeby odbiorca
- *   wykrył lukę. Po wykryciu luki feed handler robi recovery:
- *     - gap-fill request do serwera retransmisji (np. NASDAQ MoldUDP64), albo
- *     - A/B line arbitration — odbiera DWA identyczne feedy (linia A i B) i
- *       bierze pakiet który dotarł pierwszy, uzupełniając braki z drugiej linii.
- *   Bez sequence trackingu zgubiony Add Order = niewidzialne zlecenie w księdze
- *   = błędne ceny = realne straty. To nie jest opcjonalne w produkcji.
+ * Why sequence tracking is CRUCIAL:
+ *   UDP is UNRELIABLE — packets are lost (overflowed NIC/kernel buffer),
+ *   arrive out of order, sometimes get duplicated. A real exchange numbers
+ *   every message with a monotonic sequence number EXACTLY so the receiver
+ *   detects a gap. After detecting a gap the feed handler does recovery:
+ *     - a gap-fill request to a retransmission server (e.g. NASDAQ MoldUDP64), or
+ *     - A/B line arbitration — receives TWO identical feeds (line A and B) and
+ *       takes the packet that arrived first, filling missing ones from the other line.
+ *   Without sequence tracking a lost Add Order = an invisible order in the book
+ *   = wrong prices = real losses. This is not optional in production.
  *
- * Kompilacja:
+ * Compile:
  *   g++ -O2 -std=c++17 -o multicast/multicast_demo multicast/multicast_demo.cpp
  *
- * Uruchomienie:
+ * Run:
  *   ./multicast/multicast_demo 100000
  */
 
@@ -36,7 +36,7 @@
 #include <chrono>
 #include <algorithm>
 
-#include "gap_recovery.hpp"   // multicast::GapRecovery (recovery nad SequenceTracker)
+#include "gap_recovery.hpp"   // multicast::GapRecovery (recovery on top of SequenceTracker)
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -46,10 +46,10 @@
 
 static constexpr int64_t  MC_PRICE_SCALE  = 10000;
 static constexpr uint16_t MC_DEFAULT_PORT = 5001;
-static constexpr size_t   MC_MSG_SIZE     = 40;  // rozmiar wire format
+static constexpr size_t   MC_MSG_SIZE     = 40;  // wire-format size
 
 
-// Helpery big-endian (network byte order). ITCH/multicast wymaga big-endian.
+// Big-endian helpers (network byte order). ITCH/multicast requires big-endian.
 namespace mc_endian {
 
 inline void write_u16_be(uint8_t* buf, uint16_t val) noexcept {
@@ -101,42 +101,42 @@ inline uint64_t read_u64_be(const uint8_t* buf) noexcept {
 } // namespace mc_endian
 
 
-// Typy wiadomości.
+// Message types.
 enum class MsgType : char {
-    ADD    = 'A',  // nowe zlecenie
-    DELETE = 'D',  // anuluj zlecenie
-    TRADE  = 'T',  // dopasowana transakcja
-    UPDATE = 'U',  // aktualizacja zlecenia
-    QUOTE  = 'Q',  // aktualizacja best bid/ask
-    SYSTEM = 'S'   // zdarzenie systemowe
+    ADD    = 'A',  // a new order
+    DELETE = 'D',  // cancel an order
+    TRADE  = 'T',  // a matched trade
+    UPDATE = 'U',  // an order update
+    QUOTE  = 'Q',  // a best bid/ask update
+    SYSTEM = 'S'   // a system event
 };
 
 struct alignas(64) MarketDataMessage {
-    uint64_t sequence;       // numer sekwencji (klucz do gap detection)
-    uint64_t timestamp_ns;   // znacznik czasu wysłania (ns)
-    char     symbol[8];      // ticker, dopełniony spacjami
-    int64_t  price;          // cena stałoprzecinkowa (x10000)
-    uint32_t quantity;       // ilość zlecenia
-    char     side;           // 'B' kupno, 'S' sprzedaż
-    char     msg_type;       // wartość enum MsgType
-    char     padding[2];     // dopełnienie wyrównania
-    // Łączny rozmiar wire: 40 bajtów
+    uint64_t sequence;       // sequence number (the key to gap detection)
+    uint64_t timestamp_ns;   // send timestamp (ns)
+    char     symbol[8];      // ticker, space-padded
+    int64_t  price;          // fixed-point price (x10000)
+    uint32_t quantity;       // order quantity
+    char     side;           // 'B' buy, 'S' sell
+    char     msg_type;       // MsgType enum value
+    char     padding[2];     // alignment padding
+    // Total wire size: 40 bytes
 };
 
 
-// Wire format (40 bajtów, network byte order):
+// Wire format (40 bytes, network byte order):
 //   [0..7]   sequence     (uint64 BE)
 //   [8..15]  timestamp_ns (uint64 BE)
-//   [16..23] symbol       (8 bajtów, dopełnione spacjami)
+//   [16..23] symbol       (8 bytes, space-padded)
 //   [24..31] price        (int64 BE)
 //   [32..35] quantity     (uint32 BE)
 //   [36]     side         (char)
 //   [37]     msg_type     (char)
-//   [38..39] padding      (wyzerowane)
+//   [38..39] padding      (zeroed)
 
 namespace multicast {
 
-// serialize: wiadomość → bufor w network byte order. Zwraca MC_MSG_SIZE (40).
+// serialize: message → buffer in network byte order. Returns MC_MSG_SIZE (40).
 inline size_t serialize(const MarketDataMessage& msg, uint8_t* buf) noexcept {
     mc_endian::write_u64_be(buf + 0,  msg.sequence);
     mc_endian::write_u64_be(buf + 8,  msg.timestamp_ns);
@@ -150,7 +150,7 @@ inline size_t serialize(const MarketDataMessage& msg, uint8_t* buf) noexcept {
     return MC_MSG_SIZE;
 }
 
-// deserialize: bufor → wiadomość. Zwraca false gdy bufor za krótki.
+// deserialize: buffer → message. Returns false when the buffer is too short.
 inline bool deserialize(const uint8_t* buf, size_t len, MarketDataMessage& msg) noexcept {
     if (len < MC_MSG_SIZE) return false;
     msg.sequence     = mc_endian::read_u64_be(buf + 0);
@@ -165,13 +165,13 @@ inline bool deserialize(const uint8_t* buf, size_t len, MarketDataMessage& msg) 
     return true;
 }
 
-// now_ns: aktualny znacznik czasu w nanosekundach.
+// now_ns: the current timestamp in nanoseconds.
 inline uint64_t now_ns() noexcept {
     return static_cast<uint64_t>(
         std::chrono::high_resolution_clock::now().time_since_epoch().count());
 }
 
-// make_message: zbuduj wiadomość z aktualnym znacznikiem czasu.
+// make_message: build a message with the current timestamp.
 inline MarketDataMessage make_message(
     uint64_t seq,
     const char* sym,
@@ -187,7 +187,7 @@ inline MarketDataMessage make_message(
     msg.quantity     = qty;
     msg.side         = side;
     msg.msg_type     = static_cast<char>(type);
-    // Symbol dopełniony spacjami do 8 znaków.
+    // Symbol space-padded to 8 chars.
     std::memset(msg.symbol, ' ', 8);
     const void* end = std::memchr(sym, '\0', 8);
     const size_t len = end ? static_cast<size_t>(static_cast<const char*>(end) - sym) : 8;
@@ -196,31 +196,30 @@ inline MarketDataMessage make_message(
 }
 
 
-// SequenceTracker — wykrywa luki (packet loss), duplikaty i reordering.
+// SequenceTracker — detects gaps (packet loss), duplicates and reordering.
 //
-// Model: każda wiadomość ma monotoniczny sequence number. Tracker pamięta
-// następny OCZEKIWANY numer i porównuje go z przychodzącym:
-//   seq == expected  → OK, kolejny w kolejności
-//   seq >  expected  → LUKA: zgubiliśmy (seq - expected) pakietów
-//   seq <  expected  → DUPLIKAT / spóźniony (już przeszliśmy ten numer)
+// Model: each message has a monotonic sequence number. The tracker remembers
+// the next EXPECTED number and compares it with the incoming one:
+//   seq == expected  → OK, the next one in order
+//   seq >  expected  → GAP: we lost (seq - expected) packets
+//   seq <  expected  → DUPLICATE / late (we already passed this number)
 //
-// Uwaga: prosta heurystyka "highest seq seen" — nie buforuje out-of-order
-// pakietów (nie reasembluje). Po luce ustawiamy expected = seq+1 i jedziemy
-// dalej; prawdziwy recovery (gap-fill / A-B arbitration) buforowałby i
-// uzupełniał, ale to wykracza poza ten lab. Tu chodzi o DETEKCJĘ — która
-// jest pierwszym krokiem każdego recovery.
+// Note: a simple "highest seq seen" heuristic — it does not buffer out-of-order
+// packets (no reassembly). After a gap we set expected = seq+1 and carry on;
+// real recovery (gap-fill / A-B arbitration) would buffer and fill, but that is
+// beyond this lab. Here it is about DETECTION — which is the first step of every recovery.
 struct SequenceTracker {
     enum class Status { OK, GAP, DUPLICATE };
 
-    uint64_t expected_seq = 0;     // następny oczekiwany numer
-    uint64_t received     = 0;     // ile pakietów zaakceptowanych (w kolejności + po luce)
-    uint64_t gaps         = 0;     // ile osobnych zdarzeń luki
-    uint64_t lost         = 0;     // łączna liczba zgubionych pakietów
-    uint64_t duplicates   = 0;     // ile pakietów seq < expected
-    bool     initialized  = false; // czy widzieliśmy pierwszy pakiet
+    uint64_t expected_seq = 0;     // the next expected number
+    uint64_t received     = 0;     // how many packets accepted (in order + after a gap)
+    uint64_t gaps         = 0;     // how many separate gap events
+    uint64_t lost         = 0;     // total number of lost packets
+    uint64_t duplicates   = 0;     // how many packets with seq < expected
+    bool     initialized  = false; // whether we have seen the first packet
 
-    // observe: zgłoś sequence number przychodzącej wiadomości. Aktualizuje
-    // statystyki i zwraca status tego pakietu.
+    // observe: report the sequence number of an incoming message. Updates
+    // statistics and returns this packet's status.
     Status observe(uint64_t seq) noexcept {
         if (!initialized) {
             initialized  = true;
@@ -240,15 +239,15 @@ struct SequenceTracker {
             ++received;
             return Status::GAP;
         }
-        // seq < expected_seq → duplikat albo spóźniony (już go widzieliśmy).
+        // seq < expected_seq → duplicate or late (we already saw it).
         ++duplicates;
         return Status::DUPLICATE;
     }
 
-    // observe_packet: wariant MoldUDP64. Pakiet niesie sequence PIERWSZEJ
-    // wiadomości i ile ich jest (count). Następny oczekiwany = seq + count.
-    // Heartbeat (count=0) ma seq == next-expected → wykrywa lukę nawet gdy
-    // feed jest idle (żadnych danych, ale numer się zgadza lub nie).
+    // observe_packet: the MoldUDP64 variant. A packet carries the sequence of the FIRST
+    // message and how many there are (count). Next expected = seq + count.
+    // A heartbeat (count=0) has seq == next-expected → detects a gap even when
+    // the feed is idle (no data, but the number matches or not).
     Status observe_packet(uint64_t packet_seq, uint16_t count) noexcept {
         if (!initialized) {
             initialized  = true;
@@ -268,22 +267,22 @@ struct SequenceTracker {
             received    += count;
             return Status::GAP;
         }
-        // packet_seq < expected_seq — pakiet zaczyna się przed oczekiwanym.
+        // packet_seq < expected_seq — the packet starts before the expected one.
         const uint64_t packet_end = packet_seq + count;  // exclusive
         if (packet_end <= expected_seq) {
             ++duplicates;
-            return Status::DUPLICATE;          // w całości już widziany
+            return Status::DUPLICATE;          // already seen in full
         }
-        // Częściowy overlap — część wiadomości jest nowa (rzadkie, ale realne
-        // przy A/B line arbitration gdy linie się minimalnie rozjeżdżają).
+        // Partial overlap — part of the message is new (rare, but real
+        // with A/B line arbitration when the lines diverge slightly).
         received    += (packet_end - expected_seq);
         expected_seq = packet_end;
         ++duplicates;
         return Status::DUPLICATE;
     }
 
-    // loss_rate: ułamek zgubionych pakietów względem wszystkich które
-    // POWINNY dotrzeć (received + lost). 0.0 = zero strat.
+    // loss_rate: the fraction of lost packets relative to all that
+    // SHOULD have arrived (received + lost). 0.0 = zero loss.
     double loss_rate() const noexcept {
         const uint64_t total = received + lost;
         return total > 0 ? static_cast<double>(lost) / static_cast<double>(total) : 0.0;
@@ -292,32 +291,32 @@ struct SequenceTracker {
     void reset() noexcept { *this = SequenceTracker{}; }
 };
 
-// GapRecovery (recovery nad detekcją) wydzielony do osobnego nagłówka, by był
-// używalny/testowalny bez nagłówków gniazd i globalnego MsgType z tego pliku.
-// (Include na końcu pliku — patrz dół namespace.)
+// GapRecovery (recovery on top of detection) is split into a separate header so it is
+// usable/testable without socket headers and the global MsgType from this file.
+// (Included at the end of the file — see the bottom of the namespace.)
 
 
-// MoldUDP64 — przemysłowy standard transportu market data over UDP (NASDAQ).
+// MoldUDP64 — the industrial standard for transporting market data over UDP (NASDAQ).
 //
-// Pojedynczy UDP datagram (downstream packet) niesie WIELE wiadomości:
-//   [0..9]   Session         10 bajtów ASCII (identyfikator sesji handlowej)
-//   [10..17] Sequence Number uint64 BE — numer PIERWSZEJ wiadomości w pakiecie
-//   [18..19] Message Count   uint16 BE — ile wiadomości w pakiecie
-//   potem MessageCount bloków, każdy:
+// A single UDP datagram (downstream packet) carries MANY messages:
+//   [0..9]   Session         10 bytes ASCII (trading session identifier)
+//   [10..17] Sequence Number uint64 BE — the number of the FIRST message in the packet
+//   [18..19] Message Count   uint16 BE — how many messages in the packet
+//   then MessageCount blocks, each:
 //     [+0..1] Message Length uint16 BE
-//     [+2..]  Message Data   <length> bajtów
+//     [+2..]  Message Data   <length> bytes
 //
-// Pakiety specjalne (po Message Count):
-//   0       → heartbeat (utrzymuje sesję, pozwala wykryć lukę gdy feed idle)
+// Special packets (by Message Count):
+//   0       → heartbeat (keeps the session alive, lets a gap be detected when the feed is idle)
 //   0xFFFF  → end of session
 //
-// Numery wiadomości w pakiecie są kolejne: seq, seq+1, ..., seq+count-1.
-// Następny oczekiwany = seq + count. To pozwala odbiorcy wykryć lukę nawet
-// gdy zgubił CAŁY datagram (next_expected nie zgadza się z kolejnym seq).
+// Message numbers within a packet are consecutive: seq, seq+1, ..., seq+count-1.
+// Next expected = seq + count. This lets the receiver detect a gap even
+// when it lost a WHOLE datagram (next_expected does not match the next seq).
 //
-// Tak działa NASDAQ TotalView-ITCH, BX, PSX i wiele globalnych giełd —
-// batchowanie wielu wiadomości w jeden datagram amortyzuje narzut UDP/IP
-// (28 bajtów nagłówków na pakiet) przy zachowaniu sekwencji per-wiadomość.
+// This is how NASDAQ TotalView-ITCH, BX, PSX and many global exchanges work —
+// batching many messages into one datagram amortizes the UDP/IP overhead
+// (28 bytes of headers per packet) while keeping per-message sequencing.
 
 static constexpr size_t   MOLD_HEADER_SIZE    = 20;
 static constexpr size_t   MOLD_SESSION_LEN    = 10;
@@ -330,7 +329,7 @@ struct MoldUDP64Header {
     uint16_t message_count;
 };
 
-// mold_write_header: zapisz 20-bajtowy nagłówek MoldUDP64.
+// mold_write_header: write the 20-byte MoldUDP64 header.
 inline size_t mold_write_header(uint8_t* buf, const char* session,
                                  uint64_t seq, uint16_t count) noexcept {
     std::memset(buf, ' ', MOLD_SESSION_LEN);
@@ -344,7 +343,7 @@ inline size_t mold_write_header(uint8_t* buf, const char* session,
     return MOLD_HEADER_SIZE;
 }
 
-// mold_read_header: odczytaj nagłówek. Zwraca false gdy bufor za krótki.
+// mold_read_header: read the header. Returns false when the buffer is too short.
 inline bool mold_read_header(const uint8_t* buf, size_t len, MoldUDP64Header& h) noexcept {
     if (len < MOLD_HEADER_SIZE) return false;
     std::memcpy(h.session, buf, MOLD_SESSION_LEN);
@@ -353,8 +352,8 @@ inline bool mold_read_header(const uint8_t* buf, size_t len, MoldUDP64Header& h)
     return true;
 }
 
-// mold_serialize_packet: zbuduj kompletny pakiet MoldUDP64 z `count` wiadomości
-// (count=0 → heartbeat). Zwraca rozmiar pakietu lub 0 gdy bufor za mały.
+// mold_serialize_packet: build a complete MoldUDP64 packet with `count` messages
+// (count=0 → heartbeat). Returns the packet size or 0 if the buffer is too small.
 inline size_t mold_serialize_packet(uint8_t* buf, size_t cap,
                                      const char* session, uint64_t first_seq,
                                      const MarketDataMessage* msgs, uint16_t count) noexcept {
@@ -371,17 +370,17 @@ inline size_t mold_serialize_packet(uint8_t* buf, size_t cap,
     return off;
 }
 
-// mold_parse_packet: parsuje pakiet MoldUDP64. Aktualizuje tracker na poziomie
-// pakietu (jeśli != nullptr) i woła on_msg() dla każdej wiadomości danych.
-// Zwraca message_count (>=0) lub -1 na błąd formatu. End-of-session i heartbeat
-// zwracają 0 (brak wiadomości danych).
+// mold_parse_packet: parses a MoldUDP64 packet. Updates the packet-level tracker
+// (if != nullptr) and calls on_msg() for each data message.
+// Returns message_count (>=0) or -1 on a format error. End-of-session and heartbeat
+// return 0 (no data messages).
 template <typename OnMessage>
 inline int mold_parse_packet(const uint8_t* buf, size_t len, MoldUDP64Header& h,
                              SequenceTracker* tracker, OnMessage&& on_msg) noexcept {
     if (!mold_read_header(buf, len, h)) return -1;
 
-    // End-of-session i heartbeat nie niosą wiadomości danych → count efektywny 0
-    // dla trackera (EoS-seq i heartbeat-seq oba == next-expected).
+    // End-of-session and heartbeat carry no data messages → effective count 0
+    // for the tracker (EoS-seq and heartbeat-seq are both == next-expected).
     const bool is_control = (h.message_count == MOLD_HEARTBEAT ||
                              h.message_count == MOLD_END_OF_SESSION);
     if (tracker) tracker->observe_packet(h.sequence, is_control ? 0 : h.message_count);
@@ -401,7 +400,7 @@ inline int mold_parse_packet(const uint8_t* buf, size_t len, MoldUDP64Header& h,
 }
 
 
-// MulticastSender — nakładka na gniazdo UDP multicast (nadajnik).
+// MulticastSender — a wrapper over a UDP multicast socket (sender).
 class MulticastSender {
     int fd_ = -1;
     struct sockaddr_in dest_{};
@@ -412,16 +411,16 @@ public:
     MulticastSender(const MulticastSender&) = delete;
     MulticastSender& operator=(const MulticastSender&) = delete;
 
-    // init: gniazdo nadawcze dla danej grupy multicast i portu.
+    // init: a sending socket for a given multicast group and port.
     bool init(const char* group, uint16_t port) noexcept {
         fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
         if (fd_ < 0) return false;
 
-        // TTL multicast = 2 (przejście przez jeden router).
+        // multicast TTL = 2 (crosses one router).
         unsigned char ttl = 2;
         ::setsockopt(fd_, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
 
-        // Loopback włączony — nadajnik może odbierać własne wiadomości.
+        // Loopback enabled — the sender can receive its own messages.
         unsigned char loop = 1;
         ::setsockopt(fd_, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
 
@@ -431,7 +430,7 @@ public:
         return true;
     }
 
-    // send: wyślij wiadomość przez multicast. Zwraca bajty lub -1.
+    // send: send a message over multicast. Returns bytes or -1.
     int send(const MarketDataMessage& msg) noexcept {
         uint8_t buf[MC_MSG_SIZE];
         serialize(msg, buf);
@@ -441,7 +440,7 @@ public:
                      sizeof(dest_)));
     }
 
-    // send_raw: wyślij surowy zserializowany bufor.
+    // send_raw: send a raw serialized buffer.
     int send_raw(const uint8_t* buf, size_t len) noexcept {
         return static_cast<int>(
             ::sendto(fd_, buf, len, 0,
@@ -457,8 +456,8 @@ public:
 };
 
 
-// MulticastReceiver — nakładka na gniazdo UDP multicast (odbiornik)
-// + wbudowany SequenceTracker auto-aktualizowany przy każdym receive().
+// MulticastReceiver — a wrapper over a UDP multicast socket (receiver)
+// + a built-in SequenceTracker auto-updated on every receive().
 class MulticastReceiver {
     int             fd_ = -1;
     SequenceTracker seq_;
@@ -469,12 +468,12 @@ public:
     MulticastReceiver(const MulticastReceiver&) = delete;
     MulticastReceiver& operator=(const MulticastReceiver&) = delete;
 
-    // init: gniazdo odbiorcze + dołączenie do grupy multicast.
+    // init: a receiving socket + joining the multicast group.
     bool init(const char* group, uint16_t port) noexcept {
         fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
         if (fd_ < 0) return false;
 
-        // Wielu odbiorców na tym samym porcie (niekrytyczne jeśli brak wsparcia).
+        // Multiple receivers on the same port (non-critical if unsupported).
         int reuse = 1;
         ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
@@ -488,9 +487,9 @@ public:
             return false;
         }
 
-        // Dołącz do grupy multicast.
+        // Join the multicast group.
         struct ip_mreq mreq{};
-        if (::inet_aton(group, &mreq.imr_multiaddr) == 0) {  // 0 = zły adres
+        if (::inet_aton(group, &mreq.imr_multiaddr) == 0) {  // 0 = bad address
             ::close(fd_); fd_ = -1;
             return false;
         }
@@ -503,15 +502,15 @@ public:
         return true;
     }
 
-    // receive: odbierz wiadomość (blokuje do nadejścia danych). Aktualizuje
-    // sequence tracker. Zwraca recv timestamp (ns) lub 0 na błąd.
-    // Opcjonalny out_status zwraca status sekwencji tego pakietu (OK/GAP/DUP).
+    // receive: receive a message (blocks until data arrives). Updates the
+    // sequence tracker. Returns the recv timestamp (ns) or 0 on error.
+    // The optional out_status returns this packet's sequence status (OK/GAP/DUP).
     uint64_t receive(MarketDataMessage& msg,
                      SequenceTracker::Status* out_status = nullptr) noexcept {
         uint8_t buf[MC_MSG_SIZE + 16];
         ssize_t n = ::recv(fd_, buf, sizeof(buf), 0);
         uint64_t recv_ts = now_ns();
-        if (n <= 0) return 0;  // błąd lub zamknięcie
+        if (n <= 0) return 0;  // error or close
         if (n < static_cast<ssize_t>(MC_MSG_SIZE)) return 0;
         if (!deserialize(buf, static_cast<size_t>(n), msg)) return 0;
         const SequenceTracker::Status st = seq_.observe(msg.sequence);
@@ -519,7 +518,7 @@ public:
         return recv_ts;
     }
 
-    // set_timeout: timeout odbioru w ms. 0 = blokujący.
+    // set_timeout: receive timeout in ms. 0 = blocking.
     bool set_timeout(int ms) noexcept {
         struct timeval tv{};
         tv.tv_sec  = ms / 1000;
@@ -527,7 +526,7 @@ public:
         return ::setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0;
     }
 
-    // Dostęp do statystyk sekwencji (gaps, lost, duplicates, loss_rate).
+    // Access to sequence statistics (gaps, lost, duplicates, loss_rate).
     const SequenceTracker& sequence_tracker() const noexcept { return seq_; }
 
     void close() noexcept {
@@ -538,39 +537,39 @@ public:
 };
 
 
-// ArbitratedReceiver — A/B line arbitration (standard branżowy redundancji feedów).
+// ArbitratedReceiver — A/B line arbitration (the industry standard for feed redundancy).
 //
-// Prawdziwa giełda publikuje DWA identyczne strumienie (linia A i linia B,
-// zwykle na różnych grupach multicast / VLAN'ach / NIC'ach). Odbiorca słucha
-// obu i bierze pakiet który dotarł PIERWSZY; duplikaty z drugiej linii są
-// odrzucane. Jeśli jedna linia zgubi pakiet, druga go (zwykle) dostarczy.
-// To eliminuje pojedyncze punkty awarii i daje 99.9999% completeness bez
-// retransmisji.
+// A real exchange publishes TWO identical streams (line A and line B,
+// usually on different multicast groups / VLANs / NICs). The receiver listens
+// to both and takes the packet that arrived FIRST; duplicates from the other line are
+// dropped. If one line loses a packet, the other (usually) delivers it.
+// This eliminates single points of failure and gives 99.9999% completeness without
+// retransmission.
 //
-// Algorytm tutaj uproszczony do logiki — nie ownuje gniazd ani threadów.
-// Caller pollu'je dwa receivery (poll/epoll na obu fd) i wywołuje
-// observe(seq, count) z każdego pakietu który dostarczył. Tracker mówi czy
-// pakiet jest FRESH (pierwszy raz widziany — przekazujemy dalej) czy
-// DUPLICATE (już widzieliśmy z drugiej linii — drop).
+// The algorithm here is simplified to the logic — it does not own sockets or threads.
+// The caller polls two receivers (poll/epoll on both fds) and calls
+// observe(seq, count) for each packet it delivered. The tracker says whether a
+// packet is FRESH (seen for the first time — we forward it) or
+// DUPLICATE (already seen from the other line — drop).
 //
-// To ten sam algorytm co observe_packet w SequenceTracker, ale wystawiony
-// jako osobna klasa-wrapper żeby pokazać intent. Wewnętrznie używa pojedynczego
-// SequenceTrackera: pierwsze przyjście wygrywa, drugie jest "<= expected" → dup.
+// It is the same algorithm as observe_packet in SequenceTracker, but exposed
+// as a separate wrapper class to show intent. Internally it uses a single
+// SequenceTracker: the first arrival wins, the second is "<= expected" → dup.
 class ArbitratedReceiver {
     SequenceTracker tracker_;
-    uint64_t        from_a_ = 0;   // ile pakietów przyszło najpierw z linii A
-    uint64_t        from_b_ = 0;   // ile najpierw z linii B
-    uint64_t        deduped_ = 0;  // ile odrzuconych jako duplikaty drugiej linii
+    uint64_t        from_a_ = 0;   // how many packets arrived first from line A
+    uint64_t        from_b_ = 0;   // how many first from line B
+    uint64_t        deduped_ = 0;  // how many dropped as duplicates of the other line
 
 public:
     enum class Line { A, B };
     enum class Result { FRESH, DUPLICATE, GAP };
 
-    // observe: rozważ pakiet z linii A albo B (seq = sequence pierwszej
-    // wiadomości w pakiecie, count = liczba wiadomości; dla MoldUDP64).
-    // Zwraca FRESH gdy to pierwszy raz widzimy ten zakres (przekaż dalej),
-    // DUPLICATE gdy druga linia już dostarczyła (odrzuć), GAP gdy zostało
-    // wykryte zgubienie pakietu (przekaż dalej + można odpalić recovery).
+    // observe: consider a packet from line A or B (seq = sequence of the first
+    // message in the packet, count = number of messages; for MoldUDP64).
+    // Returns FRESH when we see this range for the first time (forward it),
+    // DUPLICATE when the other line already delivered it (drop), GAP when a
+    // packet loss was detected (forward it + recovery can be triggered).
     Result observe(Line line, uint64_t packet_seq, uint16_t count) noexcept {
         const auto st = tracker_.observe_packet(packet_seq, count);
         switch (st) {
@@ -592,8 +591,8 @@ public:
     uint64_t fresh_from_b() const noexcept { return from_b_; }
     uint64_t deduped()      const noexcept { return deduped_; }
 
-    // failover_ratio: ile % FRESH pakietów przyszło tylko dzięki linii B
-    // (gdy A się zgubiła). >0 oznacza że linia B faktycznie ratuje sytuację.
+    // failover_ratio: what % of FRESH packets arrived only thanks to line B
+    // (when A was lost). >0 means line B actually saves the day.
     double failover_ratio() const noexcept {
         const uint64_t total = from_a_ + from_b_;
         return total > 0 ? static_cast<double>(from_b_) / static_cast<double>(total) : 0.0;
@@ -601,7 +600,7 @@ public:
 };
 
 
-// Statystyki opóźnień.
+// Latency statistics.
 struct LatencyStats {
     uint64_t count     = 0;
     uint64_t sum_ns    = 0;

@@ -1,21 +1,21 @@
 /*
- * GapRecovery — warstwa RECOVERY nad detekcją luk sekwencji (expansion #82).
+ * GapRecovery — a RECOVERY layer on top of sequence gap detection (expansion #82).
  *
- * Wydzielona z multicast.hpp do osobnego, lekkiego nagłówka: multicast.hpp
- * ciągnie nagłówki gniazd (sys/socket) i globalny MsgType — a recovery to
- * czysta logika, którą chcemy testować/używać bez transportu. multicast.hpp
- * include'uje ten plik, więc multicast_demo nadal dostaje GapRecovery.
+ * Split out of multicast.hpp into a separate, lightweight header: multicast.hpp
+ * pulls in socket headers (sys/socket) and the global MsgType — but recovery is
+ * pure logic that we want to test/use without transport. multicast.hpp
+ * includes this file, so multicast_demo still gets GapRecovery.
  *
- * SequenceTracker (multicast.hpp) tylko WYKRYWA luki. To pierwszy krok; realny
- * feed handler musi jeszcze ODZYSKAĆ braki: zapamiętać KTÓRE seq zgubił, wysłać
- * gap-fill request do serwera retransmisji (MoldUDP64 request / A-B arbitration)
- * i pogodzić retransmitowane pakiety z primary feedem.
+ * SequenceTracker (multicast.hpp) only DETECTS gaps. That is the first step; a real
+ * feed handler must also RECOVER the missing ones: remember WHICH seq it lost, send
+ * a gap-fill request to a retransmission server (MoldUDP64 request / A-B arbitration)
+ * and reconcile the retransmitted packets with the primary feed.
  *
  * Model:
- *   observe(seq)        — primary feed; luka → wpis brakujących seq do `missing`
- *   on_retransmit(seq)  — pakiet z serwera recovery / linii B; usuwa z `missing`
- *   next_request(lo,hi) — zakres do gap-fill request (najniższy..najwyższy brak)
- *   has_gaps()/missing()— czy księga jest jeszcze niepewna
+ *   observe(seq)        — primary feed; a gap → records the missing seq into `missing`
+ *   on_retransmit(seq)  — a packet from the recovery server / line B; removes from `missing`
+ *   next_request(lo,hi) — the range for a gap-fill request (lowest..highest missing)
+ *   has_gaps()/missing()— whether the book is still uncertain
  */
 #pragma once
 
@@ -76,15 +76,15 @@ private:
 };
 
 struct GapRecovery {
-    std::set<uint64_t> missing;          // znane braki, czekają na retransmisję
+    std::set<uint64_t> missing;          // known missing, awaiting retransmission
     uint64_t expected    = 0;
     bool     initialized = false;
-    uint64_t gap_events  = 0;            // ile osobnych zdarzeń luki
-    uint64_t recovered   = 0;            // ile braków odzyskanych
-    uint64_t duplicates  = 0;            // seq < expected i NIE był brakiem
+    uint64_t gap_events  = 0;            // how many separate gap events
+    uint64_t recovered   = 0;            // how many missing recovered
+    uint64_t duplicates  = 0;            // seq < expected and NOT a missing one
 
-    // observe: primary feed. W kolejności → OK; do przodu → wpisz lukę; do tyłu
-    // → albo wypełnia znany brak (recovered), albo czysty duplikat.
+    // observe: primary feed. In order → OK; ahead → record a gap; behind
+    // → either fills a known gap (recovered) or a pure duplicate.
     void observe(uint64_t seq) noexcept {
         if (!initialized) { initialized = true; expected = seq + 1; return; }
         if (seq == expected) { ++expected; return; }
@@ -94,19 +94,19 @@ struct GapRecovery {
             expected = seq + 1;
             return;
         }
-        if (missing.erase(seq)) ++recovered;   // spóźniony pakiet wypełnia lukę
+        if (missing.erase(seq)) ++recovered;   // a late packet fills a gap
         else                    ++duplicates;
     }
 
-    // on_retransmit: pakiet z serwera recovery / linii B. Liczy się tylko gdy
-    // realnie wypełnia znaną lukę. Zwraca true gdy coś odzyskano.
+    // on_retransmit: a packet from the recovery server / line B. It counts only when
+    // it actually fills a known gap. Returns true when something was recovered.
     bool on_retransmit(uint64_t seq) noexcept {
         if (missing.erase(seq)) { ++recovered; return true; }
         return false;
     }
 
-    // next_request: zakres [lo,hi] do gap-fill request pokrywający aktualne
-    // braki. Zwraca false gdy nie ma luk (księga znów pewna).
+    // next_request: the [lo,hi] range for a gap-fill request covering the current
+    // missing. Returns false when there are no gaps (the book is certain again).
     bool next_request(uint64_t& lo, uint64_t& hi) const noexcept {
         if (missing.empty()) return false;
         lo = *missing.begin();
@@ -162,30 +162,30 @@ struct GapRecovery {
 };
 
 
-// ABLineArbitrator — arbitraż dwóch redundantnych linii feedu (expansion #91).
+// ABLineArbitrator — arbitration of two redundant feed lines (expansion #91).
 //
-// Giełdy wysyłają market data DWIEMA identycznymi liniami (A i B) tym samym
-// UDP multicastem. Odbiorca bierze pakiet z TEJ linii, która dotarła pierwsza
-// dla danego sequence, a duplikat z drugiej odrzuca. Jeśli linia A zgubi
-// pakiet, linia B zwykle go dostarcza — luka się "samonaprawia" bez gap-fill
-// requestu. To standardowa odporność feedu (NASDAQ/CME itp.).
+// Exchanges send market data on TWO identical lines (A and B) over the same
+// UDP multicast. The receiver takes the packet from WHICHEVER line arrived first
+// for a given sequence, and drops the duplicate from the other. If line A loses
+// a packet, line B usually delivers it — the gap "self-heals" without a gap-fill
+// request. This is standard feed resilience (NASDAQ/CME etc.).
 //
-// on_packet(seq, from_line_a) → true gdy pakiet NOWY (przekazany dalej),
-// false gdy duplikat (druga linia już dostarczyła ten seq). Pod spodem
-// GapRecovery daje zunifikowany obraz luk PO arbitrażu.
+// on_packet(seq, from_line_a) → true when the packet is NEW (forwarded),
+// false when a duplicate (the other line already delivered this seq). Underneath,
+// GapRecovery gives a unified view of gaps AFTER arbitration.
 struct ABLineArbitrator {
-    GapRecovery rec;          // stan po połączeniu obu linii
-    uint64_t a_first = 0;     // ile razy linia A dostarczyła seq pierwsza
-    uint64_t b_first = 0;     // ile razy linia B
-    uint64_t dups    = 0;     // odrzucone duplikaty (druga linia)
+    GapRecovery rec;          // state after merging both lines
+    uint64_t a_first = 0;     // how many times line A delivered the seq first
+    uint64_t b_first = 0;     // how many times line B
+    uint64_t dups    = 0;     // dropped duplicates (the other line)
 
     bool on_packet(uint64_t seq, bool from_line_a) noexcept {
-        // Nowy = jeszcze nie skonsumowany: na/przed expected albo wypełnia lukę.
+        // New = not yet consumed: at/before expected or fills a gap.
         const bool is_new = !rec.initialized
                           || seq >= rec.expected
                           || rec.missing.count(seq) != 0;
         if (!is_new) { ++dups; return false; }
-        rec.observe(seq);                 // advance / recover (wspólna logika)
+        rec.observe(seq);                 // advance / recover (shared logic)
         if (from_line_a) ++a_first; else ++b_first;
         return true;
     }
@@ -195,12 +195,12 @@ struct ABLineArbitrator {
     void   reset()         noexcept { *this = ABLineArbitrator{}; }
 };
 
-// MultiChannelRecovery — gap-recovery po WIELU kanalach feedu (expansion #122).
+// MultiChannelRecovery — gap recovery across MANY feed channels (expansion #122).
 //
-// Realne giełdy dziela market data na osobne kanaly multicast (np. NASDAQ po
-// zakresie symboli), kazdy z WLASNA numeracja sekwencji. Pojedynczy GapRecovery
-// sledzi jeden kanal; ten agregator trzyma po jednym per channel_id i daje
-// zbiorczy obraz: czy gdziekolwiek jest luka, ile lacznie brakuje/odzyskano.
+// Real exchanges split market data into separate multicast channels (e.g. NASDAQ by
+// symbol range), each with its OWN sequence numbering. A single GapRecovery
+// tracks one channel; this aggregator keeps one per channel_id and gives a
+// combined view: whether there is a gap anywhere, how much in total is missing/recovered.
 struct MultiChannelRecovery {
     std::unordered_map<std::uint32_t, GapRecovery> channels;
 
@@ -818,31 +818,31 @@ struct PacketStats {
 };
 
 
-// FeedStalenessMonitor — wykrywa MARTWY feed (expansion #98).
+// FeedStalenessMonitor — detects a DEAD feed (expansion #98).
 //
-// Giełdy wysyłają heartbeaty gdy brak danych właśnie po to, by odbiorca odróżnił
-// "spokojny rynek" od "linia padła" (NAT/firewall ucina idle UDP, switch pada).
-// Brak JAKIEGOKOLWIEK pakietu (dane LUB heartbeat) przez > timeout = stale →
-// feed handler powinien przełączyć na linię zapasową / re-subscribe.
+// Exchanges send heartbeats when there is no data exactly so the receiver can tell
+// "a quiet market" from "the line is down" (NAT/firewall cuts idle UDP, a switch dies).
+// No packet AT ALL (data OR heartbeat) for > timeout = stale →
+// the feed handler should switch to the backup line / re-subscribe.
 //
-//   on_packet(now_ns)         — wołaj na każdy odebrany pakiet (reset zegara)
-//   check(now_ns, timeout_ns) — true gdy feed stale; liczy zdarzenia (zbocze)
+//   on_packet(now_ns)         — call on every received packet (resets the clock)
+//   check(now_ns, timeout_ns) — true when the feed is stale; counts events (edge)
 struct FeedStalenessMonitor {
     int64_t  last_ns      = 0;
-    bool     seen         = false;   // czy widzieliśmy pierwszy pakiet
+    bool     seen         = false;   // whether we have seen the first packet
     bool     stale_       = false;
-    uint64_t stale_events = 0;       // ile razy feed wpadł w stan stale (zbocza)
+    uint64_t stale_events = 0;       // how many times the feed went stale (edges)
 
     void on_packet(int64_t now_ns) noexcept {
         last_ns = now_ns;
         seen    = true;
-        stale_  = false;             // świeży pakiet ożywia feed
+        stale_  = false;             // a fresh packet revives the feed
     }
 
     bool check(int64_t now_ns, int64_t timeout_ns) noexcept {
-        if (!seen) return false;     // jeszcze nie wystartował — nie "stale"
+        if (!seen) return false;     // not started yet — not "stale"
         const bool now_stale = (now_ns - last_ns) > timeout_ns;
-        if (now_stale && !stale_) ++stale_events;   // wejście w stan stale
+        if (now_stale && !stale_) ++stale_events;   // entering the stale state
         stale_ = now_stale;
         return stale_;
     }
@@ -851,31 +851,31 @@ struct FeedStalenessMonitor {
     void reset()    noexcept { *this = FeedStalenessMonitor{}; }
 };
 
-// ReorderBuffer — bufor zmiany kolejnosci pakietow (expansion #110).
+// ReorderBuffer — a packet reordering buffer (expansion #110).
 //
-// GapRecovery WYKRYWA i godzi luki, ale nie ODTWARZA KOLEJNOSCI danych — pakiet,
-// ktory przyszedl za wczesnie (seq > expected), trzeba przytrzymac az dotra
-// brakujace przed nim, inaczej konsument (np. rekonstruktor ksiegi) zobaczyl by
-// zdarzenia nie po kolei. ReorderBuffer buforuje "przyszle" pakiety i dostarcza
-// je dopiero gdy luka sie zasklepi — strumien wychodzacy jest ZAWSZE w kolejnosci.
+// GapRecovery DETECTS and reconciles gaps, but does not RESTORE the ORDER of data — a packet
+// that arrived too early (seq > expected) must be held until the
+// missing ones before it arrive, otherwise the consumer (e.g. the book reconstructor) would see
+// events out of order. ReorderBuffer buffers "future" packets and delivers
+// them only when the gap closes — the outgoing stream is ALWAYS in order.
 //
-//   push(seq, val): seq==expected -> dostarcz + opróznij kolejne ciagle z bufora
-//                   seq> expected -> zbuforuj (czeka na brakujace)
-//                   seq< expected -> duplikat, odrzuc
-// Dostarczone w kolejnosci ladowane do `out` (caller drainuje i czysci).
+//   push(seq, val): seq==expected -> deliver + drain the next contiguous from the buffer
+//                   seq> expected -> buffer it (waits for the missing ones)
+//                   seq< expected -> duplicate, drop
+// Delivered in order are loaded into `out` (the caller drains and clears).
 template <typename T>
 struct ReorderBuffer {
     std::uint64_t        expected = 0;
     bool                 initialized = false;
-    std::map<std::uint64_t, T> pending;   // seq > expected, czekaja
-    std::vector<T>       out;             // dostarczone w kolejnosci
+    std::map<std::uint64_t, T> pending;   // seq > expected, waiting
+    std::vector<T>       out;             // delivered in order
     std::uint64_t        duplicates = 0;
 
     void push(std::uint64_t seq, const T& val) {
         if (!initialized) { expected = seq; initialized = true; }
-        if (seq < expected) { ++duplicates; return; }    // juz dostarczony
+        if (seq < expected) { ++duplicates; return; }    // already delivered
         pending[seq] = val;
-        // Opróznij wszystkie ciagle od expected.
+        // Drain all contiguous from expected.
         auto it = pending.find(expected);
         while (it != pending.end()) {
             out.push_back(it->second);
