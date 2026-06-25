@@ -1,18 +1,18 @@
 /*
- * feed_demo — uruchamia mini-serwer WebSocket w jednym wątku i WsClient
- * w drugim. Serwer akceptuje 1 połączenie, odpowiada na HTTP upgrade
- * (bez weryfikacji Sec-WebSocket-Accept — to lab), po czym wysyła N
- * "tickerów" w formacie JSON jak Binance: {"e":"trade","s":"BTCUSDT",...}.
+ * feed_demo — runs a mini WebSocket server on one thread and a WsClient
+ * on another. The server accepts 1 connection, replies to the HTTP upgrade
+ * (without verifying Sec-WebSocket-Accept — this is a lab), then sends N
+ * "tickers" in JSON format like Binance: {"e":"trade","s":"BTCUSDT",...}.
  *
- * Klient łączy się przez WsClient, czyta ramki text, parsuje minimalnie
- * (sscanf na cenie) i zlicza odebrane eventy. Test przechodzi gdy klient
- * dostał wszystkie N wiadomości.
+ * The client connects via WsClient, reads text frames, parses minimally
+ * (sscanf on the price) and counts the received events. The test passes when the client
+ * got all N messages.
  *
- * Po co? Pokazuje że stos WS w labie działa end-to-end — bez zewnętrznej
- * giełdy / proxy / curl'a. W prawdziwym życiu zamiast mock_server byłby
- * stream://stream.binance.com:9443/ws/btcusdt@trade albo Coinbase WS API.
+ * Why? It shows the lab's WS stack works end-to-end — without an external
+ * exchange / proxy / curl. In real life, instead of mock_server there would be
+ * stream://stream.binance.com:9443/ws/btcusdt@trade or the Coinbase WS API.
  *
- * Self-contained = CI nie potrzebuje drugiego procesu ani sieci.
+ * Self-contained = CI doesn't need a second process or a network.
  */
 #include "ws_client.hpp"
 
@@ -28,12 +28,12 @@
 #include <unistd.h>
 
 
-static constexpr int  DEMO_PORT = 19998;   // unprivileged, nie koliduje z fix_server_demo
+static constexpr int  DEMO_PORT = 19998;   // unprivileged, doesn't collide with fix_server_demo
 static constexpr int  N_TRADES  = 50;
 static constexpr auto WAIT      = std::chrono::milliseconds(2000);
 
 
-// Wyślij całość bufora albo zwróć false. ::send może zwracać krócej przy zatorach.
+// Send the whole buffer or return false. ::send may return short under congestion.
 static bool send_all(int fd, const void* buf, std::size_t n) noexcept {
     const auto* p = static_cast<const std::uint8_t*>(buf);
     std::size_t  sent = 0;
@@ -46,8 +46,8 @@ static bool send_all(int fd, const void* buf, std::size_t n) noexcept {
 }
 
 
-// Zbuduj ramkę WS text (FIN=1, opcode=1, brak maski — server→client zwykle bez).
-// Dla N_TRADES wszystkie payloady < 126 bajtów, więc 2-bajtowy header wystarczy.
+// Build a WS text frame (FIN=1, opcode=1, no mask — server→client usually none).
+// For N_TRADES all payloads are < 126 bytes, so a 2-byte header is enough.
 static bool send_ws_text(int fd, const char* payload, std::size_t len) noexcept {
     std::uint8_t hdr[4];
     std::size_t  hdr_len;
@@ -65,7 +65,7 @@ static bool send_ws_text(int fd, const char* payload, std::size_t len) noexcept 
 }
 
 
-// Mock serwer: 1 accept, HTTP 101, N tradesów, close. Działa w osobnym wątku.
+// Mock server: 1 accept, HTTP 101, N trades, close. Runs on a separate thread.
 static void run_server(std::atomic<bool>& ready, std::atomic<int>& sent_count) {
     const int srv = ::socket(AF_INET, SOCK_STREAM, 0);
     if (srv < 0) return;
@@ -92,7 +92,7 @@ static void run_server(std::atomic<bool>& ready, std::atomic<int>& sent_count) {
     const int   c = ::accept(srv, reinterpret_cast<sockaddr*>(&cli), &clilen);
     if (c < 0) { ::close(srv); return; }
 
-    // Czytaj HTTP request aż do CRLF CRLF. Nie weryfikujemy — i tak go zignorujemy.
+    // Read the HTTP request until CRLF CRLF. We don't verify — we'll ignore it anyway.
     char req[2048];
     std::size_t got = 0;
     while (got < sizeof(req) - 1) {
@@ -103,8 +103,8 @@ static void run_server(std::atomic<bool>& ready, std::atomic<int>& sent_count) {
         if (std::strstr(req, "\r\n\r\n")) break;
     }
 
-    // Odpowiedź 101 — Sec-WebSocket-Accept powinien być SHA1+base64 z klucza
-    // klienta + magic GUID. WsClient nie weryfikuje, więc stała wartość OK.
+    // The 101 response — Sec-WebSocket-Accept should be SHA1+base64 of the client's
+    // key + the magic GUID. WsClient doesn't verify, so a constant value is OK.
     const char* resp =
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: websocket\r\n"
@@ -113,7 +113,7 @@ static void run_server(std::atomic<bool>& ready, std::atomic<int>& sent_count) {
         "\r\n";
     if (!send_all(c, resp, std::strlen(resp))) { ::close(c); ::close(srv); return; }
 
-    // Wyślij N "tradesów" — format z Binance trade stream.
+    // Send N "trades" — the format from the Binance trade stream.
     for (int i = 0; i < N_TRADES; ++i) {
         char json[160];
         const int n = std::snprintf(json, sizeof(json),
@@ -133,7 +133,7 @@ int main() {
     std::atomic<int>  sent{0};
     std::thread       srv_thread(run_server, std::ref(ready), std::ref(sent));
 
-    // Spin aż serwer zabinduje port. tight loop, ale max kilka ms.
+    // Spin until the server binds the port. A tight loop, but a few ms at most.
     while (!ready.load(std::memory_order_acquire))
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
@@ -153,7 +153,7 @@ int main() {
         if (n <= 0) break;
         buf[n] = '\0';
 
-        // Minimalny "parser" JSON — wystarczy do testu że dostaliśmy poprawny stream.
+        // A minimal JSON "parser" — enough to test we got a valid stream.
         int price = 0;
         const char* p = std::strstr(buf, "\"p\":\"");
         if (p) {

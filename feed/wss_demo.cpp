@@ -1,11 +1,11 @@
 /*
- * wss_demo — łączy się z PRAWDZIWĄ giełdą (Binance public WS stream),
- *            czyta N tradeów w formacie JSON i wypisuje cenę.
+ * wss_demo — connects to a REAL exchange (Binance public WS stream),
+ *            reads N trades in JSON format and prints the price.
  *
- * Wymaga libssl-dev i flagi HFT_USE_OPENSSL — zobacz feed/README.md
- * sekcja "Podłączenie do prawdziwej giełdy".
+ * Requires libssl-dev and the HFT_USE_OPENSSL flag — see feed/README.md
+ * section "Connecting to a real exchange".
  *
- * Domyślny endpoint:
+ * Default endpoint:
  *   wss://stream.binance.com:9443/ws/btcusdt@trade
  *
  * Format Binance trade event (uproszczone):
@@ -13,14 +13,14 @@
  *
  * Build:
  *   make feed/wss_demo HFT_USE_OPENSSL=1
- *   # albo bezpośrednio:
+ *   # or directly:
  *   g++ -O2 -std=c++17 -DHFT_USE_OPENSSL -Wall -Wextra -pthread \
  *       -o feed/wss_demo feed/wss_demo.cpp -lssl -lcrypto
  *
  * Run:
  *   ./feed/wss_demo                                                # Binance BTCUSDT
  *   ./feed/wss_demo stream.binance.com 9443 /ws/ethusdt@trade      # ETH/USDT
- *   ./feed/wss_demo stream.binance.com 9443 /ws/btcusdt@trade 10   # tylko 10 trade'ów
+ *   ./feed/wss_demo stream.binance.com 9443 /ws/btcusdt@trade 10   # only 10 trades
  */
 #include "wss_client.hpp"
 
@@ -43,8 +43,8 @@ int main(int argc, char* argv[]) {
     feed::WssClient cli;
     const auto t0 = std::chrono::steady_clock::now();
     if (!cli.connect(host, port, path)) {
-        std::fprintf(stderr, "ERROR: nie udało się połączyć (TCP/TLS/upgrade). "
-                             "Sprawdź internet + certyfikaty (apt install ca-certificates).\n");
+        std::fprintf(stderr, "ERROR: failed to connect (TCP/TLS/upgrade). "
+                             "Check internet + certificates (apt install ca-certificates).\n");
         return 1;
     }
     const auto t1 = std::chrono::steady_clock::now();
@@ -56,12 +56,12 @@ int main(int argc, char* argv[]) {
     while (received < limit) {
         const int n = cli.recv_text(buf, sizeof(buf) - 1);
         if (n <= 0) {
-            std::fprintf(stderr, "stream zamknięty (received=%d)\n", received);
+            std::fprintf(stderr, "stream closed (received=%d)\n", received);
             break;
         }
         buf[n] = '\0';
 
-        // Wyciągnij price ("p") i quantity ("q") z payloadu.
+        // Extract price ("p") and quantity ("q") from the payload.
         const char* p = std::strstr(buf, "\"p\":\"");
         const char* q = std::strstr(buf, "\"q\":\"");
         char price[32] = {}, qty[32] = {};

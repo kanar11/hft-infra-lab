@@ -1,24 +1,24 @@
 /*
- * WsClient — minimalny klient WebSocket (RFC 6455), plain ws://.
+ * WsClient — a minimal WebSocket client (RFC 6455), plain ws://.
  *
- * Funkcjonalność RFC-compliant:
- *   - HTTP/1.1 upgrade handshake z losowym Sec-WebSocket-Key (16B z /dev/urandom)
- *   - masking client→server frames (4-byte mask key per ramka, XOR payloadu)
- *   - parsing wszystkich opcodów (TEXT/BINARY/CLOSE/PING/PONG/CONTINUATION)
+ * RFC-compliant functionality:
+ *   - HTTP/1.1 upgrade handshake with a random Sec-WebSocket-Key (16B from /dev/urandom)
+ *   - masking of client→server frames (a 4-byte mask key per frame, XOR of the payload)
+ *   - parsing of all opcodes (TEXT/BINARY/CLOSE/PING/PONG/CONTINUATION)
  *   - payload length 7/16/64 bit
- *   - auto-PONG na PING, clean CLOSE handshake
+ *   - auto-PONG on PING, clean CLOSE handshake
  *
- * Czego NIE ma (poza scope laba):
- *   - TLS (wss://) — osobny WssClient w feed/wss_client.hpp, wymaga OpenSSL
- *   - fragmentacja (FIN=0) — produkcyjne giełdy wysyłają zawsze FIN=1
- *   - permessage-deflate compression — opcjonalne w RFC
- *   - weryfikacja Sec-WebSocket-Accept odpowiedzi serwera (i tak nie chronimy
- *     przed MITM bez TLS, więc bezsensu)
+ * What it does NOT have (out of the lab's scope):
+ *   - TLS (wss://) — a separate WssClient in feed/wss_client.hpp, requires OpenSSL
+ *   - fragmentation (FIN=0) — production exchanges always send FIN=1
+ *   - permessage-deflate compression — optional in the RFC
+ *   - verification of the server's Sec-WebSocket-Accept response (we don't protect
+ *     against MITM without TLS anyway, so it would be pointless)
  *
- * Po co własna impl skoro jest Boost.Beast / libwebsockets?
- * Bo to **lab edukacyjny** — pokazuje strukturę protokołu (HTTP upgrade,
- * frame header, opcode, length encoding) w ~270 liniach. Boost.Beast ma
- * dziesiątki tysięcy linii i dependency chain na 200 MB headers.
+ * Why a custom impl when Boost.Beast / libwebsockets exist?
+ * Because this is an **educational lab** — it shows the protocol structure (HTTP upgrade,
+ * frame header, opcode, length encoding) in ~270 lines. Boost.Beast has
+ * tens of thousands of lines and a dependency chain on 200 MB of headers.
  *
  * Format ramki (RFC 6455 §5.2):
  *
@@ -31,10 +31,10 @@
  *   | |1|2|3|       |K|             |                               |
  *   +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
  *
- * Opcody: 0x1=text, 0x2=binary, 0x8=close, 0x9=ping, 0xA=pong.
+ * Opcodes: 0x1=text, 0x2=binary, 0x8=close, 0x9=ping, 0xA=pong.
  * Payload len: 0-125 inline, 126 → next 2 bytes (uint16), 127 → next 8 (uint64).
- * Mask bit + 4-byte mask key: tylko gdy klient→server (zawsze 1) i opcjonalnie
- * server→klient (zwykle 0).
+ * Mask bit + 4-byte mask key: only when client→server (always 1) and optionally
+ * server→client (usually 0).
  */
 #pragma once
 
@@ -66,14 +66,14 @@ enum class WsOpcode : std::uint8_t {
 };
 
 
-// detail — utilities współdzielone przez WsClient i WssClient.
-// Free functions (nie static class members) żeby były dostępne z wss_client.hpp
-// bez exponowania na publiczne API klasy.
+// detail — utilities shared by WsClient and WssClient.
+// Free functions (not static class members) so they are available from wss_client.hpp
+// without exposing them on the class's public API.
 namespace detail {
 
-// random_bytes: kernel CSPRNG (/dev/urandom) + fallback do rand().
-// RFC nie wymaga kryptograficznej siły dla mask_key, ale urandom jest
-// dostępny na każdej Linux/BSD/macOS bez deps więc czemu nie.
+// random_bytes: kernel CSPRNG (/dev/urandom) + a fallback to rand().
+// The RFC doesn't require cryptographic strength for mask_key, but urandom is
+// available on every Linux/BSD/macOS with no deps, so why not.
 inline void random_bytes(std::uint8_t* out, std::size_t n) noexcept {
     const int fd = ::open("/dev/urandom", O_RDONLY);
     if (fd >= 0) {
@@ -90,7 +90,7 @@ inline void random_bytes(std::uint8_t* out, std::size_t n) noexcept {
         out[i] = static_cast<std::uint8_t>(std::rand() & 0xFF);
 }
 
-// gen_sec_websocket_key: 16 losowych bajtów → 24-char base64 (RFC 6455 §4.1).
+// gen_sec_websocket_key: 16 random bytes → a 24-char base64 (RFC 6455 §4.1).
 inline void gen_sec_websocket_key(char out[25]) noexcept {
     std::uint8_t raw[16];
     random_bytes(raw, 16);
@@ -106,7 +106,7 @@ inline void gen_sec_websocket_key(char out[25]) noexcept {
         out[j++] = alphabet[(v >>  6) & 0x3F];
         out[j++] = alphabet[ v        & 0x3F];
     }
-    // 16th byte → 2 znaki danych + 2 '=' padding (16 = 5*3 + 1).
+    // 16th byte → 2 data chars + 2 '=' padding (16 = 5*3 + 1).
     const std::uint32_t v = static_cast<std::uint32_t>(raw[15]) << 16;
     out[j++] = alphabet[(v >> 18) & 0x3F];
     out[j++] = alphabet[(v >> 12) & 0x3F];
@@ -130,8 +130,8 @@ public:
     WsClient(WsClient&&)                 = delete;
     WsClient& operator=(WsClient&&)      = delete;
 
-    // connect: TCP connect + HTTP upgrade handshake. Zwraca false na każdy błąd.
-    // host/port wskazują endpoint, path to ścieżka w URL'u (np. "/" lub "/ws/btcusdt@trade").
+    // connect: TCP connect + HTTP upgrade handshake. Returns false on any error.
+    // host/port point at the endpoint, path is the path in the URL (e.g. "/" or "/ws/btcusdt@trade").
     bool connect(const char* host, int port, const char* path = "/") noexcept {
         fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
         if (fd_ < 0) return false;
@@ -140,7 +140,7 @@ public:
         addr.sin_family = AF_INET;
         addr.sin_port   = htons(static_cast<std::uint16_t>(port));
         if (::inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-            // Spróbuj DNS dla nazw hostów (np. "localhost")
+            // Try DNS for hostnames (e.g. "localhost")
             hostent* he = ::gethostbyname(host);
             if (!he) { close(); return false; }
             std::memcpy(&addr.sin_addr, he->h_addr, he->h_length);
@@ -150,10 +150,10 @@ public:
             return false;
         }
 
-        // HTTP upgrade. Sec-WebSocket-Key musi być świeży na każde połączenie
-        // (RFC wymaga unikalności — produkcyjne giełdy odrzucą stałą wartość
-        // jako próbę replay attack'u). Generujemy losowe 16 bajtów z urandom
-        // i kodujemy base64.
+        // HTTP upgrade. The Sec-WebSocket-Key must be fresh on every connection
+        // (the RFC requires uniqueness — production exchanges reject a constant value
+        // as a replay-attack attempt). We generate 16 random bytes from urandom
+        // and encode them as base64.
         char ws_key[25] = {};  // 24 chars + null
         detail::gen_sec_websocket_key(ws_key);
 
@@ -172,16 +172,16 @@ public:
             return false;
         }
 
-        // Czekaj na "HTTP/1.1 101 Switching Protocols" + nagłówki + pusty wiersz.
+        // Wait for "HTTP/1.1 101 Switching Protocols" + headers + an empty line.
         //
-        // KRYTYCZNE: czytamy bajt-po-bajcie aż do CRLF CRLF. TCP to strumień —
-        // serwer wysyła odpowiedź 101 i ZARAZ potem może blastować ramki WS,
-        // które trafiają do tego samego segmentu/recv-bufora. Gdybyśmy czytali
-        // łapczywie (recv dużymi kawałkami), wciągnęlibyśmy część ramek WS do
-        // bufora handshake'u i je ZGUBILI — recv_text() startowałby w środku
-        // ramki → desync. Bajt-po-bajcie gwarantuje że zatrzymamy się dokładnie
-        // na \r\n\r\n i ani bajtu dalej. Koszt (≈150 syscalli) jest nieistotny
-        // bo handshake jest raz na połączenie.
+        // CRITICAL: we read byte-by-byte until CRLF CRLF. TCP is a stream —
+        // the server sends the 101 response and IMMEDIATELY after may blast WS frames
+        // that land in the same segment/recv buffer. If we read
+        // greedily (recv in large chunks), we'd pull part of the WS frames into the
+        // handshake buffer and LOSE them — recv_text() would start in the middle of
+        // a frame → desync. Byte-by-byte guarantees we stop exactly
+        // at \r\n\r\n and not a byte further. The cost (≈150 syscalls) is negligible
+        // because the handshake is once per connection.
         char resp[1024];
         std::size_t got = 0;
         while (got < sizeof(resp) - 1) {
@@ -191,7 +191,7 @@ public:
             resp[got++] = static_cast<char>(c);
             if (got >= 4 && resp[got - 4] == '\r' && resp[got - 3] == '\n' &&
                             resp[got - 2] == '\r' && resp[got - 1] == '\n') {
-                break;  // koniec nagłówków — reszta strumienia to ramki WS
+                break;  // end of headers — the rest of the stream is WS frames
             }
         }
         resp[got] = '\0';
@@ -202,9 +202,9 @@ public:
         return true;
     }
 
-    // recv_text: odbierz jedną wiadomość text. Zwraca długość payloadu (>0)
-    // albo 0 na close / EOF, -1 na błąd. Pomijaj ping (odeślij pong) i
-    // przechwytuj close cleanly.
+    // recv_text: receive one text message. Returns the payload length (>0)
+    // or 0 on close / EOF, -1 on error. Skips ping (sends back a pong) and
+    // intercepts close cleanly.
     int recv_text(char* out, std::size_t max_len) noexcept {
         for (;;) {
             std::uint8_t h[2];
@@ -214,7 +214,7 @@ public:
             const WsOpcode     opcode = static_cast<WsOpcode>(h[0] & 0x0F);
             const bool         masked = (h[1] & 0x80) != 0;
             std::uint64_t      len    = h[1] & 0x7F;
-            (void)fin;  // demo nie obsługuje fragmentacji
+            (void)fin;  // the demo does not handle fragmentation
 
             if (len == 126) {
                 std::uint8_t ext[2];
@@ -230,7 +230,7 @@ public:
             std::uint8_t mask_key[4]{};
             if (masked && !recv_all(mask_key, 4)) return -1;
 
-            // Limit żeby nie czytać megabajtów do buforu klienta.
+            // Limit so we don't read megabytes into the client's buffer.
             if (len > max_len) return -1;
 
             if (!recv_all(reinterpret_cast<std::uint8_t*>(out), len)) return -1;
@@ -243,7 +243,7 @@ public:
             case WsOpcode::BINARY:
                 return static_cast<int>(len);
             case WsOpcode::PING:
-                // Odeślij pong z tym samym payloadem.
+                // Send back a pong with the same payload.
                 send_frame(WsOpcode::PONG, out, static_cast<std::size_t>(len));
                 continue;
             case WsOpcode::PONG:
@@ -257,18 +257,18 @@ public:
         }
     }
 
-    // send_text: wyślij text frame z maską (RFC 6455 wymóg dla client→server).
+    // send_text: send a text frame with a mask (RFC 6455 requirement for client→server).
     bool send_text(const char* msg, std::size_t len) noexcept {
         return send_frame(WsOpcode::TEXT, msg, len);
     }
 
-    // send_ping: wyślij ramkę PING (client → server). Payload opcjonalny;
-    // standard używa kilku bajtów timestamp/cookie żeby zweryfikować że PONG
-    // pasuje do PING'a. Pusty payload też legalny.
+    // send_ping: send a PING frame (client → server). Payload optional;
+    // the standard uses a few timestamp/cookie bytes to verify the PONG
+    // matches the PING. An empty payload is also legal.
     //
-    // Po co? Binance/Coinbase ZAMYKA idle wss:// po ~3 min bez warningu —
-    // bez okresowego PING/PONG strategia "ucisza się" niezauważalnie.
-    // Wywołuj z timera co 30s (lub krócej niż server timeout).
+    // Why? Binance/Coinbase CLOSE an idle wss:// after ~3 min without a warning —
+    // without periodic PING/PONG the strategy "goes silent" unnoticed.
+    // Call it from a timer every 30s (or shorter than the server timeout).
     bool send_ping(const void* payload = nullptr, std::size_t len = 0) noexcept {
         return send_frame(WsOpcode::PING, payload, len);
     }
@@ -292,11 +292,11 @@ private:
         return true;
     }
 
-    // send_frame: wysyła ramkę WS z maską (RFC 6455 §5.3 — klient MUSI maskować
-    // wszystkie ramki wysyłane do serwera). Mask key to 4 losowe bajty z urandom,
-    // XOR'owane z payloadem przed wysłaniem. Mock_ws_server akceptuje zarówno
-    // masked jak i unmasked (po prostu nie czyta naszych ramek), więc demo
-    // dalej działa; ale prawdziwy Binance/Coinbase odrzuci unmasked frame.
+    // send_frame: sends a WS frame with a mask (RFC 6455 §5.3 — the client MUST mask
+    // all frames sent to the server). The mask key is 4 random bytes from urandom,
+    // XORed with the payload before sending. mock_ws_server accepts both
+    // masked and unmasked (it simply doesn't read our frames), so the demo
+    // still works; but a real Binance/Coinbase will reject an unmasked frame.
     bool send_frame(WsOpcode opcode, const void* payload, std::size_t len) noexcept {
         std::uint8_t hdr[14];  // 2 base + 8 ext_len + 4 mask = max 14
         std::size_t  hdr_len = 2;
@@ -315,7 +315,7 @@ private:
             hdr_len = 10;
         }
 
-        // Wygeneruj 4-bajtowy mask_key i wstaw bezpośrednio za length.
+        // Generate a 4-byte mask_key and insert it directly after the length.
         std::uint8_t mask_key[4];
         detail::random_bytes(mask_key, 4);
         std::memcpy(hdr + hdr_len, mask_key, 4);
@@ -325,8 +325,8 @@ private:
             return false;
 
         if (len > 0) {
-            // XOR payloadu z mask_key (cykliczny mod 4). Wysyłamy chunk'ami
-            // żeby nie alokować całego buforu na heap.
+            // XOR the payload with mask_key (cyclic mod 4). We send in chunks
+            // so as not to allocate the whole buffer on the heap.
             constexpr std::size_t CHUNK = 1024;
             std::uint8_t buf[CHUNK];
             const auto* src = static_cast<const std::uint8_t*>(payload);

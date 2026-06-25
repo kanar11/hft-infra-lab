@@ -1,34 +1,34 @@
 /*
  * WssClient — WsClient + TLS (wss://).
  *
- * Bliźniaczy klient WS owinięty w OpenSSL. Ten plik jest OPCJONALNY —
- * kompiluje się tylko gdy projekt jest budowany z flagą HFT_USE_OPENSSL
- * i linkiem do -lssl -lcrypto (zobacz Makefile target `make feed/wss_demo`).
+ * A twin WS client wrapped in OpenSSL. This file is OPTIONAL —
+ * it compiles only when the project is built with the HFT_USE_OPENSSL flag
+ * and linked against -lssl -lcrypto (see the Makefile target `make feed/wss_demo`).
  *
- * Po co osobny plik a nie #ifdef w ws_client.hpp?
- *   - main CI nie wymaga libssl-dev (mniejszy obrazek, szybszy build)
- *   - czytelność: ws_client.hpp zostaje czysty (~270 linii); wszystko co
- *     TLS-specific siedzi tutaj.
+ * Why a separate file rather than an #ifdef in ws_client.hpp?
+ *   - the main CI doesn't require libssl-dev (smaller image, faster build)
+ *   - readability: ws_client.hpp stays clean (~270 lines); everything
+ *     TLS-specific lives here.
  *
- * Czego trzeba żeby tego użyć?
+ * What do you need to use it?
  *   sudo apt install libssl-dev          # Ubuntu / Debian
  *   sudo dnf install openssl-devel       # RHEL / Fedora
  *
  *   make feed/wss_demo HFT_USE_OPENSSL=1
  *   ./feed/wss_demo stream.binance.com 9443 /ws/btcusdt@trade
  *
- * Bezpieczeństwo: weryfikujemy certyfikat serwera przez domyślny store
- * OpenSSL (/etc/ssl/certs/). Bez tej weryfikacji MITM byłby trywialny.
- * SNI ustawiamy żeby serwery virtual-host (Cloudflare etc.) wiedziały
- * którego cert'a zwrócić.
+ * Security: we verify the server certificate via OpenSSL's default store
+ * (/etc/ssl/certs/). Without this verification MITM would be trivial.
+ * We set SNI so virtual-host servers (Cloudflare etc.) know
+ * which cert to return.
  */
 #pragma once
 
 #ifndef HFT_USE_OPENSSL
-#  error "wss_client.hpp wymaga -DHFT_USE_OPENSSL i linku -lssl -lcrypto"
+#  error "wss_client.hpp requires -DHFT_USE_OPENSSL and linking -lssl -lcrypto"
 #endif
 
-#include "ws_client.hpp"   // dla WsOpcode enum + helperów random_bytes/gen_key
+#include "ws_client.hpp"   // for the WsOpcode enum + random_bytes/gen_key helpers
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -63,34 +63,34 @@ public:
     WssClient& operator=(WssClient&&)      = delete;
 
     // connect: TCP → TLS handshake → HTTP upgrade.
-    // host  — np. "stream.binance.com" (SNI + hostname verification)
-    // port  — np. 443 (Binance używa 9443)
-    // path  — np. "/ws/btcusdt@trade"
+    // host  — e.g. "stream.binance.com" (SNI + hostname verification)
+    // port  — e.g. 443 (Binance uses 9443)
+    // path  — e.g. "/ws/btcusdt@trade"
     bool connect(const char* host, int port, const char* path = "/") noexcept {
-        // Init OpenSSL — idempotentne, można wołać wielokrotnie.
+        // Init OpenSSL — idempotent, can be called multiple times.
         SSL_library_init();
         SSL_load_error_strings();
 
         ctx_ = SSL_CTX_new(TLS_client_method());
         if (!ctx_) return false;
 
-        // Verify certyfikatu serwera + minimum TLS 1.2 (1.0/1.1 deprecated).
+        // Verify the server certificate + a minimum of TLS 1.2 (1.0/1.1 deprecated).
         SSL_CTX_set_verify(ctx_, SSL_VERIFY_PEER, nullptr);
         SSL_CTX_set_default_verify_paths(ctx_);
         SSL_CTX_set_min_proto_version(ctx_, TLS1_2_VERSION);
 
-        // TCP connect (jak w ws_client.hpp — resolve, socket, connect).
+        // TCP connect (as in ws_client.hpp — resolve, socket, connect).
         if (!tcp_connect(host, port)) { close(); return false; }
 
         ssl_ = SSL_new(ctx_);
         if (!ssl_) { close(); return false; }
         SSL_set_fd(ssl_, fd_);
 
-        // SNI — krytyczne dla serwerów virtual-host (Cloudflare, AWS LB).
-        // Bez tego dostaniesz domyślny cert i hostname check failnie.
+        // SNI — critical for virtual-host servers (Cloudflare, AWS LB).
+        // Without it you get the default cert and the hostname check fails.
         SSL_set_tlsext_host_name(ssl_, host);
 
-        // Hostname verification — sprawdza CN/SAN w certyfikacie.
+        // Hostname verification — checks the CN/SAN in the certificate.
         if (SSL_set1_host(ssl_, host) != 1) { close(); return false; }
 
         if (SSL_connect(ssl_) != 1) {
@@ -99,7 +99,7 @@ public:
             return false;
         }
 
-        // HTTP upgrade nad TLS — identycznie jak w ws_client.hpp.
+        // HTTP upgrade over TLS — identical to ws_client.hpp.
         char ws_key[25] = {};
         detail::gen_sec_websocket_key(ws_key);
 
@@ -115,10 +115,10 @@ public:
             path, host, port, ws_key);
         if (SSL_write(ssl_, req, n) != n) { close(); return false; }
 
-        // Odczytaj odpowiedź bajt-po-bajcie aż do CRLF CRLF. Tak samo jak w
-        // ws_client.hpp: łapczywy SSL_read wciągnąłby ramki WS wysłane tuż za
-        // handshake'iem do bufora i je zgubił → desync recv_text(). Czytanie
-        // pojedynczo zatrzymuje nas dokładnie na granicy nagłówków.
+        // Read the response byte-by-byte until CRLF CRLF. Same as in
+        // ws_client.hpp: a greedy SSL_read would pull WS frames sent right after the
+        // handshake into the buffer and lose them → recv_text() desync. Reading
+        // one byte at a time stops us exactly at the header boundary.
         char resp[2048];
         int got = 0;
         while (got < static_cast<int>(sizeof(resp)) - 1) {
@@ -133,14 +133,14 @@ public:
         }
         resp[got] = '\0';
         if (std::strncmp(resp, "HTTP/1.1 101", 12) != 0) {
-            std::fprintf(stderr, "wss: server odpowiedział nie-101: %.*s\n", 64, resp);
+            std::fprintf(stderr, "wss: server replied non-101: %.*s\n", 64, resp);
             close();
             return false;
         }
         return true;
     }
 
-    // recv_text — taka sama logika jak w WsClient, tylko ::recv → SSL_read.
+    // recv_text — same logic as WsClient, only ::recv → SSL_read.
     int recv_text(char* out, std::size_t max_len) noexcept {
         for (;;) {
             std::uint8_t h[2];
@@ -184,13 +184,13 @@ public:
         }
     }
 
-    // send_text — z maską, identycznie jak WsClient.
+    // send_text — with a mask, identical to WsClient.
     bool send_text(const char* msg, std::size_t len) noexcept {
         return send_frame(WsOpcode::TEXT, msg, len);
     }
 
-    // send_ping: PING z klienta — wywołuj co 30s żeby Binance/Coinbase
-    // nie zamknęło idle wss:// po 3 min.
+    // send_ping: a PING from the client — call it every 30s so Binance/Coinbase
+    // doesn't close an idle wss:// after 3 min.
     bool send_ping(const void* payload = nullptr, std::size_t len = 0) noexcept {
         return send_frame(WsOpcode::PING, payload, len);
     }
