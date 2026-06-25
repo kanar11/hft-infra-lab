@@ -1,16 +1,16 @@
 /*
- * KernelBypassSimulator — symulator DPDK (kernel bypass).
+ * KernelBypassSimulator — a DPDK (kernel bypass) simulator.
  *
- * W prawdziwym HFT DPDK omija cały stos sieciowy Linuksa — pakiety idą
- * bezpośrednio z karty sieciowej do przestrzeni użytkownika przez DMA
- * (Direct Memory Access). Symulator nie używa karty sieciowej; mierzy tylko
- * RÓŻNICĘ narzutów dwóch modeli za pomocą pakietów w pamięci.
+ * In real HFT, DPDK bypasses the entire Linux network stack — packets go
+ * directly from the NIC to user space via DMA
+ * (Direct Memory Access). The simulator does not use a NIC; it only measures
+ * the DIFFERENCE in the overhead of the two models using in-memory packets.
  *
- * Dlaczego to ma znaczenie:
- *   Interrupt mode: NIC → IRQ jądra → context switch → kopia → userspace
- *                   (~10-50 µs per pakiet — context switche są drogie)
- *   Poll mode:      NIC → DMA → ring buffer w userspace (zero copy!)
- *                   (~1-5 µs per pakiet — busy-wait, brak context switcha)
+ * Why it matters:
+ *   Interrupt mode: NIC → kernel IRQ → context switch → copy → userspace
+ *                   (~10-50 µs per packet — context switches are expensive)
+ *   Poll mode:      NIC → DMA → ring buffer in userspace (zero copy!)
+ *                   (~1-5 µs per packet — busy-wait, no context switch)
  *
  * Pipeline: NIC → DPDK → ITCH Parser → Strategy → OMS.
  */
@@ -26,20 +26,20 @@
 #include <algorithm>
 #include <vector>
 
-// Rozmiar symulowanego pakietu (typowa wiadomość danych rynkowych).
+// Size of a simulated packet (a typical market data message).
 static constexpr int PACKET_SIZE = 64;
 
-// Rozmiar ring bufora dla poll-mode (potęga 2 dla szybkiego modulo).
+// Ring buffer size for poll mode (a power of 2 for fast modulo).
 static constexpr int RING_SIZE = 4096;
 static constexpr int RING_MASK = RING_SIZE - 1;
 
 
-// Symulowany pakiet — jak ramka Ethernet ale uproszczona: timestamp + payload.
+// A simulated packet — like an Ethernet frame but simplified: timestamp + payload.
 
 struct alignas(64) SimPacket {
-    int64_t  send_ts_ns;            // sender timestamp / znacznik czasu nadawcy
-    uint32_t seq_num;               // sequence number / numer sekwencji
-    uint8_t  payload[PACKET_SIZE];  // market data / dane rynkowe
+    int64_t  send_ts_ns;            // sender timestamp
+    uint32_t seq_num;               // sequence number
+    uint8_t  payload[PACKET_SIZE];  // market data
 
     SimPacket() noexcept : send_ts_ns(0), seq_num(0) {
         std::memset(payload, 0, PACKET_SIZE);
@@ -47,14 +47,13 @@ struct alignas(64) SimPacket {
 };
 
 
-// Ring buffer — współdzielony między producent a konsument.
+// Ring buffer — shared between producer and consumer.
 // Like DPDK's rte_ring — lock-free SPSC (single producer, single consumer)
-// Jak rte_ring z DPDK — bezblokadowy SPSC (jeden producent, jeden konsument)
 
 struct alignas(64) PacketRing {
     SimPacket packets[RING_SIZE];
-    alignas(64) std::atomic<uint32_t> head{0};  // write position / pozycja zapisu
-    alignas(64) std::atomic<uint32_t> tail{0};  // read position / pozycja odczytu
+    alignas(64) std::atomic<uint32_t> head{0};  // write position
+    alignas(64) std::atomic<uint32_t> tail{0};  // read position
 
     bool push(const SimPacket& pkt) noexcept {
         uint32_t h = head.load(std::memory_order_relaxed);
@@ -75,7 +74,7 @@ struct alignas(64) PacketRing {
 };
 
 
-// Wyniki benchmarku.
+// Benchmark results.
 
 struct BypassStats {
     int64_t  total_packets;
@@ -100,7 +99,7 @@ struct BypassStats {
 };
 
 
-// KernelBypassSimulator — runner obu trybów + pomiar róznicy latencji.
+// KernelBypassSimulator — runs both modes + measures the latency difference.
 
 class KernelBypassSimulator {
 
@@ -113,10 +112,8 @@ class KernelBypassSimulator {
     // simulate_interrupt_overhead: add artificial delay representing kernel overhead
     // In real systems: IRQ handler → softirq → socket buffer copy → wake process
     // Like 'sleep 0.00001' but at nanosecond granularity — simulates context switch cost
-    // Symuluje narzut przerwania: handler IRQ → softirq → kopiowanie bufora → budzenie procesu
     static void simulate_interrupt_overhead() noexcept {
         // Burn ~500ns of CPU cycles to simulate interrupt + context switch overhead
-        // Spal ~500ns cykli CPU żeby symulować narzut przerwania + przełączenia kontekstu
         volatile int x = 0;
         for (int i = 0; i < 150; ++i) {
             x += i;
@@ -126,7 +123,6 @@ class KernelBypassSimulator {
 public:
     // benchmark_poll_mode: measure latency of DPDK-style poll mode
     // Packets go directly to ring buffer — consumer polls continuously
-    // Pakiety idą bezpośrednio do bufora pierścieniowego — konsument sonduje ciągle
     static BypassStats benchmark_poll_mode(int num_packets) {
         PacketRing ring;
         std::vector<int64_t> latencies;
@@ -134,19 +130,17 @@ public:
         std::atomic<bool> done{false};
 
         // Producer thread: simulate NIC DMA writing to ring buffer
-        // Wątek producenta: symuluje DMA karty sieciowej zapisujące do bufora
         std::thread producer([&]() {
             for (int i = 0; i < num_packets; ++i) {
                 SimPacket pkt;
                 pkt.seq_num = i;
                 pkt.send_ts_ns = now_ns();
-                while (!ring.push(pkt)) {}  // spin if full / kręć się jeśli pełny
+                while (!ring.push(pkt)) {}  // spin if full
             }
             done.store(true, std::memory_order_release);
         });
 
         // Consumer: poll mode — busy-wait for packets (no sleep, no yield)
-        // Konsument: tryb sondowania — aktywne czekanie na pakiety (bez sleep, bez yield)
         int received = 0;
         auto total_start = now_ns();
 
@@ -158,7 +152,6 @@ public:
                 received++;
             }
             // No sleep — this IS the poll mode advantage
-            // Bez sleep — to JEST przewaga trybu sondowania
         }
 
         auto total_end = now_ns();
@@ -185,7 +178,6 @@ public:
 
     // benchmark_interrupt_mode: measure latency with simulated kernel overhead
     // Each packet incurs interrupt + context switch cost before delivery
-    // Każdy pakiet ponosi koszt przerwania + przełączenia kontekstu przed dostarczeniem
     static BypassStats benchmark_interrupt_mode(int num_packets) {
         PacketRing ring;
         std::vector<int64_t> latencies;

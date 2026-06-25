@@ -5,7 +5,6 @@
  * Run:     ./dpdk_demo [number_of_packets]
  *
  * Compares poll-mode (DPDK-style) vs interrupt-mode packet processing.
- * Porównuje tryb sondowania (styl DPDK) vs tryb przerwań.
  */
 
 #include "kernel_bypass_sim.hpp"
@@ -64,7 +63,6 @@ void test_ring_fifo_order() {
 void test_ring_wrap_around() {
     PacketRing ring;
     // Fill and drain to force wrap-around
-    // Wypełnij i opróżnij żeby wymusić zawinięcie
     bool all_ok = true;
     for (int cycle = 0; cycle < 3; ++cycle) {
         for (int i = 0; i < 100; ++i) {
@@ -96,11 +94,8 @@ void test_interrupt_mode_basic() {
 
 void test_poll_faster_than_interrupt() {
     // Poll mode should have higher throughput than interrupt mode
-    // Tryb sondowania powinien mieć wyższą przepustowość niż tryb przerwań
     // NOTE: This is a soft check — on shared CI runners (GitHub Actions),
     // thread scheduling can make results unpredictable.
-    // UWAGA: To jest miękki test — na współdzielonych CI runnerach,
-    // planowanie wątków może dawać nieprzewidywalne wyniki.
     auto poll = KernelBypassSimulator::benchmark_poll_mode(50000);
     auto intr = KernelBypassSimulator::benchmark_interrupt_mode(50000);
     bool faster = poll.throughput_mpps > intr.throughput_mpps;
@@ -109,7 +104,7 @@ void test_poll_faster_than_interrupt() {
         tests_passed++; tests_total++;
     } else {
         printf("  WARN: test_poll_faster_than_interrupt (skipped on shared CPU)\n");
-        // Don't count as failure — timing-dependent / Nie licz jako błąd — zależne od timingu
+        // Don't count as failure — timing-dependent
     }
     printf("    (poll: %.1f Mpps, interrupt: %.1f Mpps, speedup: %.1fx)\n",
            poll.throughput_mpps, intr.throughput_mpps,
@@ -135,7 +130,7 @@ void benchmark(int num_packets) {
     auto intr = KernelBypassSimulator::benchmark_interrupt_mode(num_packets);
     intr.print();
 
-    printf("\n--- Comparison / Porównanie ---\n");
+    printf("\n--- Comparison ---\n");
     double speedup = intr.avg_latency_ns / poll.avg_latency_ns;
     printf("  Poll mode latency:      %.0f ns\n", poll.avg_latency_ns);
     printf("  Interrupt mode latency: %.0f ns\n", intr.avg_latency_ns);
