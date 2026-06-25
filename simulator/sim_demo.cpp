@@ -112,16 +112,16 @@ void test_pipeline_full() {
     ASSERT(stats.messages_parsed > 0, "full_pipeline_parsed");
 }
 
-// Risk wpięty w pipeline (#74). Hojne limity → bramka przepuszcza, zlecenia
-// nadal się rozliczają (zero pre-trade rejectów).
+// Risk wired into the pipeline (#74). Generous limits → the gate passes, orders
+// still settle (zero pre-trade rejects).
 void test_pipeline_with_risk_allow() {
     PipelineStats stats = run_pipeline(500, true, true, 42, nullptr, 0, /*use_risk=*/true);
     ASSERT(stats.orders_submitted > 0, "risk_allow_submitted");
     ASSERT(stats.orders_risk_rejected == 0, "risk_allow_no_rejects");
 }
 
-// Zaciśnięte limity → RiskManager odrzuca PRZED OMS. Dowód że bramka działa
-// na hot-pathie, a nie jest tylko podpięta na sucho.
+// Tightened limits → the RiskManager rejects BEFORE the OMS. Proof the gate works
+// on the hot path, not just wired up cosmetically.
 void test_pipeline_with_risk_reject() {
     HFTConfig cfg{};
     cfg.risk.max_position_per_symbol = 100;
@@ -130,8 +130,8 @@ void test_pipeline_with_risk_reject() {
     ASSERT(stats.orders_risk_rejected > 0, "risk_reject_engages");
 }
 
-// FullOrderBook jako silnik fillów (#75) — zlecenia z pipeline matchują się
-// realnie w orderbook_pro, a nie są syntetyzowane po cenie submitu.
+// FullOrderBook as the fill engine (#75) — pipeline orders actually match
+// in orderbook_pro instead of being synthesized at the submit price.
 void test_pipeline_with_book() {
     PipelineStats stats = run_pipeline(500, true, true, 42, nullptr, 0,
                                        /*use_risk=*/false, /*use_book=*/true);
@@ -139,8 +139,8 @@ void test_pipeline_with_book() {
     ASSERT(stats.orders_filled > 0, "book_pipeline_filled_via_engine");
 }
 
-// MarketMaker napędzany przez OMS (#76) — MM kwotuje, market flow go przecina,
-// fille idą przez OMS. Dowód że MM nie żyje już tylko we własnym demie.
+// MarketMaker driven through the OMS (#76) — the MM quotes, market flow crosses it,
+// fills go through the OMS. Proof the MM no longer lives only in its own demo.
 void test_pipeline_with_mm() {
     PipelineStats stats = run_pipeline(5000, false, false, 42, nullptr, 0,
                                        /*use_risk=*/false, /*use_book=*/false,
@@ -150,9 +150,9 @@ void test_pipeline_with_mm() {
     ASSERT(stats.orders_filled == stats.orders_submitted, "mm_fills_settle_in_oms");
 }
 
-// BookMatchEngine bezpośrednio — deterministyczny dowód że silnik FIFO realnie
-// przechodzi poziomy: małe zlecenie fill bez slippage, duże > płynności touch'a
-// walkuje w głąb (VWAP gorszy od ceny ref po właściwej stronie).
+// BookMatchEngine directly — deterministic proof the FIFO engine actually
+// walks levels: a small order fills with no slippage, a large one > the touch liquidity
+// walks deeper (VWAP worse than the ref price on the appropriate side).
 void test_book_match_engine() {
     auto eng = std::make_unique<BookMatchEngine>(/*level_liq=*/100);
     double vwap = 0.0;
@@ -162,12 +162,12 @@ void test_book_match_engine() {
     ASSERT(vwap == 100.00, "book_small_no_slippage");      // 50 < 100/level → touch
 
     const int32_t f_buy = eng->match(Side::BUY, 100.00, 350, vwap);
-    ASSERT(f_buy == 350, "book_large_buy_full_fill");      // drabinka pokrywa
-    ASSERT(vwap > 100.00, "book_buy_slippage_up");          // walk w górę = drożej
+    ASSERT(f_buy == 350, "book_large_buy_full_fill");      // the ladder covers it
+    ASSERT(vwap > 100.00, "book_buy_slippage_up");          // walk up = more expensive
 
     const int32_t f_sell = eng->match(Side::SELL, 100.00, 350, vwap);
     ASSERT(f_sell == 350, "book_large_sell_full_fill");
-    ASSERT(vwap < 100.00, "book_sell_slippage_down");       // walk w dół = taniej
+    ASSERT(vwap < 100.00, "book_sell_slippage_down");       // walk down = cheaper
 }
 
 void test_rng_deterministic() {

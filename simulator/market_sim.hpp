@@ -1,23 +1,23 @@
 /*
- * MarketSim — symulator danych rynkowych end-to-end pipeline'u HFT.
+ * MarketSim — a market data simulator for the end-to-end HFT pipeline.
  *
- * Generuje syntetyczne wiadomości ITCH, parsuje przez ITCH parser, routuje
- * zlecenia przez OMS z risk checkami, śledzi P&L. To "klejenie" wszystkich
- * komponentów labu w jeden binarny demo — pokazuje że całość działa.
+ * Generates synthetic ITCH messages, parses them through the ITCH parser, routes
+ * orders through the OMS with risk checks, tracks P&L. This is the "glue" of all
+ * the lab's components into one binary demo — it shows the whole thing works.
  *
  * Pipeline: ITCH Generator → ITCH Parser → Strategy → Router → Risk → OMS → P&L
  *
- * RiskManager (opt-in przez use_risk / flagę --risk) jest pre-trade bramkarzem:
- * każde zlecenie przechodzi check_order() ZANIM trafi do OMS (SEC 15c3-5).
- * REJECT/KILL → zlecenie nie idzie; fille zasilają pozycje i P&L w RiskManagerze
- * (circuit breaker / drawdown). Patrz do_fill() i pętla [3/4].
+ * The RiskManager (opt-in via use_risk / the --risk flag) is the pre-trade gatekeeper:
+ * every order passes check_order() BEFORE it reaches the OMS (SEC 15c3-5).
+ * REJECT/KILL → the order does not go; fills feed the positions and P&L in the RiskManager
+ * (circuit breaker / drawdown). See do_fill() and the [3/4] loop.
  *
- * Dwa warianty:
- *   - run_pipeline()           — wszystko w jednym wątku, sekwencyjnie.
- *   - run_pipeline_threaded()  — gen / parse-strategy / oms na osobnych
- *                                wątkach przez SPSC queue (lockfree).
+ * Two variants:
+ *   - run_pipeline()           — everything on one thread, sequentially.
+ *   - run_pipeline_threaded()  — gen / parse-strategy / oms on separate
+ *                                threads via an SPSC queue (lockfree).
  *
- * Wydajność (lab): ~573K msg/sec end-to-end (full pipeline).
+ * Performance (lab): ~573K msg/sec end-to-end (full pipeline).
  */
 
 #pragma once
@@ -33,7 +33,7 @@
 #include <thread>
 #include <vector>
 
-// Wszystkie moduły pipeline'u
+// All pipeline modules
 #include "../itch-parser/itch_parser.hpp"
 #include "../oms/oms.hpp"
 #include "../risk/risk_manager.hpp"
@@ -48,9 +48,9 @@
 #include <unordered_map>
 
 
-// MarketDataGenerator — generuje syntetyczne binarne wiadomości ITCH.
+// MarketDataGenerator — generates synthetic binary ITCH messages.
 
-// Prosty LCG (deterministyczny, zero heap allocation — istotne w hot path).
+// A simple LCG (deterministic, zero heap allocation — important on the hot path).
 struct FastRNG {
     uint64_t state;
 
@@ -67,7 +67,7 @@ struct FastRNG {
 };
 
 
-// Informacje o symbolu dla generatora.
+// Symbol info for the generator.
 struct StockInfo {
     char   symbol[9];
     double base_price;
@@ -82,11 +82,11 @@ static const int SHARE_SIZES[] = {10, 25, 50, 100, 200, 500};
 static constexpr int NUM_SHARE_SIZES = 6;
 
 
-// Śledzenie aktywnych zleceń (stała tablica, zero heap na hot path).
+// Active-order tracking (fixed array, zero heap on the hot path).
 struct ActiveOrder {
     int64_t order_ref;
     char    stock[9];
-    char    side;       // 'B' lub 'S'
+    char    side;       // 'B' or 'S'
     double  price;
     int32_t shares;
     bool    active;
@@ -94,10 +94,10 @@ struct ActiveOrder {
 
 static constexpr int MAX_ACTIVE_ORDERS = 8192;
 
-// Pre-built bufor surowej wiadomości ITCH (max rozmiar to ramka 'P' z match_num).
+// Pre-built raw ITCH message buffer (max size is a 'P' frame with match_num).
 static constexpr int MAX_MSG_SIZE = 64;
 
-// Wygenerowana wiadomość — surowe bajty + długość.
+// A generated message — raw bytes + length.
 struct GeneratedMessage {
     uint8_t data[MAX_MSG_SIZE];
     int     length;
@@ -110,16 +110,16 @@ class MarketDataGenerator {
     int64_t order_ref_;
     ActiveOrder active_orders_[MAX_ACTIVE_ORDERS];
     int active_count_;
-    // Scratch buffer dla random_active_order — pole klasy żeby każde wywołanie
-    // nie wrzucało 32 KB na stos. Nadpisywany przy każdym użyciu, nigdy nie
-    // czytany przed wypełnieniem, więc init zbędny.
+    // Scratch buffer for random_active_order — a class field so each call
+    // doesn't put 32 KB on the stack. Overwritten on every use, never
+    // read before being filled, so no init needed.
     int active_indices_[MAX_ACTIVE_ORDERS];
-    // Symbol universe — wskazuje na pre-built StockInfo. Domyślnie hardcoded
-    // STOCKS[] fallback gdy config nie został dostarczony.
+    // Symbol universe — points at pre-built StockInfo. Defaults to the hardcoded
+    // STOCKS[] fallback when no config was provided.
     const StockInfo* stocks_;
     int              n_stocks_;
 
-    // ITCH używa network byte order (big-endian) — pakery 32/64 bit.
+    // ITCH uses network byte order (big-endian) — 32/64-bit packers.
     static void pack_be64(uint8_t* buf, int64_t val) noexcept {
         for (int i = 7; i >= 0; --i) { buf[i] = val & 0xFF; val >>= 8; }
     }
@@ -132,7 +132,7 @@ class MarketDataGenerator {
         return 34200000000000LL + seq_ * 1000000LL;  // 9:30 AM + seq * 1ms
     }
 
-    // Wylosuj indeks aktywnego zlecenia, -1 gdy brak.
+    // Pick a random active-order index, -1 if none.
     int random_active_order() noexcept {
         if (active_count_ == 0) return -1;
         int n = 0;
@@ -151,16 +151,16 @@ public:
             active_orders_[i].active = false;
     }
 
-    // set_stocks: nadpisz symbol universe ticker'ami z configa.
-    // Ownership wskaźnika zostaje po stronie wywołującego — zwykle wskazuje
-    // na długożyjący StockInfo vector zbudowany z HFTConfig::simulator::stocks.
+    // set_stocks: override the symbol universe with tickers from the config.
+    // Ownership of the pointer stays with the caller — usually points
+    // at a long-lived StockInfo vector built from HFTConfig::simulator::stocks.
     void set_stocks(const StockInfo* arr, int n) noexcept {
         if (arr && n > 0) { stocks_ = arr; n_stocks_ = n; }
     }
 
     int active_order_count() const noexcept { return active_count_; }
 
-    // Generuj wiadomość Add Order ('A').
+    // Generate an Add Order ('A') message.
     GeneratedMessage generate_add_order() noexcept {
         GeneratedMessage msg = {};
         const StockInfo& stock = stocks_[rng_.rand_int(n_stocks_)];
@@ -170,14 +170,14 @@ public:
         int shares = SHARE_SIZES[rng_.rand_int(NUM_SHARE_SIZES)];
         order_ref_++;
 
-        // Zapisz aktywne zlecenie.
+        // Record the active order.
         for (int i = 0; i < MAX_ACTIVE_ORDERS; ++i) {
             if (!active_orders_[i].active) {
                 active_orders_[i].order_ref = order_ref_;
-                // memcpy zamiast strncpy — g++ -Wstringop-truncation flagują
-                // strncpy(dst, src, 8) jako "może nie być null-terminated", mimo
-                // że explicit stock[8] = '\0' linijkę niżej. memcpy daje identyczne
-                // bajty i nie wywala warninga.
+                // memcpy instead of strncpy — g++ -Wstringop-truncation flags
+                // strncpy(dst, src, 8) as "may not be null-terminated", even
+                // though there's an explicit stock[8] = '\0' a line below. memcpy gives identical
+                // bytes and does not trigger the warning.
                 std::memcpy(active_orders_[i].stock, stock.symbol, 8);
                 active_orders_[i].stock[8] = '\0';
                 active_orders_[i].side = side;
@@ -189,7 +189,7 @@ public:
             }
         }
 
-        // Pakowanie ramki: 'A' + timestamp(8) + order_ref(8) + side(1) + shares(4) + stock(8) + price(4)
+        // Pack the frame: 'A' + timestamp(8) + order_ref(8) + side(1) + shares(4) + stock(8) + price(4)
         uint8_t* d = msg.data;
         d[0] = 'A';
         pack_be64(d + 1, next_ts());
@@ -203,7 +203,7 @@ public:
         return msg;
     }
 
-    // Generuj wiadomość Order Executed ('E').
+    // Generate an Order Executed ('E') message.
     GeneratedMessage generate_execute() noexcept {
         int idx = random_active_order();
         if (idx < 0) return generate_add_order();
@@ -229,7 +229,7 @@ public:
         return msg;
     }
 
-    // Generuj wiadomość Order Cancelled ('C').
+    // Generate an Order Cancelled ('C') message.
     GeneratedMessage generate_cancel() noexcept {
         int idx = random_active_order();
         if (idx < 0) return generate_add_order();
@@ -249,7 +249,7 @@ public:
         return msg;
     }
 
-    // Generuj wiadomość Trade ('P').
+    // Generate a Trade ('P') message.
     GeneratedMessage generate_trade() noexcept {
         const StockInfo& stock = stocks_[rng_.rand_int(n_stocks_)];
         double price = stock.base_price + rng_.rand_range(-1.0, 1.0);
@@ -284,7 +284,7 @@ public:
         return msg;
     }
 
-    // Wymieszane wiadomości wg rozkładu prawdopodobieństwa (45% A, 25% E, 15% P, 15% C).
+    // Mixed messages by a probability distribution (45% A, 25% E, 15% P, 15% C).
     GeneratedMessage generate_random_message() noexcept {
         double roll = rng_.rand_double();
         if (roll < 0.45)       return generate_add_order();
@@ -295,32 +295,32 @@ public:
 };
 
 
-// PipelineStats — wyniki uruchomienia symulacji.
+// PipelineStats — the results of a simulation run.
 struct PipelineStats {
     int     messages_generated;
     int     messages_parsed;
     int     orders_submitted;
     int     orders_filled;
-    int     orders_rejected;         // OMS odrzucił (limit pozycji / wartości w OMS)
-    int     orders_risk_rejected;    // RiskManager odrzucił PRZED OMS (pre-trade)
-    bool    risk_kill_tripped;       // kill switch zatrzasnął się w trakcie sesji
-    int     orders_book_partial;     // ile fillów z FullOrderBook było częściowych
-    double  book_slippage_usd;       // łączny koszt slippage'u z realnego matchu
-    // Tryb MarketMaker (--mm): MM kwotuje, market flow go przecina, fille idą
-    // przez Risk→OMS. Statystyki agregowane po wszystkich symbolach.
-    uint64_t mm_quotes_placed;       // łączny churn kwotowań (cancel+replace)
-    uint64_t mm_fills;               // ile razy MM został przecięty (fill)
-    double   mm_pnl;                 // mark-to-market P&L MM po ostatnim mid
-    int      mm_abs_inventory;       // Σ |net inventory| po symbolach na koniec
+    int     orders_rejected;         // OMS rejected (position / value limit in the OMS)
+    int     orders_risk_rejected;    // RiskManager rejected BEFORE the OMS (pre-trade)
+    bool    risk_kill_tripped;       // the kill switch latched during the session
+    int     orders_book_partial;     // how many FullOrderBook fills were partial
+    double  book_slippage_usd;       // total slippage cost from the real match
+    // MarketMaker mode (--mm): the MM quotes, market flow crosses it, fills go
+    // through Risk→OMS. Stats aggregated across all symbols.
+    uint64_t mm_quotes_placed;       // total quote churn (cancel+replace)
+    uint64_t mm_fills;               // how many times the MM was crossed (fill)
+    double   mm_pnl;                 // the MM's mark-to-market P&L at the last mid
+    int      mm_abs_inventory;       // Σ |net inventory| across symbols at the end
     int     max_in_flight_orders;   // peak submittted-but-unfilled
-    int     fill_latency_iters;     // iteracje symulowanego opóźnienia fill-ack (0 = zero-latency)
+    int     fill_latency_iters;     // iterations of simulated fill-ack latency (0 = zero-latency)
     double  gen_ms;
     double  parse_ms;
     double  oms_ms;
     double  total_ms;
     double  total_pnl;
 
-    // Rozbicie typów wiadomości
+    // Message-type breakdown
     int add_orders;
     int executes;
     int trades;
@@ -329,7 +329,7 @@ struct PipelineStats {
 };
 
 
-// Pending fill powiązany z wysłanym zleceniem — drainowany gdy current_iter osiągnie due_iter.
+// A pending fill tied to a submitted order — drained when current_iter reaches due_iter.
 struct PendingFill {
     uint64_t order_id;
     int32_t  shares;
@@ -339,49 +339,49 @@ struct PendingFill {
 
 
 // ============================================================================
-// BookMatchEngine — adapter spinający OMS-owe zlecenia z prawdziwym silnikiem
-// dopasowań FullOrderBook (orderbook_pro). Zastępuje syntetyczny "fill po cenie
-// submitu" realnym matchem: FIFO price-time, przejście wielu poziomów, partiale,
-// realny VWAP i slippage.
+// BookMatchEngine — an adapter wiring OMS orders to the real FullOrderBook
+// matching engine (orderbook_pro). It replaces the synthetic "fill at the submit
+// price" with a real match: FIFO price-time, walking multiple levels, partials,
+// a real VWAP and slippage.
 //
-// Dlaczego znormalizowana siatka ticków, a nie absolutne ceny?
-//   FullOrderBook<LEVELS=16384> @ $0.01/tick pokrywa $0..$163.83 — za mało dla
-//   NVDA ($880). Zamiast tego pracujemy w siatce wokół MID_TICK: cena dolarowa
-//   = ref_price + (tick - MID_TICK) * TICK_USD. Działa dla DOWOLNEJ ceny symbolu,
-//   a silnik dopasowań i tak operuje wyłącznie na tickach.
+// Why a normalized tick grid, not absolute prices?
+//   FullOrderBook<LEVELS=16384> @ $0.01/tick covers $0..$163.83 — not enough for
+//   NVDA ($880). Instead we work in a grid around MID_TICK: the dollar price
+//   = ref_price + (tick - MID_TICK) * TICK_USD. It works for ANY symbol price,
+//   and the matching engine operates purely on ticks anyway.
 //
-// Model płynności (per match): drabinka kontr-zleceń wystawiona od touch'a w
-// głąb księgi (LEVEL_LIQ akcji na poziom). Nasze zlecenie wchodzi jako IOC i
-// przechodzi tyle poziomów, ile trzeba — im większe, tym głębszy walk = większy
-// slippage. Po matchu resztki drabinki kasujemy po id (taniej niż clear() O(LEVELS)).
+// Liquidity model (per match): a ladder of counter-orders placed from the touch
+// down into the book (LEVEL_LIQ shares per level). Our order enters as IOC and
+// walks as many levels as needed — the larger it is, the deeper the walk = more
+// slippage. After the match we cancel the ladder remnants by id (cheaper than clear() O(LEVELS)).
 //
-// Pełna, wierna rekonstrukcja księgi ze strumienia ITCH to osobny krok (#82) —
-// tu chodzi o to, by NASZE zlecenia realnie matchowały się w klejnotowym silniku.
+// A full, faithful book reconstruction from the ITCH stream is a separate step (#82) —
+// here the point is for OUR orders to actually match in the gem of an engine.
 class BookMatchEngine {
-    // Typy z orderbook_pro — wciągamy do scope'u klasy (bez zaśmiecania global).
+    // Types from orderbook_pro — pulled into the class scope (without polluting the global).
     using FullOrderBook = orderbook_pro::FullOrderBook<>;
     using BookEvent     = orderbook_pro::BookEvent;
     using EventType     = orderbook_pro::EventType;
     using OrderType     = orderbook_pro::OrderType;
     using TimeInForce   = orderbook_pro::TimeInForce;
 
-    static constexpr std::int32_t MID_TICK   = 8192;   // środek siatki 16384
-    static constexpr std::int32_t MAX_LADDER = 250;    // cap głębokości (< LEVELS/2)
+    static constexpr std::int32_t MID_TICK   = 8192;   // middle of the 16384 grid
+    static constexpr std::int32_t MAX_LADDER = 250;    // depth cap (< LEVELS/2)
     static constexpr double       TICK_USD   = 0.01;
 
     FullOrderBook book_;
-    std::int32_t    level_liq_;        // akcji na poziom drabinki
-    std::uint64_t   next_id_;          // wspólny licznik id (drabinka + taker)
+    std::int32_t    level_liq_;        // shares per ladder level
+    std::uint64_t   next_id_;          // shared id counter (ladder + taker)
 
-    // Stan przechwytywania fillów dla bieżącego taker'a (ustawiany per match).
+    // Fill-capture state for the current taker (set per match).
     struct Capture {
         std::uint64_t taker_id;
-        std::int64_t  qty;             // Σ exec_qty po stronie taker'a
+        std::int64_t  qty;             // Σ exec_qty on the taker side
         std::int64_t  notional_ticks;  // Σ price_ticks * exec_qty
     } cap_{};
 
-    // FILL emitowany jest dla obu stron (taker i maker). Liczymy tylko taker'a
-    // (e.order_id == taker_id) — brak podwójnego liczenia.
+    // A FILL is emitted for both sides (taker and maker). We count only the taker
+    // (e.order_id == taker_id) — no double counting.
     static void on_event(const BookEvent& e, void* ctx) noexcept {
         auto* c = static_cast<Capture*>(ctx);
         if (e.type == EventType::FILL && e.order_id == c->taker_id) {
@@ -396,21 +396,21 @@ public:
         book_.set_event_callback(&on_event, &cap_);
     }
 
-    // match: dopasuj zlecenie (side, qty) przy cenie referencyjnej ref_price.
-    // Zwraca faktycznie wypełnioną ilość; out_vwap_usd = średnia cena wykonania.
-    // Gdy płynność < qty → partial fill (out_filled < qty).
+    // match: match an order (side, qty) at the reference price ref_price.
+    // Returns the actually filled quantity; out_vwap_usd = the average execution price.
+    // When liquidity < qty → a partial fill (out_filled < qty).
     std::int32_t match(Side side, double ref_price, std::int32_t qty,
                        double& out_vwap_usd) noexcept {
         out_vwap_usd = ref_price;
         if (qty <= 0 || ref_price <= 0.0) return 0;
 
-        // Głębokość drabinki: pokryj qty + poduszka, w granicach MAX_LADDER.
+        // Ladder depth: cover qty + a cushion, within MAX_LADDER.
         const std::int32_t levels =
             std::min<std::int32_t>(MAX_LADDER, qty / level_liq_ + 2);
         const bool is_buy = (side == Side::BUY);
 
-        // Wystaw kontr-płynność: BUY trafia w ASK (rosnąco od touch), SELL w BID
-        // (malejąco). Zapamiętujemy id, by skasować resztki.
+        // Place counter-liquidity: BUY hits the ASK (ascending from the touch), SELL the BID
+        // (descending). We remember the ids to cancel the remnants.
         std::uint64_t ladder_ids[MAX_LADDER];
         const Side contra = is_buy ? Side::SELL : Side::BUY;
         for (std::int32_t k = 0; k < levels; ++k) {
@@ -421,13 +421,13 @@ public:
                          TimeInForce::DAY, id, /*client_id=*/0);
         }
 
-        // Taker jako IOC: limit ustawiony tak, by mógł przejść całą drabinkę.
+        // Taker as IOC: the limit is set so it can walk the whole ladder.
         cap_ = Capture{ next_id_++, 0, 0 };
         const std::int32_t taker_px = is_buy ? (MID_TICK + levels) : (MID_TICK - levels);
         book_.submit(side, taker_px, qty, OrderType::IOC,
                      TimeInForce::IOC, cap_.taker_id, /*client_id=*/0);
 
-        // Skasuj resztki drabinki (skonsumowane id → no-op).
+        // Cancel the ladder remnants (consumed ids → no-op).
         for (std::int32_t k = 0; k < levels; ++k) book_.cancel(ladder_ids[k]);
 
         if (cap_.qty <= 0) return 0;
@@ -438,7 +438,7 @@ public:
 };
 
 
-// run_pipeline — pełna symulacja end-to-end, wszystko w jednym wątku.
+// run_pipeline — a full end-to-end simulation, everything on one thread.
 inline PipelineStats run_pipeline(int num_messages = 1000,
                                    bool use_strategy = false,
                                    bool use_router = false,
@@ -451,14 +451,14 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     PipelineStats stats = {};
     stats.fill_latency_iters = fill_latency_iters;
 
-    // Rozwiązywanie parametrów: config file wygrywa nad hardcoded defaults.
+    // Parameter resolution: the config file wins over the hardcoded defaults.
     int    strat_window    = cfg ? cfg->strategy.window        : 20;
     double strat_threshold = cfg ? cfg->strategy.threshold_pct : 0.1;
     int    strat_size      = cfg ? cfg->strategy.order_size     : 100;
     int    oms_max_pos     = cfg ? cfg->oms.max_position        : 1000;
     double oms_max_val     = cfg ? cfg->oms.max_order_value     : 100000.0;
 
-    // Symbol universe — config (jeśli niepusty) override'uje domyślne STOCKS.
+    // Symbol universe — config (if non-empty) overrides the default STOCKS.
     std::vector<StockInfo> sim_stocks;
     if (cfg && !cfg->simulator.stocks.empty()) {
         sim_stocks.reserve(cfg->simulator.stocks.size());
@@ -473,14 +473,14 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     const StockInfo* active_stocks = sim_stocks.empty() ? STOCKS              : sim_stocks.data();
     const int        n_active      = sim_stocks.empty() ? NUM_STOCKS          : static_cast<int>(sim_stocks.size());
 
-    // Inicjalizacja komponentów
+    // Component initialization
     MarketDataGenerator generator(seed);
     generator.set_stocks(active_stocks, n_active);
     ITCHParser parser;
     OMS oms(oms_max_pos, oms_max_val);
     MeanReversionStrategy strategy(strat_window, strat_threshold, strat_size);
 
-    // Strategia routera z configa
+    // Router strategy from the config
     RoutingStrategy rr = RoutingStrategy::BEST_PRICE;
     int split_thr = 500;
     if (cfg) {
@@ -493,7 +493,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     SmartOrderRouter router(rr, split_thr);
 
     if (use_router) {
-        // Preferuj giełdy z configa, fallback do hardcoded defaults.
+        // Prefer venues from the config, fall back to the hardcoded defaults.
         if (cfg && !cfg->router.venues.empty()) {
             for (const auto& vc : cfg->router.venues) {
                 Venue v;
@@ -513,9 +513,9 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
     }
 
-    // RiskManager — pre-trade bramkarz między Strategy/Router a OMS.
-    // Limity z configa (cfg->risk), fallback do RiskLimits() defaults.
-    // SEC 15c3-5: nic nie idzie do OMS bez pozytywnego check_order().
+    // RiskManager — the pre-trade gatekeeper between Strategy/Router and the OMS.
+    // Limits from the config (cfg->risk), fall back to RiskLimits() defaults.
+    // SEC 15c3-5: nothing reaches the OMS without a positive check_order().
     RiskLimits rlimits;
     if (cfg) {
         rlimits.max_position_per_symbol = cfg->risk.max_position_per_symbol;
@@ -530,25 +530,25 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         rlimits.max_consecutive_losses  = cfg->risk.max_consecutive_losses;
         rlimits.max_daily_traded_notional = cfg->risk.max_daily_traded_notional;
     }
-    // Rate-limiter mierzy zlecenia/sek po zegarze ściennym (mono_ns). Symulator
-    // kompresuje czas — wszystkie zlecenia lecą w ułamku sekundy, więc realny
-    // próg N/s odrzuciłby je masowo jako artefakt benchmarku, nie ryzyka. Dla
-    // in-process symulacji rozluźniamy TYLKO ten jeden check; pozostałe 6
-    // (kill switch, wartość, pozycja per-symbol, ekspozycja portfela, circuit
-    // breaker, drawdown) działają w pełni i to one są tu interesujące.
+    // The rate limiter measures orders/sec by the wall clock (mono_ns). The simulator
+    // compresses time — all orders fly in a fraction of a second, so a real
+    // N/s threshold would reject them en masse as a benchmark artifact, not a risk one. For
+    // in-process simulation we relax ONLY this one check; the other 6
+    // (kill switch, value, per-symbol position, portfolio exposure, circuit
+    // breaker, drawdown) work fully and are the interesting ones here.
     rlimits.max_orders_per_second = (num_messages > 0) ? (num_messages + 16) : 1024;
     RiskManager risk(rlimits);
 
-    // Silnik dopasowań — realne matchowanie naszych zleceń w FullOrderBook
-    // (opt-in --book). 200 akcji/poziom drabinki = umiarkowany slippage.
-    // Na stercie: FullOrderBook<16384,65536> to obiekt wielkości MB — na stosie
-    // przepełniłby go. Tworzony tylko gdy use_book.
+    // Matching engine — real matching of our orders in FullOrderBook
+    // (opt-in --book). 200 shares/ladder level = moderate slippage.
+    // On the heap: FullOrderBook<16384,65536> is an MB-sized object — on the stack
+    // it would overflow. Created only when use_book.
     std::unique_ptr<BookMatchEngine> book_engine;
     if (use_book) book_engine = std::make_unique<BookMatchEngine>(/*level_liq=*/200);
 
-    // Tryb MarketMaker (--mm): jeden MM per symbol. MarketMaker jest non-movable
-    // (usunięte copy/move), więc trzymamy w std::deque (emplace_back nie rusza
-    // istniejących elementów) + mapa sym_key→indeks + równoległy last_mid.
+    // MarketMaker mode (--mm): one MM per symbol. MarketMaker is non-movable
+    // (deleted copy/move), so we keep it in a std::deque (emplace_back doesn't move
+    // existing elements) + a sym_key→index map + a parallel last_mid.
     mm::MMConfig mm_cfg;
     mm_cfg.quote_size          = 10;
     mm_cfg.half_spread_ticks   = 2;
@@ -558,11 +558,11 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     std::vector<int32_t>                 maker_last_mid;
     std::unordered_map<uint64_t, size_t> maker_idx;
 
-    // [1/4] Generowanie danych rynkowych
+    // [1/4] Market data generation
     auto gen_start = std::chrono::high_resolution_clock::now();
 
-    // Pre-alokacja bufora wiadomości
-    int total_msgs = num_messages + 6;  // +6 na system events (3 start + 3 end)
+    // Pre-allocate the message buffer
+    int total_msgs = num_messages + 6;  // +6 for system events (3 start + 3 end)
     std::vector<GeneratedMessage> messages(total_msgs);
     int msg_idx = 0;
 
@@ -584,7 +584,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     stats.gen_ms = std::chrono::duration<double, std::milli>(gen_end - gen_start).count();
     stats.messages_generated = msg_idx;
 
-    // [2/4] Parsowanie wszystkich wiadomości
+    // [2/4] Parse all messages
     auto parse_start = std::chrono::high_resolution_clock::now();
 
     std::vector<ParsedMessage> parsed(msg_idx);
@@ -605,17 +605,17 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     stats.parse_ms = std::chrono::duration<double, std::milli>(parse_end - parse_start).count();
     stats.messages_parsed = msg_idx;
 
-    // [3/4] Routing przez OMS
+    // [3/4] Routing through the OMS
     auto oms_start = std::chrono::high_resolution_clock::now();
 
-    // Kolejka FIFO fillów w locie; size() = liczba pending zleceń w OMS.
+    // FIFO queue of in-flight fills; size() = number of pending orders in the OMS.
     std::vector<PendingFill> pending_fills;
 
-    // do_fill — jeden punkt rozliczenia fillu (3 miejsca wołają to samo):
-    // OMS księguje pozycję/P&L, a gdy use_risk także RiskManager (przepływ
-    // pending→realized + feed realizowanego P&L do circuit breakera/drawdown).
-    // Deltę P&L liczymy z Position OMS-a przed/po fillu (realized_pnl jest
-    // fixed-point int64, więc przez to_float na dolary dla risk.update_pnl).
+    // do_fill — one fill-settlement point (3 places call the same thing):
+    // the OMS books the position/P&L, and when use_risk also the RiskManager (the
+    // pending→realized flow + feeding realized P&L to the circuit breaker/drawdown).
+    // We compute the P&L delta from the OMS Position before/after the fill (realized_pnl is
+    // fixed-point int64, so via to_float to dollars for risk.update_pnl).
     auto do_fill = [&](uint64_t oid, int32_t sh, double px) {
         char    sym[9]   = {0};
         Side    fside    = Side::BUY;
@@ -639,7 +639,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     };
 
     for (int i = 0; i < msg_idx; ++i) {
-        // Drain fillów których ack deadline już minął.
+        // Drain fills whose ack deadline has passed.
         size_t drained = 0;
         for (; drained < pending_fills.size() && pending_fills[drained].due_iter <= i; ++drained) {
             const PendingFill& pf = pending_fills[drained];
@@ -664,18 +664,18 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             side_str = pm.data.trade.side == 'B' ? "BUY" : "SELL";
             shares = pm.data.trade.shares;
         } else {
-            continue;  // pomiń wiadomości nietradowalne
+            continue;  // skip non-tradable messages
         }
 
         if (!stock || price <= 0.0) continue;
 
-        // Zasil cenę referencyjną Risk'a z market data (price-band / fat-finger).
+        // Feed the Risk reference price from market data (price-band / fat-finger).
         if (use_risk) risk.update_reference_price(stock, price);
 
-        // === Tryb MarketMaker (--mm) ===
-        // MM jest makerem: kwotuje obie strony wokół mid, a przychodzący market
-        // flow (ta wiadomość = agresor) przecina jego kwotowanie. Fill MM idzie
-        // przez Risk→OMS, więc OMS śledzi pozycję i realizowany P&L, a Risk bramkuje.
+        // === MarketMaker mode (--mm) ===
+        // The MM is a maker: it quotes both sides around the mid, and incoming market
+        // flow (this message = the aggressor) crosses its quote. The MM fill goes
+        // through Risk→OMS, so the OMS tracks the position and realized P&L, and Risk gates.
         if (use_mm) {
             const uint64_t sym_key = sym_to_key(stock);
             auto it = maker_idx.find(sym_key);
@@ -686,13 +686,13 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             }
             mm::MarketMaker& maker = makers[it->second];
 
-            // Mid w tickach ($0.01); referencyjny spread 1 tick wokół mid.
+            // Mid in ticks ($0.01); a reference spread of 1 tick around the mid.
             const int32_t mid_ticks = static_cast<int32_t>(price * 100.0 + 0.5);
             maker_last_mid[it->second] = mid_ticks;
             const mm::Quote q = maker.quote(mid_ticks - 1, mid_ticks + 1);
 
-            // Agresor: BUY market order lifuje nasz ASK (MM sprzedał),
-            // SELL hituje nasz BID (MM kupił). side_str z wiadomości = strona agresora.
+            // Aggressor: a BUY market order lifts our ASK (the MM sold),
+            // a SELL hits our BID (the MM bought). side_str from the message = the aggressor's side.
             const bool aggressor_buy = (side_str[0] == 'B');
             Side    mm_side = Side::BUY;
             int32_t mm_qty  = 0;
@@ -727,10 +727,10 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
                     }
                 }
             }
-            continue;  // MM jest strategią — pomijamy ścieżkę mean-reversion/router
+            continue;  // the MM is the strategy — skip the mean-reversion/router path
         }
 
-        // Aktualizuj quoty routera
+        // Update the router quotes
         if (use_router) {
             double spread = price * 0.0002;
             router.update_quote("NYSE",   price - spread, price + spread, 300, 300);
@@ -742,9 +742,9 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         Side   oms_side   = side_from_str(side_str);
 
         if (use_strategy) {
-            // Tryb strategy: karm cenę, traduj tylko na sygnałach.
-            // Signal::side jest enumem Side — nie ma już dangling-pointer aliasing
-            // risk (wcześniej był char[5] wewnątrz lokalnego Signal).
+            // Strategy mode: feed the price, trade only on signals.
+            // Signal::side is a Side enum — there's no more dangling-pointer aliasing
+            // risk (it used to be a char[5] inside a local Signal).
             Signal signal = strategy.on_market_data(stock, price, 0);
             if (!signal.valid) continue;
             oms_side   = signal.side;
@@ -752,8 +752,8 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             fill_price = signal.price;
 
             if (use_router) {
-                // ::side_str disambiguates global function od lokalnego
-                // `const char* side_str` zadeklarowanego wyżej w pętli.
+                // ::side_str disambiguates the global function from the local
+                // `const char* side_str` declared above in the loop.
                 RouteDecision route = router.route_order(::side_str(signal.side), shares);
                 if (route.valid) fill_price = route.price;
             }
@@ -762,7 +762,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             if (route.valid) fill_price = route.price;
         }
 
-        // Pre-trade risk: bramkarz PRZED OMS. REJECT/KILL → zlecenie nie idzie.
+        // Pre-trade risk: the gatekeeper BEFORE the OMS. REJECT/KILL → the order does not go.
         if (use_risk) {
             const RiskCheckResult rc = risk.check_order(stock, oms_side, fill_price, shares);
             if (rc.action != RiskAction::ALLOW) {
@@ -775,11 +775,11 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         Order* order = oms.submit_order(stock, oms_side, fill_price, shares);
         if (order) {
             stats.orders_submitted++;
-            if (use_risk) risk.on_order_sent(stock, oms_side, shares);  // rezerwacja pending
+            if (use_risk) risk.on_order_sent(stock, oms_side, shares);  // reserve pending
 
-            // Realny match w FullOrderBook (opt-in) — wyznacza faktyczną ilość
-            // i VWAP. Płynność oceniana JEST teraz; rozliczenie w OMS może być
-            // odroczone (fill latency). Bez --book: legacy fill po cenie submitu.
+            // Real match in FullOrderBook (opt-in) — determines the actual quantity
+            // and VWAP. Liquidity IS assessed now; settlement in the OMS may be
+            // deferred (fill latency). Without --book: a legacy fill at the submit price.
             int32_t fill_sh = shares;
             double  fill_px = fill_price;
             if (use_book) {
@@ -796,7 +796,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
             }
 
             if (fill_sh <= 0) {
-                // Brak płynności — zlecenie zostaje pending w OMS/Risk (realne).
+                // No liquidity — the order stays pending in OMS/Risk (realistic).
             } else if (fill_latency_iters <= 0) {
                 do_fill(order->order_id, fill_sh, fill_px);
             } else {
@@ -809,7 +809,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
     }
 
-    // Final drain — rozlicz zlecenia jeszcze in-flight na końcu strumienia.
+    // Final drain — settle orders still in-flight at the end of the stream.
     for (const auto& pf : pending_fills) {
         do_fill(pf.order_id, pf.shares, pf.price);
     }
@@ -819,8 +819,8 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
     stats.oms_ms = std::chrono::duration<double, std::milli>(oms_end - oms_start).count();
     stats.total_ms = stats.gen_ms + stats.parse_ms + stats.oms_ms;
 
-    // Łączny P&L — przeglądamy pozycje wszystkich symboli.
-    // realized_pnl jest fixed-point int64 (× PRICE_SCALE) w OMS.
+    // Total P&L — we go over the positions of all symbols.
+    // realized_pnl is fixed-point int64 (× PRICE_SCALE) in the OMS.
     stats.total_pnl = 0.0;
     for (int i = 0; i < n_active; ++i) {
         const Position* pos = oms.get_position(active_stocks[i].symbol);
@@ -829,7 +829,7 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
         }
     }
 
-    // Agregacja MM po wszystkich symbolach (mark-to-market po ostatnim mid).
+    // MM aggregation across all symbols (mark-to-market at the last mid).
     if (use_mm) {
         for (size_t m = 0; m < makers.size(); ++m) {
             stats.mm_quotes_placed += makers[m].quotes_placed();
@@ -842,20 +842,20 @@ inline PipelineStats run_pipeline(int num_messages = 1000,
 }
 
 
-// run_pipeline_threaded — generator na wątku producenta, parser na wątku
-// konsumenta, hand-off przez lockfree::SPSCQueue.
+// run_pipeline_threaded — the generator on the producer thread, the parser on the
+// consumer thread, hand-off via lockfree::SPSCQueue.
 //
-// To najprostsze realistyczne użycie naszego prymitywu lock-free: feed-handler
-// i parser działają na różnych rdzeniach, queue to jedyna rzecz która je łączy.
-// Zero mutexa, zero alokacji na hot path, parser thread nawet nie musi
-// wiedzieć jaki protokół generuje producent — po prostu drainuje bajty.
+// This is the simplest realistic use of our lock-free primitive: the feed handler
+// and parser run on different cores, the queue is the only thing connecting them.
+// Zero mutex, zero allocation on the hot path, the parser thread doesn't even need
+// to know what protocol the producer generates — it just drains bytes.
 
 inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
                                             uint64_t seed = 42) {
     PipelineStats stats = {};
 
-    // SIZE = 1024: każda GeneratedMessage to ~68 bajtów, łącznie ~70 KB —
-    // wystarczy małe i alokowane raz na call (unique_ptr → heap, alignas zachowany).
+    // SIZE = 1024: each GeneratedMessage is ~68 bytes, ~70 KB total —
+    // small enough and allocated once per call (unique_ptr → heap, alignas preserved).
     auto queue = std::make_unique<lockfree::SPSCQueue<GeneratedMessage, 1024>>();
     std::atomic<bool> producer_done{false};
 
@@ -865,7 +865,7 @@ inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
         MarketDataGenerator gen(seed);
         for (int i = 0; i < num_messages; ++i) {
             GeneratedMessage msg = gen.generate_random_message();
-            while (!queue->push(msg)) { /* busy-spin gdy konsument zostaje w tyle */ }
+            while (!queue->push(msg)) { /* busy-spin when the consumer falls behind */ }
         }
         producer_done.store(true, std::memory_order_release);
     });
@@ -900,7 +900,7 @@ inline PipelineStats run_pipeline_threaded(int num_messages = 1000,
 }
 
 
-// print_pipeline_stats — wyświetla wyniki symulacji.
+// print_pipeline_stats — displays the simulation results.
 inline void print_pipeline_stats(const PipelineStats& s, bool use_strategy, bool use_router,
                                  bool use_risk = false, bool use_book = false,
                                  bool use_mm = false) {
