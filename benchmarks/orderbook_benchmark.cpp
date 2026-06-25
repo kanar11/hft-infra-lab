@@ -1,6 +1,5 @@
 /*
  * Orderbook Micro-Benchmark — Add / Cancel / Match Performance
- * Mikro-benchmark orderbooka — wydajność dodawania / anulowania / dopasowywania
  *
  * WHAT THIS MEASURES:
  * Individual operation latencies for the three core orderbook operations:
@@ -8,22 +7,12 @@
  *   2. CANCEL — remove an existing order by ID
  *   3. MATCH  — match a crossing order against resting orders
  *
- * CO TO MIERZY:
- * Indywidualne opóźnienia dla trzech podstawowych operacji orderbooka:
- *   1. ADD    — wstaw nowe zlecenie z limitem (bid lub ask)
- *   2. CANCEL — usuń istniejące zlecenie po ID
- *   3. MATCH  — dopasuj zlecenie krzyżujące się z oczekującymi zleceniami
- *
  * WHY THESE THREE:
  * These are the only operations a matching engine does. Every nanosecond
  * saved here directly translates to better queue position at the exchange.
  * Optiver, Citadel, Jump — they all optimize these exact operations.
  *
- * DLACZEGO TE TRZY:
- * To jedyne operacje silnika dopasowującego. Każda zaoszczędzona nanosekunda
- * przekłada się bezpośrednio na lepszą pozycję w kolejce na giełdzie.
- *
- * Compile / Kompilacja:
+ * Compile:
  *   g++ -O2 -std=c++17 -Wall -Wextra -pthread -o orderbook_benchmark orderbook_benchmark.cpp
  *
  * Output: per-operation latency percentiles + CSV results
@@ -43,11 +32,8 @@
 
 
 // === Minimal Orderbook for Benchmarking ===
-// === Minimalny Orderbook do Benchmarkowania ===
 // This is a simplified version focused on measurable performance.
 // For the full implementation see orderbook/orderbook_v2.cpp
-// To jest uproszczona wersja skupiona na mierzalnej wydajności.
-// Pełna implementacja: orderbook/orderbook_v2.cpp
 
 struct Order {
     uint64_t id;
@@ -60,23 +46,16 @@ class Orderbook {
     // std::map: sorted tree (red-black) — keys are always in order
     // For bids: highest price first (reverse iterator)
     // For asks: lowest price first (forward iterator)
-    // std::map: posortowane drzewo (czerwono-czarne) — klucze zawsze w kolejności
-    // Dla kupna: najwyższa cena pierwsza (odwrotny iterator)
-    // Dla sprzedaży: najniższa cena pierwsza (zwykły iterator)
     std::map<int64_t, std::vector<Order>> bids_;  // price → orders (descending)
     std::map<int64_t, std::vector<Order>> asks_;  // price → orders (ascending)
 
     // unordered_map: hash table for O(1) lookup by order ID
     // Like a phone book — given an ID, find the order instantly
-    // unordered_map: tablica hashująca do wyszukiwania O(1) po ID zlecenia
-    // Jak książka telefoniczna — mając ID, znajdź zlecenie natychmiast
     std::unordered_map<uint64_t, std::pair<int64_t, bool>> order_index_;  // id → (price, is_buy)
 
 public:
     // add_order: O(log N) due to map insertion
     // In production: custom allocator + flat arrays for O(1) amortized
-    // add_order: O(log N) ze względu na wstawianie do mapy
-    // W produkcji: własny alokator + płaskie tablice dla zamortyzowanego O(1)
     void add_order(const Order& order) noexcept {
         auto& book = order.is_buy ? bids_ : asks_;
         book[order.price].push_back(order);
@@ -84,7 +63,6 @@ public:
     }
 
     // cancel_order: find by ID (O(1) hash lookup), then remove from price level
-    // cancel_order: znajdź po ID (O(1) wyszukiwanie hash), potem usuń z poziomu cenowego
     bool cancel_order(uint64_t id) noexcept {
         auto it = order_index_.find(id);
         if (it == order_index_.end()) return false;
@@ -108,8 +86,6 @@ public:
 
     // try_match: attempt to match an incoming order against resting orders
     // Returns number of shares filled
-    // try_match: próba dopasowania przychodzącego zlecenia do oczekujących
-    // Zwraca liczbę zrealizowanych akcji
     uint32_t try_match(Order& incoming) noexcept {
         uint32_t filled = 0;
         auto& book = incoming.is_buy ? asks_ : bids_;
@@ -118,7 +94,6 @@ public:
             auto it = incoming.is_buy ? book.begin() : std::prev(book.end());
 
             // Check if prices cross (buy >= ask, or sell <= bid)
-            // Sprawdź czy ceny się krzyżują (kupno >= ask, lub sprzedaż <= bid)
             if (incoming.is_buy && incoming.price < it->first) break;
             if (!incoming.is_buy && incoming.price > it->first) break;
 
@@ -198,7 +173,6 @@ int main(int argc, char* argv[]) {
 
     // === Benchmark: ADD orders ===
     // Pre-populate with some orders, then measure adds
-    // Wstępnie wypełnij kilkoma zleceniami, potem mierz dodawanie
     book.clear();
     for (int i = 0; i < ops; ++i) {
         Order order{
@@ -218,12 +192,10 @@ int main(int argc, char* argv[]) {
 
     // === Benchmark: CANCEL orders ===
     // Cancel all orders we just added (in random-ish order)
-    // Anuluj wszystkie zlecenia które właśnie dodaliśmy (w pseudo-losowej kolejności)
     std::vector<uint64_t> ids_to_cancel;
     ids_to_cancel.reserve(ops);
     for (int i = 0; i < ops; ++i) {
         // Interleave IDs for more realistic access pattern
-        // Przemieszaj ID dla bardziej realistycznego wzorca dostępu
         ids_to_cancel.push_back(static_cast<uint64_t>((i * 7 + 13) % ops));
     }
 
@@ -238,19 +210,16 @@ int main(int argc, char* argv[]) {
 
     // === Benchmark: MATCH orders ===
     // Add resting asks, then send matching bids
-    // Dodaj oczekujące oferty sprzedaży, potem wyślij pasujące zlecenia kupna
     book.clear();
     uint64_t id_counter = 0;
 
     // Populate with asks at various prices
-    // Wypełnij ofertami sprzedaży po różnych cenach
     for (int i = 0; i < ops; ++i) {
         Order ask{id_counter++, false, 1000000 + (int64_t)(i % 100) * 1000, 100};
         book.add_order(ask);
     }
 
     // Send matching buy orders
-    // Wyślij pasujące zlecenia kupna
     for (int i = 0; i < ops; ++i) {
         Order buy{id_counter++, true, 1000000 + (int64_t)(i % 100) * 1000, 100};
 
