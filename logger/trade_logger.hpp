@@ -1,31 +1,31 @@
 /*
- * TradeLogger — ścieżka audytu zleceń (SPSC ring + asynchroniczny flush).
+ * TradeLogger — an order audit trail (SPSC ring + asynchronous flush).
  *
- * Każde zdarzenie (submit, fill, cancel, risk decision, kill switch,
- * system event) jest zapisywane jako stały rekord TradeEvent (128 bajtów,
- * 2 linie cache'a) z dwoma znacznikami czasu — CLOCK_MONOTONIC do
- * pomiaru latency i CLOCK_REALTIME dla regulatorów (MiFID II RTS 25
- * Article 2 wymaga UTC epoch).
+ * Every event (submit, fill, cancel, risk decision, kill switch,
+ * system event) is recorded as a fixed TradeEvent record (128 bytes,
+ * 2 cache lines) with two timestamps — CLOCK_MONOTONIC for
+ * latency measurement and CLOCK_REALTIME for regulators (MiFID II RTS 25
+ * Article 2 requires a UTC epoch).
  *
- * Architektura:
- *   - Wątek handlu pisze przez log()           — hot path, O(1), bez alokacji
- *   - Wątek flush_thread_ drenuje ring do plik  — off-CPU, batched fwrite
- *   - Trzeci wątek może czytać snapshot         — tylko między sesjami,
- *                                                  nie współbieżnie z log()
+ * Architecture:
+ *   - The trading thread writes via log()       — hot path, O(1), no allocation
+ *   - The flush_thread_ thread drains the ring to a file — off-CPU, batched fwrite
+ *   - A third thread may read a snapshot          — only between sessions,
+ *                                                  not concurrently with log()
  *
- * Wydajność: ~15-25 M zdarzeń/sek log(), ~5-8 M zapisów/sek do pliku.
+ * Performance: ~15-25 M events/sec for log(), ~5-8 M writes/sec to the file.
  *
- * Format pliku: FlushFileHeader (64 B) + N × TradeEvent (128 B). Plik
- * jest dopisywalny (open "ab") — każda sesja dorzuca własny header
- * + swoje rekordy, parser offline rozpoznaje po magic "HFTLOG\0\0".
+ * File format: FlushFileHeader (64 B) + N × TradeEvent (128 B). The file
+ * is appendable (open "ab") — each session adds its own header
+ * + its records, and the offline parser recognizes them by the magic "HFTLOG\0\0".
  *
- * Trzy warianty loggera w repo (różne kompromisy):
- *   - TradeLogger (ten plik)    — ręcznie zwijany SPSC ring + flush thread
- *                                  + tryb ring_mode (nadpisuje najstarsze)
- *   - LockfreeTradeLogger       — używa lockfree::SPSCQueue jako backing
- *                                  store; bez ring_mode (fail-on-full)
- *   - MmapTradeLogger           — file mmap'd do RAMu, log() to memcpy,
- *                                  jądro flushuje asynchronicznie
+ * Three logger variants in the repo (different trade-offs):
+ *   - TradeLogger (this file)    — a hand-rolled SPSC ring + flush thread
+ *                                  + a ring_mode mode (overwrites the oldest)
+ *   - LockfreeTradeLogger        — uses lockfree::SPSCQueue as the backing
+ *                                  store; no ring_mode (fail-on-full)
+ *   - MmapTradeLogger            — the file is mmap'd into RAM, log() is a memcpy,
+ *                                  the kernel flushes asynchronously
  *
  * Pipeline: Strategy → Router → Risk → OMS → Logger → audit file.
  */
@@ -41,34 +41,34 @@
 #include <memory>
 #include <vector>
 #include <unordered_set>
-#include <unistd.h>     // ::fsync (durability po power-loss)
+#include <unistd.h>     // ::fsync (durability after power loss)
 #include <string>
 
 #include "../common/time_utils.hpp"
 
 
-// Maks. zdarzeń w buforze pierścieniowym. 1M × 128 B = 128 MB —
-// alokowane raz w konstruktorze.
+// Max events in the ring buffer. 1M × 128 B = 128 MB —
+// allocated once in the constructor.
 static constexpr int MAX_EVENTS = 1'000'000;
 
-// Limit dla reserve() w unique_orders/symbols — żeby nie alokować
-// dużej hash mapy gdy bufor jest częściowo zapełniony.
+// Limit for reserve() in unique_orders/symbols — to avoid allocating
+// a large hash map when the buffer is only partially filled.
 static constexpr int MAX_TRACKED_IDS = 4096;
 
 
-// Co stało się ze zleceniem. uint8_t — 1 bajt vs 4, w TradeEvent
-// (128 B exactly) liczy się każdy bajt.
+// What happened to the order. uint8_t — 1 byte vs 4, in TradeEvent
+// (128 B exactly) every byte counts.
 enum class EventType : uint8_t {
-    ORDER_SUBMIT  = 0,   // strategia wysłała zlecenie do OMS
-    RISK_ACCEPT   = 1,   // RiskManager przepuścił
-    RISK_REJECT   = 2,   // RiskManager odrzucił (kod powodu w `details`)
-    ORDER_FILL    = 3,   // giełda zrealizowała w pełni
-    ORDER_PARTIAL = 4,   // częściowa realizacja
-    ORDER_CANCEL  = 5,   // anulowane
-    KILL_SWITCH   = 6,   // tryb awaryjny — handel zatrzymany
-    SYSTEM_START  = 7,   // start sesji
-    SYSTEM_STOP   = 8,   // koniec sesji
-    EVENT_COUNT   = 9    // sentinela do iteracji po liczniku
+    ORDER_SUBMIT  = 0,   // the strategy sent an order to the OMS
+    RISK_ACCEPT   = 1,   // the RiskManager let it through
+    RISK_REJECT   = 2,   // the RiskManager rejected it (reason code in `details`)
+    ORDER_FILL    = 3,   // the exchange fully executed it
+    ORDER_PARTIAL = 4,   // a partial execution
+    ORDER_CANCEL  = 5,   // cancelled
+    KILL_SWITCH   = 6,   // emergency mode — trading halted
+    SYSTEM_START  = 7,   // session start
+    SYSTEM_STOP   = 8,   // session end
+    EVENT_COUNT   = 9    // sentinel for iterating over the counter
 };
 
 inline const char* event_type_str(EventType t) noexcept {
@@ -84,71 +84,71 @@ inline const char* event_type_str(EventType t) noexcept {
 }
 
 
-// Pojedynczy nieushuwalny rekord ścieżki audytu. Dokładnie 128 bajtów
-// (2 linie cache'a) — pola ułożone tak żeby uniknąć paddingu.
-// alignas(64): każdy rekord zaczyna się na granicy linii cache'a, więc
-// wątek flush czytający slot K nie unieważnia linii w której wątek
-// handlu pisze slot K+1.
+// A single immutable audit-trail record. Exactly 128 bytes
+// (2 cache lines) — fields laid out to avoid padding.
+// alignas(64): each record starts on a cache-line boundary, so the
+// flush thread reading slot K does not invalidate the line in which the
+// trading thread writes slot K+1.
 struct alignas(64) TradeEvent {
-    // 8-bajtowe pola najpierw — kompilator nie wstawia paddingu
-    int64_t   mono_ns;       // CLOCK_MONOTONIC, ns — dla latency
-    int64_t   wall_ns;       // CLOCK_REALTIME, ns  — UTC epoch dla regulatora
-    uint64_t  sequence_no;   // monotonic counter — regulator wykrywa luki
-    uint64_t  order_id;      // pasuje do OMS::Order::order_id
-    double    price;         // float dla wyświetlania (OMS trzyma fixed-point)
-    // 4-bajtowe
+    // 8-byte fields first — the compiler inserts no padding
+    int64_t   mono_ns;       // CLOCK_MONOTONIC, ns — for latency
+    int64_t   wall_ns;       // CLOCK_REALTIME, ns  — UTC epoch for the regulator
+    uint64_t  sequence_no;   // monotonic counter — the regulator detects gaps
+    uint64_t  order_id;      // matches OMS::Order::order_id
+    double    price;         // float for display (OMS keeps fixed-point)
+    // 4-byte
     int32_t   quantity;
-    // 1-bajt + char[] — bez paddingu między nimi
+    // 1-byte + char[] — no padding between them
     EventType event_type;
     char      symbol[9];     // "AAPL" + null
     char      side[5];       // "BUY"/"SELL" + null
-    char      details[69];   // wolne pole na kontekst (venue, reject reason, ...)
-    // Layout: 8+8+8+8+8 + 4 + 1+9+5+69 = 128 bajtów
+    char      details[69];   // free field for context (venue, reject reason, ...)
+    // Layout: 8+8+8+8+8 + 4 + 1+9+5+69 = 128 bytes
 };
 static_assert(sizeof(TradeEvent) == 128, "TradeEvent must be exactly 128 bytes");
 
 
-// Header pliku audytu. 64 bajty, raz na sesję, przed rekordami.
+// Audit file header. 64 bytes, once per session, before the records.
 struct FlushFileHeader {
-    char     magic[8];          // "HFTLOG\0\0" — identyfikacja formatu
+    char     magic[8];          // "HFTLOG\0\0" — format identification
     uint32_t version;           // = 1
     uint32_t record_size;       // sizeof(TradeEvent) = 128
-    int64_t  created_wall_ns;   // UTC wall clock przy starcie sesji
-    char     padding[40];       // rezerwa na przyszłość (8+4+4+8+40 = 64)
+    int64_t  created_wall_ns;   // UTC wall clock at session start
+    char     padding[40];       // reserved for the future (8+4+4+8+40 = 64)
 };
 static_assert(sizeof(FlushFileHeader) == 64, "FlushFileHeader must be 64 bytes");
 
 
 class TradeLogger {
-    // Ring buffer — alokowany raz, nigdy nie realokowany
+    // Ring buffer — allocated once, never reallocated
     std::unique_ptr<TradeEvent[]> events_;
     int max_events_;
 
-    // SPSC atomics — wątek handlu pisze head_, wątek flush czyta head_
-    // (acquire) i pisze flush_tail_ (relaxed — sam jest jedynym writerem).
-    // Para release/acquire gwarantuje że flush_thread zobaczy kompletne
-    // dane rekordu dopiero gdy zobaczy head_+1.
+    // SPSC atomics — the trading thread writes head_, the flush thread reads head_
+    // (acquire) and writes flush_tail_ (relaxed — it is the only writer).
+    // The release/acquire pair guarantees the flush_thread sees the complete
+    // record data only once it sees head_+1.
     alignas(64) std::atomic<int> head_{0};
     alignas(64) std::atomic<int> flush_tail_{0};
 
-    // Counters — tylko wątek handlu (lub query offline). 64-bit, bo
-    // przy 25 M evt/s int32 wraps w ~85 s — długa sesja zniszczyłaby
-    // sequence numbers których regulator używa do detekcji luk.
+    // Counters — trading thread only (or offline query). 64-bit, because
+    // at 25 M evt/s an int32 wraps in ~85 s — a long session would destroy
+    // the sequence numbers the regulator uses to detect gaps.
     uint64_t sequence_{0};
     uint64_t total_logged_{0};
-    bool     ring_mode_;        // true = nadpisuj najstarsze, false = stop gdy pełny
+    bool     ring_mode_;        // true = overwrite the oldest, false = stop when full
 
-    // Per-type counters — szybki "ile było submitów / fillów / rejectów"
+    // Per-type counters — a quick "how many submits / fills / rejects"
     int counters_[static_cast<int>(EventType::EVENT_COUNT)]{};
 
-    // Stan flush thread
+    // Flush thread state
     std::thread       flush_thread_;
     std::atomic<bool> flush_running_{false};
     FILE*             flush_file_{nullptr};
 
-    // drain_to_file: zapisuje ciągłe spany [t..h) do flush_file_.
-    // Batched fwrite — jeden syscall na ciągły zakres zamiast N. Dla
-    // ring_mode_ rozdziela na maks. 2 spany (przed wrap, po wrap).
+    // drain_to_file: writes contiguous spans [t..h) to flush_file_.
+    // Batched fwrite — one syscall per contiguous range instead of N. For
+    // ring_mode_ it splits into at most 2 spans (before wrap, after wrap).
     int drain_to_file(int t, int h) noexcept {
         while (t != h) {
             int slot   = ring_mode_ ? (t % max_events_) : t;
@@ -159,13 +159,13 @@ class TradeLogger {
         return t;
     }
 
-    // flush_loop: pętla wątku flush. Co iterację: czyta head_ (acquire),
-    // drainuje [flush_tail_..head_), potem 50 µs sleep żeby nie kręcić
-    // CPU. Po flush_running_ = false jeszcze jeden drain (producent
-    // mógł zdążyć dopisać) i fflush.
+    // flush_loop: the flush thread's loop. Each iteration: reads head_ (acquire),
+    // drains [flush_tail_..head_), then sleeps 50 µs so as not to spin the
+    // CPU. After flush_running_ = false, one more drain (the producer
+    // may have managed to append) and fflush.
     //
-    // W produkcji 50 µs sleep zastępuje się futexem / condvarem żeby
-    // skrócić latency wakup'u. Tutaj prostsza wersja dla czytelności.
+    // In production the 50 µs sleep is replaced with a futex / condvar to
+    // shorten the wakeup latency. Here a simpler version for readability.
     void flush_loop() noexcept {
         while (true) {
             int h = head_.load(std::memory_order_acquire);
@@ -177,22 +177,22 @@ class TradeLogger {
             if (!flush_running_.load(std::memory_order_relaxed)) break;
             std::this_thread::sleep_for(std::chrono::microseconds(50));
         }
-        // Finalny drain po sygnale stop — producent mógł jeszcze coś
-        // wepchnąć między test flush_running_ a break.
+        // Final drain after the stop signal — the producer may have pushed
+        // something between testing flush_running_ and break.
         int h = head_.load(std::memory_order_acquire);
         int t = drain_to_file(flush_tail_.load(std::memory_order_relaxed), h);
         flush_tail_.store(t, std::memory_order_relaxed);
         std::fflush(flush_file_);
-        // fsync — gwarancja durability po power-loss. Compliance (SEC/MiFID II
-        // audit trail) wymaga że ostatnia minuta zleceń przeżyje crash maszyny.
-        // Bez tego dane siedzą w page cache kernela i znikają przy odcięciu zasilania.
+        // fsync — durability guarantee after power loss. Compliance (SEC/MiFID II
+        // audit trail) requires the last minute of orders to survive a machine crash.
+        // Without it the data sits in the kernel page cache and is lost on power cut.
         if (flush_file_) ::fsync(::fileno(flush_file_));
     }
 
 public:
-    // ring_mode=false (default): bufor liniowy, log() zwraca 0 gdy pełny.
-    // ring_mode=true:             bufor pierścieniowy, log() nadpisuje
-    //                              najstarsze zdarzenia po przepełnieniu.
+    // ring_mode=false (default): a linear buffer, log() returns 0 when full.
+    // ring_mode=true:             a ring buffer, log() overwrites
+    //                              the oldest events on overflow.
     explicit TradeLogger(bool ring_mode = false, int capacity = MAX_EVENTS)
         : events_(std::make_unique<TradeEvent[]>(capacity)),
           max_events_(capacity), ring_mode_(ring_mode) {
@@ -203,15 +203,15 @@ public:
 
     TradeLogger(const TradeLogger&)            = delete;
     TradeLogger& operator=(const TradeLogger&) = delete;
-    // Move byłby skomplikowany — flush_thread_/flush_file_/flush_running_
-    // wymagałby transferu + atomic resync head_/flush_tail_. Logger jest
-    // pinowany do wątku handlu, nie warto.
+    // A move would be complicated — flush_thread_/flush_file_/flush_running_
+    // would need a transfer + an atomic resync of head_/flush_tail_. The logger is
+    // pinned to the trading thread, not worth it.
     TradeLogger(TradeLogger&&)                 = delete;
     TradeLogger& operator=(TradeLogger&&)      = delete;
 
-    // start_async_flush: otwórz plik (append) i odpal flush thread.
-    // Zwraca false jeśli fopen padł. Plik dopisuje header — można wielokrotnie
-    // otwierać ten sam plik, każdy run zaczyna od własnego HFTLOG headera.
+    // start_async_flush: open the file (append) and start the flush thread.
+    // Returns false if fopen failed. The file appends a header — you can open
+    // the same file repeatedly, each run starts with its own HFTLOG header.
     bool start_async_flush(const char* filepath) noexcept {
         flush_file_ = std::fopen(filepath, "ab");
         if (!flush_file_) return false;
@@ -229,16 +229,16 @@ public:
         return true;
     }
 
-    // stop_async_flush: sygnalizuj flush thread'owi zakończenie, poczekaj
-    // na join, zamknij plik. Blokuje dopóki wszystkie pending eventy
-    // nie zostaną zapisane (i fsynced — patrz flush_loop).
+    // stop_async_flush: signal the flush thread to finish, wait for the
+    // join, close the file. Blocks until all pending events
+    // are written (and fsynced — see flush_loop).
     void stop_async_flush() noexcept {
         if (flush_thread_.joinable()) {
             flush_running_.store(false, std::memory_order_relaxed);
             flush_thread_.join();
         }
         if (flush_file_) {
-            // Dodatkowy fsync gdy ktoś close() bez async flush'a (legacy/sync mode).
+            // An extra fsync when someone close()s without the async flush (legacy/sync mode).
             std::fflush(flush_file_);
             ::fsync(::fileno(flush_file_));
             std::fclose(flush_file_);
@@ -246,13 +246,13 @@ public:
         }
     }
 
-    // log: hot path. Buduje TradeEvent w wybranym slocie, inkrementuje
-    // sequence_/total_logged_/counters_, release-store na head_ (czytany
-    // przez flush thread acquire).
+    // log: hot path. Builds a TradeEvent in the chosen slot, increments
+    // sequence_/total_logged_/counters_, release-stores head_ (read
+    // by the flush thread via acquire).
     //
-    // Zwraca sequence_no (>0) przy sukcesie albo 0 jeśli linear bufor
-    // jest pełny. Nie zwracamy pointera do slotu — w ring_mode slot
-    // byłby nadpisany przez następne log()'i, caller mógłby czytać
+    // Returns sequence_no (>0) on success or 0 if the linear buffer
+    // is full. We don't return a pointer to the slot — in ring_mode the slot
+    // would be overwritten by the next log()s and the caller could read
     // stale data.
     uint64_t log(EventType type, uint64_t order_id = 0,
                  const char* symbol = "", const char* side = "",
@@ -279,14 +279,14 @@ public:
             counters_[idx]++;
         total_logged_++;
 
-        // Release store: flush thread odczyta ten slot dopiero gdy zobaczy
-        // head+1. Wszystkie zapisy do TradeEvent są przed nim w program
-        // order, więc po release są widoczne dla acquire-readera.
+        // Release store: the flush thread will read this slot only once it sees
+        // head+1. All writes to TradeEvent are before it in program
+        // order, so after the release they are visible to the acquire-reader.
         head_.store(head + 1, std::memory_order_release);
         return e.sequence_no;
     }
 
-    // Akcessory (proste read-only).
+    // Accessors (simple read-only).
     int      total_events()  const noexcept {
         int h = head_.load(std::memory_order_relaxed);
         return ring_mode_ ? std::min(h, max_events_) : h;
@@ -304,15 +304,15 @@ public:
                ? counters_[idx] : 0;
     }
 
-    // Query — wszystkie bezpieczne tylko między sesjami (nie współbieżnie
-    // z log()). Iterują po pełnym buforze, O(N).
+    // Query — all safe only between sessions (not concurrently
+    // with log()). They iterate over the full buffer, O(N).
     int get_events(const TradeEvent** out) const noexcept {
         *out = events_.get();
         return total_events();
     }
 
-    // get_events_filtered: kopiuje do `out` rekordy spełniające filtry.
-    // Filtry są opcjonalne (przekaż 0 / -1 / nullptr żeby pominąć).
+    // get_events_filtered: copies into `out` the records that satisfy the filters.
+    // The filters are optional (pass 0 / -1 / nullptr to skip).
     int get_events_filtered(TradeEvent* out, int max_out,
                             uint64_t filter_order_id = 0,
                             int filter_type = -1,
@@ -333,8 +333,8 @@ public:
         return get_events_filtered(out, max_out, order_id);
     }
 
-    // unique_orders/symbols: liczy ile *różnych* order_id / symboli pojawiło
-    // się w buforze. Alokuje hash set — wywołuj offline.
+    // unique_orders/symbols: counts how many *distinct* order_id / symbols appeared
+    // in the buffer. Allocates a hash set — call offline.
     int unique_orders() const {
         std::unordered_set<uint64_t> ids;
         ids.reserve(std::min(total_events(), MAX_TRACKED_IDS));
@@ -353,17 +353,17 @@ public:
         return static_cast<int>(syms.size());
     }
 
-    // time_span_ms: rozpiętość czasu między pierwszym a ostatnim zdarzeniem
-    // (z mono_ns — odporne na korekcje NTP).
+    // time_span_ms: the time span between the first and last event
+    // (from mono_ns — resistant to NTP corrections).
     double time_span_ms() const noexcept {
         const int n = total_events();
         if (n < 2) return 0.0;
         return static_cast<double>(events_[n - 1].mono_ns - events_[0].mono_ns) / 1'000'000.0;
     }
 
-    // get_events_in_range: zapytanie po wall_ns (UTC), np. "wszystkie eventy
-    // między 09:30:00.000 a 09:30:00.100" — przydatne dla regulatorów
-    // którzy żądają replay konkretnego okna czasowego.
+    // get_events_in_range: a query by wall_ns (UTC), e.g. "all events
+    // between 09:30:00.000 and 09:30:00.100" — useful for regulators
+    // that demand a replay of a specific time window.
     int get_events_in_range(TradeEvent* out, int max_out,
                             int64_t start_wall_ns, int64_t end_wall_ns) const noexcept {
         int count = 0;
@@ -376,7 +376,7 @@ public:
         return count;
     }
 
-    // Statystyki inter-event latency (gap mono_ns między kolejnymi).
+    // Inter-event latency statistics (the mono_ns gap between consecutive ones).
     struct LatencyStats {
         int     count;
         int64_t min_ns, max_ns, mean_ns, p50_ns, p90_ns, p99_ns;
@@ -406,7 +406,7 @@ public:
         return stats;
     }
 
-    // Raporty — offline only (alokują, robią printf'y).
+    // Reports — offline only (they allocate, do printfs).
     void print_summary() const {
         printf("\n=== Logger Summary ===\n");
         printf("  Total events:   %d\n",          total_events());
@@ -434,8 +434,8 @@ public:
         }
     }
 
-    // export_binary: synchroniczny zrzut całego bufora do pliku.
-    // Używaj gdy chcesz zarchiwizować bez wcześniejszego start_async_flush.
+    // export_binary: a synchronous dump of the whole buffer to a file.
+    // Use when you want to archive without a prior start_async_flush.
     bool export_binary(const char* filepath) const {
         FILE* f = std::fopen(filepath, "ab");
         if (!f) return false;
@@ -451,8 +451,8 @@ public:
         return true;
     }
 
-    // CSV / JSON do stdout lub pliku. Wszystkie 4 trasy używają
-    // write_csv_row / write_json_obj jako wspólnych formatters.
+    // CSV / JSON to stdout or a file. All 4 paths use
+    // write_csv_row / write_json_obj as shared formatters.
     void export_csv()                              const { export_csv_to(stdout); }
     void export_json()                             const { export_json_to(stdout); }
     bool export_csv_to_file(const char* filepath)  const { return write_to_file(filepath, &TradeLogger::export_csv_to); }
@@ -490,8 +490,8 @@ private:
         fprintf(f, "  ]\n}\n");
     }
 
-    // write_to_file: otwórz w "w", wywołaj member writer, zamknij.
-    // Wspólny szkielet dla export_csv_to_file / export_json_to_file.
+    // write_to_file: open in "w", call the member writer, close.
+    // A shared skeleton for export_csv_to_file / export_json_to_file.
     bool write_to_file(const char* filepath,
                        void (TradeLogger::*writer)(FILE*) const) const {
         FILE* f = std::fopen(filepath, "w");

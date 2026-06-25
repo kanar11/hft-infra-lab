@@ -1,20 +1,20 @@
 /*
- * InfraMonitor — monitor infrastruktury HFT w czasie rzeczywistym.
+ * InfraMonitor — a real-time HFT infrastructure monitor.
  *
- * Czyta metryki systemowe bezpośrednio z /proc (zero subprocess, zero deps):
+ * Reads system metrics directly from /proc (zero subprocess, zero deps):
  *   /proc/stat        → CPU usage, context switches
- *   /proc/meminfo     → pamięć, hugepages
+ *   /proc/meminfo     → memory, hugepages
  *   /proc/interrupts  → per-CPU interrupt counts
- *   /proc/net/dev     → przepustowość sieci
+ *   /proc/net/dev     → network throughput
  *
- * W prawdziwym HFT monitorowanie skoków opóźnień i naruszeń izolacji CPU
- * jest krytyczne — jedno context-switch na trading-CPU dorzuca 1-10 µs
- * jitter'a do ścieżki zlecenia.
+ * In real HFT, monitoring latency spikes and CPU-isolation violations
+ * is critical — a single context switch on a trading CPU adds 1-10 µs
+ * of jitter to the order path.
  *
- * Wydajność (lab): ~50K+ snapshots/sec (direct /proc parsing).
+ * Performance (lab): ~50K+ snapshots/sec (direct /proc parsing).
  *
- * Alert cooldown: check_alerts() ma per-metric cooldown (default 5 min)
- * żeby nie spamować — to standard PagerDuty/Splunk.
+ * Alert cooldown: check_alerts() has a per-metric cooldown (default 5 min)
+ * so as not to spam — the PagerDuty/Splunk standard.
  */
 
 #pragma once
@@ -31,7 +31,7 @@ static constexpr int MAX_CPUS = 128;
 static constexpr int MAX_IFACES = 4;
 
 
-// Struktury metryk.
+// Metric structs.
 
 struct CpuStats {
     int64_t idle;
@@ -73,7 +73,7 @@ struct InterruptStats {
     }
 };
 
-// Alert thresholds / Progi alertów
+// Alert thresholds
 struct AlertThresholds {
     double  mem_percent;            // alert if memory usage above this
     int64_t ctx_switches_per_sec;   // alert if context switches above this
@@ -84,9 +84,8 @@ struct AlertThresholds {
 };
 
 
-// Funkcje parsujące — bierą zawartość pliku /proc z buforu (testowalne).
+// Parsing functions — they take the /proc file contents from a buffer (testable).
 // These can be unit-tested with mock data (no actual /proc needed)
-// Mogą być testowane jednostkowo z danymi testowymi (bez prawdziwego /proc)
 
 namespace proc_parser {
 
@@ -209,7 +208,7 @@ inline NetworkStats parse_net_dev(const char* content) noexcept {
 } // namespace proc_parser
 
 
-// InfraMonitor — główna klasa monitora.
+// InfraMonitor — the main monitor class.
 
 class InfraMonitor {
     AlertThresholds thresholds_;
@@ -218,9 +217,9 @@ class InfraMonitor {
     // read. If we add per-sample context-switch and elapsed-time deltas,
     // re-introduce them as locals or as fields written-and-read.
 
-    // Alert dedup / cooldown — patrz check_alerts().
+    // Alert dedup / cooldown — see check_alerts().
     int64_t  last_alert_mem_ms_  = 0;
-    int64_t  alert_cooldown_ms_  = 300000;   // 5 minut (standard PagerDuty/Splunk)
+    int64_t  alert_cooldown_ms_  = 300000;   // 5 minutes (PagerDuty/Splunk standard)
 
     static int64_t now_ns() noexcept {
         auto now = std::chrono::high_resolution_clock::now();
@@ -289,17 +288,17 @@ public:
 
     // check_alerts: compare metrics against thresholds + cooldown dedup.
     //
-    // Bez cooldown'u: jeśli mem >80% przez minutę dostajesz 60 spamu identycznych.
-    // Standard branżowy: max 1 alert per metric per cooldown_ms (default 300s).
-    // Ostatni czas wystrzelenia per-metryka trzymamy w mutable polach
-    // last_alert_*_ms_; tick wewnętrzny przez std::chrono::steady_clock.
+    // Without a cooldown: if mem >80% for a minute you get 60 identical spam alerts.
+    // Industry standard: max 1 alert per metric per cooldown_ms (default 300s).
+    // We keep the last fire time per metric in the mutable
+    // last_alert_*_ms_ fields; the internal tick is std::chrono::steady_clock.
     int check_alerts(const MemoryStats& mem, char alerts[][128], int max_alerts) noexcept {
         int count = 0;
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        // last_alert_mem_ms_ == 0 → nigdy jeszcze nie odpaliliśmy → strzelaj.
-        // (Nie można porównać przez sam delta, bo steady_clock to time-since-boot;
-        // świeży CI runner może mieć uptime krótszy niż cooldown → false negative.)
+        // last_alert_mem_ms_ == 0 → we have never fired yet → fire.
+        // (We can't compare by the delta alone, because steady_clock is time-since-boot;
+        // a fresh CI runner may have an uptime shorter than the cooldown → false negative.)
         const bool cooldown_ok = (last_alert_mem_ms_ == 0)
                               || (now_ms - last_alert_mem_ms_ >= alert_cooldown_ms_);
         if (mem.used_percent > thresholds_.mem_percent && count < max_alerts && cooldown_ok) {
@@ -310,7 +309,7 @@ public:
         return count;
     }
 
-    // Konfiguracja cooldown'u — domyślnie 5 minut, jak typowy PagerDuty/Splunk.
+    // Cooldown configuration — 5 minutes by default, like a typical PagerDuty/Splunk.
     void set_alert_cooldown_ms(int64_t cd_ms) noexcept { alert_cooldown_ms_ = cd_ms; }
     int64_t alert_cooldown_ms() const noexcept { return alert_cooldown_ms_; }
 

@@ -132,12 +132,12 @@ void test_kill_switch_event() {
     ASSERT(std::strcmp(buf[0].details, "manual_trigger") == 0, "test_kill_switch_details");
 }
 
-// NOLINTBEGIN — clang-tidy lubi grymasić na fork/WIFEXITED/POSIX makra,
-// ale to standardowe wzorce z POSIX C. NOLINT obejmuje tylko ten test.
-// MmapTradeLogger crash recovery — kluczowa zaleta mmap'a vs SPSC ring:
-// po crash'u procesu (bez clean shutdown) wszystkie zapisane eventy dalej
-// czytelne z dysku. Test używa fork(): child pisze i robi _exit(1) bez
-// uruchamiania destruktorów; parent reopens i czyta nagłówek.
+// NOLINTBEGIN — clang-tidy likes to grumble about fork/WIFEXITED/POSIX macros,
+// but these are standard POSIX C patterns. The NOLINT covers only this test.
+// MmapTradeLogger crash recovery — the key advantage of mmap vs an SPSC ring:
+// after a process crash (no clean shutdown) all written events are still
+// readable from disk. The test uses fork(): the child writes and does _exit(1) without
+// running destructors; the parent reopens and reads the header.
 void test_mmap_crash_recovery() {
     const char* path = "/tmp/hft_mmap_recovery_test.bin";
     std::remove(path);
@@ -148,34 +148,34 @@ void test_mmap_crash_recovery() {
         return;
     }
     if (pid == 0) {
-        // Child: open, log 5 events, _exit BEZ close() / destruktora.
+        // Child: open, log 5 events, _exit WITHOUT close() / destructor.
         mmap_logger::MmapTradeLogger lg;
         if (!lg.open_file(path, 1024)) _exit(2);
         for (int i = 0; i < 5; ++i) {
             lg.log(EventType::ORDER_SUBMIT, static_cast<uint64_t>(i + 1),
                    "AAPL", "BUY", 100, 150.0, "crash");
         }
-        // Force msync (pisanie do dirty pages → kernel) zanim "padniemy".
+        // Force msync (writing dirty pages → kernel) before we "crash".
         lg.flush_sync();
-        _exit(0);   // <-- BRUTAL: nie wywoła destruktora, nie wywoła close()
+        _exit(0);   // <-- BRUTAL: won't run the destructor, won't call close()
     }
-    // Parent: czekaj, otwórz ten sam plik na nowo, sprawdź że eventy są.
+    // Parent: wait, reopen the same file, check the events are there.
     int wstatus = 0;
     waitpid(pid, &wstatus, 0);
     ASSERT(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0, "mmap_recovery_child_exit_ok");
 
-    // Parent reopens. Plik powinien zawierać header + 5 eventów.
-    // Czytamy raw, bo MmapTradeLogger open() chce zerowy plik / inicjalizuje
-    // header. Sprawdzamy że bajty są tam — to dowód że msync zadziałał.
+    // Parent reopens. The file should contain the header + 5 events.
+    // We read raw, because MmapTradeLogger open() wants a zero file / initializes
+    // the header. We check the bytes are there — proof that msync worked.
     FILE* f = std::fopen(path, "rb");
     ASSERT(f != nullptr, "mmap_recovery_reopen_file");
     if (f) {
         std::fseek(f, 0, SEEK_END);
         long sz = std::ftell(f);
         std::fclose(f);
-        // Header (64 B) + 5 * sizeof(TradeEvent) (128 B każdy) = 64 + 640 = 704.
-        // Header (64 B) + 5 × TradeEvent (128 B) = 704. Wpisany jako long
-        // żeby uniknąć bugprone-implicit-widening-of-multiplication (int*int).
+        // Header (64 B) + 5 * sizeof(TradeEvent) (128 B each) = 64 + 640 = 704.
+        // Header (64 B) + 5 × TradeEvent (128 B) = 704. Written as long
+        // to avoid bugprone-implicit-widening-of-multiplication (int*int).
         ASSERT(sz >= 64L + 5L * 128L, "mmap_recovery_data_persisted");
     }
     std::remove(path);
@@ -217,7 +217,7 @@ void benchmark(int num_events) {
     latencies.reserve(num_events);
 
     // Cycle through different event types for realistic mix
-    // Cykl przez różne typy zdarzeń dla realistycznego miksu
+    // Cycle through different event types for a realistic mix
     EventType types[] = {
         EventType::ORDER_SUBMIT, EventType::RISK_ACCEPT,
         EventType::ORDER_FILL, EventType::ORDER_CANCEL

@@ -139,7 +139,7 @@ void test_alert_thresholds() {
 }
 
 void test_alert_cooldown_deduplicates() {
-    // Standard branżowy: nie spamuj alertami dla tej samej metryki.
+    // Industry standard: don't spam alerts for the same metric.
     AlertThresholds th;
     th.mem_percent = 80.0;
     InfraMonitor mon(th);
@@ -160,7 +160,7 @@ void test_alert_cooldown_deduplicates() {
     int n3 = mon.check_alerts(mem, alerts, 4);
     ASSERT(n3 == 0, "cooldown_third_still_suppressed");
 
-    // Wyłącz cooldown → znowu możemy strzelić.
+    // Disable the cooldown → we can fire again.
     mon.set_alert_cooldown_ms(0);
     int n4 = mon.check_alerts(mem, alerts, 4);
     ASSERT(n4 == 1, "cooldown_zero_means_no_dedup");
@@ -168,7 +168,6 @@ void test_alert_cooldown_deduplicates() {
 
 void test_live_proc_read() {
     // Test reading actual /proc files (if available)
-    // Testuj czytanie prawdziwych plików /proc (jeśli dostępne)
     InfraMonitor mon;
     auto mem = mon.collect_memory();
     // On any Linux system, MemTotal should be > 0
