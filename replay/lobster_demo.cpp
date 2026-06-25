@@ -64,18 +64,18 @@ struct ReplayStats {
 };
 
 
-// Inline testy malformed CSV — sprawdzają że reader bezpiecznie pomija
-// uszkodzone wiersze i kontynuuje. Wywoływane na początku main().
+// Inline malformed-CSV tests — they check the reader safely skips
+// corrupted rows and continues. Called at the start of main().
 static int run_malformed_tests() {
     const char* path = "/tmp/hft_lobster_test.csv";
     FILE* f = std::fopen(path, "w");
     if (!f) { std::fprintf(stderr, "TEST SKIP: cannot write %s\n", path); return 0; }
-    // 3 dobre wiersze, między nimi: pusty, za mało pól, niedopuszczalne znaki, komentarz.
+    // 3 good rows, interspersed: empty, too few fields, invalid characters, a comment.
     std::fprintf(f, "34200.1,1,11885113,100,2238100,1\n");
-    std::fprintf(f, "\n");                                       // pusty
-    std::fprintf(f, "# comment\n");                              // komentarz
-    std::fprintf(f, "34200.2,1,11885114,200\n");                 // za mało pól
-    std::fprintf(f, "garbage,not,a,csv,row\n");                  // nieparsowalne
+    std::fprintf(f, "\n");                                       // empty
+    std::fprintf(f, "# comment\n");                              // comment
+    std::fprintf(f, "34200.2,1,11885114,200\n");                 // too few fields
+    std::fprintf(f, "garbage,not,a,csv,row\n");                  // unparseable
     std::fprintf(f, "34200.3,4,11885113,50,2238100,1\n");
     std::fprintf(f, "34200.4,3,11885114,200,2238500,-1\n");
     std::fclose(f);
@@ -92,7 +92,7 @@ static int run_malformed_tests() {
         std::fprintf(stderr, "TEST FAIL malformed: expected 3 good rows, got %d\n", good);
         rc = 1;
     }
-    if (r.rows_bad() < 2) {  // co najmniej "za mało pól" + "garbage"
+    if (r.rows_bad() < 2) {  // at least "too few fields" + "garbage"
         std::fprintf(stderr, "TEST FAIL malformed: rows_bad()=%lu < 2\n",
                      static_cast<unsigned long>(r.rows_bad()));
         rc = 1;
