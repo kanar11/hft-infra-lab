@@ -414,6 +414,22 @@ class FullOrderBook {
                 cum_vsq_sell_ += vsq;
             }
         }
+        // Roll (1984) implied-spread accumulator — serial covariance of
+        // consecutive trade-price changes. Δp_t is this trade's change vs the
+        // previous trade; pairing it with the previous Δp builds
+        // cov(Δp_t, Δp_{t-1}) (first pair forms on the third trade).
+        if (prev_trade_px_for_lambda_ >= 0) {
+            const double dp_roll =
+                static_cast<double>(price_ticks - prev_trade_px_for_lambda_);
+            if (roll_prev_dp_has_) {
+                roll_xy_sum_ += dp_roll * roll_prev_dp_;
+                roll_x_sum_  += dp_roll;        // current Δp of the pair
+                roll_y_sum_  += roll_prev_dp_;  // lagged Δp of the pair
+                ++roll_pair_count_;
+            }
+            roll_prev_dp_     = dp_roll;
+            roll_prev_dp_has_ = true;
+        }
         prev_trade_px_for_lambda_ = price_ticks;
         // Latency arbitrage: same-side aggressors within window
         if (larb_window_ns_ > 0 && last_fill_ts_ns_ != 0 &&
@@ -3090,6 +3106,18 @@ private:
     double        cum_vsq_buy_ = 0.0;
     double        cum_vsq_sell_ = 0.0;
 
+    // Roll (1984) implied effective-spread accumulators — the serial covariance
+    // of consecutive trade-price changes Δp. In Roll's model the bid-ask bounce
+    // makes cov(Δp_t, Δp_{t-1}) = −c², so the implied effective spread is
+    // S = 2c = 2·√(−cov). Quote-free: a cross-check on the quote-based
+    // effective/quoted-spread metrics (it needs only the trade tape).
+    double        roll_xy_sum_      = 0.0;  // Σ Δp_t · Δp_{t-1}
+    double        roll_x_sum_       = 0.0;  // Σ Δp_t     (current of each pair)
+    double        roll_y_sum_       = 0.0;  // Σ Δp_{t-1} (lagged of each pair)
+    std::uint64_t roll_pair_count_  = 0;    // number of consecutive-Δp pairs
+    double        roll_prev_dp_     = 0.0;  // previous Δp (to form the next pair)
+    bool          roll_prev_dp_has_ = false;
+
     // Spread regime thresholds + counters
     std::int32_t  spread_regime_tight_thresh_  = 0;
     std::int32_t  spread_regime_wide_thresh_   = 0;
@@ -3863,6 +3891,36 @@ public:
     double kyle_lambda_abs() const noexcept {
         return std::abs(kyle_lambda());
     }
+
+    // ====================================================================
+    // Roll's implied effective spread (Roll 1984)
+    // ====================================================================
+    //
+    // Infers the effective bid-ask spread from the serial covariance of
+    // consecutive trade-price changes alone (no quotes needed):
+    //     cov(Δp_t, Δp_{t-1}) = −c²   ⇒   S = 2c = 2·√(−cov)
+    // where c is the effective half-spread. Distinct from Kyle's λ (which is the
+    // price-impact slope vs signed volume): Roll isolates the bid-ask bounce, so
+    // it is a useful cross-check on the quote-based effective/quoted spread.
+    //
+    // Returns 0 with fewer than two Δp pairs, or when the serial covariance is
+    // ≥ 0 — Roll's estimator is only defined for the negative covariance produced
+    // by bid-ask bounce; a non-negative value signals trending / auto-correlated
+    // prices where the model breaks down (textbook convention: report 0 there).
+    double roll_implied_spread_ticks() const noexcept {
+        if (roll_pair_count_ == 0) return 0.0;
+        const double n   = static_cast<double>(roll_pair_count_);
+        const double cov = roll_xy_sum_ / n
+                         - (roll_x_sum_ / n) * (roll_y_sum_ / n);
+        if (cov >= 0.0) return 0.0;
+        return 2.0 * std::sqrt(-cov);
+    }
+    // Roll's implied effective HALF-spread (c in the model) = spread / 2.
+    double roll_implied_half_spread_ticks() const noexcept {
+        return roll_implied_spread_ticks() / 2.0;
+    }
+    // Number of consecutive-Δp pairs accumulated (the estimator's sample size).
+    std::uint64_t roll_pair_count() const noexcept { return roll_pair_count_; }
 
     // ====================================================================
     // Latency arbitrage window detector

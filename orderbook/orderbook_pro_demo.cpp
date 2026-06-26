@@ -4117,6 +4117,50 @@ void benchmark(int iterations) {
     time_calls("audit (O(L+orders))",  [&]{ return b.audit_book_integrity(); }, 200);
 }
 
+// ──────────────────────────────────────────────
+// Roll (1984) implied effective spread
+// ──────────────────────────────────────────────
+
+// Each push_trade() produces exactly one trade at price `px` and leaves the
+// book empty (taker qty == maker qty), so we drive an exact price sequence.
+static void push_trade(Book& b, std::int32_t px) {
+    b.submit(Side::SELL, px, 10);  // maker
+    b.submit(Side::BUY,  px, 10);  // taker fully fills it → book empty again
+}
+
+void test_roll_spread_bounce_recovers_spread() {
+    Book b;
+    // Perfect bid-ask bounce: 7 trades alternating ±1 tick → 6 Δp → 5 Δp pairs,
+    // every product = −1 → strongly negative serial covariance.
+    const std::int32_t seq[] = {10000,10001,10000,10001,10000,10001,10000};
+    for (std::int32_t p : seq) push_trade(b, p);
+    ASSERT(b.roll_pair_count() == 5, "roll_pair_count_5");
+    const double s = b.roll_implied_spread_ticks();
+    // cov = −0.96 → S = 2·√0.96 ≈ 1.96 ticks (just under the true 2-tick bounce).
+    ASSERT(s > 1.5 && s < 2.0, "roll_spread_near_two_ticks");
+    ASSERT(b.roll_implied_half_spread_ticks() == s / 2.0, "roll_half_is_half");
+}
+
+void test_roll_spread_trending_returns_zero() {
+    Book b;
+    // Monotone climb → every Δp = +1 → non-negative serial covariance →
+    // Roll's model breaks down, estimator reports 0 by convention.
+    for (std::int32_t p = 10000; p <= 10005; ++p) push_trade(b, p);
+    ASSERT(b.roll_pair_count() >= 2,                  "roll_trend_has_pairs");
+    ASSERT(b.roll_implied_spread_ticks() == 0.0,      "roll_trend_zero");
+    ASSERT(b.roll_implied_half_spread_ticks() == 0.0, "roll_trend_half_zero");
+}
+
+void test_roll_spread_insufficient_data_zero() {
+    Book b;
+    ASSERT(b.roll_pair_count() == 0,             "roll_no_trades_count_zero");
+    ASSERT(b.roll_implied_spread_ticks() == 0.0, "roll_no_trades_zero");
+    // A single trade yields no Δp pair → still 0.
+    push_trade(b, 10000);
+    ASSERT(b.roll_pair_count() == 0,             "roll_one_trade_count_zero");
+    ASSERT(b.roll_implied_spread_ticks() == 0.0, "roll_one_trade_zero");
+}
+
 
 int main(int argc, char* argv[]) {
     std::printf("=== FullOrderBook (orderbook_pro) tests ===\n");
@@ -4414,6 +4458,9 @@ int main(int argc, char* argv[]) {
     test_anti_internalization_allows_different_firm();
     test_anti_internalization_account_level_still_works();
     test_anti_internalization_off_when_stp_none();
+    test_roll_spread_bounce_recovers_spread();
+    test_roll_spread_trending_returns_zero();
+    test_roll_spread_insufficient_data_zero();
 
     std::printf("\n%d/%d tests passed", tests_passed, tests_total);
     if (tests_failed > 0) std::printf("  (%d FAILED)", tests_failed);
