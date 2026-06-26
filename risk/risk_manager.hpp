@@ -350,7 +350,7 @@ class RiskManager {
     // --------------------------------------------------------------------
     static constexpr int RATE_BUF_SIZE = 4096;   // must be power of 2; covers up to 4096 orders/sec
     static constexpr int RATE_BUF_MASK = RATE_BUF_SIZE - 1;
-    int64_t ts_ring_[RATE_BUF_SIZE];
+    int64_t ts_ring_[RATE_BUF_SIZE] = {};   // value-init (cppcheck uninitMemberVar; never read before write)
     int     ts_head_ = 0;   // next entry to evict (oldest)
     int     ts_tail_ = 0;   // next slot to write (newest)
 
