@@ -204,7 +204,8 @@ class OMS {
     uint64_t  total_replaces_ = 0;
     uint64_t  total_ordered_shares_ = 0;  // sum of ordered shares (#228)
     uint64_t  total_filled_shares_  = 0;  // sum of executed shares (#228)
-    double    total_traded_notional_ = 0.0; // cumulative $ value of all fills (#266)
+    double    total_traded_notional_    = 0.0; // cumulative $ value of all fills (#266)
+    double    total_submitted_notional_ = 0.0; // cumulative $ value of all submitted orders (#322)
 
 public:
     // commission_per_share: e.g. 0.0035 = $0.0035/share (typical taker fee).
@@ -276,6 +277,7 @@ public:
         pos_it->second.pending_qty += signed_n;
         ++total_submitted_;   // #160
         total_ordered_shares_ += quantity;   // #228
+        total_submitted_notional_ += price_f * static_cast<double>(quantity);  // #322
         return &it->second;
     }
 
@@ -711,6 +713,18 @@ public:
     // analysis and exchange-tier volume tracking; independent of position (a
     // round-trip trades twice the notional but nets zero position).
     double   total_traded_notional() const noexcept { return total_traded_notional_; }
+    // total_submitted_notional: Σ (price × qty) across all accepted submits (#322) —
+    // the gross dollar volume the desk ATTEMPTED to trade, whether filled or not.
+    // Compare to total_traded_notional (#266) to measure execution completeness in $.
+    double   total_submitted_notional() const noexcept { return total_submitted_notional_; }
+    // avg_submitted_notional: total_submitted_notional / total_submitted (#322) — the
+    // average order size in dollars. Rising avg signals increasing block-trade activity
+    // vs. small-lot order routing; falling avg suggests fragmentation.
+    double   avg_submitted_notional() const noexcept {
+        return total_submitted_ > 0
+            ? total_submitted_notional_ / static_cast<double>(total_submitted_)
+            : 0.0;
+    }
     // avg_trade_price: blended VWAP across EVERY fill (#306) = total_traded_notional
     // / total_filled_shares. The single execution price the whole session achieved,
     // independent of side or position — the TCA benchmark you compare arrival/VWAP
@@ -740,7 +754,8 @@ public:
         total_replaces_  = 0;
         total_ordered_shares_ = 0;   // #228
         total_filled_shares_  = 0;
-        total_traded_notional_ = 0.0;   // #266
+        total_traded_notional_    = 0.0;   // #266
+        total_submitted_notional_ = 0.0;   // #322
         for (auto& c : reject_counts_) c = 0;
     }
 
