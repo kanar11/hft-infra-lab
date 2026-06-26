@@ -2051,6 +2051,22 @@ void test_multicast_gap_recovery() {
     agb.on_retransmit(3); agb.on_retransmit(4); agb.on_retransmit(7);
     ASSERT(std::fabs(agb.avg_gap_burst() - 1.5) < 1e-9, "gaprec_burst_recover_invariant");
 
+    // #338 outstanding_range_count / largest_outstanding_run — live fragmentation.
+    multicast::GapRecovery gror;
+    ASSERT(gror.outstanding_range_count() == 0 && gror.largest_outstanding_run() == 0,
+           "gaprec_runs_empty");
+    gror.observe(1);
+    gror.observe(5);     // miss 2,3,4  -> one run of 3
+    gror.observe(10);    // miss 6,7,8,9 -> a second run of 4
+    ASSERT(gror.outstanding_range_count() == 2, "gaprec_two_runs");
+    ASSERT(gror.largest_outstanding_run() == 4, "gaprec_largest_run_4");
+    gror.on_retransmit(7);  // splits 6,7,8,9 into 6 | 8,9 -> three runs, largest now 3 (2,3,4)
+    ASSERT(gror.outstanding_range_count() == 3, "gaprec_three_runs_after_fill");
+    ASSERT(gror.largest_outstanding_run() == 3, "gaprec_largest_run_now_3");
+    gror.on_retransmit(2); gror.on_retransmit(3); gror.on_retransmit(4);
+    gror.on_retransmit(6); gror.on_retransmit(8); gror.on_retransmit(9);
+    ASSERT(!gror.has_gaps() && gror.largest_outstanding_run() == 0, "gaprec_runs_cleared");
+
     // #110 ReorderBuffer — always delivers in order, holds "future" ones.
     multicast::ReorderBuffer<int> rb;
     rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2

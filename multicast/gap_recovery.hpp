@@ -167,6 +167,43 @@ struct GapRecovery {
             : 0.0;
     }
 
+    // outstanding_range_count (#338): how many DISTINCT contiguous runs the
+    // currently-missing sequences form — the number of separate gap-fill requests
+    // still needed RIGHT NOW. missing_ranges() (#149) returns the actual [lo,hi]
+    // pairs but allocates a vector; this counts them in a single pass over the
+    // sorted set with no heap. Distinct from gap_events (a cumulative lifetime
+    // counter that never decreases): this is the live, point-in-time fragmentation.
+    // 0 when nothing is outstanding.
+    std::size_t outstanding_range_count() const noexcept {
+        std::size_t runs = 0;
+        bool have_prev = false;
+        std::uint64_t prev = 0;
+        for (std::uint64_t s : missing) {        // std::set iterates ascending
+            if (!have_prev || s != prev + 1) ++runs;
+            prev = s; have_prev = true;
+        }
+        return runs;
+    }
+
+    // largest_outstanding_run (#338): the size (in sequences) of the BIGGEST
+    // contiguous block of currently-missing numbers — the worst single hole in the
+    // book right now, and the span one retransmit request would cover. A large run
+    // points at a burst drop; many size-1 runs (see outstanding_range_count) point
+    // at scattered single-packet loss. The live, point-in-time companion to
+    // avg_gap_burst (#329, a historical mean over all gap events). 0 when nothing
+    // is outstanding.
+    std::uint64_t largest_outstanding_run() const noexcept {
+        std::uint64_t best = 0, cur = 0, prev = 0;
+        bool have_prev = false;
+        for (std::uint64_t s : missing) {        // ascending
+            if (have_prev && s == prev + 1) ++cur;
+            else                            cur = 1;
+            if (cur > best) best = cur;
+            prev = s; have_prev = true;
+        }
+        return best;
+    }
+
     // missing_ranges (#149): gaps grouped into CONTIGUOUS intervals [begin,end].
     // next_request gives only min..max (may include already-received); this gives
     // exact ranges for a gap-fill request (more efficient retransmission).
