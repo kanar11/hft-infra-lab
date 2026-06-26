@@ -569,6 +569,51 @@ public:
         return maxgap;
     }
 
+    // book_slope: the order-book liquidity gradient on a side across the top n
+    // occupied levels (Næs–Skjeltorp 2006) — cumulative displayed depth divided
+    // by the price span it covers, in SHARES PER TICK ($0.01). High slope = depth
+    // packed tightly near the touch (a resilient book that absorbs size with
+    // little price travel); low slope = depth sparse and far from the touch
+    // (fragile). Unlike depth_imbalance/notional_imbalance (pure qty), this
+    // couples size to the price distance you must pay to reach it. 0 when fewer
+    // than two levels are in range, or all collected depth sits at one price
+    // (zero span — slope undefined).
+    double book_slope(char side, int n) const noexcept {
+        if (n <= 1) return 0.0;
+        int64_t cum = 0, best_px = 0, last_px = 0;
+        int c = 0; bool have_first = false;
+        if (side == 'B') {
+            for (auto it = bids_.rbegin(); it != bids_.rend() && c < n; ++it, ++c) {
+                if (!have_first) { best_px = it->first; have_first = true; }
+                last_px = it->first;
+                cum += it->second;
+            }
+        } else {
+            for (auto it = asks_.begin(); it != asks_.end() && c < n; ++it, ++c) {
+                if (!have_first) { best_px = it->first; have_first = true; }
+                last_px = it->first;
+                cum += it->second;
+            }
+        }
+        if (c < 2) return 0.0;
+        const int64_t span = (side == 'B') ? (best_px - last_px) : (last_px - best_px);
+        if (span <= 0) return 0.0;
+        return static_cast<double>(cum) / static_cast<double>(span);
+    }
+
+    // book_slope_imbalance: which side's near-touch liquidity builds up faster,
+    // in [-1, 1] = (bid_slope - ask_slope)/(bid_slope + ask_slope) over the top n
+    // levels. >0 = the bid side is steeper (denser support stacking below the
+    // touch), <0 = the ask side is steeper. A structural companion to imbalance()
+    // (which weighs only top-of-book qty): this weighs depth against price
+    // distance. 0 when neither side has a measurable slope.
+    double book_slope_imbalance(int n) const noexcept {
+        const double bs = book_slope('B', n);
+        const double as = book_slope('S', n);
+        const double tot = bs + as;
+        return tot > 0.0 ? (bs - as) / tot : 0.0;
+    }
+
     size_t  bid_levels()     const noexcept { return bids_.size(); }
     size_t  ask_levels()     const noexcept { return asks_.size(); }
     size_t  resting_orders() const noexcept { return orders_.size(); }

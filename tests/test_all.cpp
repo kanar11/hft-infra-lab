@@ -1959,6 +1959,22 @@ void test_itch_book() {
     ASSERT(nla.largest_level_gap('S', 1)  == 0, "itchbook_gap_single_level"); // no adjacent pair
     ASSERT(nla.largest_level_gap('B', 0)  == 0, "itchbook_gap_n_zero");
 
+    // #334 book_slope (liquidity gradient: shares of depth per $0.01 tick).
+    itch::ITCHOrderBook slp;
+    slp.on_add(1, 'B', 100.00, 100); slp.on_add(2, 'B', 99.99, 200); slp.on_add(3, 'B', 99.98, 300);
+    slp.on_add(4, 'S', 100.01, 50);  slp.on_add(5, 'S', 100.02, 50);  slp.on_add(6, 'S', 100.03, 50);
+    // bids: cum 600 over a 2-tick span (100.00 -> 99.98) = 300 sh/tick
+    ASSERT(std::fabs(slp.book_slope('B', 3) - 300.0) < 1e-9, "itchbook_slope_bid");
+    // asks: cum 150 over a 2-tick span (100.01 -> 100.03) = 75 sh/tick
+    ASSERT(std::fabs(slp.book_slope('S', 3) - 75.0)  < 1e-9, "itchbook_slope_ask");
+    // imbalance: (300-75)/(300+75) = 0.6 (bid side steeper)
+    ASSERT(std::fabs(slp.book_slope_imbalance(3) - 0.6) < 1e-9, "itchbook_slope_imb");
+    ASSERT(slp.book_slope('B', 1) == 0.0, "itchbook_slope_n1_zero");      // need >= 2 levels
+    itch::ITCHOrderBook slp1;
+    slp1.on_add(1, 'B', 100.00, 100);                                     // single level -> span 0
+    ASSERT(slp1.book_slope('B', 5) == 0.0, "itchbook_slope_single_zero");
+    ASSERT(slp1.book_slope_imbalance(5) == 0.0, "itchbook_slope_imb_onesided");
+
     // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
     itch::ITCHOrderBook ni;
     ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 shares.
