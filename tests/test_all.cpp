@@ -54,6 +54,7 @@
 #include "../strategy/kama.hpp"
 #include "../strategy/linreg.hpp"
 #include "../strategy/rolling_stddev.hpp"
+#include "../strategy/fisher.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2728,6 +2729,42 @@ void test_rolling_stddev() {
     ASSERT(std::fabs(sd.value() - std::sqrt(8.0 / 3.0)) < 1e-9, "rsd_sample_std");
 }
 
+// FisherTransform #324 — Ehlers' Fisher Transform oscillator.
+void test_fisher() {
+    SECTION("FisherTransform (#324)");
+    FisherTransform warm(5);
+    for (int i = 0; i < 4; ++i) warm.update(10.0 + i);
+    ASSERT(!warm.ready(), "fisher_not_ready_before_period");
+    warm.update(14.0);
+    ASSERT(warm.ready(), "fisher_ready_at_period");
+
+    // flat input -> range 0 every step -> position 0 -> Fisher stays exactly 0
+    FisherTransform fl(5);
+    for (int i = 0; i < 10; ++i) fl.update(42.0);
+    ASSERT(std::fabs(fl.value()) < 1e-12, "fisher_flat_zero");
+    ASSERT(std::fabs(fl.trigger()) < 1e-12, "fisher_flat_trigger_zero");
+
+    // monotonic rising -> price sits at the window high -> positive, growing Fisher
+    FisherTransform up(5);
+    for (int i = 1; i <= 20; ++i) up.update(static_cast<double>(i));
+    ASSERT(up.value() > 0.5, "fisher_uptrend_positive");
+    // trigger is the 1-bar-lagged value; in a steady uptrend value > its own lag
+    ASSERT(up.value() >= up.trigger(), "fisher_uptrend_above_trigger");
+
+    // monotonic falling -> price sits at the window low -> negative Fisher
+    FisherTransform dn(5);
+    for (int i = 0; i < 20; ++i) dn.update(100.0 - i);
+    ASSERT(dn.value() < -0.5, "fisher_downtrend_negative");
+
+    // clamp guard: an extreme one-sided run must never overflow to inf/nan
+    FisherTransform cl(3);
+    for (int i = 0; i < 50; ++i) cl.update(static_cast<double>(i) * 1000.0);
+    ASSERT(std::isfinite(cl.value()), "fisher_clamp_finite");
+
+    dn.reset();
+    ASSERT(!dn.ready() && std::fabs(dn.value()) < 1e-12, "fisher_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4689,6 +4726,7 @@ int main() {
     test_kama();
     test_linreg();
     test_rolling_stddev();
+    test_fisher();
     test_backtest();
     test_ensemble();
     test_trailing_stop();
