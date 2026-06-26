@@ -1947,6 +1947,13 @@ void test_itch_book() {
     ASSERT(nla.queue_ahead('B', 99.99) == 150, "itchbook_queue_best_bid");
     ASSERT(nla.queue_ahead('S', 101.00) == 0, "itchbook_queue_empty_level");  // no level there
 
+    // #325 largest_level_gap (widest tick gap between adjacent levels in top-N).
+    ASSERT(nla.largest_level_gap('S', 10) == 3, "itchbook_gap_ask_all");    // .00->.02=2, .02->.05=3
+    ASSERT(nla.largest_level_gap('S', 2)  == 2, "itchbook_gap_ask_top2");   // only the .00->.02 step
+    ASSERT(nla.largest_level_gap('B', 5)  == 1, "itchbook_gap_bid_contig"); // 99.99->99.98 = 1 tick
+    ASSERT(nla.largest_level_gap('S', 1)  == 0, "itchbook_gap_single_level"); // no adjacent pair
+    ASSERT(nla.largest_level_gap('B', 0)  == 0, "itchbook_gap_n_zero");
+
     // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
     itch::ITCHOrderBook ni;
     ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 shares.

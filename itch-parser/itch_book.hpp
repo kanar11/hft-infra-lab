@@ -542,6 +542,32 @@ public:
         const auto it = asks_.find(px);
         return it != asks_.end() ? it->second : 0;
     }
+    // largest_level_gap: the widest tick ($0.01) gap between ADJACENT occupied price
+    // levels among the top N on a side (#325). The book is not contiguous — prices can
+    // skip ticks — so once a sweep exhausts one level it jumps to the next OCCUPIED
+    // price; this returns the worst such single-step dislocation within depth N. The
+    // intra-side companion to spread_ticks (#207, the gap BETWEEN sides): a 1-tick
+    // result is a dense, contiguous book, a large result an "air pocket" that makes the
+    // touch fragile. 0 when fewer than two levels are in range (no gap to measure).
+    int64_t largest_level_gap(char side, int n) const noexcept {
+        if (n <= 1) return 0;
+        int64_t maxgap = 0, prev = 0;
+        int c = 0; bool have_prev = false;
+        if (side == 'B') {
+            for (auto it = bids_.rbegin(); it != bids_.rend() && c < n; ++it, ++c) {
+                const int64_t px = it->first;
+                if (have_prev && prev - px > maxgap) maxgap = prev - px;
+                prev = px; have_prev = true;
+            }
+        } else {
+            for (auto it = asks_.begin(); it != asks_.end() && c < n; ++it, ++c) {
+                const int64_t px = it->first;
+                if (have_prev && px - prev > maxgap) maxgap = px - prev;
+                prev = px; have_prev = true;
+            }
+        }
+        return maxgap;
+    }
 
     size_t  bid_levels()     const noexcept { return bids_.size(); }
     size_t  ask_levels()     const noexcept { return asks_.size(); }
