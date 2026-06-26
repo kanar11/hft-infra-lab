@@ -255,14 +255,17 @@ public:
         last_reject_ = OMSReject::NONE;
         if (out_reason) *out_reason = OMSReject::NONE;
 
-        // Create the Order, set status SENT, store it in the map.
+        // Create the Order IN PLACE: try_emplace constructs it directly inside the
+        // map node from the constructor args, avoiding the stack temporary and the
+        // ~80-byte struct copy that emplace(id, order) did on every submit (hot path).
+        // id is unique (next_id_++), so the insert always succeeds.
         const uint64_t id = next_id_++;
-        Order order(id, symbol, side, price, quantity);
+        auto it = orders_.try_emplace(id, id, symbol, side, price, quantity).first;
+        Order& order = it->second;
         order.created_ns = t0;
         order.sent_ns    = mono_ns();
         order.status     = OrderStatus::SENT;
         order.expire_ns  = expire_ns;   // #172 GTD
-        auto it = orders_.emplace(id, order).first;
 
         // Reserve pending. We create the Position lazily here (rather than at
         // the first fill) so that pending accounting is consistent on every
