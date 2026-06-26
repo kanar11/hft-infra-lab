@@ -38,7 +38,7 @@ public:
             sum_ -= old; sum_sq_ -= old * old;
         }
         rets_[head_] = r; sum_ += r; sum_sq_ += r * r;
-        head_ = (head_ + 1) % window_;
+        if (++head_ == window_) head_ = 0;
         if (count_ < window_) ++count_;
     }
 

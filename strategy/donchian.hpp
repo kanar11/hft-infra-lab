@@ -46,7 +46,7 @@ class DonchianBreakout {
 
     static void push(Win& w, double price) noexcept {
         w.prices[w.head] = price;
-        w.head = (w.head + 1) % w.size;
+        if (++w.head == w.size) w.head = 0;
         if (w.count < w.size) ++w.count;
     }
 

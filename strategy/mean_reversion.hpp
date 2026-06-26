@@ -98,7 +98,7 @@ struct PriceWindow {
         if (count == window_size) running_sum -= prices[head];  // evict
         prices[head] = price;
         running_sum += price;
-        head = (head + 1) % window_size;
+        if (++head == window_size) head = 0;   // compare+cmov, avoids integer division
         if (count < window_size) ++count;
     }
 

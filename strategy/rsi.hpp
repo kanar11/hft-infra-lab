@@ -75,7 +75,7 @@ public:
         w->prev_price = price;
         w->gains[w->head]  = (delta > 0.0) ?  delta : 0.0;
         w->losses[w->head] = (delta < 0.0) ? -delta : 0.0;
-        w->head = (w->head + 1) % w->size;
+        if (++w->head == w->size) w->head = 0;
         if (w->count < w->size) ++w->count;
 
         if (w->count >= w->size) {

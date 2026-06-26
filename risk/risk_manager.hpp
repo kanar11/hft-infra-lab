@@ -69,7 +69,6 @@
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
-#include <deque>
 #include <cstdio>
 #include <cstdlib>     // std::remove
 #include <cmath>
@@ -344,14 +343,16 @@ class RiskManager {
     // --------------------------------------------------------------------
     // State: rate limit
     //
-    // A FIFO queue of timestamps (CLOCK_MONOTONIC). On every
-    // check_order we evict from the front entries older than 1 second; if
-    // the remaining size ≥ max_orders_per_second → REJECT.
-    //
-    // std::deque (not vector) because pop_front is O(1). With a vector you
-    // would have to erase(begin, begin+N) = O(M) every time.
+    // Fixed circular ring buffer of order timestamps (CLOCK_MONOTONIC).
+    // Replaces std::deque to eliminate pointer chasing and dynamic allocation.
+    // head_/tail_ are indices into ts_ring_; count = (tail - head) & MASK.
+    // Power-of-2 size allows bitmask wrap instead of modulo.
     // --------------------------------------------------------------------
-    std::deque<int64_t> order_timestamps_;
+    static constexpr int RATE_BUF_SIZE = 4096;   // must be power of 2; covers up to 4096 orders/sec
+    static constexpr int RATE_BUF_MASK = RATE_BUF_SIZE - 1;
+    int64_t ts_ring_[RATE_BUF_SIZE];
+    int     ts_head_ = 0;   // next entry to evict (oldest)
+    int     ts_tail_ = 0;   // next slot to write (newest)
 
     // --------------------------------------------------------------------
     // State: statistics (for print_stats / monitoring)
@@ -710,7 +711,7 @@ public:
         peak_pnl_  = 0.0;
         consec_losses_ = 0;
         traded_notional_ = 0.0;
-        order_timestamps_.clear();
+        ts_head_ = ts_tail_ = 0;
         pending_.clear();
         kill_switch_active_ = false;
         kill_reason_        = KillReason::NONE;
@@ -1033,22 +1034,19 @@ private:
 
     // check_rate_limit: check #7 from check_order.
     //
-    // Strategy: keep a FIFO of order timestamps. Before checking,
-    // evict all older than 1s (deque.pop_front). Then:
-    //   if size ≥ limit → REJECT
-    //   otherwise       → push_back(now), ALLOW
-    //
-    // Amortized O(1) per check (each timestamp is inserted once
-    // and evicted once during its lifetime ≤ 1s).
+    // Circular ring buffer of timestamps: evict stale entries (>1s old)
+    // by advancing ts_head_, then compare count against the limit.
+    // O(1) amortized; contiguous memory avoids pointer chasing from std::deque.
     //
     // Returns true (ALLOW), false (REJECT).
     bool check_rate_limit(int64_t now) noexcept {
         const int64_t one_sec_ago = now - 1'000'000'000;
-        while (!order_timestamps_.empty() && order_timestamps_.front() <= one_sec_ago)
-            order_timestamps_.pop_front();
-        if (static_cast<int32_t>(order_timestamps_.size()) >= limits_.max_orders_per_second)
-            return false;
-        order_timestamps_.push_back(now);
+        while (ts_head_ != ts_tail_ && ts_ring_[ts_head_] <= one_sec_ago)
+            ts_head_ = (ts_head_ + 1) & RATE_BUF_MASK;
+        const int count = (ts_tail_ - ts_head_ + RATE_BUF_SIZE) & RATE_BUF_MASK;
+        if (count >= limits_.max_orders_per_second) return false;
+        ts_ring_[ts_tail_] = now;
+        ts_tail_ = (ts_tail_ + 1) & RATE_BUF_MASK;
         return true;
     }
 

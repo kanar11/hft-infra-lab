@@ -57,7 +57,7 @@ class BollingerStrategy {
         }
         w.prices[w.head] = price;
         w.sum += price; w.sum_sq += price * price;
-        w.head = (w.head + 1) % w.window_size;
+        if (++w.head == w.window_size) w.head = 0;
         if (w.count < w.window_size) ++w.count;
     }
 

@@ -66,7 +66,7 @@ public:
         if (!w) { ++stats_.holds; stats_.total_latency_ns += (mono_ns() - t0); return sig; }
 
         w->prices[w->head] = price;
-        w->head = (w->head + 1) % slow_;
+        if (++w->head == slow_) w->head = 0;
         if (w->count < slow_) ++w->count;
 
         if (w->count >= slow_) {

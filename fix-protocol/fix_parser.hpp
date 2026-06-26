@@ -123,18 +123,20 @@ public:
         int  body_off  = -1;     // where the field AFTER tag 9 begins
         bool pending_body = false;
 
+        const char* buf_end = buf + len;
         char* pos = buf;
-        while (*pos && field_count_ < MAX_FIX_TAGS) {
+        while (pos < buf_end && field_count_ < MAX_FIX_TAGS) {
             const int field_off = static_cast<int>(pos - buf);
             if (pending_body) { body_off = field_off; pending_body = false; }
 
-            // Find the next delimiter or the end.
-            char* delim = pos;
-            while (*delim && *delim != delim_char) ++delim;
+            // memchr uses SIMD on most platforms — much faster than a byte loop.
+            char* delim = static_cast<char*>(
+                std::memchr(pos, delim_char, static_cast<size_t>(buf_end - pos)));
+            if (!delim) delim = buf + len;
 
-            // Find '=' in this segment.
-            char* eq = pos;
-            while (eq < delim && *eq != '=') ++eq;
+            char* eq = static_cast<char*>(
+                std::memchr(pos, '=', static_cast<size_t>(delim - pos)));
+            if (!eq) eq = delim;
 
             if (eq < delim && eq > pos) {
                 *eq = '\0';
