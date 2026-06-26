@@ -55,6 +55,7 @@
 #include "../strategy/linreg.hpp"
 #include "../strategy/rolling_stddev.hpp"
 #include "../strategy/fisher.hpp"
+#include "../strategy/coppock.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2790,6 +2791,32 @@ void test_fisher() {
     ASSERT(!dn.ready() && std::fabs(dn.value()) < 1e-12, "fisher_reset");
 }
 
+// Coppock Curve #333 — long-horizon momentum oscillator (WMA of summed ROCs).
+void test_coppock() {
+    SECTION("Coppock Curve (#333)");
+    // Default params need ROC_long(14)+1 warmup, then WMA(10) feeds -> ~25 prices.
+    Coppock cop;            // WMA=10, ROC_long=14, ROC_short=11
+    for (int i = 0; i < 14; ++i) cop.update(100.0 + i);
+    ASSERT(!cop.ready(), "coppock_not_ready_during_warmup");
+
+    // Steady uptrend -> both ROCs positive -> Coppock turns positive (bullish).
+    Coppock up(3, 5, 3);   // shorter periods for a compact deterministic test
+    for (int i = 0; i < 40; ++i) up.update(100.0 + 2.0 * i);
+    ASSERT(up.ready(), "coppock_ready_after_warmup");
+    ASSERT(up.value() > 0.0, "coppock_uptrend_positive");
+    ASSERT(up.bullish(), "coppock_uptrend_bullish");
+
+    // Steady downtrend -> both ROCs negative -> Coppock negative, not bullish.
+    Coppock dn(3, 5, 3);
+    for (int i = 0; i < 40; ++i) dn.update(300.0 - 2.0 * i);
+    ASSERT(dn.ready(), "coppock_dn_ready");
+    ASSERT(dn.value() < 0.0, "coppock_downtrend_negative");
+    ASSERT(!dn.bullish(), "coppock_downtrend_not_bullish");
+
+    up.reset();
+    ASSERT(!up.ready() && up.value() == 0.0, "coppock_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4835,6 +4862,7 @@ int main() {
     test_bollinger_pctb();
     test_roc();
     test_aroon();
+    test_coppock();
     test_cmo();
     test_zscore();
     test_tsi();
