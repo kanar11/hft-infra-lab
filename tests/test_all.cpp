@@ -4005,6 +4005,32 @@ void test_fix_session() {
         ASSERT(cr.get_field(434)[0] == '2', "fix_cxlreject_response_to");  // wobec Replace
         ASSERT(std::atoi(cr.get_field(102)) == 0, "fix_cxlreject_reason_too_late");
         ASSERT(std::strcmp(cr.get_field(41), "ORD1") == 0, "fix_cxlreject_origclordid");
+
+        // #319 QuoteStatusReport (35=AI) — venue ack/reject of a Quote.
+        // Full RFQ lifecycle: 35=R (request) -> 35=S (quote) -> 35=AI (status) -> 35=Z (cancel).
+        s.build_quote_status_report(buf, sizeof(buf), "Q1", "AAPL", 0, nullptr, '|'); // Accepted
+        FIXMessage qsr; qsr.parse(buf);
+        ASSERT(qsr.is_valid() && std::strcmp(qsr.get_msg_type(), "AI") == 0, "fix_qsr_AI_valid");
+        ASSERT(std::strcmp(qsr.get_field(117), "Q1") == 0
+               && std::strcmp(qsr.get_symbol(), "AAPL") == 0, "fix_qsr_id_symbol");
+        ASSERT(qsr.get_int(297) == 0, "fix_qsr_status_accepted");
+        {
+            const auto qsrd = fix::FIXSession::parse_quote_status(qsr);
+            ASSERT(qsrd.valid && qsrd.status == 0, "fix_qsr_parsed_accepted");
+        }
+        s.build_quote_status_report(buf, sizeof(buf), "Q2", "MSFT", 4, "Price out of band", '|');
+        FIXMessage qsrj; qsrj.parse(buf);
+        ASSERT(qsrj.is_valid() && qsrj.get_int(297) == 4, "fix_qsr_status_rejected");
+        ASSERT(std::strcmp(qsrj.get_field(58), "Price out of band") == 0, "fix_qsr_rejection_text");
+        {
+            const auto qsrjd = fix::FIXSession::parse_quote_status(qsrj);
+            ASSERT(qsrjd.valid && qsrjd.status == 4, "fix_qsr_parsed_rejected");
+        }
+        // A non-AI message must produce valid=false.
+        {
+            FIXMessage not_ai; not_ai.parse("35=S|117=X|55=AAPL|132=10.0|133=10.1|");
+            ASSERT(!fix::FIXSession::parse_quote_status(not_ai).valid, "fix_qsr_non_AI_invalid");
+        }
     }
 }
 

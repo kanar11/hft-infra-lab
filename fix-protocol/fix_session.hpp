@@ -797,6 +797,53 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // QuoteStatusReport (35=AI): the venue's feedback on a Quote (35=S, #249) —
+    // whether the quote was accepted, rejected, or pulled from the market (#319).
+    // Closes the RFQ lifecycle:
+    //   35=R (QuoteRequest, #256) → 35=S (Quote, #249)
+    //   → 35=AI (QuoteStatusReport, here) → optional 35=Z (QuoteCancel, #271).
+    //
+    // 297=QuoteStatus:
+    //   0 = Accepted, 4 = Rejected, 5 = RemovedFromMarket,
+    //   8 = Pending,  14 = Active   (FIX 4.2 subset)
+    // 58=Text: optional human-readable reason for non-0 status.
+    int build_quote_status_report(char* out, int cap, const char* quote_id,
+                                  const char* symbol, int quote_status,
+                                  const char* text = nullptr,
+                                  char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        int n;
+        if (text && *text) {
+            n = std::snprintf(body, sizeof(body),
+                "35=AI%c49=%s%c56=%s%c34=%u%c117=%s%c55=%s%c297=%d%c58=%s%c",
+                delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+                quote_id, delim, symbol, delim, quote_status, delim, text, delim);
+        } else {
+            n = std::snprintf(body, sizeof(body),
+                "35=AI%c49=%s%c56=%s%c34=%u%c117=%s%c55=%s%c297=%d%c",
+                delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+                quote_id, delim, symbol, delim, quote_status, delim);
+        }
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
+    // QuoteStatusReport — typed view of a parsed 35=AI message (#319).
+    // Symmetric to ExecReport (#241): parse once, access by field name.
+    struct QuoteStatusReport {
+        int  status = -1;   // 297=QuoteStatus (-1 = absent)
+        bool valid  = false; // true when msg type == "AI"
+    };
+
+    static QuoteStatusReport parse_quote_status(const FIXMessage& m) noexcept {
+        QuoteStatusReport r;
+        if (std::strcmp(m.get_msg_type(), "AI") != 0) return r;
+        const char* s = m.get_field(297);
+        r.status = s ? std::atoi(s) : -1;
+        r.valid  = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 
