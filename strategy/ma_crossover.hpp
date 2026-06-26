@@ -44,13 +44,6 @@ class MACrossover {
         return &w;
     }
 
-    // mean of the last k prices (k <= count). Ring of size slow_.
-    double mean_last(const Win& w, int k) const noexcept {
-        double s = 0.0; int idx = w.head;
-        for (int i = 0; i < k; ++i) { idx = (idx - 1 + slow_) % slow_; s += w.prices[idx]; }
-        return s / k;
-    }
-
     void emit(Signal& sig, const char* stock, Side side, double price,
               double slow_sma, int64_t ts) const noexcept {
         sig.valid = true; sig.timestamp_ns = ts; sig.side = side; sig.price = price;
@@ -77,8 +70,22 @@ public:
         if (w->count < slow_) ++w->count;
 
         if (w->count >= slow_) {
-            const double fast_sma = mean_last(*w, fast_);
-            const double slow_sma = mean_last(*w, slow_);
+            // Both SMAs in ONE backward ring walk: the fast window is a prefix of the
+            // slow window, so accumulate slow_sum over all slow_ prices and capture
+            // fast_sum at the fast_-th step. Replaces two separate walks (fast_+slow_
+            // element visits) and the per-element `% slow_` with a single slow_-length
+            // walk and a branchless wrap. Same elements summed in the same order, so
+            // the means are bit-identical to the previous mean_last().
+            double fast_sum = 0.0, slow_sum = 0.0;
+            int idx = w->head;
+            for (int i = 0; i < slow_; ++i) {
+                idx = (idx == 0) ? slow_ - 1 : idx - 1;   // walk back one, no modulo
+                const double p = w->prices[idx];
+                slow_sum += p;
+                if (i < fast_) fast_sum += p;
+            }
+            const double fast_sma = fast_sum / fast_;
+            const double slow_sma = slow_sum / slow_;
             const bool fast_above = fast_sma > slow_sma;
             if (w->has_prev && fast_above != w->prev_fast_above) {
                 if (fast_above) { emit(sig, stock, Side::BUY,  price, slow_sma, timestamp_ns); ++stats_.buys;  ++stats_.signals_generated; }
