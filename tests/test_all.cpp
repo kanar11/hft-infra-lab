@@ -446,6 +446,19 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.symbol_win_rate(), 0.5), "symwinrate_half");
         OMS empt(1000000, 1000000000.0);
         ASSERT(empt.symbol_win_rate() == 0.0, "symwinrate_empty_zero");
+        // #339 gross_profit / gross_loss / profit_factor (P&L-weighted attribution).
+        ASSERT(close(to_float(oms.gross_profit()), 200.0), "oms_gross_profit_200");  // AAA
+        ASSERT(close(to_float(oms.gross_loss()),   100.0), "oms_gross_loss_100");    // BBB
+        ASSERT(close(oms.profit_factor(), 2.0), "oms_profit_factor_2");              // 200/100
+        ASSERT(empt.profit_factor() == 0.0, "oms_pf_empty_zero");
+        // no losing symbols + profit -> +inf (same convention as the Backtester)
+        OMS pf_allwin(1000000, 1000000000.0);
+        Order* pfw1 = pf_allwin.submit_order("WIN", Side::BUY, 10.0, 100);
+        pf_allwin.fill_order(pfw1->order_id, 100, 10.0);
+        Order* pfw2 = pf_allwin.submit_order("WIN", Side::SELL, 11.0, 100);
+        pf_allwin.fill_order(pfw2->order_id, 100, 11.0);
+        const double pf = pf_allwin.profit_factor();
+        ASSERT(std::isinf(pf) && pf > 0.0, "oms_pf_no_loss_inf");
     }
 
     {   // #251 pending_buy_shares / pending_sell_shares (working orders per side).

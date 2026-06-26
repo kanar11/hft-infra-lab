@@ -26,6 +26,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <cstdio>
@@ -670,6 +671,32 @@ public:
         const size_t w = winning_symbols();
         const size_t decided = w + losing_symbols();
         return decided > 0 ? static_cast<double>(w) / static_cast<double>(decided) : 0.0;
+    }
+    // gross_profit / gross_loss: the dollar attribution behind winning_symbols /
+    // losing_symbols (#244) — gross_profit sums the realized P&L of the profitable
+    // symbols, gross_loss the MAGNITUDE of the losing ones (returned positive). In
+    // raw P&L units (×PRICE_SCALE, like total_realized_pnl). Together they show not
+    // just HOW MANY names win/lose but by HOW MUCH — a few big losers can sink a
+    // high symbol win-rate. Symbols at exactly zero realized P&L are skipped.
+    int64_t gross_profit() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, p] : positions_) if (p.realized_pnl > 0) s += p.realized_pnl;
+        return s;
+    }
+    int64_t gross_loss() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, p] : positions_) if (p.realized_pnl < 0) s -= p.realized_pnl;
+        return s;   // positive magnitude of the losing symbols
+    }
+    // profit_factor: gross_profit / gross_loss (#339) — the classic ratio (>1 =
+    // realized winners outweigh losers). Same convention as the Backtester: with no
+    // losing symbols it is +inf when there is any profit, 0 when nothing is realized.
+    // The P&L-weighted counterpart to symbol_win_rate (#298, a pure count ratio).
+    double profit_factor() const noexcept {
+        const int64_t gp = gross_profit();
+        const int64_t gl = gross_loss();
+        if (gl > 0) return static_cast<double>(gp) / static_cast<double>(gl);
+        return gp > 0 ? std::numeric_limits<double>::infinity() : 0.0;
     }
     // last_reject: reason for the last submit_order rejection (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
