@@ -441,6 +441,27 @@ public:
         const double m = nbbo_mid();
         return m > 0.0 ? nbbo_spread() / m * 10000.0 : 0.0;
     }
+    // nbbo_imbalance: consolidated top-of-book pressure across venues (#326). Sums the
+    // quoted size AT the national best bid (every active venue posting that exact price)
+    // against the size AT the national best ask, as (bidSz - askSz)/(bidSz + askSz) in
+    // [-1, 1]. +1 = all displayed weight on the bid (buy pressure), -1 = the ask, 0 =
+    // balanced or one-sided. Unlike nbbo_microprice (#318), which size-weights the
+    // PRICE, this is a pure depth-pressure ratio at the touch — the cross-venue analog
+    // of a single book's top-of-book imbalance. 0 without two-sided NBBO liquidity.
+    double nbbo_imbalance() const noexcept {
+        const double nbb = national_best_bid();
+        const double nbo = national_best_ask();
+        if (nbb <= 0.0 || nbo <= 0.0) return 0.0;
+        int64_t bid_sz = 0, ask_sz = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (v.bid_size > 0 && v.best_bid == nbb) bid_sz += v.bid_size;
+            if (v.ask_size > 0 && v.best_ask == nbo) ask_sz += v.ask_size;
+        }
+        const int64_t denom = bid_sz + ask_sz;
+        return denom > 0 ? static_cast<double>(bid_sz - ask_sz) / static_cast<double>(denom) : 0.0;
+    }
     // nbbo_locked / nbbo_crossed: consolidated market-integrity checks across venues
     // (#270). LOCKED = national best bid == national best ask (spread zero) — a
     // Reg NMS locked market, usually a stale quote or a maker about to be hit.

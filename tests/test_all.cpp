@@ -2973,6 +2973,39 @@ void test_router_ewma_partial() {
         ASSERT(remp.nbbo_microprice() == 0.0, "router_micro_empty_zero");
     }
 
+    // --- #326 nbbo_imbalance: consolidated top-of-book pressure across venues ---
+    {
+        auto closei = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        // NBB 100.00 sz 300 (A), NBO 100.02 sz 100 (C) -> (300-100)/400 = 0.5 (bid-heavy)
+        SmartOrderRouter rib(RoutingStrategy::BEST_PRICE);
+        rib.add_venue(Venue("A", 100, 0.0));
+        rib.add_venue(Venue("C", 100, 0.0));
+        rib.update_quote("A", 100.00, 100.04, 300, 50);
+        rib.update_quote("C", 99.99, 100.02, 80, 100);
+        ASSERT(closei(rib.nbbo_imbalance(), 0.5), "router_nbbo_imb_bid_heavy");
+
+        // sizes summed across venues quoting the SAME NBB / NBO price
+        SmartOrderRouter rsum(RoutingStrategy::BEST_PRICE);
+        rsum.add_venue(Venue("A", 100, 0.0));
+        rsum.add_venue(Venue("B", 100, 0.0));
+        rsum.add_venue(Venue("C", 100, 0.0));
+        rsum.update_quote("A", 100.00, 100.05, 200, 100);   // bid at NBB
+        rsum.update_quote("B", 100.00, 100.02, 300, 100);   // bid at NBB, ask at NBO
+        rsum.update_quote("C", 99.98,  100.02, 90,  150);   // ask at NBO (bid below NBB, excluded)
+        // NBB 100.00 sz 200+300=500 ; NBO 100.02 sz 100+150=250 -> (500-250)/750 = 1/3
+        ASSERT(closei(rsum.nbbo_imbalance(), 250.0/750.0), "router_nbbo_imb_summed");
+
+        // balanced sizes -> 0
+        SmartOrderRouter rbl(RoutingStrategy::BEST_PRICE);
+        rbl.add_venue(Venue("A", 100, 0.0));
+        rbl.update_quote("A", 100.00, 100.02, 100, 100);
+        ASSERT(closei(rbl.nbbo_imbalance(), 0.0), "router_nbbo_imb_balanced_zero");
+
+        // one-sided / empty -> 0
+        SmartOrderRouter rem(RoutingStrategy::BEST_PRICE);
+        ASSERT(rem.nbbo_imbalance() == 0.0, "router_nbbo_imb_empty_zero");
+    }
+
     // --- #109 available_liquidity: sum of top-of-book across active venues ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
