@@ -2856,6 +2856,29 @@ void test_router_ewma_partial() {
         ASSERT(close(r.nbbo_mid(), 100.01), "nbbo_mid");
     }
 
+    // --- #318 nbbo_microprice: size-weighted consolidated mid across venues ---
+    {
+        auto closem = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
+        SmartOrderRouter rmic(RoutingStrategy::BEST_PRICE);
+        rmic.add_venue(Venue("A", 100, 0.0));
+        rmic.add_venue(Venue("C", 100, 0.0));
+        // NBB 100.00 @ size 300 (venue A); NBO 100.02 @ size 100 (venue C).
+        rmic.update_quote("A", 100.00, 100.04, 300, 50);
+        rmic.update_quote("C", 99.99, 100.02, 80, 100);
+        // micro = (NBB*ask_sz + NBO*bid_sz)/(bid_sz+ask_sz)
+        //       = (100.00*100 + 100.02*300)/400 = 100.015 (>mid 100.01, bid-heavy)
+        ASSERT(closem(rmic.nbbo_microprice(), 100.015), "router_nbbo_microprice");
+        ASSERT(rmic.nbbo_microprice() > rmic.nbbo_mid(), "router_micro_above_mid");
+        // Balanced sizes -> microprice == mid.
+        SmartOrderRouter rbal(RoutingStrategy::BEST_PRICE);
+        rbal.add_venue(Venue("A", 100, 0.0));
+        rbal.update_quote("A", 100.00, 100.02, 100, 100);
+        ASSERT(closem(rbal.nbbo_microprice(), rbal.nbbo_mid()), "router_micro_balanced_eq_mid");
+        // No two-sided liquidity -> 0.
+        SmartOrderRouter remp(RoutingStrategy::BEST_PRICE);
+        ASSERT(remp.nbbo_microprice() == 0.0, "router_micro_empty_zero");
+    }
+
     // --- #109 available_liquidity: sum of top-of-book across active venues ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);

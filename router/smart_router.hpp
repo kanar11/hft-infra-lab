@@ -403,6 +403,30 @@ public:
         const double b = national_best_bid(), a = national_best_ask();
         return (b > 0.0 && a > 0.0) ? (b + a) / 2.0 : 0.0;
     }
+    // nbbo_microprice: size-weighted consolidated mid across venues (#318). The plain
+    // nbbo_mid (#402) ignores depth; the microprice weights the National Best Bid by
+    // the size resting at the National Best Ask and vice-versa (the standard
+    // Q_ask/Q_bid weighting), so it leans toward the side that is likely to be hit
+    // next — a sharper fair-value estimate and short-horizon move predictor than the
+    // mid. Uses the displayed size at the NBB venue and the NBO venue. With balanced
+    // sizes it equals nbbo_mid; heavier bid size pulls it toward the ask and vice
+    // versa. 0 without two-sided liquidity.
+    double nbbo_microprice() const noexcept {
+        double  bid = 0.0; int32_t bid_sz = 0;
+        double  ask = 0.0; int32_t ask_sz = 0; bool ask_found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (v.bid_size > 0 && v.best_bid > bid) { bid = v.best_bid; bid_sz = v.bid_size; }
+            if (v.ask_size > 0 && v.best_ask > 0.0 && (!ask_found || v.best_ask < ask)) {
+                ask = v.best_ask; ask_sz = v.ask_size; ask_found = true;
+            }
+        }
+        if (bid <= 0.0 || !ask_found || ask <= 0.0) return 0.0;
+        const int64_t denom = static_cast<int64_t>(bid_sz) + ask_sz;
+        if (denom <= 0) return 0.0;
+        return (bid * ask_sz + ask * bid_sz) / static_cast<double>(denom);
+    }
     // nbbo_spread: the consolidated NBBO spread (#208) = NBO - NBB across all
     // active venues. Usually TIGHTER than on a single exchange (the best bid and
     // best ask can be on different venues). <=0 signals locked/crossed between
