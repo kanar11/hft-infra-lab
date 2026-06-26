@@ -529,6 +529,20 @@ public:
         return s;
     }
 
+    // largest_position_notional: the biggest SINGLE position by absolute $ value (#330)
+    // = max over positions of |net_qty| * avg_price, fixed-point (×PRICE_SCALE). The
+    // dollar companion to largest_position (#220, shares): risk limits care about
+    // capital at risk, and 100 shares of a $3000 name dwarf 1000 shares of a $2 name.
+    // Pinpoints the instrument holding the most concentration risk in dollars. 0 flat.
+    int64_t largest_position_notional() const noexcept {
+        int64_t m = 0;
+        for (const auto& [key, p] : positions_) {
+            const int64_t v = std::abs(static_cast<int64_t>(p.net_qty)) * p.avg_price;
+            if (v > m) m = v;
+        }
+        return m;
+    }
+
     // pending_buy_shares / pending_sell_shares: total working (pending) shares per
     // side across all symbols (#251). pending_qty is signed (buy +, sell -); these
     // split it into directional exposure of live orders not yet filled. Pre-trade
