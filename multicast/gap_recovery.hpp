@@ -24,7 +24,6 @@
 #include <map>
 #include <vector>
 #include <unordered_map>
-#include <deque>
 #include <iterator>
 #include <utility>
 
@@ -37,22 +36,31 @@ namespace multicast {
 // of overload / drop) or a lull. A sliding-window counter of timestamps:
 // at each measurement it evicts those older than the window, size = count in the window.
 struct FeedRateMeter {
-    std::int64_t      window_ns;
-    std::deque<std::int64_t> ts;
+    // Sliding window backed by a contiguous power-of-2 ring (no heap, no pointer
+    // chasing — replaces the old std::deque<int64_t>). The ring is L1-resident (32 KB)
+    // so insert/evict touch only hot cache lines and wrap with a bitmask (no idiv).
+    // Bounded: holds up to RB_SIZE-1 timestamps; on a burst beyond that the oldest are
+    // dropped and count() saturates — for burst DETECTION a floor of 4095 is already an
+    // unambiguous overload signal, and the bound keeps latency deterministic.
+    static constexpr int RB_SIZE = 4096;       // power of 2 → mask wrap
+    static constexpr int RB_MASK = RB_SIZE - 1;
+
+    std::int64_t window_ns;
 
     explicit FeedRateMeter(std::int64_t window_ns_ = 1'000'000'000) noexcept
-        : window_ns(window_ns_ > 0 ? window_ns_ : 1) {}
+        : window_ns(window_ns_ > 0 ? window_ns_ : 1), ts_{} {}
 
-    void on_message(std::int64_t now_ns) {
-        ts.push_back(now_ns);
+    void on_message(std::int64_t now_ns) noexcept {
+        push(now_ns);
         evict(now_ns);
-        if (ts.size() > peak_count_) peak_count_ = ts.size();   // #163 burst peak
+        const std::size_t c = size();
+        if (c > peak_count_) peak_count_ = c;   // #163 burst peak
     }
-    std::size_t count(std::int64_t now_ns) {
+    std::size_t count(std::int64_t now_ns) noexcept {
         evict(now_ns);
-        return ts.size();
+        return size();
     }
-    double rate_per_sec(std::int64_t now_ns) {
+    double rate_per_sec(std::int64_t now_ns) noexcept {
         return static_cast<double>(count(now_ns)) * 1e9 / static_cast<double>(window_ns);
     }
     // peak_count / peak_rate_per_sec (#163): the highest count/rate in the window ever
@@ -62,16 +70,26 @@ struct FeedRateMeter {
     double      peak_rate_per_sec() const noexcept {
         return static_cast<double>(peak_count_) * 1e9 / static_cast<double>(window_ns);
     }
-    void reset() noexcept { ts.clear(); peak_count_ = 0; }
+    void reset() noexcept { head_ = tail_ = 0; peak_count_ = 0; }
 
 private:
-    std::size_t peak_count_ = 0;
-public:
+    std::int64_t ts_[RB_SIZE];   // ring of timestamps (oldest at head_)
+    int          head_ = 0;      // index of the oldest timestamp in the window
+    int          tail_ = 0;      // next write slot
+    std::size_t  peak_count_ = 0;
 
-private:
-    void evict(std::int64_t now_ns) {
+    std::size_t size() const noexcept {
+        return static_cast<std::size_t>((tail_ - head_ + RB_SIZE) & RB_MASK);
+    }
+    void push(std::int64_t now_ns) noexcept {
+        ts_[tail_] = now_ns;
+        tail_ = (tail_ + 1) & RB_MASK;
+        if (tail_ == head_) head_ = (head_ + 1) & RB_MASK;   // full → drop the oldest
+    }
+    void evict(std::int64_t now_ns) noexcept {
         const std::int64_t cutoff = now_ns - window_ns;
-        while (!ts.empty() && ts.front() <= cutoff) ts.pop_front();
+        while (head_ != tail_ && ts_[head_] <= cutoff)
+            head_ = (head_ + 1) & RB_MASK;
     }
 };
 
@@ -572,21 +590,37 @@ struct ContiguousTracker {
 // fall out of the window. Useful for windowed burst detection and capacity
 // checks: "how many messages did I receive in the last millisecond?".
 struct SlidingWindowRate {
+    // Same contiguous power-of-2 ring as FeedRateMeter (no heap, mask wrap, L1-resident).
+    // Bounded at RB_SIZE-1 events in the window; on overflow the oldest are dropped and
+    // count() saturates — acceptable for windowed burst/capacity checks.
+    static constexpr int RB_SIZE = 4096;       // power of 2 → mask wrap
+    static constexpr int RB_MASK = RB_SIZE - 1;
+
     std::int64_t window_ns;
-    std::deque<std::int64_t> ts;
 
     explicit SlidingWindowRate(std::int64_t window_ns_ = 1'000'000'000) noexcept
-        : window_ns(window_ns_) {}
+        : window_ns(window_ns_), ts_{} {}
 
-    void on_event(std::int64_t now_ns) {
-        ts.push_back(now_ns);
-        while (!ts.empty() && ts.front() <= now_ns - window_ns) ts.pop_front();
+    void on_event(std::int64_t now_ns) noexcept {
+        ts_[tail_] = now_ns;
+        tail_ = (tail_ + 1) & RB_MASK;
+        if (tail_ == head_) head_ = (head_ + 1) & RB_MASK;     // full → drop the oldest
+        const std::int64_t cutoff = now_ns - window_ns;
+        while (head_ != tail_ && ts_[head_] <= cutoff)
+            head_ = (head_ + 1) & RB_MASK;
     }
-    std::size_t count() const noexcept { return ts.size(); }   // events within the window
+    std::size_t count() const noexcept {   // events within the window
+        return static_cast<std::size_t>((tail_ - head_ + RB_SIZE) & RB_MASK);
+    }
     double rate_per_sec() const noexcept {
-        return window_ns > 0 ? static_cast<double>(ts.size()) * 1e9 / static_cast<double>(window_ns) : 0.0;
+        return window_ns > 0 ? static_cast<double>(count()) * 1e9 / static_cast<double>(window_ns) : 0.0;
     }
-    void reset() noexcept { ts.clear(); }
+    void reset() noexcept { head_ = tail_ = 0; }
+
+private:
+    std::int64_t ts_[RB_SIZE];   // ring of timestamps (oldest at head_)
+    int          head_ = 0;      // index of the oldest event in the window
+    int          tail_ = 0;      // next write slot
 };
 
 

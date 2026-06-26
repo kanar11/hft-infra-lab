@@ -2055,6 +2055,17 @@ void test_multicast_gap_recovery() {
     ASSERT(pm.count(1300) == 1 && pm.peak_count() == 3, "rate_peak_holds");
     ASSERT(std::fabs(pm.peak_rate_per_sec() - 3e6) < 1.0, "rate_peak_rate_3M");
 
+    // ring wrap correctness: push 10k events 1 ns apart through the 4096 ring → the
+    // index wraps ~2.4×; with a 1000 ns window only the last 1000 stay (9000..9999).
+    multicast::FeedRateMeter wrp(1000);
+    for (int i = 0; i < 10000; ++i) wrp.on_message(i);
+    ASSERT(wrp.count(9999) == 1000, "rate_wrap_window_1000");
+    // bounded window: 6000 simultaneous events exceed RB_SIZE-1 → count saturates.
+    multicast::FeedRateMeter sat(1'000'000'000);
+    for (int i = 0; i < 6000; ++i) sat.on_message(0);
+    ASSERT(sat.count(0) == static_cast<std::size_t>(multicast::FeedRateMeter::RB_SIZE - 1),
+           "rate_saturates_at_cap");
+
     // #171 DedupWindow — at-most-once (rejects duplicates).
     multicast::DedupWindow dw(100);
     ASSERT(dw.accept(1), "dedup_1_new");
@@ -2158,6 +2169,10 @@ void test_multicast_gap_recovery() {
     sw.on_event(1500);                                     // prunes <= 500 (0 and 500)
     ASSERT(sw.count() == 2, "swr_pruned_old");             // keeps 900, 1500
     ASSERT(std::fabs(sw.rate_per_sec() - 2.0 * 1e9 / 1000.0) < 1e-3, "swr_rate");
+    // ring wrap: 10k events 1 ns apart wrap the 4096 ring; 1000 ns window keeps 1000.
+    multicast::SlidingWindowRate swr(1000);
+    for (int i = 0; i < 10000; ++i) swr.on_event(i);
+    ASSERT(swr.count() == 1000, "swr_wrap_window_1000");
 
     // #265 RetransmitTracker — timeout / retry / escalate lifecycle.
     multicast::RetransmitTracker rt(1000, 3);   // 1000 ns timeout, max 3 attempts
