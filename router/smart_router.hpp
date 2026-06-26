@@ -666,6 +666,63 @@ public:
         const int32_t f = avail < shares ? avail : shares;
         return static_cast<double>(f) / static_cast<double>(shares);
     }
+    // sweep_to_fill: the realized fill of a price-prioritized multi-venue sweep —
+    // the cross-venue analog of walking a single book. Consumes each active
+    // venue's displayed top-of-book size from the best price outward (BUY takes
+    // the cheapest asks first, SELL hits the highest bids first) up to `shares`.
+    // Returns shares filled (<= shares; < shares when consolidated depth is thin)
+    // and writes the volume-weighted average sweep price into out_vwap (0 on no
+    // fill). Unlike best_effective_price (#155, the single best touch) this blends
+    // the price across the MULTIPLE venues a large order must hit — the real
+    // expected cost of a sweep and the basis for sweep slippage. Raw quotes (no
+    // fees), matching the NBBO convention; effective_spread_bps covers the fee view.
+    int32_t sweep_to_fill(bool is_buy, int32_t shares, double& out_vwap) const noexcept {
+        out_vwap = 0.0;
+        if (shares <= 0) return 0;
+        bool    used[MAX_VENUES] = {};   // value-init: cppcheck-clean, no heap
+        int32_t remaining = shares, filled = 0;
+        double  notional = 0.0;
+        // venue_count_ <= MAX_VENUES and small; pick the best remaining venue
+        // each pass (price priority), at most venue_count_ passes.
+        for (int pass = 0; pass < venue_count_ && remaining > 0; ++pass) {
+            int    best_i  = -1;
+            double best_px = 0.0;
+            for (int i = 0; i < venue_count_; ++i) {
+                if (used[i]) continue;
+                const Venue& v = venues_[i];
+                if (!v.is_active) continue;
+                const double  px = is_buy ? v.best_ask : v.best_bid;
+                const int32_t sz = is_buy ? v.ask_size : v.bid_size;
+                if (px <= 0.0 || sz <= 0) continue;
+                const bool better = (best_i < 0) ||
+                                    (is_buy ? px < best_px : px > best_px);
+                if (better) { best_i = i; best_px = px; }
+            }
+            if (best_i < 0) break;                       // no more liquidity
+            used[best_i] = true;
+            const Venue&  v    = venues_[best_i];
+            const int32_t sz   = is_buy ? v.ask_size : v.bid_size;
+            const int32_t take = remaining < sz ? remaining : sz;
+            notional  += best_px * take;
+            filled    += take;
+            remaining -= take;
+        }
+        if (filled > 0) out_vwap = notional / static_cast<double>(filled);
+        return filled;
+    }
+    // sweep_slippage_bps: the expected cost of a `shares` sweep vs the NBBO mid,
+    // in basis points and always POSITIVE (a cost) — a BUY sweeps UP through the
+    // asks (vwap > mid), a SELL DOWN through the bids (vwap < mid). Builds on
+    // sweep_to_fill + nbbo_mid. 0 when nothing fills or there is no two-sided
+    // NBBO. The cross-venue analog of itch slippage_bps (#199).
+    double sweep_slippage_bps(bool is_buy, int32_t shares) const noexcept {
+        double vwap = 0.0;
+        const int32_t filled = sweep_to_fill(is_buy, shares, vwap);
+        const double  m = nbbo_mid();
+        if (filled <= 0 || vwap <= 0.0 || m <= 0.0) return 0.0;
+        const double diff = is_buy ? (vwap - m) : (m - vwap);
+        return diff / m * 10000.0;
+    }
     // venue_liquidity_share: a named venue's share of the CURRENT displayed
     // liquidity on a side (#262), as a percent. Unlike venue_share_pct (#216,
     // historical routed volume) this is the live quote concentration right now —

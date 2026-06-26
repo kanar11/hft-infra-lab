@@ -3080,6 +3080,31 @@ void test_router_ewma_partial() {
         ASSERT(r.available_liquidity(true) == 250, "liq_excludes_inactive");
     }
 
+    // --- #335 sweep_to_fill / sweep_slippage_bps: multi-venue price-priority sweep ---
+    {
+        SmartOrderRouter rs(RoutingStrategy::BEST_PRICE);
+        rs.add_venue(Venue("A", 100, 0.0));
+        rs.add_venue(Venue("B", 100, 0.0));
+        rs.add_venue(Venue("C", 100, 0.0));
+        rs.update_quote("A", 99.99, 100.00, 100, 100);   // best ask 100.00 sz 100
+        rs.update_quote("B", 99.98, 100.01, 100, 200);   // next ask 100.01 sz 200
+        rs.update_quote("C", 99.97, 100.02, 100, 300);   // next ask 100.02 sz 300
+        double vwap = 0.0;
+        // BUY 250: 100@100.00 + 150@100.01 = 25001.5 / 250 = 100.006
+        ASSERT(rs.sweep_to_fill(true, 250, vwap) == 250, "router_sweep_filled_250");
+        ASSERT(std::fabs(vwap - 100.006) < 1e-9, "router_sweep_vwap");
+        // BUY 1000 > total 600 displayed -> fills only 600, vwap of full ask stack
+        ASSERT(rs.sweep_to_fill(true, 1000, vwap) == 600, "router_sweep_capped_depth");
+        ASSERT(std::fabs(vwap - (60008.0 / 600.0)) < 1e-9, "router_sweep_full_vwap");
+        // slippage vs nbbo_mid: best bid 99.99 / best ask 100.00 -> mid 99.995.
+        // BUY 100 sweeps only venue A @100.00 -> (100.00-99.995)/99.995*1e4 bps > 0
+        const double slp = rs.sweep_slippage_bps(true, 100);
+        ASSERT(slp > 0.0 && std::fabs(slp - (0.005/99.995*10000.0)) < 1e-6, "router_sweep_slip_buy");
+        ASSERT(rs.sweep_slippage_bps(true, 0) == 0.0, "router_sweep_slip_zero_shares");
+        SmartOrderRouter rse(RoutingStrategy::BEST_PRICE);
+        ASSERT(rse.sweep_to_fill(true, 100, vwap) == 0 && vwap == 0.0, "router_sweep_empty_zero");
+    }
+
     // --- #117 TCA: routed-volume per venue ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
