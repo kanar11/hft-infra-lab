@@ -2,11 +2,11 @@
  * FullOrderBook<LEVELS, MAX_ORDERS> — production-grade orderbook.
  *
  * Po co kolejny? FlatOrderBook (orderbook_flat.hpp) ma O(1) add/cancel/modify
- * z trackowaniem ID, ale agreguje quantity per price level — nie zna kolejki
- * (FIFO) i nie obsługuje zaawansowanych typów zleceń. Ten plik dodaje:
+ * with ID tracking, but aggregates quantity per price level — it does not know the queue
+ * (FIFO) and does not support advanced order types. This file adds:
  *
- *   - **L3 detail** — pełna FIFO kolejka per price level (nie tylko Σ qty)
- *   - **Queue position tracking** — wiesz że jesteś N-ty w kolejce
+ *   - **L3 detail** — a full FIFO queue per price level (not just Σ qty)
+ *   - **Queue position tracking** — you know you are N-th in the queue
  *   - **Order types**: LIMIT, IOC, FOK, POST_ONLY, ICEBERG, STOP, PEG
  *   - **Time-in-force**: DAY, GTC, IOC, FOK, GTD
  *   - **Self-trade prevention** (STP) — cancel-newest / cancel-oldest / cancel-both
@@ -18,24 +18,24 @@
  *   - **Pre-trade checks** — locked/crossed market protection
  *
  * Wybory projektowe:
- *   - Pamięć: pre-allocated `Order` pool (free-list LIFO), zero heap alloc
- *     na hot path. Wszystkie struktury cache-aligned.
- *   - Price levels: flat array `levels_[LEVELS]` indeksowane przez (price-PRICE_MIN).
- *     Każdy `PriceLevel` to mała struct z `head_ / tail_ / total_qty_ / order_count_`.
- *   - FIFO kolejka: intrusive doubly-linked list — `Order` ma `next_at_level_`
+ *   - Memory: a pre-allocated `Order` pool (free-list LIFO), zero heap alloc
+ *     on the hot path. All structures are cache-aligned.
+ *   - Price levels: a flat array `levels_[LEVELS]` indexed by (price-PRICE_MIN).
+ *     Each `PriceLevel` is a small struct with `head_ / tail_ / total_qty_ / order_count_`.
+ *   - FIFO queue: an intrusive doubly-linked list — `Order` has `next_at_level_`
  *     i `prev_at_level_`. Cancel = O(1) unlink. Insert na koniec = O(1).
  *   - Order ID lookup: `std::unordered_map<uint64_t, Order*>` — O(1) cancel/modify.
- *   - Best bid/ask: trackowane jako int32 indices w `levels_` (jak FlatOrderBook).
- *   - Multi-level depth: top N bidów/asków cachowane w `top_bids_[N]` /
+ *   - Best bid/ask: tracked as int32 indices into `levels_` (like FlatOrderBook).
+ *   - Multi-level depth: top N bids/asks cached in `top_bids_[N]` /
  *     `top_asks_[N]` (lazy, invalidated on book change).
  *
  * Limity szablonu:
- *   - LEVELS         — szerokość siatki cenowej w tickach (powinno pokrywać dzień)
- *   - MAX_ORDERS     — pula Orderów (=max equally aktywnych zleceń w księdze)
+ *   - LEVELS         — width of the price grid in ticks (should cover a day)
+ *   - MAX_ORDERS     — the Order pool (=max simultaneously active orders in the book)
  *
- * Tick = 1/PRICE_SCALE dolara (=$0.0001 jeśli PRICE_SCALE=10000).
+ * Tick = 1/PRICE_SCALE of a dollar (=$0.0001 if PRICE_SCALE=10000).
  *
- * Wydajność (na podobnej szablonowej księdze):
+ * Performance (on a similar templated book):
  *   - add limit:        p50 ~80 ns, p99 ~150 ns
  *   - cancel by id:     p50 ~50 ns, p99 ~120 ns
  *   - top-of-book read: p50 ~5 ns  (1 cache line)
@@ -47,7 +47,7 @@
 #pragma once
 
 #include "../common/types.hpp"     // Price, Side, side_str
-#include "orderbook_pro_types.hpp" // model danych: stałe, enumy, Order/PriceLevel/Trade/...
+#include "orderbook_pro_types.hpp" // data model: constants, enums, Order/PriceLevel/Trade/...
 
 #include <algorithm>
 #include <array>
@@ -68,13 +68,13 @@ namespace orderbook_pro {
 
 
 // FullOrderBook<LEVELS, MAX_ORDERS> — generic, fixed-capacity.
-//   LEVELS      — ile slotów cenowych. price_ticks ∈ [0, LEVELS).
-//                  Dla AAPL przy $0.01 ticku i zakresie $100..$200 wystarczy
+//   LEVELS      — how many price slots. price_ticks ∈ [0, LEVELS).
+//                  For AAPL at a $0.01 tick and a $100..$200 range it is enough
 //                  ~10000-65536 (zostawia headroom).
-//   MAX_ORDERS  — pula Orderów. Realny intraday LOB ma 10k-100k równocześnie.
+//   MAX_ORDERS  — the Order pool. A real intraday LOB has 10k-100k simultaneously.
 //
-// noexcept everywhere — żadnych wyjątków; błędy raportowane przez return value
-// + RejectReason. To wymóg HFT — wyjątek z nieprzewidzianego miejsca zabija
+// noexcept everywhere — no exceptions; errors reported via the return value
+// + RejectReason. An HFT requirement — an exception from an unexpected place kills
 // determinizm latencji.
 template <std::int32_t LEVELS = 16384, std::int32_t MAX_ORDERS = 65536>
 class FullOrderBook {
@@ -84,7 +84,7 @@ class FullOrderBook {
     // Storage
     Order        pool_[MAX_ORDERS];         // pool aktywnych + free slots
     Order*       free_list_head_ = nullptr; // LIFO free-list (cache-friendly)
-    PriceLevel   levels_[LEVELS];           // jeden slot per tick
+    PriceLevel   levels_[LEVELS];           // one slot per tick
     std::unordered_map<std::uint64_t, Order*> id_index_;  // O(1) cancel/modify
 
     // Best bid/ask cache — int sentinels
@@ -98,7 +98,7 @@ class FullOrderBook {
     std::size_t  tape_count_ = 0;       // total trades written (overruns ok)
     std::uint64_t next_exec_id_ = 1;
 
-    // Auto order_id (gdy caller nie podaje swojego)
+    // Auto order_id (when the caller does not provide its own)
     std::uint64_t next_order_id_ = 1;
 
     // Statystyki
@@ -106,38 +106,38 @@ class FullOrderBook {
     std::size_t  active_orders_ = 0;
     std::size_t  pool_high_water_ = 0;
 
-    // STP policy (default NONE — testy mogą się wash-trade'ować swobodnie)
+    // STP policy (default NONE — tests may freely wash-trade)
     SelfTradePrevention stp_policy_ = SelfTradePrevention::NONE;
 
     // Anti-internalization: mapa client_id → firm_id (MPID). STP normalnie
-    // łapie tylko ten sam client_id; firma ma wiele desków/kont, które też
-    // nie powinny ze sobą handlować. Gdy oba ordery należą do tej samej firmy,
-    // STP odpala tak jakby to był ten sam podmiot.
+    // catches only the same client_id; a firm has many desks/accounts that also
+    // should not trade with each other. When both orders belong to the same firm,
+    // STP fires as if it were the same entity.
     std::unordered_map<std::uint64_t, std::uint64_t> client_to_firm_;
     std::uint64_t firm_self_trade_blocks_ = 0;
 
-    // Czy a i b to ten sam podmiot handlowy (ten sam client albo ta sama firma)?
+    // Are a and b the same trading entity (the same client or the same firm)?
     bool same_trading_entity(std::uint64_t a, std::uint64_t b) const noexcept {
-        if (a == 0 || b == 0) return false;   // anonim nigdy nie blokowany
-        if (a == b) return true;              // ten sam client_id
+        if (a == 0 || b == 0) return false;   // an anonymous party is never blocked
+        if (a == b) return true;              // the same client_id
         const auto ia = client_to_firm_.find(a);
         const auto ib = client_to_firm_.find(b);
         return ia != client_to_firm_.end() && ib != client_to_firm_.end() &&
-               ia->second == ib->second;      // ta sama firma (MPID)
+               ia->second == ib->second;      // the same firm (MPID)
     }
 
-    // Callback na eventy (opcjonalnie ustawiany przez set_event_callback)
+    // Callback for events (optionally set via set_event_callback)
     using EventCallback = void(*)(const BookEvent&, void* ctx);
     EventCallback event_cb_  = nullptr;
     void*         event_ctx_ = nullptr;
 
-    // Drop copy — kopia eventów jednego monitorowanego konta
+    // Drop copy — a copy of the events of a single monitored account
     EventCallback drop_copy_cb_     = nullptr;
     void*         drop_copy_ctx_    = nullptr;
-    std::uint64_t drop_copy_client_ = 0;       // 0 = wyłączone
+    std::uint64_t drop_copy_client_ = 0;       // 0 = disabled
     std::uint64_t drop_copy_events_ = 0;
 
-    // Helper: timestamp monotonic ns (header-local żeby uniknąć zależności).
+    // Helper: monotonic timestamp ns (header-local to avoid dependencies).
     static std::uint64_t mono_ns_now() noexcept {
         return static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -149,7 +149,7 @@ class FullOrderBook {
         return price_ticks >= PRICE_MIN_TICKS && price_ticks < LEVELS;
     }
 
-    // Alokuj Order z poola lub nullptr gdy pula wyczerpana.
+    // Allocate an Order from the pool or nullptr when the pool is exhausted.
     Order* alloc_order() noexcept {
         if (!free_list_head_) return nullptr;
         Order* o = free_list_head_;
@@ -163,7 +163,7 @@ class FullOrderBook {
         return o;
     }
 
-    // Zwróć Order do free-list.
+    // Return the Order to the free-list.
     void free_order(Order* o) noexcept {
         if (!o) return;
         o->next_free = free_list_head_;
@@ -171,7 +171,7 @@ class FullOrderBook {
         --active_orders_;
     }
 
-    // Wepchnij Order na koniec FIFO kolejki na price level (intrusive list).
+    // Push the Order to the end of the FIFO queue at the price level (intrusive list).
     void enqueue_at_level(Order* o) noexcept {
         PriceLevel& lvl = levels_[o->price_ticks];
         o->next_at_level = nullptr;
@@ -180,13 +180,13 @@ class FullOrderBook {
         else          lvl.head = o;
         lvl.tail = o;
         lvl.total_qty    += o->displayed_qty;
-        // Hidden remainder = total - filled - displayed (filled może być > 0
-        // przy partial-fill-then-rest; stara formuła T-D liczyła filled jako hidden)
+        // Hidden remainder = total - filled - displayed (filled may be > 0
+        // at partial-fill-then-rest; the old T-D formula counted filled as hidden)
         lvl.total_hidden += (o->total_qty - o->filled_qty - o->displayed_qty);
         ++lvl.order_count;
     }
 
-    // Wyjmij Order z jego price level (O(1) — intrusive unlink).
+    // Remove the Order from its price level (O(1) — intrusive unlink).
     void unlink_from_level(Order* o) noexcept {
         PriceLevel& lvl = levels_[o->price_ticks];
         if (o->prev_at_level) o->prev_at_level->next_at_level = o->next_at_level;
@@ -194,29 +194,29 @@ class FullOrderBook {
         if (o->next_at_level) o->next_at_level->prev_at_level = o->prev_at_level;
         else                  lvl.tail = o->prev_at_level;
         lvl.total_qty    -= o->displayed_qty;
-        // Symetrycznie do enqueue: T - F - D. Stara formuła T-D powodowała
-        // ujemny drift total_hidden przy cancel partially-filled makera
-        // (fill dekrementuje D, więc T-D rosło o filled_qty).
+        // Symmetric to enqueue: T - F - D. The old T-D formula caused
+        // negative total_hidden drift on cancel of a partially-filled maker
+        // (fill decrements D, so T-D grew by filled_qty).
         lvl.total_hidden -= (o->total_qty - o->filled_qty - o->displayed_qty);
         if (lvl.order_count > 0) --lvl.order_count;
     }
 
-    // Po dodaniu/wyjęciu z księgi — odśwież best_bid/best_ask gdy trzeba.
+    // After adding/removing from the book — refresh best_bid/best_ask when needed.
     //
-    // Guard zakresu start_ticks: callery wołają to z best_bid_ticks_-1 /
-    // best_ask_ticks_+1. Gdy best_*_ticks_ było już sentinelem (NO_BID=-1,
-    // NO_ASK=INT32_MAX) — np. po tym jak STP CANCEL_OLDEST skasował JEDYNY level
-    // w match_at_level i cancel_internal sam zrefreshował best na sentinel —
-    // arytmetyka daje start poza [0,LEVELS) (a NO_ASK+1 to wrecz przepełnienie
-    // do INT32_MIN). Bez guardu pętla indeksuje levels_[ujemne] → OOB/SEGV.
-    // Poprawnie: start poza siatką oznacza "brak quote po tej stronie".
+    // start_ticks range guard: callers invoke this with best_bid_ticks_-1 /
+    // best_ask_ticks_+1. When best_*_ticks_ was already a sentinel (NO_BID=-1,
+    // NO_ASK=INT32_MAX) — e.g. after STP CANCEL_OLDEST removed the ONLY level
+    // in match_at_level and cancel_internal itself refreshed best to the sentinel —
+    // the arithmetic gives a start outside [0,LEVELS) (and NO_ASK+1 is outright overflow
+    // to INT32_MIN). Without the guard the loop indexes levels_[negative] → OOB/SEGV.
+    // Correctly: a start outside the grid means "no quote on this side".
     void refresh_best_bid_from(std::int32_t start_ticks) noexcept {
         if (start_ticks < PRICE_MIN_TICKS || start_ticks >= LEVELS) {
             best_bid_ticks_ = NO_BID_TICKS;
             return;
         }
-        // Skanuj w dół zaczynając od start_ticks aż znajdziesz niepusty level
-        // (lub spadniesz poniżej 0 → brak bidów).
+        // Scan downward starting from start_ticks until you find a non-empty level
+        // (or drop below 0 → no bids).
         for (std::int32_t p = start_ticks; p >= PRICE_MIN_TICKS; --p) {
             if (levels_[p].total_qty > 0) { best_bid_ticks_ = p; return; }
         }
@@ -233,7 +233,7 @@ class FullOrderBook {
         best_ask_ticks_ = NO_ASK_TICKS;
     }
 
-    // Emit event do callbacka jeśli ustawiony.
+    // Emit an event to the callback if set.
     void emit(EventType ev, std::uint64_t order_id, std::uint64_t maker_id,
               std::int32_t price_ticks, std::int32_t qty,
               OrderStatus status, RejectReason rr,
@@ -244,8 +244,8 @@ class FullOrderBook {
         BookEvent e{ev, order_id, maker_id, price_ticks, qty, status, rr,
                     mono_ns_now(), seq, client_id};
         if (event_cb_) event_cb_(e, event_ctx_);
-        // Drop copy: kopia eventów monitorowanego konta (FIX drop copy) —
-        // risk/compliance dostaje strumień niezależnie od głównego callbacku
+        // Drop copy: a copy of the monitored account's events (FIX drop copy) —
+        // risk/compliance gets the stream independently of the main callback
         if (drop_copy_cb_ && client_id != 0 && client_id == drop_copy_client_) {
             ++drop_copy_events_;
             drop_copy_cb_(e, drop_copy_ctx_);
@@ -253,7 +253,7 @@ class FullOrderBook {
     }
 
     // Zapisz Trade do tape (ring buffer) + aktualizuj last_trade_ticks_
-    // używane przez STOP triggers + fee accounting.
+    // used by STOP triggers + fee accounting.
     void record_trade(std::uint64_t maker_id, std::uint64_t taker_id,
                       std::int32_t price_ticks, std::int32_t qty,
                       Side taker_side, std::uint64_t ts_ns) noexcept {
@@ -272,7 +272,7 @@ class FullOrderBook {
         last_trade_ticks_ = price_ticks;
         update_size_distribution(qty);
         // Fee accounting (basis): notional = price * qty; fee = notional * bps / 10000
-        // Trzymamy w "basis units" (price_ticks * qty * bps), divs by 10000 robi caller.
+        // We keep it in "basis units" (price_ticks * qty * bps), the caller divides by 10000.
         const std::int64_t notional_ticks =
             static_cast<std::int64_t>(price_ticks) * qty;
         cum_taker_fees_ += notional_ticks * taker_fee_bps_;
@@ -358,15 +358,15 @@ class FullOrderBook {
         prev_trade_ts_ns_for_gap_ = ts_ns;
         // Largest single trade
         if (qty > largest_single_trade_qty_) largest_single_trade_qty_ = qty;
-        // SSR circuit breaker (Rule 201): spadek do progu aktywuje restriction
+        // SSR circuit breaker (Rule 201): a drop to the threshold activates the restriction
         if (ssr_armed_ && !ssr_active_ && price_ticks <= ssr_trigger_px_) {
             ssr_active_ = true;
             ++ssr_trips_;
         }
-        // Lee-Ready classification — jak outside observer (bez taker_side)
-        // sklasyfikowałby trade: quote rule (vs mid), fallback tick test
-        // (vs poprzednia cena). W engine znamy faktyczny taker_side, więc
-        // liczymy accuracy (Lee/Ready 1991 raportują ~85% na NYSE).
+        // Lee-Ready classification — as an outside observer (without taker_side)
+        // would classify the trade: quote rule (vs mid), fallback tick test
+        // (vs previous price). In the engine we know the actual taker_side, so
+        // we compute accuracy (Lee/Ready 1991 report ~85% on NYSE).
         {
             const std::int32_t m_now = mid_ticks();
             bool classifiable = true;
@@ -427,7 +427,7 @@ class FullOrderBook {
         last_fill_ts_ns_    = ts_ns;
         if (taker_side == Side::BUY) last_buy_fill_ts_ns_  = ts_ns;
         else                          last_sell_fill_ts_ns_ = ts_ns;
-        // Volume-at-price profile (capped na ostatnie SAMPLES poziomów wpisanych)
+        // Volume-at-price profile (capped to the last SAMPLES levels written)
         if (price_ticks >= 0 && price_ticks < LEVELS) {
             volume_at_price_[static_cast<std::size_t>(price_ticks)] +=
                 static_cast<std::uint64_t>(qty);
@@ -436,7 +436,7 @@ class FullOrderBook {
 
 public:
     FullOrderBook() noexcept {
-        // Zbuduj free-list: każdy slot łączysz z next.
+        // Build the free-list: link each slot to the next.
         for (std::int32_t i = 0; i < MAX_ORDERS; ++i) {
             pool_[i].reset();
             pool_[i].next_free = (i + 1 < MAX_ORDERS) ? &pool_[i + 1] : nullptr;
@@ -445,7 +445,7 @@ public:
         id_index_.reserve(static_cast<std::size_t>(MAX_ORDERS));
     }
 
-    // Deleted copy/move — book ma intrusive pointers, kopia by je niszczyła.
+    // Deleted copy/move — the book has intrusive pointers; a copy would corrupt them.
     FullOrderBook(const FullOrderBook&)            = delete;
     FullOrderBook& operator=(const FullOrderBook&) = delete;
     FullOrderBook(FullOrderBook&&)                 = delete;
@@ -458,9 +458,9 @@ public:
     void set_stp_policy(SelfTradePrevention p) noexcept { stp_policy_ = p; }
     SelfTradePrevention stp_policy() const noexcept { return stp_policy_; }
 
-    // Anti-internalization — przypisz client_id do firmy (MPID). Po przypisaniu
-    // STP traktuje wszystkie konta tej samej firmy jak jeden podmiot.
-    // firm_id = 0 usuwa przypisanie. Wymaga stp_policy_ != NONE by działać.
+    // Anti-internalization — assign client_id to a firm (MPID). After assignment
+    // STP treats all accounts of the same firm as a single entity.
+    // firm_id = 0 removes the assignment. Requires stp_policy_ != NONE to work.
     void set_client_firm(std::uint64_t client_id, std::uint64_t firm_id) noexcept {
         if (client_id == 0) return;
         if (firm_id == 0) client_to_firm_.erase(client_id);
@@ -470,14 +470,14 @@ public:
         const auto it = client_to_firm_.find(client_id);
         return it == client_to_firm_.end() ? 0 : it->second;
     }
-    // Bloki STP złapane na poziomie firmy (różne konta, ta sama firma).
+    // STP blocks caught at the firm level (different accounts, same firm).
     std::uint64_t firm_self_trade_blocks() const noexcept {
         return firm_self_trade_blocks_;
     }
 
-    // Drop copy (FIX drop copy semantics): osobny strumień eventów JEDNEGO
-    // monitorowanego konta — risk desk / compliance widzi ACCEPT/FILL/CANCEL/
-    // EXPIRE klienta niezależnie od głównego callbacku. client_id = 0 wyłącza.
+    // Drop copy (FIX drop copy semantics): a separate event stream of a SINGLE
+    // the monitored account — the risk desk / compliance sees ACCEPT/FILL/CANCEL/
+    // client's EXPIRE independently of the main callback. client_id = 0 disables it.
     void set_drop_copy(std::uint64_t client_id, EventCallback cb,
                         void* ctx) noexcept {
         drop_copy_client_ = client_id;
@@ -499,7 +499,7 @@ public:
     bool has_bid() const noexcept { return best_bid_ticks_ != NO_BID_TICKS; }
     bool has_ask() const noexcept { return best_ask_ticks_ != NO_ASK_TICKS; }
 
-    // mid_ticks: zwraca (bid+ask)/2, lub -1 gdy brak quote po jednej ze stron.
+    // mid_ticks: returns (bid+ask)/2, or -1 when there is no quote on one of the sides.
     std::int32_t mid_ticks() const noexcept {
         if (!has_bid() || !has_ask()) return -1;
         return (best_bid_ticks_ + best_ask_ticks_) / 2;
@@ -507,7 +507,7 @@ public:
 
     // microprice_ticks: weighted by size na top of book.
     //   micro = (bid*ask_qty + ask*bid_qty) / (bid_qty + ask_qty)
-    // Lepszy predykator następnego trade'u niż mid (uwzględnia order flow).
+    // A better predictor of the next trade than mid (accounts for order flow).
     std::int32_t microprice_ticks() const noexcept {
         if (!has_bid() || !has_ask()) return -1;
         const std::int32_t bq = levels_[best_bid_ticks_].total_qty;
@@ -545,7 +545,7 @@ public:
     std::size_t pool_capacity() const noexcept { return MAX_ORDERS; }
     std::size_t pool_used_high_water() const noexcept { return pool_high_water_; }
 
-    // Lookup po order_id (do introspekcji testów; nie używaj na hot path).
+    // Lookup by order_id (for test introspection; do not use on the hot path).
     const Order* find_order(std::uint64_t id) const noexcept {
         auto it = id_index_.find(id);
         return it == id_index_.end() ? nullptr : it->second;
@@ -555,17 +555,17 @@ public:
     // Matching helpers
     // ====================================================================
 private:
-    // Sprawdza czy cena `p` po stronie `side` byłaby agresorem (krzyżuje rynek).
-    // BUY  agresor gdy p >= best_ask
-    // SELL agresor gdy p <= best_bid
+    // Checks whether price `p` on side `side` would be an aggressor (crosses the market).
+    // BUY  is an aggressor when p >= best_ask
+    // SELL is an aggressor when p <= best_bid
     bool would_cross(Side side, std::int32_t p) const noexcept {
         if (side == Side::BUY)  return has_ask() && p >= best_ask_ticks_;
         else                     return has_bid() && p <= best_bid_ticks_;
     }
 
-    // Sprawdza locked/crossed market przed dodaniem (post-fill state).
-    // LOCKED: best_bid == best_ask (cena równa).
-    // CROSSED: best_bid > best_ask (rynek skrzyżowany — patologia).
+    // Checks for a locked/crossed market before adding (post-fill state).
+    // LOCKED: best_bid == best_ask (equal price).
+    // CROSSED: best_bid > best_ask (crossed market — a pathology).
     bool is_locked()  const noexcept {
         return has_bid() && has_ask() && best_bid_ticks_ == best_ask_ticks_;
     }
@@ -573,7 +573,7 @@ private:
         return has_bid() && has_ask() && best_bid_ticks_ > best_ask_ticks_;
     }
 
-    // Quote tester dla FOK: czy dostępna płynność po tej stronie do `price` ≥ qty?
+    // Quote tester for FOK: is the available liquidity on this side up to `price` ≥ qty?
     bool fok_fillable(Side side, std::int32_t price, std::int32_t qty) const noexcept {
         std::int32_t avail = 0;
         if (side == Side::BUY) {
@@ -590,25 +590,25 @@ private:
         return avail >= qty;
     }
 
-    // Match przy jednym price level (FIFO traversal). Pomniejsza qty_remaining.
-    // Wywoływane z petli ceny w match_against().
+    // Match at a single price level (FIFO traversal). Decreases qty_remaining.
+    // Called from the price loop in match_against().
     void match_at_level(PriceLevel& lvl, Order* taker,
                         std::int32_t& qty_remaining, std::uint64_t ts_ns) noexcept {
         Order* m = lvl.head;
         while (m && qty_remaining > 0) {
-            // STP check: czy maker i taker to ten sam podmiot (client albo
-            // firma — anti-internalization)?
+            // STP check: are the maker and taker the same entity (client or
+            // firm — anti-internalization)?
             if (stp_policy_ != SelfTradePrevention::NONE &&
                 same_trading_entity(m->client_id, taker->client_id)) {
                 ++stats_.total_self_trade_blocks;
                 if (m->client_id != taker->client_id)
-                    ++firm_self_trade_blocks_;   // złapane na poziomie firmy
+                    ++firm_self_trade_blocks_;   // caught at the firm level
                 if (stp_policy_ == SelfTradePrevention::CANCEL_NEWEST) {
-                    // Taker pada — abort completely
+                    // Taker falls — abort completely
                     qty_remaining = 0;
                     return;
                 } else if (stp_policy_ == SelfTradePrevention::CANCEL_OLDEST) {
-                    // Maker pada — usuń go z księgi i jedź dalej
+                    // The maker falls — remove it from the book and carry on
                     Order* next_m = m->next_at_level;
                     cancel_internal(m, /*emit_event=*/true);
                     m = next_m;
@@ -641,7 +641,7 @@ private:
             account_vwap_on_fill(taker->client_id, m->price_ticks, exec_qty);
             mmp_on_maker_fill(m->client_id);
             // Implementation shortfall (per fill, signed by side).
-            // BUY: cost > 0 jeśli fill_px > decision_mid; SELL: cost > 0 jeśli fill_px < decision_mid.
+            // BUY: cost > 0 if fill_px > decision_mid; SELL: cost > 0 if fill_px < decision_mid.
             if (taker->decision_mid_ticks > 0) {
                 const std::int64_t fp = m->price_ticks;
                 const std::int64_t dm = taker->decision_mid_ticks;
@@ -670,15 +670,15 @@ private:
 
             if (m->displayed_qty == 0 && m->total_qty - m->filled_qty > 0 &&
                 m->type == OrderType::ICEBERG) {
-                // Iceberg: doślij displayed z hidden reserve — refresh do
-                // oryginalnego display size (fallback 100 dla legacy orderów
-                // bez zapisanego rozmiaru, np. wczytanych ze starego snapshotu)
+                // Iceberg: top up the displayed from the hidden reserve — refresh to
+                // the original display size (fallback 100 for legacy orders
+                // without a recorded size, e.g. loaded from an old snapshot)
                 const std::int32_t hidden = m->total_qty - m->filled_qty;
                 std::int32_t show = (m->iceberg_display_size > 0)
                                      ? m->iceberg_display_size : 100;
-                // Anti-detection jitter: stały refresh size zdradza iceberg
-                // (predatorzy liczą powtarzalne refille). LCG deterministyczny
-                // — replay tej samej sekwencji daje identyczne refreshe.
+                // Anti-detection jitter: a fixed refresh size reveals the iceberg
+                // (predators count the repeatable refills). A deterministic LCG
+                // — replaying the same sequence yields identical refreshes.
                 if (ice_jitter_bps_ > 0) {
                     ice_jitter_rng_ = ice_jitter_rng_ * 6364136223846793005ULL
                                       + 1442695040888963407ULL;
@@ -713,13 +713,13 @@ private:
             }
 
             if (m->filled_qty >= m->total_qty) {
-                // Maker pełen → unlink + free
+                // Maker full → unlink + free
                 Order* next_m = m->next_at_level;
                 m->status = OrderStatus::FILLED;
                 emit(EventType::FILL, m->id, taker->id, m->price_ticks, exec_qty,
                      OrderStatus::FILLED, RejectReason::NONE, m->client_id);
-                // Unlink z level (już zaktualizowaliśmy total_qty wyżej, więc
-                // unlink_from_level zrobi to ponownie. Robimy ręczny unlink.)
+                // Unlink from the level (we already updated total_qty above, so
+                // unlink_from_level would do it again. We do a manual unlink.)
                 if (m->prev_at_level) m->prev_at_level->next_at_level = m->next_at_level;
                 else                  lvl.head = m->next_at_level;
                 if (m->next_at_level) m->next_at_level->prev_at_level = m->prev_at_level;
@@ -736,26 +736,26 @@ private:
                 m = next_m;
             } else {
                 m->status = OrderStatus::PARTIALLY_FILLED;
-                // taker dostał całość lub maker ma displayed=0 ale nie iceberg.
-                // Jeśli displayed_qty == 0 i nie iceberg → unlink (limit order
-                // który dostał display reduction to nie powinien się zdarzyć).
+                // the taker got everything or the maker has displayed=0 but is not an iceberg.
+                // If displayed_qty == 0 and not an iceberg → unlink (a limit order
+                // that got a display reduction should not happen).
                 m = m->next_at_level;
             }
         }
     }
 
-    // Match przeciw przeciwnej stronie. Aktualizuje taker, generuje fills.
+    // Match against the opposite side. Updates the taker, generates fills.
     void match_against(Order* taker) noexcept {
         const std::uint64_t ts = mono_ns_now();
         std::int32_t qty_left = taker->remaining_qty();
         const std::int32_t qty_pre = qty_left;
         std::int32_t levels_consumed = 0;
-        // Mid pre-match — używany do effective spread (TCA)
+        // Mid pre-match — used for effective spread (TCA)
         const std::int32_t mid_pre_ticks = has_bid() && has_ask()
             ? (best_bid_ticks_ + best_ask_ticks_) / 2 : -1;
 
         if (taker->side == Side::BUY) {
-            // BUY zjada asks od najlepszej (najtańszej) aż do limit price
+            // BUY eats asks from the best (cheapest) up to the limit price
             while (qty_left > 0 && has_ask() && best_ask_ticks_ <= taker->price_ticks) {
                 const std::int32_t qty_before = qty_left;
                 PriceLevel& lvl = levels_[best_ask_ticks_];
@@ -798,10 +798,10 @@ private:
                 ++slippage_guard_violations_;
             }
         }
-        // NBBO audit — czy taker zapłacił gorzej niż best opposite quote PRZED match?
-        // Mid_pre_ticks już sniedzedrugiej strony; sprawdzamy: fill at taker->limit
-        // dla BUY powinien być <= best_ask_pre; dla SELL >= best_bid_pre.
-        // (Tu prosta heurystyka — porównanie do limit price.)
+        // NBBO audit — did the taker pay worse than the best opposite quote BEFORE the match?
+        // Mid_pre_ticks already from the other side; we check: fill at taker->limit
+        // for BUY should be <= best_ask_pre; for SELL >= best_bid_pre.
+        // (A simple heuristic here — comparison to the limit price.)
         if (qty_left < qty_pre) {
             if (taker->side == Side::BUY &&
                 taker->price_ticks > 0 &&
@@ -817,13 +817,13 @@ private:
         }
     }
 
-    // Wspólna ścieżka cancel — używana przez user cancel + STP + internal.
+    // Shared cancel path — used by user cancel + STP + internal.
     void cancel_internal(Order* o, bool emit_event) noexcept {
         if (!o || !o->is_active()) return;
         const std::int32_t cancel_price = o->price_ticks;
         const char         cancel_side  = (o->side == Side::BUY) ? 'B' : 'S';
         unlink_from_level(o);
-        // Refresh best bid/ask jeśli ten level się opróżnił
+        // Refresh best bid/ask if this level emptied
         if (levels_[o->price_ticks].empty()) {
             if (o->side == Side::BUY  && o->price_ticks == best_bid_ticks_)
                 refresh_best_bid_from(o->price_ticks - 1);
@@ -855,22 +855,22 @@ private:
 
 public:
     // ====================================================================
-    // submit() — główna ścieżka dodania zlecenia
+    // submit() — the main order-add path
     // ====================================================================
     //
-    // Zwraca order_id przyjętego zlecenia (>0) lub 0 gdy odrzucone.
-    // out_reason (jeśli != nullptr) dostaje RejectReason dla diagnostyki.
+    // Returns the order_id of the accepted order (>0) or 0 when rejected.
+    // out_reason (if != nullptr) receives the RejectReason for diagnostics.
     //
     // Logika:
     //   1. Walidacja: range, qty, duplicate id, range.
-    //   2. STP check (jeśli policy != NONE) — ale STP pełniejsze w matchu.
-    //   3. POST_ONLY: jeśli krzyżuje → REJECT.
-    //   4. FOK: jeśli nieosiągalny → REJECT.
+    //   2. STP check (if policy != NONE) — but STP is more complete in the match.
+    //   3. POST_ONLY: if it crosses → REJECT.
+    //   4. FOK: if not achievable → REJECT.
     //   5. Alokuj Order z pool.
-    //   6. Jeśli typ to STOP, NIE matchuj — wstaw w czekoligę triggerów.
-    //   7. Match against przeciwnej strony do limit price.
-    //   8. Jeśli IOC i resta — cancel resztę. Jeśli FOK i nie wszystko → revert.
-    //   9. Reszta (jeśli > 0): wstaw do FIFO na price level + index id.
+    //   6. If the type is STOP, do NOT match — place it in the trigger wait-queue.
+    //   7. Match against the opposite side up to the limit price.
+    //   8. If IOC and remainder — cancel the rest. If FOK and not all → revert.
+    //   9. The rest (if > 0): insert into the FIFO at the price level + index id.
     std::uint64_t submit(Side side, std::int32_t price_ticks, std::int32_t qty,
                           OrderType type = OrderType::LIMIT,
                           TimeInForce tif = TimeInForce::DAY,
@@ -901,15 +901,15 @@ public:
                                        return reject(RejectReason::PRICE_OUT_OF_RANGE);
         if (order_id != 0 && id_index_.find(order_id) != id_index_.end())
                                        return reject(RejectReason::DUPLICATE_ID);
-        // Rate limit (token bucket) — tylko zewnętrzne submity; wewnętrzne
+        // Rate limit (token bucket) — external submits only; internal
         // resubmity engine (stop trigger, MOC/LOC injection, bracket arming)
-        // dotyczą orderów już zaakceptowanych i nie zżerają tokenów
+        // concern already-accepted orders and do not consume tokens
         if (rate_limiting_enabled_ && !in_internal_submit_ && client_id != 0 &&
             !consume_rate_token(client_id))
                                        return reject(RejectReason::RATE_LIMITED);
-        // MMP — gdy protekcja konta trip'nęła, nowe quotes są blokowane do
-        // jawnego mmp_reset (MM musi potwierdzić, że odświeżył wyceny).
-        // Internalne resubmity engine omijają (dotyczą starych orderów).
+        // MMP — when the account's protection has tripped, new quotes are blocked until
+        // an explicit mmp_reset (the MM must confirm it has refreshed its quotes).
+        // The engine's internal resubmits bypass it (they concern old orders).
         if (mmp_enabled_ && !in_internal_submit_ && client_id != 0) {
             const auto it = mmp_.find(client_id);
             if (it != mmp_.end() && it->second.tripped)
@@ -919,26 +919,26 @@ public:
         if (luld_enabled_ && (price_ticks < luld_low_ticks_ ||
                                 price_ticks > luld_high_ticks_)) {
             ++luld_breaches_;
-            // halt_to_auction: LULD-style pauza (order entry trwa, match
-            // czeka na reopen cross); auto_halt: hard halt (submity padają)
+            // halt_to_auction: LULD-style pause (order entry continues, match
+            // waits for the reopen cross); auto_halt: hard halt (submits fail)
             if (luld_halt_to_auction_)   halt_for_auction();
             else if (luld_auto_halt_)    halt("LULD_BREACH");
             return reject(RejectReason::LULD_BAND_BREACH);
         }
 
-        // POST_ONLY: nie wolno wziąć płynności (cross protection)
+        // POST_ONLY: must not take liquidity (cross protection)
         if (type == OrderType::POST_ONLY && would_cross(side, price_ticks)) {
             return reject(RejectReason::POST_ONLY_WOULD_CROSS);
         }
 
-        // FOK: musi się od razu wypełnić w całości
+        // FOK: must fill in full immediately
         if ((type == OrderType::FOK || tif == TimeInForce::FOK)
             && !fok_fillable(side, price_ticks, qty)) {
             return reject(RejectReason::FOK_NOT_FILLABLE);
         }
 
-        // MIN_QTY: matched musi być ≥ min_qty albo REJECT.
-        // (Skip dla POST_ONLY/HIDDEN/auction — nie matchują continuous.)
+        // MIN_QTY: matched must be ≥ min_qty or REJECT.
+        // (Skip for POST_ONLY/HIDDEN/auction — they do not match continuously.)
         if (min_qty > 0 && type != OrderType::POST_ONLY
             && type != OrderType::HIDDEN && !in_auction_mode_) {
             const auto preview = walk_the_book(side, qty, price_ticks);
@@ -955,11 +955,11 @@ public:
         o->price_ticks   = price_ticks;
         o->total_qty     = qty;
         o->filled_qty    = 0;
-        // HIDDEN: pełna qty w total_hidden, displayed=0 → niewidoczne w L1/L2.
-        // ICEBERG: pokazuj tylko displayed_qty arg (jeśli >0).
-        // Pozostałe: pełna widoczność.
-        // Iceberg display clamped do qty — displayed > total psułoby hidden
-        // accounting (T-F-D < 0). Zapamiętujemy rozmiar dla refreshów.
+        // HIDDEN: full qty in total_hidden, displayed=0 → invisible in L1/L2.
+        // ICEBERG: show only the displayed_qty arg (if >0).
+        // Others: full visibility.
+        // Iceberg display clamped to qty — displayed > total would corrupt hidden
+        // accounting (T-F-D < 0). We remember the size for refreshes.
         const std::int32_t ice_show =
             (type == OrderType::ICEBERG && displayed_qty > 0)
                 ? std::min(displayed_qty, qty) : 0;
@@ -999,10 +999,10 @@ public:
                     OrderStatus::OPEN);
         exposure_on_submit(o->client_id, o->side, o->total_qty);
 
-        // Match (chyba że POST_ONLY — ale POST_ONLY już odrzucone gdyby krzyżowało,
-        // ani w trybie auction — orders czekają na batch cross via run_auction).
-        // HIDDEN orders nie matchują continuous (dark-pool semantyka) — wchodzą
-        // bezpośrednio do księgi jako pure-dark liquidity dla cross/auction.
+        // Match (unless POST_ONLY — but POST_ONLY would already be rejected if it crossed,
+        // nor in auction mode — orders wait for the batch cross via run_auction).
+        // HIDDEN orders do not match continuously (dark-pool semantics) — they enter
+        // directly into the book as pure-dark liquidity for cross/auction.
         if (type != OrderType::POST_ONLY && type != OrderType::HIDDEN &&
             !in_auction_mode_) {
             match_against(o);
@@ -1013,7 +1013,7 @@ public:
 
         // Po matchu:
         if (o->filled_qty >= o->total_qty) {
-            // Pełen fill → zwolnij slot (nie wchodzi do księgi)
+            // Full fill → free the slot (does not enter the book)
             o->status = OrderStatus::FILLED;
             const std::uint64_t rid = o->id;
             ++completion_filled_fully_;
@@ -1021,7 +1021,7 @@ public:
             return rid;
         }
 
-        // IOC: nie zostawiaj resztek — cancel
+        // IOC: do not leave remainders — cancel
         if (type == OrderType::IOC || tif == TimeInForce::IOC) {
             const std::int32_t left = o->remaining_qty();
             o->status = OrderStatus::CANCELLED;
@@ -1034,15 +1034,15 @@ public:
             return rid;
         }
 
-        // Włóż do księgi (FIFO)
+        // Insert into the book (FIFO)
         o->status = OrderStatus::OPEN;
         if (o->filled_qty > 0) {
             o->status = OrderStatus::PARTIALLY_FILLED;
-            // Resztka po partial matchu: displayed nie może przekraczać
-            // remaining — inaczej L2 depth zawyżony o filled_qty.
+            // Remainder after a partial match: displayed must not exceed
+            // remaining — otherwise L2 depth is inflated by filled_qty.
             o->displayed_qty = std::min(o->displayed_qty, o->remaining_qty());
         }
-        // Queue depth at arrival — sample przed enqueue (current order_count = pozycja w FIFO)
+        // Queue depth at arrival — sample before enqueue (current order_count = position in FIFO)
         const std::int32_t qd_arrival = levels_[o->price_ticks].order_count;
         queue_depth_arrival_sum_ += static_cast<std::uint64_t>(qd_arrival);
         ++queue_depth_arrival_count_;
@@ -1051,8 +1051,8 @@ public:
         enqueue_at_level(o);
         id_index_[o->id] = o;
 
-        // Update best bid/ask — TYLKO dla visible orders (HIDDEN nigdy nie
-        // pojawia się w L1/L2; jest tylko dla cross/auction match'u).
+        // Update best bid/ask — ONLY for visible orders (HIDDEN never
+        // appears in L1/L2; it is only for cross/auction matching).
         if (type != OrderType::HIDDEN) {
             if (o->side == Side::BUY) {
                 if (best_bid_ticks_ == NO_BID_TICKS || o->price_ticks > best_bid_ticks_)
@@ -1068,14 +1068,14 @@ public:
     }
 
     // ====================================================================
-    // cancel(order_id) — user cancel; zwraca true gdy znaleziono i usunięto.
+    // cancel(order_id) — user cancel; returns true when found and removed.
     // ====================================================================
     bool cancel(std::uint64_t order_id) noexcept {
         auto it = id_index_.find(order_id);
         if (it == id_index_.end()) return false;
         Order* o = it->second;
-        // Pending STOP nie jest w levelach (status NEW, nie is_active) —
-        // osobna ścieżka przez stop_orders_.
+        // A pending STOP is not in the levels (status NEW, not is_active) —
+        // a separate path via stop_orders_.
         if (o->type == OrderType::STOP && o->status == OrderStatus::NEW) {
             const bool ok = cancel_pending_stop(o);
             process_oco_pending();
@@ -1088,9 +1088,9 @@ public:
 
     // ====================================================================
     // modify(order_id, new_price, new_qty) — cancel + resubmit, GUBI priority
-    // (zgodnie z większością giełd jeśli zmieniasz cenę). Jeśli tylko qty DOWN
-    // (down-only), niektóre giełdy zachowują priority; tu zachowuję
-    // tylko w przypadku qty DOWN ON SAME PRICE.
+    // (in line with most exchanges if you change the price). If only qty DOWN
+    // (down-only), some exchanges keep priority; here I keep
+    // only in the case of qty DOWN ON SAME PRICE.
     // ====================================================================
     std::uint64_t modify(std::uint64_t order_id,
                           std::int32_t new_price_ticks,
@@ -1104,22 +1104,22 @@ public:
         Order* o = it->second;
 
         // Same-price + qty DOWN → priority-preserving in-place
-        // (reguła zgodna z NASDAQ ITCH/OUCH "Decrease" — zachowuje FIFO)
+        // (rule consistent with NASDAQ ITCH/OUCH "Decrease" — preserves FIFO)
         if (new_price_ticks == o->price_ticks &&
             new_qty < o->total_qty &&
             new_qty > o->filled_qty) {
             const std::int32_t delta = (o->total_qty - new_qty);
-            // Redukcja idzie najpierw z displayed, nadwyżka z hidden reserve.
-            // Level aggregates spadają dokładnie o tyle, o ile spadły
-            // komponenty ordera — stary kod odejmował min(delta, level_total)
-            // od total_qty (psuł Σ displayed przy wielu orderach na levelu)
-            // i w ogóle nie ruszał total_hidden (iceberg decrease).
+            // The reduction comes first from displayed, the surplus from the hidden reserve.
+            // Level aggregates drop by exactly as much as
+            // the order's components dropped — old code subtracted min(delta, level_total)
+            // from total_qty (corrupted Σ displayed with many orders on a level)
+            // and did not touch total_hidden at all (iceberg decrease).
             const std::int32_t vis_delta = std::min(delta, o->displayed_qty);
             o->total_qty = new_qty;
             o->displayed_qty -= vis_delta;
             levels_[o->price_ticks].total_qty    -= vis_delta;
             levels_[o->price_ticks].total_hidden -= (delta - vis_delta);
-            // Bracket entry: exity mają hedgować finalną (zmniejszoną) qty
+            // Bracket entry: exits must hedge the final (reduced) qty
             {
                 const auto bit = bracket_specs_.find(order_id);
                 if (bit != bracket_specs_.end()) bit->second.qty = new_qty;
@@ -1137,13 +1137,13 @@ public:
         const TimeInForce tif       = o->tif;
         const std::uint64_t client_id = o->client_id;
         const std::int32_t  filled  = o->filled_qty;
-        // OCO przeżywa cancel-replace (order_id się nie zmienia — konwencja
-        // venue). Stash + unlink PRZED cancel_internal, żeby nie skasował
+        // OCO survives cancel-replace (order_id does not change — venue
+        // convention). Stash + unlink BEFORE cancel_internal, so it does not cancel
         // partnera; restore po udanym resubmicie.
         const std::uint64_t oco_partner = oco_partner_of(order_id);
         if (oco_partner != 0) (void)unlink_oco(order_id);
-        // Bracket spec też przeżywa cancel-replace; qty spec idzie za nową
-        // qty (exity mają hedgować finalną pozycję entry)
+        // The bracket spec also survives cancel-replace; the qty spec follows the new
+        // qty (exits must hedge the final entry position)
         BracketSpec saved_bspec{};
         bool had_bracket = false;
         {
@@ -1166,7 +1166,7 @@ public:
                 (void)link_oco(nid, oco_partner);
             } else if (id_index_.find(nid) == id_index_.end()) {
                 // Zmodyfikowana noga od razu fully filled → semantyka OCO:
-                // partner pada (pending queue liczy i obsłuży też STOP/NEW)
+                // the partner falls (the pending queue counts and also handles STOP/NEW)
                 oco_pending_cancel_.push_back(oco_partner);
                 process_oco_pending();
             }
@@ -1175,13 +1175,13 @@ public:
             if (id_index_.find(nid) != id_index_.end()) {
                 bracket_specs_[nid] = saved_bspec;
             } else {
-                // Entry wypełniony w trakcie resubmitu → armuj exity teraz
+                // Entry filled during the resubmit → arm the exits now
                 bracket_pending_.push_back(saved_bspec);
                 process_bracket_pending();
             }
         }
-        // nid == 0 (reject resubmitu): order przepadł, para OCO rozwiązana,
-        // bracket disarmowany — partner/spec nie wracają
+        // nid == 0 (resubmit reject): the order is gone, the OCO pair dissolved,
+        // the bracket disarmed — partner/spec do not return
         return nid;
     }
 
@@ -1189,8 +1189,8 @@ public:
     // L2 depth — `n_levels` najlepszych cen per side
     // ====================================================================
     //
-    // Wypełnia bid_out[] i ask_out[] zawijając do `n_levels` lub LEVELS.
-    // Zwraca ile faktycznie zwrócono.
+    // Fills bid_out[] and ask_out[] capping to `n_levels` or LEVELS.
+    // Returns how many were actually returned.
     std::int32_t depth(std::int32_t n_levels,
                        DepthLevel* bid_out, DepthLevel* ask_out,
                        std::int32_t* bid_count, std::int32_t* ask_count) const noexcept {
@@ -1218,7 +1218,7 @@ public:
         return bn + an;
     }
 
-    // total_volume_at_price: Σ displayed qty na konkretnym levelu (0 gdy pusty).
+    // total_volume_at_price: Σ displayed qty at a specific level (0 when empty).
     std::int32_t total_volume_at_price(std::int32_t price_ticks) const noexcept {
         if (!in_range(price_ticks)) return 0;
         return levels_[price_ticks].total_qty;
@@ -1230,10 +1230,10 @@ public:
     }
 
     // imbalance_bps: (bid_qty - ask_qty)/(bid+ask) × 10000.
-    //   +5000 = same bidy (bardzo buy-heavy)
+    //   +5000 = only bids (very buy-heavy)
     //   -5000 = same aski
     //   0     = balans
-    // Signal flow — kluczowa metryka order book imbalance dla strategii.
+    // Signal flow — a key order-book imbalance metric for strategies.
     std::int32_t imbalance_bps() const noexcept {
         if (!has_bid() || !has_ask()) return 0;
         const std::int64_t b = levels_[best_bid_ticks_].total_qty;
@@ -1243,9 +1243,9 @@ public:
         return static_cast<std::int32_t>((b - a) * 10000 / total);
     }
 
-    // queue_position(order_id): ile zleceń przed nami w FIFO na tym levelu.
-    // Strategia market making'u używa do oceny "kiedy mnie wezmą" — jeśli
-    // jesteś 1000-szy w kolejce, fill probability jest niska.
+    // queue_position(order_id): how many orders are ahead of us in the FIFO at this level.
+    // A market-making strategy uses it to judge "when will I get taken" — if
+    // you are 1000th in the queue, the fill probability is low.
     std::int32_t queue_position(std::uint64_t order_id) const noexcept {
         auto it = id_index_.find(order_id);
         if (it == id_index_.end()) return -1;
@@ -1264,13 +1264,13 @@ public:
         return std::min(tape_count_, TAPE_CAP);
     }
 
-    // Skopiuj ostatnie `max_n` egzekucji do out[]. Zwraca ile zwrócono
-    // (nigdy więcej niż tape_size()).
+    // Copy the last `max_n` executions to out[]. Returns how many were returned
+    // (never more than tape_size()).
     std::size_t recent_trades(Trade* out, std::size_t max_n) const noexcept {
         const std::size_t avail = tape_size();
         const std::size_t n = std::min(avail, max_n);
         for (std::size_t i = 0; i < n; ++i) {
-            // od najnowszego w tył
+            // from newest backwards
             const std::size_t idx = (tape_head_ + TAPE_CAP - 1 - i) % TAPE_CAP;
             out[i] = tape_[idx];
         }
@@ -1295,17 +1295,17 @@ public:
     // Snapshot — wire format do recovery
     // ====================================================================
     //
-    // Encoder/decoder: serializuje wszystkie active orders do buforu bajtów
-    // (per-order POD), zwraca bytes_written. Format wire:
+    // Encoder/decoder: serializes all active orders into a byte buffer
+    // (per-order POD), returns bytes_written. Wire format:
     //   [4 B magic "OBPRO" prefix nadpisany, no]
     //   [4 B version (1)]
     //   [8 B active_orders count]
-    //   [N × OrderRecord (70 B each — v2 dodała iceberg_display_size)]
+    //   [N × OrderRecord (70 B each — v2 added iceberg_display_size)]
     //
-    // To NIE jest delta — to FULL snapshot. Delta zaimplementowana przez
+    // This is NOT a delta — it is a FULL snapshot. The delta is implemented via
     // event callback z EventType (caller may build incremental log).
     //
-    // Zwraca liczbę zapisanych bajtów lub 0 gdy bufor za mały.
+    // Returns the number of bytes written or 0 when the buffer is too small.
 
     struct __attribute__((packed)) OrderRecord {
         std::uint64_t id;
@@ -1343,7 +1343,7 @@ public:
         std::memcpy(buf + off, &version, 4); off += 4;
         std::memcpy(buf + off, &count,   8); off += 8;
 
-        // Iteruj po wszystkich levelach (oba sidey), dla każdego po FIFO
+        // Iterate over all levels (both sides), for each over the FIFO
         for (std::int32_t p = 0; p < LEVELS; ++p) {
             for (Order* o = levels_[p].head; o; o = o->next_at_level) {
                 OrderRecord r{};
@@ -1366,9 +1366,9 @@ public:
                 off += sizeof(r);
             }
         }
-        // Pending STOPy są zaalokowane (liczone w active_orders_ = header
-        // count), ale NIE siedzą w levels — bez tej pętli zapisany count
-        // byłby większy niż liczba rekordów i load_snapshot by failował.
+        // Pending STOPs are allocated (counted in active_orders_ = header
+        // count), but do NOT sit in levels — without this loop the written count
+        // would be larger than the record count and load_snapshot would fail.
         for (const Order* o : stop_orders_) {
             OrderRecord r{};
             r.id            = o->id;
@@ -1392,7 +1392,7 @@ public:
         return off;
     }
 
-    // Wczytaj snapshot — przeładowuje całą księgę. Zwraca true on success.
+    // Load a snapshot — reloads the entire book. Returns true on success.
     bool load_snapshot(const std::uint8_t* buf, std::size_t len) noexcept {
         if (len < 16) return false;
         std::uint32_t magic, version;
@@ -1429,7 +1429,7 @@ public:
             o->stop_trigger_ticks = r.stop_trigger_ticks;
             o->peg_offset_ticks   = r.peg_offset_ticks;
             o->iceberg_display_size = r.iceberg_display_size;
-            // Routing per typ: pending STOP wraca do stop_orders_ (nie do
+            // Routing per type: a pending STOP goes back to stop_orders_ (not to
             // levels), PEG do levels + peg_orders_ (inaczej traci reprice).
             if (o->type == OrderType::STOP &&
                 o->status == OrderStatus::NEW) {
@@ -1448,14 +1448,14 @@ public:
                     best_ask_ticks_ = o->price_ticks;
             }
         }
-        // Auto-id musi przeskoczyć wczytane ordery — inaczej nowy submit z
-        // order_id=0 dostaje kolidujący id i nadpisuje wpis w id_index_
-        // (restored order zostaje osierocony w levelu).
+        // The auto-id must skip past the loaded orders — otherwise a new submit with
+        // order_id=0 gets a colliding id and overwrites an entry in id_index_
+        // (the restored order is left orphaned in the level).
         if (max_loaded_id >= next_order_id_) next_order_id_ = max_loaded_id + 1;
         return true;
     }
 
-    // Pełny reset — księga pusta, statystyki wyczyszczone.
+    // Full reset — book empty, statistics cleared.
     void clear() noexcept {
         for (std::int32_t p = 0; p < LEVELS; ++p) {
             Order* o = levels_[p].head;
@@ -1467,11 +1467,11 @@ public:
             levels_[p].clear();
         }
         id_index_.clear();
-        // Pending STOPy nie siedzą w levels — pętla wyżej ich nie zwolniła.
-        // Bez tego free pool przeciekał (slot ani w free-list, ani osiągalny).
+        // Pending STOPs do not sit in levels — the loop above did not free them.
+        // Without this the free pool leaked (the slot neither in the free-list nor reachable).
         for (Order* o : stop_orders_) free_order(o);
         stop_orders_.clear();
-        peg_orders_.clear();   // pegi są w levels — już zwolnione wyżej
+        peg_orders_.clear();   // pegs are in levels — already freed above
         best_bid_ticks_ = NO_BID_TICKS;
         best_ask_ticks_ = NO_ASK_TICKS;
         last_trade_ticks_ = -1;
@@ -1483,14 +1483,14 @@ public:
     // STOP order management
     // ====================================================================
     //
-    // STOP orders nie wchodzą do księgi od razu — czekają w `stop_orders_`
-    // aż last_trade_ticks_ przekroczy `stop_trigger_ticks`:
-    //   BUY STOP   trigger gdy last_trade >= stop_trigger
-    //   SELL STOP  trigger gdy last_trade <= stop_trigger
-    // Po triggerze stają się LIMIT (z `price_ticks` jako limit) lub MARKET
-    // (gdy `price_ticks == 0`).
+    // STOP orders do not enter the book immediately — they wait in `stop_orders_`
+    // until last_trade_ticks_ crosses `stop_trigger_ticks`:
+    //   BUY STOP   triggers when last_trade >= stop_trigger
+    //   SELL STOP  triggers when last_trade <= stop_trigger
+    // After triggering they become LIMIT (with `price_ticks` as the limit) or MARKET
+    // (when `price_ticks == 0`).
     //
-    // submit_stop: zarejestruj STOP. Zwraca id albo 0 na error.
+    // submit_stop: register a STOP. Returns an id or 0 on error.
     std::uint64_t submit_stop(Side side, std::int32_t trigger_ticks,
                                 std::int32_t limit_ticks, std::int32_t qty,
                                 std::uint64_t order_id = 0,
@@ -1529,26 +1529,26 @@ public:
         return o->id;
     }
 
-    // check_stop_triggers: wywołaj po każdym executed trade. Każdy STOP
-    // który spełnia warunek triggera staje się aktywnym LIMIT/MARKET.
+    // check_stop_triggers: call after each executed trade. Every STOP
+    // that meets its trigger condition becomes an active LIMIT/MARKET.
     void check_stop_triggers() noexcept {
         if (last_trade_ticks_ < 0 || stop_orders_.empty()) return;
         for (std::size_t i = 0; i < stop_orders_.size(); ) {
             Order* o = stop_orders_[i];
-            // Referencja per order: plain stop ZAWSZE last_trade; trailing
-            // z włączonym trybem mid używa mid (ratchet I trigger z tej
-            // samej referencji — mieszanie psułoby self-trigger safety).
-            // Fallback do last_trade gdy mid niedostępny (one-sided book).
+            // Reference per order: a plain stop ALWAYS uses last_trade; trailing
+            // with mid mode enabled uses mid (the ratchet AND trigger from the
+            // same reference — mixing would break self-trigger safety).
+            // Fallback to last_trade when mid is unavailable (one-sided book).
             std::int32_t ref = last_trade_ticks_;
             if (o->peg_offset_ticks > 0 && trailing_ratchet_on_mid_) {
                 const std::int32_t mp = mid_ticks();
                 if (mp > 0) ref = mp;
             }
-            // Trailing stop (STOP + peg_offset > 0): ratchet trigger za ceną
-            // gdy rynek idzie korzystnie. SELL: trigger podąża W GÓRĘ
-            // (high-water - offset); BUY: W DÓŁ (low-water + offset).
-            // Ratchet nigdy nie self-triggeruje: nowy trigger jest zawsze
-            // offset od ref, więc warunek trigger nie zachodzi w tym ticku.
+            // Trailing stop (STOP + peg_offset > 0): ratchet the trigger behind the price
+            // when the market moves favourably. SELL: the trigger follows UP
+            // (high-water - offset); BUY: DOWN (low-water + offset).
+            // The ratchet never self-triggers: the new trigger is always
+            // offset from ref, so the trigger condition does not hold in this tick.
             if (o->peg_offset_ticks > 0) {
                 if (o->side == Side::SELL) {
                     const std::int32_t nt = ref - o->peg_offset_ticks;
@@ -1569,7 +1569,7 @@ public:
             const bool sell_trigger = (o->side == Side::SELL)
                                     && (ref <= o->stop_trigger_ticks);
             if (buy_trigger || sell_trigger) {
-                // Wyciągnij z queue, zachowaj parametry, resubmit jako LIMIT/MARKET
+                // Pull from the queue, preserve the parameters, resubmit as LIMIT/MARKET
                 const Side       sd  = o->side;
                 const std::int32_t lp = o->price_ticks;
                 const std::int32_t qy = o->total_qty;
@@ -1580,7 +1580,7 @@ public:
                 stop_orders_[i] = stop_orders_.back();
                 stop_orders_.pop_back();
                 ++stats_.total_stop_triggers;
-                // limit_ticks=0 → market: użyj NO_BID/NO_ASK jako limit fallback
+                // limit_ticks=0 → market: use NO_BID/NO_ASK as the limit fallback
                 const std::int32_t limit_p = (lp > 0) ? lp
                                               : (sd == Side::BUY ? LEVELS - 1 : 0);
                 in_internal_submit_ = true;
@@ -1600,12 +1600,12 @@ public:
     // Trailing stop
     // ====================================================================
     //
-    // Stop z triggerem podążającym za rynkiem o trail_offset_ticks:
+    // A stop with a trigger that follows the market by trail_offset_ticks:
     //   SELL (ochrona longa): trigger = high-water-mark - offset, ratchet up
     //   BUY  (ochrona shorta): trigger = low-water-mark + offset, ratchet down
     // Initial trigger liczony od reference = last_trade (fallback: mid).
-    // Marker: type == STOP && peg_offset_ticks > 0 (plain STOP ma offset 0).
-    // Ratchet dzieje się w check_stop_triggers — wymaga regularnego callowania.
+    // Marker: type == STOP && peg_offset_ticks > 0 (a plain STOP has offset 0).
+    // The ratchet happens in check_stop_triggers — it requires regular calling.
     std::uint64_t submit_trailing_stop(Side side,
                                         std::int32_t trail_offset_ticks,
                                         std::int32_t limit_ticks,
@@ -1646,9 +1646,9 @@ public:
     std::uint64_t trailing_ratchet_count() const noexcept { return trailing_ratchets_; }
 
     // Trailing na mid: ratchet i trigger z midpointu zamiast last_trade.
-    // Reaguje na ruch quote'ów bez trade'ów (mniejszy gap risk w cichym
-    // rynku). Plain stopy zawsze na last_trade. Fallback do last_trade
-    // gdy mid niedostępny.
+    // Reacts to quote movement without trades (less gap risk in a quiet
+    // the market). Plain stops always use last_trade. Fallback to last_trade
+    // when mid is unavailable.
     void set_trailing_ratchet_on_mid(bool on) noexcept {
         trailing_ratchet_on_mid_ = on;
     }
@@ -1669,11 +1669,11 @@ public:
     // PEG order management
     // ====================================================================
     //
-    // PEG order pegged do best bid/ask + offset_ticks. Po każdej zmianie top
-    // of book, peg orders są przemieszczane na nowy price level (re-quote).
+    // A PEG order pegged to best bid/ask + offset_ticks. After every change of top
+    // of book, peg orders are moved to the new price level (re-quote).
     //
     // Konwencja:
-    //   BUY PEG  → pinned to best_bid + peg_offset (offset zwykle ≤ 0)
+    //   BUY PEG  → pinned to best_bid + peg_offset (offset usually ≤ 0)
     //   SELL PEG → pinned to best_ask + peg_offset
     std::uint64_t submit_peg(Side side, std::int32_t peg_offset_ticks,
                               std::int32_t qty,
@@ -1699,7 +1699,7 @@ public:
             if (!has_ask()) initial_price = LEVELS - 1;
             else            initial_price = best_ask_ticks_ + peg_offset_ticks;
         }
-        // Pegged-with-limit: cap to twardy limit ceny (BUY: sufit, SELL: podłoga)
+        // Pegged-with-limit: cap to a hard price limit (BUY: ceiling, SELL: floor)
         if (cap_ticks > 0) {
             if (side == Side::BUY  && initial_price > cap_ticks) initial_price = cap_ticks;
             if (side == Side::SELL && initial_price < cap_ticks) initial_price = cap_ticks;
@@ -1738,9 +1738,9 @@ public:
     }
 
     // Mid-peg: pinned do mid + offset (zamiast best bid/ask). Marker w
-    // stop_trigger_ticks == 1 (primary peg ma tam 0; STOP nie jest w
-    // peg_orders_, więc brak kolizji). Offset powinien trzymać cenę
-    // wewnątrz spreadu — peg nie matchuje przy entry (jak primary peg).
+    // stop_trigger_ticks == 1 (a primary peg has 0 there; a STOP is not in
+    // peg_orders_, so no collision). The offset should keep the price
+    // inside the spread — the peg does not match at entry (like a primary peg).
     std::uint64_t submit_peg_mid(Side side, std::int32_t peg_offset_ticks,
                                   std::int32_t qty,
                                   std::uint64_t order_id = 0,
@@ -1797,8 +1797,8 @@ public:
         return o->id;
     }
 
-    // reprice_pegs: wywołaj po zmianie top of book. Każdy peg, którego target
-    // price się rozjechał z aktualnym, zostaje przeniesiony.
+    // reprice_pegs: call after a change in top of book. Every peg whose target
+    // price has diverged from the current one is moved.
     void reprice_pegs() noexcept {
         if (peg_orders_.empty()) return;
         for (std::size_t i = 0; i < peg_orders_.size(); ++i) {
@@ -1806,7 +1806,7 @@ public:
             if (!o->is_active()) continue;
             std::int32_t target;
             if (o->stop_trigger_ticks == 1) {
-                // Mid-peg — wymaga obu stron TOB
+                // Mid-peg — requires both sides of the TOB
                 const std::int32_t mp = mid_ticks();
                 if (mp < 0) continue;
                 target = mp + o->peg_offset_ticks;
@@ -1817,7 +1817,7 @@ public:
                 if (!has_ask()) continue;
                 target = best_ask_ticks_ + o->peg_offset_ticks;
             }
-            // Pegged-with-limit: target nigdy nie przekracza capu
+            // Pegged-with-limit: the target never exceeds the cap
             if (o->peg_cap_ticks > 0) {
                 if (o->side == Side::BUY  && target > o->peg_cap_ticks)
                     target = o->peg_cap_ticks;
@@ -1851,12 +1851,12 @@ public:
     // Mass cancel — kill switch by client_id
     // ====================================================================
     //
-    // W realnym HFT to obowiązkowy guard rail: gdy ryzyko trip'uje, wszystkie
-    // otwarte zlecenia danego konta muszą być instant kasowane. Zwraca ile
+    // In real HFT this is a mandatory guard rail: when risk trips, all
+    // open orders of the account must be cancelled instantly. Returns how many
     // anulowano.
     std::size_t mass_cancel(std::uint64_t client_id) noexcept {
         std::size_t cancelled = 0;
-        // Iterate by collecting ids first — modyfikacja id_index_ podczas
+        // Iterate by collecting ids first — modifying id_index_ during
         // iteracji UB.
         std::vector<Order*> to_cancel;
         std::vector<Order*> to_cancel_stops;
@@ -1868,8 +1868,8 @@ public:
                 to_cancel.push_back(o);
             } else if (o->type == OrderType::STOP &&
                        o->status == OrderStatus::NEW) {
-                // Kill switch MUSI objąć też pending stops — czekający STOP
-                // ma status NEW (nie is_active), stara wersja go pomijała
+                // The kill switch MUST also cover pending stops — a waiting STOP
+                // has status NEW (not is_active); the old version skipped it
                 to_cancel_stops.push_back(o);
             }
         }
@@ -1889,8 +1889,8 @@ public:
     // GTD expiry sweep
     // ====================================================================
     //
-    // Wywołaj periodycznie (raz na sekundę / okazjonalnie). Każdy GTD którego
-    // expire_ts_ns_ < now_ns jest kasowany jako EXPIRE event. Zwraca ile.
+    // Call periodically (once a second / occasionally). Every GTD whose
+    // expire_ts_ns_ < now_ns is cancelled as an EXPIRE event. Returns how many.
     std::size_t expire_gtd(std::uint64_t now_ns) noexcept {
         std::vector<Order*> to_expire;
         for (auto& kv : id_index_) {
@@ -1927,17 +1927,17 @@ public:
     }
 
     // ====================================================================
-    // Walk-the-book — preview matching bez modyfikacji księgi
+    // Walk-the-book — preview matching without modifying the book
     // ====================================================================
     //
-    // Sprawdza ile qty z `desired` można od razu wypełnić do `limit_price`
-    // (jak by submit(IOC) zrobił). Zwraca filled_qty + average_price.
-    // Caller używa do pre-trade analysis ("ile ruchu jest na top 5 levels").
+    // Checks how much of `desired` qty can be filled immediately up to `limit_price`
+    // (as submit(IOC) would). Returns filled_qty + average_price.
+    // The caller uses it for pre-trade analysis ("how much is on the top 5 levels").
     struct WalkResult {
         std::int32_t  fillable_qty;
-        std::int32_t  avg_price_ticks;     // ważona qty
+        std::int32_t  avg_price_ticks;     // qty-weighted
         std::int32_t  levels_touched;
-        std::int32_t  worst_price_ticks;   // najgorszy level który zostałby przeszedł
+        std::int32_t  worst_price_ticks;   // the worst level that would be traversed
     };
     WalkResult walk_the_book(Side side, std::int32_t desired_qty,
                               std::int32_t limit_price) const noexcept {
@@ -1976,14 +1976,14 @@ public:
     }
 
     // ====================================================================
-    // Order Flow Imbalance (OFI) — przemysłowy signal
+    // Order Flow Imbalance (OFI) — an industry signal
     // ====================================================================
     //
-    // OFI mierzy NETTO zmianę top-of-book qty od ostatniej obserwacji.
-    //   ΔOFI = Δbid_qty(jeśli bid level nie spadł) - Δask_qty(jeśli ask level nie wzrósł)
+    // OFI measures the NET change in top-of-book qty since the last observation.
+    //   ΔOFI = Δbid_qty(if the bid level did not drop) - Δask_qty(if the ask level did not rise)
     // Dodatnia OFI = buy pressure, ujemna = sell pressure.
     //
-    // Caller wywołuje sample_ofi() periodycznie; zwraca delta i resetuje stan.
+    // The caller invokes sample_ofi() periodically; it returns the delta and resets state.
     std::int64_t sample_ofi() noexcept {
         const std::int32_t cur_bid_qty = has_bid() ? levels_[best_bid_ticks_].total_qty : 0;
         const std::int32_t cur_ask_qty = has_ask() ? levels_[best_ask_ticks_].total_qty : 0;
@@ -2007,9 +2007,9 @@ public:
     // Cumulative volume profile (volume at price)
     // ====================================================================
     //
-    // Wypełnia `out` (rozmiaru capacity_levels): wektor (price, total_qty)
-    // dla NIEPUSTYCH levels w `[min_ticks, max_ticks]`. Zwraca ile zapisano.
-    // Sortowane rosnąco po cenie.
+    // Fills `out` (of size capacity_levels): a vector of (price, total_qty)
+    // for NON-EMPTY levels in `[min_ticks, max_ticks]`. Returns how many were written.
+    // Sorted ascending by price.
     std::int32_t volume_profile(std::int32_t min_ticks, std::int32_t max_ticks,
                                   DepthLevel* out, std::int32_t capacity) const noexcept {
         std::int32_t n = 0;
@@ -2028,9 +2028,9 @@ public:
     // Maker-taker fee accounting (basis points)
     // ====================================================================
     //
-    // Konwencja venue: maker dostaje rebate (bps_maker zwykle ujemne dla rebate),
-    // taker płaci fee. Liczone w cumulative bps × volume. Wywołujący decyduje
-    // czy chce zaaplikować — domyślnie nie liczone (= 0 bps).
+    // Venue convention: the maker gets a rebate (bps_maker usually negative for a rebate),
+    // the taker pays a fee. Counted in cumulative bps × volume. The caller decides
+    // whether to apply it — by default not counted (= 0 bps).
     void set_fee_bps(std::int32_t taker_bps, std::int32_t maker_bps) noexcept {
         taker_fee_bps_ = taker_bps;
         maker_fee_bps_ = maker_bps;
@@ -2042,27 +2042,27 @@ public:
     // Auction matching (opening / closing cross)
     // ====================================================================
     //
-    // Auction = single-price match (nie ciągłe matching). Cała kolekcja
-    // zleceń jest matched at one clearing price wybranym tak żeby zmaksymalizować
-    // przehandlowany wolumen. Klasyczny algorytm uctioned giełd:
+    // Auction = single-price match (not continuous matching). The whole collection
+    // of orders is matched at one clearing price chosen to maximize
+    // the traded volume. The classic exchange auction algorithm:
     //
-    //   For each candidate price p (od najniższego do najwyższego):
-    //     cum_bid(p) = sum of bid qty at price >= p     (skłonność do kupna ≥ p)
-    //     cum_ask(p) = sum of ask qty at price <= p     (skłonność do sprzedaży ≤ p)
+    //   For each candidate price p (from lowest to highest):
+    //     cum_bid(p) = sum of bid qty at price >= p     (willingness to buy ≥ p)
+    //     cum_ask(p) = sum of ask qty at price <= p     (willingness to sell ≤ p)
     //     matched(p) = min(cum_bid(p), cum_ask(p))
     //
-    //   Clearing price = arg max matched(p). Przy ties: NASDAQ wybiera średnią,
-    //   NYSE last trade. Tu używamy mid-range tie-breakera.
+    //   Clearing price = arg max matched(p). On ties: NASDAQ picks the average,
+    //   NYSE the last trade. Here we use a mid-range tie-breaker.
     //
-    //   Po znalezieniu clearing — wszystkie zlecenia z BID >= clearing oraz
-    //   ASK <= clearing są wypełnione (do limitu min(cum_bid, cum_ask)) at
-    //   clearing price. Pozostali zostają w księdze do continuous mode'u.
+    //   After finding clearing — all orders with BID >= clearing and
+    //   ASK <= clearing are filled (up to the limit min(cum_bid, cum_ask)) at
+    //   clearing price. The rest remain in the book until continuous mode.
     //
-    // Wynik:
+    // Result:
     //   AuctionResult{clearing_price, matched_qty, surplus_bid, surplus_ask}.
     //
-    // To używane przy: opening cross (przed 9:30 zbierane są ordery, o 9:30
-    // jeden cross), closing cross (15:55-16:00 → 16:00), trading halt reopen.
+    // Used at: the opening cross (orders are gathered before 9:30, at 9:30
+    // one cross), closing cross (15:55-16:00 → 16:00), trading halt reopen.
     struct AuctionResult {
         std::int32_t  clearing_price_ticks;
         std::int32_t  matched_qty;
@@ -2072,30 +2072,30 @@ public:
     };
 
     // NOII (Net Order Imbalance Indicator) — indicative clearing BEZ
-    // egzekucji. Giełdy broadcastują to przed opening/closing cross
+    // of execution. Exchanges broadcast this before the opening/closing cross
     // (NASDAQ NOII: indicative price + paired qty + imbalance side/qty).
-    // executed == true znaczy "cross by zaszedł" — księga nietknięta.
+    // executed == true means "the cross would happen" — the book untouched.
     AuctionResult indicative_auction_info() const noexcept {
         AuctionResult res{};
         res.clearing_price_ticks = -1;
         if (!has_bid() || !has_ask()) return res;
 
-        // Walk cena range gdzie obie strony przeszły siebie — w continuous trade
-        // tego nie ma (best_bid < best_ask), ale przy auction queue obie strony
-        // mogą się przeciąć. Iterujemy od max(best_bid_ticks_) w dół do
-        // min(best_ask_ticks_) — to interesujący zakres.
+        // Walk the price range where both sides have crossed — in continuous trade
+        // this does not hold (best_bid < best_ask), but in the auction queue both sides
+        // they can intersect. We iterate from max(best_bid_ticks_) down to
+        // min(best_ask_ticks_) — that is the interesting range.
         std::int32_t best_clearing = -1;
         std::int32_t best_matched  = -1;
         std::int32_t best_imbalance = INT32_MAX;
 
-        // cum_bid(p) liczone od HIGH w dół, cum_ask(p) od LOW w górę
+        // cum_bid(p) counted from HIGH down, cum_ask(p) from LOW up
         const std::int32_t lo = std::min(best_bid_ticks_, best_ask_ticks_);
         const std::int32_t hi = std::max(best_bid_ticks_, best_ask_ticks_);
 
         for (std::int32_t p = lo; p <= hi; ++p) {
             // cum_bid(p) = Σ BID qty na poziomach ≥ p.
-            // Walk po head listach z side filter (levels_ trzymają mix bid+ask
-            // przy auction queue gdy obie strony przecinają sobie poziomy).
+            // Walk the head lists with a side filter (levels_ hold a mix of bid+ask
+            // in the auction queue when both sides overlap each other's levels).
             std::int32_t cum_bid = 0;
             for (std::int32_t bp = hi; bp >= p; --bp) {
                 for (const Order* o = levels_[bp].head; o; o = o->next_at_level) {
@@ -2129,7 +2129,7 @@ public:
     }
 
     AuctionResult run_auction() noexcept {
-        // Clearing search współdzielony z NOII — tu tylko egzekucja.
+        // Clearing search shared with NOII — here only execution.
         AuctionResult res = indicative_auction_info();
         if (!res.executed) return res;
         const std::int32_t best_clearing = res.clearing_price_ticks;
@@ -2137,18 +2137,18 @@ public:
         const std::int32_t lo = std::min(best_bid_ticks_, best_ask_ticks_);
         const std::int32_t hi = std::max(best_bid_ticks_, best_ask_ticks_);
 
-        // Faktyczne wypełnienie at clearing price — FIFO per side
-        // (dla determinism, oversubscription = older orders win)
+        // Actual fill at the clearing price — FIFO per side
+        // (for determinism, oversubscription = older orders win)
         std::int32_t bid_remaining = best_matched;
         std::int32_t ask_remaining = best_matched;
         const std::uint64_t ts = mono_ns_now();
         // Wash-trade surveillance: per-client filled qty per side. Fills
-        // w aukcji są anonimowe (brak pairingu maker-taker), więc STP nie
-        // może działać pairwise — zamiast tego flagujemy klientów, którzy
-        // wzięli udział po OBU stronach crossa (compliance reporting).
+        // in the auction they are anonymous (no maker-taker pairing), so STP
+        // cannot act pairwise — instead we flag clients who
+        // participated on BOTH sides of the cross (compliance reporting).
         std::unordered_map<std::uint64_t, std::int64_t> wash_buy, wash_sell;
 
-        // Wykonaj BIDS od najwyższej ceny w dół, ale wszystkie po clearing_price
+        // Execute BIDS from the highest price down, but all at clearing_price
         for (std::int32_t p = hi; p >= best_clearing && bid_remaining > 0; --p) {
             Order* o = levels_[p].head;
             while (o && bid_remaining > 0) {
@@ -2159,7 +2159,7 @@ public:
                     o->filled_qty += take;
                     bid_remaining -= take;
                     if (o->client_id != 0) wash_buy[o->client_id] += take;
-                    // Aggregate accounting — najpierw displayed, reszta z hidden
+                    // Aggregate accounting — displayed first, the rest from hidden
                     const std::int32_t vis_take = std::min(take, o->displayed_qty);
                     levels_[p].total_qty    -= vis_take;
                     o->displayed_qty        -= vis_take;
@@ -2184,7 +2184,7 @@ public:
                 o = next;
             }
         }
-        // ASKS od najniższej w górę do clearing_price
+        // ASKS from the lowest up to clearing_price
         for (std::int32_t p = lo; p <= best_clearing && ask_remaining > 0; ++p) {
             Order* o = levels_[p].head;
             while (o && ask_remaining > 0) {
@@ -2195,7 +2195,7 @@ public:
                     o->filled_qty += take;
                     ask_remaining -= take;
                     if (o->client_id != 0) wash_sell[o->client_id] += take;
-                    // Aggregate accounting — najpierw displayed, reszta z hidden
+                    // Aggregate accounting — displayed first, the rest from hidden
                     const std::int32_t vis_take = std::min(take, o->displayed_qty);
                     levels_[p].total_qty    -= vis_take;
                     o->displayed_qty        -= vis_take;
@@ -2223,7 +2223,7 @@ public:
             }
         }
 
-        // Flaguj klientów z fillami po obu stronach crossa
+        // Flag clients with fills on both sides of the cross
         last_auction_wash_clients_ = 0;
         for (const auto& kv : wash_buy) {
             if (kv.second <= 0) continue;
@@ -2235,9 +2235,9 @@ public:
 
         refresh_best_bid_from(LEVELS - 1);
         refresh_best_ask_from(0);
-        // GTX (good-til-cross): resztki przeżywające cross nie restują —
-        // cross był ich deadline'em. Collect-then-cancel (unlink w pętli
-        // po levels byłby UB na trawersowanej liście).
+        // GTX (good-til-cross): remainders surviving the cross do not rest —
+        // the cross was their deadline. Collect-then-cancel (unlink in a loop
+        // over levels would be UB on the traversed list).
         {
             std::vector<Order*> gtx_sweep;
             for (auto& kv : id_index_) {
@@ -2260,11 +2260,11 @@ public:
     // Auction imbalance extension (volatility extension)
     // ====================================================================
     //
-    // Realne giełdy (LSE, Xetra) przedłużają aukcję gdy imbalance przekracza
-    // próg — daje czas na napływ kontry zamiast crossować z dużym surplusem.
-    // Model: try_run_auction(threshold) — gdy surplus po którejś stronie
-    // > threshold, cross NIE jest wykonywany (księga nietknięta), licznik
-    // extension rośnie, a zwrot niesie indicative values (executed == false
+    // Real exchanges (LSE, Xetra) extend the auction when the imbalance exceeds
+    // a threshold — giving time for counter-flow instead of crossing with a large surplus.
+    // Model: try_run_auction(threshold) — when the surplus on either side
+    // > threshold, the cross is NOT executed (book untouched), the counter
+    // extension grows, and the return carries indicative values (executed == false
     // sygnalizuje extension). Caller dosypuje orders i ponawia.
     AuctionResult try_run_auction(std::int32_t max_surplus_threshold) noexcept {
         AuctionResult ind = indicative_auction_info();
@@ -2273,7 +2273,7 @@ public:
                                                ind.surplus_ask_qty);
         if (surplus > max_surplus_threshold) {
             ++auction_extensions_;
-            ind.executed = false;   // extension — indicative values zostają
+            ind.executed = false;   // extension — indicative values remain
             return ind;
         }
         return run_auction();
@@ -2283,7 +2283,7 @@ public:
     }
 
     // GTX (TimeInForce::GTX) — resztki skasowane po crossie aukcyjnym.
-    // Use case: liquidity oferowana tylko do opening/reopen crossu.
+    // Use case: liquidity offered only for the opening/reopen cross.
     std::uint64_t gtx_cancelled_after_cross() const noexcept {
         return gtx_cancelled_after_cross_;
     }
@@ -2292,13 +2292,13 @@ public:
     // Session lifecycle (pre-open → continuous → closing → closed)
     // ====================================================================
     //
-    // Pełny dzień sesyjny z egzekwowaniem reguł per faza:
-    //   begin_pre_open()  → orders queue (auction mode), brak matchu
-    //   open_market()     → opening cross, przejście do CONTINUOUS
+    // A full trading day with rule enforcement per phase:
+    //   begin_pre_open()  → orders queue (auction mode), no match
+    //   open_market()     → opening cross, transition to CONTINUOUS
     //   begin_closing()   → orders queue do closing cross
-    //   close_market()    → closing cross (z MOC/LOC), przejście do CLOSED;
-    //                       submity w CLOSED odrzucane (MARKET_CLOSED),
-    //                       cancel pozostaje dozwolony (np. czyszczenie GTC)
+    //   close_market()    → closing cross (with MOC/LOC), transition to CLOSED;
+    //                       submits in CLOSED are rejected (MARKET_CLOSED),
+    //                       cancel remains allowed (e.g. clearing GTC)
     void begin_pre_open() noexcept {
         session_phase_ = SessionPhase::PRE_OPEN;
         in_auction_mode_ = true;
@@ -2313,15 +2313,15 @@ public:
         in_auction_mode_ = true;
     }
     AuctionResult close_market() noexcept {
-        AuctionResult r = run_closing_auction();   // sam zarządza auction flag
+        AuctionResult r = run_closing_auction();   // manages the auction flag itself
         session_phase_ = SessionPhase::CLOSED;
         return r;
     }
     SessionPhase session_phase() const noexcept { return session_phase_; }
 
-    // Wash-trade surveillance: klienci z fillami po OBU stronach jednego
-    // crossa. Fills aukcyjne są anonimowe (brak pairingu), więc STP nie
-    // zadziała pairwise — to flaga compliance, nie prewencja.
+    // Wash-trade surveillance: clients with fills on BOTH sides of one
+    // the cross. Auction fills are anonymous (no pairing), so STP
+    // will not act pairwise — this is a compliance flag, not prevention.
     std::uint64_t auction_wash_trade_flags() const noexcept {
         return auction_wash_trade_flags_;
     }
@@ -2333,11 +2333,11 @@ public:
     // Rate limiting per account (token bucket)
     // ====================================================================
     //
-    // Msg-rate throttle (SEC 15c3-5 pre-trade control). Każdy ZEWNĘTRZNY
-    // submit konta zżera 1 token; bucket refilluje refill_per_sec do
-    // capacity. Brak tokenu = reject RATE_LIMITED. Wewnętrzne resubmity
-    // engine (stop trigger, MOC/LOC injection, bracket arming) są bypass —
-    // dotyczą orderów już zaakceptowanych. Konta bez wpisu są bez limitu.
+    // Msg-rate throttle (SEC 15c3-5 pre-trade control). Every EXTERNAL
+    // submit from an account consumes 1 token; the bucket refills refill_per_sec up to
+    // capacity. No token = reject RATE_LIMITED. Internal resubmits
+    // of the engine (stop trigger, MOC/LOC injection, bracket arming) are bypassed —
+    // they concern already-accepted orders. Accounts without an entry are unlimited.
     void set_account_rate_limit(std::uint64_t client_id, double capacity,
                                  double refill_per_sec) noexcept {
         if (client_id == 0 || capacity < 1.0 || refill_per_sec < 0.0) return;
@@ -2353,13 +2353,13 @@ public:
     // Market Maker Protection (MMP)
     // ====================================================================
     //
-    // Klasyka rynków opcyjnych (CBOE/Eurex MMP): gdy maker dostanie więcej
-    // niż max_fills fillów w oknie window_ns, wszystkie jego quotes są
-    // auto-kasowane (mass_cancel), a nowe quotes blokowane (MMP_TRIPPED)
-    // aż do jawnego mmp_reset. Chroni MM przed sweep'em stale quotes podczas
-    // gwałtownego ruchu, zanim zdąży je odświeżyć/wycofać.
-    //   • Liczone TYLKO fille gdzie konto jest makerem (passive side).
-    //   • Trip robi deferred mass_cancel (po pętli match — bez dangling).
+    // A classic of options markets (CBOE/Eurex MMP): when a maker gets more
+    // than max_fills fills within the window_ns window, all its quotes are
+    // auto-cancelled (mass_cancel), and new quotes blocked (MMP_TRIPPED)
+    // until an explicit mmp_reset. Protects the MM from a sweep of stale quotes during
+    // a violent move, before it can refresh/withdraw them.
+    //   • Only fills where the account is the maker (passive side) are counted.
+    //   • A trip does a deferred mass_cancel (after the match loop — no dangling).
     void set_mmp(std::uint64_t client_id, std::uint32_t max_fills,
                   std::uint64_t window_ns) noexcept {
         if (client_id == 0 || max_fills == 0 || window_ns == 0) return;
@@ -2384,12 +2384,12 @@ public:
     // Market-On-Close (MOC)
     // ====================================================================
     //
-    // submit_moc: order czeka w osobnej kolejce (nie w księdze) do closing
-    // cross. run_closing_auction() wstrzykuje MOC jako LIMIT na krawędzi
-    // ISTNIEJĄCEGO zakresu księgi (BUY → hi, SELL → lo) — zawsze in-the-money
-    // przy każdym clearing price i z price priority w fill loopach, a zakres
-    // clearing search się nie rozszerza (search jest O(range²)).
-    // Resztki MOC po cross są kasowane — market order nie restuje.
+    // submit_moc: the order waits in a separate queue (not in the book) until the closing
+    // cross. run_closing_auction() injects the MOC as a LIMIT at the edge
+    // of the EXISTING book range (BUY → hi, SELL → lo) — always in-the-money
+    // at every clearing price and with price priority in the fill loops, while the range
+    // of the clearing search does not expand (the search is O(range²)).
+    // MOC remainders after the cross are cancelled — a market order does not rest.
     std::uint64_t submit_moc(Side side, std::int32_t qty,
                               std::uint64_t client_id = 0,
                               RejectReason* out_reason = nullptr) noexcept {
@@ -2426,10 +2426,10 @@ public:
         AuctionResult res{};
         res.clearing_price_ticks = -1;
         in_auction_mode_ = true;
-        in_internal_submit_ = true;   // injections nie zżerają rate tokenów
-        // 1. LOC — wchodzą na SWOICH limit prices (uczestniczą w price
-        //    discovery; mogą rozszerzyć zakres clearing search, ale o realne
-        //    ceny, nie ekstremalne)
+        in_internal_submit_ = true;   // injections do not consume rate tokens
+        // 1. LOC — enter at THEIR OWN limit prices (they participate in price
+        //    discovery; they may widen the clearing-search range, but by real
+        //    price, not extreme)
         std::vector<std::uint64_t> injected_loc;
         injected_loc.reserve(loc_queue_.size());
         for (const LocOrder& l : loc_queue_) {
@@ -2439,9 +2439,9 @@ public:
             if (oid != 0) injected_loc.push_back(oid);
         }
         loc_queue_.clear();
-        // 2. MOC — na krawędzi zakresu księgi (już z LOC; MOC ma być
-        //    najbardziej agresywny → price priority). Pusta księga nawet po
-        //    LOC = brak price discovery — kasuj MOCe.
+        // 2. MOC — at the edge of the book range (already with LOC; MOC is meant to be
+        //    the most aggressive → price priority). An empty book even after
+        //    LOC = no price discovery — cancel MOCs.
         std::int32_t book_hi, book_lo;
         if (has_bid() && has_ask()) {
             book_hi = std::max(best_bid_ticks_, best_ask_ticks_);
@@ -2467,10 +2467,10 @@ public:
             if (oid != 0) injected_moc.push_back(oid);
         }
         moc_queue_.clear();
-        in_auction_mode_ = false;   // closing cross kończy auction mode
+        in_auction_mode_ = false;   // the closing cross ends auction mode
         in_internal_submit_ = false;
         res = run_auction();
-        // 3. On-close semantics: resztki (MOC i LOC) nie restują
+        // 3. On-close semantics: remainders (MOC and LOC) do not rest
         for (std::uint64_t oid : injected_moc) {
             auto it = id_index_.find(oid);
             if (it != id_index_.end()) {
@@ -2494,7 +2494,7 @@ public:
         return moc_cancelled_unfilled_;
     }
 
-    // Limit-On-Close — limit order tylko na closing cross.
+    // Limit-On-Close — a limit order only for the closing cross.
     std::uint64_t submit_loc(Side side, std::int32_t price_ticks,
                               std::int32_t qty,
                               std::uint64_t client_id = 0,
@@ -2536,9 +2536,9 @@ public:
     // Short-Sale Restriction (SEC Rule 201 — uptick rule)
     // ====================================================================
     //
-    // Przy aktywnym SSR short sale może być wykonany tylko POWYŻEJ current
-    // best bid (cena ≤ bid oznaczałaby agresywny short uderzający w bid —
-    // zakazane). Rule 201 aktywuje się po 10% spadku od reference (close
+    // With SSR active, a short sale may be executed only ABOVE the current
+    // best bid (a price ≤ bid would be an aggressive short hitting the bid —
+    // forbidden). Rule 201 activates after a 10% drop from the reference (close
     // poprzedniego dnia) — arm_ssr_circuit_breaker armuje auto-trigger
     // sprawdzany per trade w record_trade.
     void set_ssr_active(bool on) noexcept { ssr_active_ = on; }
@@ -2571,11 +2571,11 @@ public:
     // Reduce-only orders
     // ====================================================================
     //
-    // Order może tylko ZREDUKOWAĆ pozycję konta (filled_net_qty), nigdy
-    // powiększyć/odwrócić. Qty clamped do |pozycji| (konwencja crypto
-    // venues); brak pozycji lub zły kierunek = reject. Check jest
-    // point-in-time przy submit — resting order nie jest re-amendowany
-    // gdy pozycja się zmieni (uproszczenie).
+    // An order may only REDUCE the account's position (filled_net_qty), never
+    // grow/flip it. Qty clamped to |position| (crypto-venue
+    // convention); no position or wrong direction = reject. The check is
+    // point-in-time at submit — a resting order is not re-amended
+    // when the position changes (a simplification).
     std::uint64_t submit_reduce_only(Side side, std::int32_t price_ticks,
                                       std::int32_t qty,
                                       std::uint64_t client_id,
@@ -2604,19 +2604,19 @@ public:
     // L2 incremental delta protocol
     // ====================================================================
     //
-    // Wire format dla rozsyłania zmian top-of-book i depth do klientów
-    // (alternative dla full snapshot). Format inspirowany ITCH 5.0 + NASDAQ
+    // Wire format for broadcasting top-of-book and depth changes to clients
+    // (an alternative to the full snapshot). Format inspired by ITCH 5.0 + NASDAQ
     // BookFeed:
     //
     //   DeltaMessage:
     //     [0]    type:    'A' = add, 'D' = delete, 'M' = modify, 'T' = trade
     //     [1]    side:    'B' = bid, 'S' = ask, 'X' = both (na trade)
     //     [2..5] price_ticks (int32 LE)
-    //     [6..9] new_qty      (int32 LE) — dla M to NEW qty na tym levelu
+    //     [6..9] new_qty      (int32 LE) — for M this is the NEW qty at this level
     //     [10..17] sequence_no (uint64 LE) — monotonic
     //
-    // Caller wywołuje pop_delta_queue() po każdej operacji żeby zabrać
-    // accumulated deltas i wysłać po sieci. Wewnętrzna kolejka FIFO.
+    // The caller invokes pop_delta_queue() after each operation to collect
+    // accumulated deltas and send them over the network. An internal FIFO queue.
     struct DeltaMessage {
         char          type;       // A/D/M/T
         char          side;       // B/S/X
@@ -2630,8 +2630,8 @@ public:
     bool delta_queue_enabled() const noexcept { return delta_queue_enabled_; }
     std::size_t delta_queue_size() const noexcept { return delta_queue_.size(); }
 
-    // pop_delta_queue: skopiuj do `out` (max max_n), wyczyść z kolejki.
-    // Zwraca ile faktycznie pobrano.
+    // pop_delta_queue: copy to `out` (max max_n), clear from the queue.
+    // Returns how many were actually retrieved.
     std::size_t pop_delta_queue(DeltaMessage* out, std::size_t max_n) noexcept {
         const std::size_t n = std::min(max_n, delta_queue_.size());
         for (std::size_t i = 0; i < n; ++i) out[i] = delta_queue_[i];
@@ -2640,7 +2640,7 @@ public:
         return n;
     }
 
-    // serialize_delta: pojedyncza wiadomość → 18 bajtów little-endian.
+    // serialize_delta: a single message → 18 little-endian bytes.
     static std::size_t serialize_delta(const DeltaMessage& d,
                                          std::uint8_t* buf) noexcept {
         buf[0] = static_cast<std::uint8_t>(d.type);
@@ -2673,8 +2673,8 @@ public:
     }
 
 private:
-    // Storage extension (rozszerzenia używane w 2nd-pass features)
-    std::vector<Order*>  stop_orders_;   // czekają na trigger
+    // Storage extension (extensions used in 2nd-pass features)
+    std::vector<Order*>  stop_orders_;   // waiting for a trigger
     std::vector<Order*>  peg_orders_;    // do reprice on book change
     std::int32_t         last_trade_ticks_ = -1;
 
@@ -2696,21 +2696,21 @@ private:
     std::vector<DeltaMessage> delta_queue_;
     std::uint64_t             delta_seq_ = 0;
 
-    // Auction mode — gdy true, submit() pomija match_against (orders sit
-    // w księdze do later batch match przez run_auction).
+    // Auction mode — when true, submit() skips match_against (orders sit
+    // in the book until a later batch match via run_auction).
     bool                      in_auction_mode_ = false;
 
     // Halt state — trading halt (LULD, news pending, technical issue).
-    // Gdy halted_, każdy submit → REJECT(HALTED). Cancel zlecenia wciąż OK.
+    // When halted_, every submit → REJECT(HALTED). Cancelling an order is still OK.
     bool                      halted_ = false;
     char                      halt_reason_[32]{};
 
-    // Halt z reopen przez aukcję (pauza — order entry trwa, match czeka)
+    // Halt with reopen via auction (pause — order entry continues, the match waits)
     bool                      halt_reopen_pending_  = false;
     std::uint64_t             halt_auction_reopens_ = 0;
 
     // Audit log — opt-in chronological record wszystkich book mutations.
-    // Używane do replay'u, forensics, compliance review (SEC 17a-4).
+    // Used for replay, forensics, compliance review (SEC 17a-4).
 public:
     struct AuditRecord {
         std::uint64_t ts_ns;
@@ -2728,12 +2728,12 @@ private:
     std::uint64_t             audit_seq_ = 0;
 
     // LULD (Limit Up Limit Down) — auto-halt mechanizm SEC Rule 605.
-    // Quote poza band'ami auto-rejected lub auto-haltuje book.
+    // A quote outside the bands is auto-rejected or auto-halts the book.
     bool                      luld_enabled_ = false;
     std::int32_t              luld_low_ticks_  = 0;
     std::int32_t              luld_high_ticks_ = 0;
     bool                      luld_auto_halt_  = false;   // true → breach halt'uje (hard)
-    bool                      luld_halt_to_auction_ = false; // breach → pauza z reopen cross
+    bool                      luld_halt_to_auction_ = false; // breach → pause with reopen cross
     std::uint64_t             luld_breaches_   = 0;
 
     void push_audit(EventType ev, std::uint64_t order_id, Side side,
@@ -2751,10 +2751,10 @@ public:
     // ====================================================================
     //
     // Quote poza band'ami → REJECT(LULD_BAND_BREACH).
-    // Jeśli auto_halt=true, breach też haltuje book (5 min standard SEC).
+    // If auto_halt=true, a breach also halts the book (5 min SEC standard).
     //
-    // Real-world: dla S&P 500 stocks 5% LULD band podczas regularnej sesji,
-    // 10% pierwsze 15 min. Trigger po jednej breach = pauza market data + halt.
+    // Real-world: for S&P 500 stocks a 5% LULD band during the regular session,
+    // 10% in the first 15 min. Trigger after one breach = pause market data + halt.
     void set_luld_bands(std::int32_t low_ticks, std::int32_t high_ticks,
                          bool auto_halt = true) noexcept {
         luld_enabled_    = true;
@@ -2766,16 +2766,16 @@ public:
     bool luld_enabled() const noexcept { return luld_enabled_; }
 
     // ====================================================================
-    // Trading halt z reopen przez aukcję (LULD-style pause/resume)
+    // Trading halt with reopen via auction (LULD-style pause/resume)
     // ====================================================================
     //
-    // Hard halt (halt()) odrzuca submity. Realny LULD halt działa inaczej:
-    // handel staje, ale order entry TRWA — zlecenia kolejkują się do
-    // reopening cross, który robi price discovery po pauzie.
-    //   halt_for_auction()     — pauza (auction mode, bez halted_)
-    //   resume_with_auction()  — reopen cross + powrót do continuous
-    // set_luld_halt_to_auction(true) podpina pauzę pod LULD breach
-    // (ma pierwszeństwo przed hard auto_halt).
+    // A hard halt (halt()) rejects submits. A real LULD halt works differently:
+    // trading stops, but order entry CONTINUES — orders queue for the
+    // reopening cross, which does price discovery after the pause.
+    //   halt_for_auction()     — pause (auction mode, without halted_)
+    //   resume_with_auction()  — reopen cross + return to continuous
+    // set_luld_halt_to_auction(true) hooks the pause to a LULD breach
+    // (takes precedence over the hard auto_halt).
     void halt_for_auction() noexcept {
         in_auction_mode_ = true;
         halt_reopen_pending_ = true;
@@ -2801,12 +2801,12 @@ public:
     // MIFID II RTS27/28 best-execution metrics
     // ====================================================================
     //
-    // Regulacyjny output dla EU venue reporting. Tracking continuous:
+    // Regulatory output for EU venue reporting. Continuous tracking:
     //   - effective_spread = 2 × |exec_price - mid_at_exec| (per execution)
     //   - realized_spread  = 2 × |exec_price - mid_post_n_seconds| (proxy: trade-to-trade)
     //   - num_executions, total_volume, total_notional
     //
-    // Caller wywołuje get_mifid_metrics() na koniec sesji żeby wygenerować raport.
+    // The caller invokes get_mifid_metrics() at the end of the session to generate a report.
     struct MIFIDMetrics {
         std::uint64_t num_executions          = 0;
         std::uint64_t total_volume            = 0;
@@ -2828,12 +2828,12 @@ public:
     // Quote stuffing detection
     // ====================================================================
     //
-    // Stuffing = wysyłka tysięcy ordersów per sekunda + natychmiastowe
-    // cancele, żeby symbolu nie dało się odczytać w real time. SEC Rule
-    // 15c3-5: każdy venue musi to wykrywać i flagować.
+    // Stuffing = sending thousands of orders per second + immediate
+    // cancels, so the symbol cannot be read in real time. SEC Rule
+    // 15c3-5: every venue must detect and flag this.
     //
-    // Tu trzymamy per-client_id licznik cancel'i w sliding window (last
-    // N samples). Powyżej threshold → emit STUFFING_FLAGGED event +
+    // Here we keep a per-client_id counter of cancels in a sliding window (last
+    // N samples). Above the threshold → emit a STUFFING_FLAGGED event +
     // stats.total_stuffing_flags.
     void set_stuffing_threshold(std::uint32_t cancels_per_sec_threshold) noexcept {
         stuffing_threshold_ = cancels_per_sec_threshold;
@@ -2845,7 +2845,7 @@ public:
     }
     std::uint64_t total_stuffing_flags() const noexcept { return total_stuffing_flags_; }
 
-    // Reset stuffing window per client (np. po manual review).
+    // Reset the stuffing window per client (e.g. after a manual review).
     void clear_stuffing_flag(std::uint64_t client_id) noexcept {
         stuffing_flagged_[client_id] = false;
         cancel_counters_[client_id]  = 0;
@@ -2856,29 +2856,29 @@ public:
     // ====================================================================
     //
     // Per client_id: net qty (BUY - SELL) open + filled, plus gross qty.
-    // Risk team używa do real-time monitoring expozycji per account.
+    // The risk team uses it for real-time monitoring of exposure per account.
     //
-    // Tracked w submit/cancel/fill events. Caller wywołuje
-    // get_account_exposure(client_id) — zwraca AccountExposure struct.
+    // Tracked in submit/cancel/fill events. The caller invokes
+    // get_account_exposure(client_id) — returns an AccountExposure struct.
     struct AccountExposure {
-        std::int64_t  open_buy_qty       = 0;     // bid orders w księdze
-        std::int64_t  open_sell_qty      = 0;     // ask orders w księdze
-        std::int64_t  filled_net_qty     = 0;     // realizowana pozycja
+        std::int64_t  open_buy_qty       = 0;     // bid orders in the book
+        std::int64_t  open_sell_qty      = 0;     // ask orders in the book
+        std::int64_t  filled_net_qty     = 0;     // realized position
         std::int64_t  filled_gross_volume = 0;    // gross qty traded
         std::uint64_t orders_submitted    = 0;
         std::uint64_t orders_cancelled    = 0;
         std::uint64_t fills_received      = 0;
-        // Aggressive (taker) vs passive (maker) volume — przydatne dla rebates
+        // Aggressive (taker) vs passive (maker) volume — useful for rebates
         // i toxicity scoring per account.
-        std::uint64_t aggressive_volume   = 0;    // ta strona była taker
-        std::uint64_t passive_volume      = 0;    // ta strona była maker
+        std::uint64_t aggressive_volume   = 0;    // this side was the taker
+        std::uint64_t passive_volume      = 0;    // this side was the maker
     };
     AccountExposure get_account_exposure(std::uint64_t client_id) const noexcept {
         const auto it = account_exposure_.find(client_id);
         return it == account_exposure_.end() ? AccountExposure{} : it->second;
     }
     // Aggressive ratio = taker_volume / (taker + maker). 1.0 = pure taker
-    // (płaci taker fee — wysoki cost); 0.0 = pure maker (zbiera rebate).
+    // (pays the taker fee — high cost); 0.0 = pure maker (collects a rebate).
     double aggressive_ratio_for(std::uint64_t client_id) const noexcept {
         const auto ex = get_account_exposure(client_id);
         const std::uint64_t total = ex.aggressive_volume + ex.passive_volume;
@@ -2895,7 +2895,7 @@ public:
     }
 
 private:
-    // Helper hooks dla aggressor vs passive volume tagging.
+    // Helper hooks for aggressor vs passive volume tagging.
     void tag_aggressor_volume(std::uint64_t cid, std::int32_t qty) noexcept {
         if (cid == 0) return;
         account_exposure_[cid].aggressive_volume += static_cast<std::uint64_t>(qty);
@@ -2914,7 +2914,7 @@ private:
     std::unordered_map<std::uint64_t, std::uint32_t> cancel_counters_;
     std::uint64_t                            total_stuffing_flags_ = 0;
 
-    // update_exposure helpers — wywoływane z submit/cancel/fill hooks.
+    // update_exposure helpers — called from submit/cancel/fill hooks.
     void exposure_on_submit(std::uint64_t cid, Side side, std::int32_t qty) noexcept {
         if (cid == 0) return;
         AccountExposure& ex = account_exposure_[cid];
@@ -2956,7 +2956,7 @@ public:
     // Trade size distribution + TWAP + reference price drift
     // ====================================================================
     //
-    // Trade size distribution: classify executions w 4 segments dla detection
+    // Trade size distribution: classify executions into 4 segments for detection
     // retail (small) vs institutional flow (block):
     //   SMALL   ≤ 100
     //   MEDIUM  101..1000
@@ -2980,9 +2980,9 @@ public:
     void reset_size_distribution() noexcept { size_dist_ = TradeSizeDistribution{}; }
 
     // TWAP — time-weighted average price z trade tape.
-    // Inaczej niż tape_vwap (volume-weighted), TWAP traktuje każdy trade
-    // jednakowo. Używany do detection wash-trading (gdy wolumeny nierówne
-    // ale TWAP =VWAP, podejrzanie).
+    // Unlike tape_vwap (volume-weighted), TWAP treats each trade
+    // equally. Used to detect wash-trading (when volumes are unequal
+    // but TWAP =VWAP, suspiciously).
     std::int32_t tape_twap_ticks() const noexcept {
         const std::size_t n = tape_size();
         if (n == 0) return -1;
@@ -2996,9 +2996,9 @@ public:
 
     // Reference price + drift detection.
     //
-    // set_reference_price(ticks) — ustal anchor (np. previous close, opening cross,
-    // SIP NBBO mid). Potem reference_drift_bps() zwraca |mid - ref| / ref × 10000.
-    // Drift > X bps może triggerować halt review.
+    // set_reference_price(ticks) — set the anchor (e.g. previous close, opening cross,
+    // SIP NBBO mid). Then reference_drift_bps() returns |mid - ref| / ref × 10000.
+    // A drift > X bps may trigger a halt review.
     void set_reference_price(std::int32_t ref_ticks) noexcept {
         reference_price_ticks_ = ref_ticks;
         reference_set_ = true;
@@ -3006,8 +3006,8 @@ public:
     bool has_reference_price() const noexcept { return reference_set_; }
     std::int32_t reference_price_ticks() const noexcept { return reference_price_ticks_; }
 
-    // reference_drift_bps: bps deviation mid od reference. Zwraca -1 gdy
-    // ref nieustalone lub brak mid.
+    // reference_drift_bps: bps deviation of mid from the reference. Returns -1 when
+    // ref is not set or there is no mid.
     std::int32_t reference_drift_bps() const noexcept {
         if (!reference_set_) return -1;
         const std::int32_t m = mid_ticks();
@@ -3136,7 +3136,7 @@ private:
     std::uint64_t burst_window_ns_   = 0;     // 0 = off
     std::uint64_t burst_last_submit_ns_ = 0;
     std::uint64_t burst_runs_count_  = 0;     // # bursts (≥2 submits within window)
-    std::uint64_t burst_in_run_count_ = 0;    // counter dla bieżącego runa
+    std::uint64_t burst_in_run_count_ = 0;    // counter for the current run
 
     // Order completion histogram
     std::uint64_t completion_filled_fully_     = 0;  // total_qty == filled_qty
@@ -3158,7 +3158,7 @@ private:
     double  ema_imbalance_bps_value_ = 0.0;
     bool    ema_imbalance_init_ = false;
 
-    // Microprice ring buffer (last MID_RING_CAP samples — definicja niżej)
+    // Microprice ring buffer (last MID_RING_CAP samples — definition below)
     static constexpr std::size_t MID_RING_CAP = 16;
     std::int32_t  microprice_ring_[MID_RING_CAP]{};
     std::size_t   microprice_ring_head_  = 0;
@@ -3177,7 +3177,7 @@ private:
     std::uint64_t ofi_samples_        = 0;
 
     // Trade clustering — variance/mean inter-trade gap (overdispersion)
-    // Welford's algorithm dla running variance
+    // Welford's algorithm for running variance
     double        gap_var_mean_       = 0.0;
     double        gap_var_M2_         = 0.0;
     std::uint64_t gap_var_count_      = 0;
@@ -3209,7 +3209,7 @@ private:
     std::int32_t  slippage_guard_threshold_ticks_ = 0;     // 0 = off
     std::uint64_t slippage_guard_violations_       = 0;
 
-    // NBBO violation audit (defensywne — nie powinno się zdarzyć w correct engine)
+    // NBBO violation audit (defensive — should not happen in a correct engine)
     std::uint64_t nbbo_violations_count_ = 0;
 
     // Per-side cancellation counters
@@ -3238,10 +3238,10 @@ private:
         v.volume         += qty;
     }
 
-    // OCO (One-Cancels-Other) — para orderów; completion jednej nogi
-    // (full fill / cancel / expire) kasuje drugą. Cancel partnera jest
-    // DEFEROWANY przez oco_pending_cancel_ — nie wolno unlinkować innych
-    // orderów w środku pętli match (dangling next_m).
+    // OCO (One-Cancels-Other) — a pair of orders; completion of one leg
+    // (full fill / cancel / expire) cancels the other. The partner's cancel is
+    // DEFERRED via oco_pending_cancel_ — you must not unlink other
+    // orders in the middle of the match loop (dangling next_m).
     std::unordered_map<std::uint64_t, std::uint64_t> oco_partner_;
     std::vector<std::uint64_t> oco_pending_cancel_;
     std::uint64_t oco_triggered_cancels_ = 0;
@@ -3262,8 +3262,8 @@ private:
             auto it = id_index_.find(pid);
             if (it != id_index_.end()) {
                 ++oco_triggered_cancels_;
-                // cancel_internal wywoła oco_on_complete partnera — wpisy
-                // pary już skasowane, więc no-op (brak rekursji)
+                // cancel_internal will call the partner's oco_on_complete — the pair's
+                // entries are already cleared, so it is a no-op (no recursion)
                 Order* o = it->second;
                 if (o->type == OrderType::STOP && o->status == OrderStatus::NEW)
                     cancel_pending_stop(o);
@@ -3273,8 +3273,8 @@ private:
         }
     }
 
-    // Cancel STOP czekającego na trigger — nie jest w levelach, więc
-    // cancel_internal (wymagający is_active()) go nie obsługuje. Usuwa
+    // Cancel a STOP waiting for a trigger — it is not in the levels, so
+    // cancel_internal (requiring is_active()) does not handle it. Removes
     // z stop_orders_ (swap-erase), id_index_ i emituje CANCEL.
     bool cancel_pending_stop(Order* o) noexcept {
         for (std::size_t i = 0; i < stop_orders_.size(); ++i) {
@@ -3296,8 +3296,8 @@ private:
         return false;
     }
 
-    // Bracket: entry order + spec exitów (TP limit + SL stop) odpalanych
-    // automatycznie po FULL fillu entry. Exits linkowane jako para OCO.
+    // Bracket: an entry order + a spec of exits (TP limit + SL stop) fired
+    // automatically after a FULL fill of the entry. Exits linked as an OCO pair.
     struct BracketSpec {
         Side          exit_side;
         std::int32_t  tp_price_ticks;
@@ -3306,16 +3306,16 @@ private:
         std::uint64_t client_id;
     };
     std::unordered_map<std::uint64_t, BracketSpec> bracket_specs_;  // entry_id → spec
-    std::vector<BracketSpec> bracket_pending_;   // armowane po pętli match
+    std::vector<BracketSpec> bracket_pending_;   // armed after the match loop
     std::uint64_t brackets_armed_ = 0;
 
-    // Trailing stop ratchets (trigger przesunięty za rynkiem)
+    // Trailing stop ratchets (trigger moved behind the market)
     std::uint64_t trailing_ratchets_ = 0;
-    // Opt-in: trailing śledzi mid zamiast last_trade (reaguje na ruch
-    // quote'ów bez trade'ów; trigger też z mid — spójna referencja)
+    // Opt-in: trailing tracks mid instead of last_trade (reacts to quote
+    // movement without trades; the trigger is also from mid — a consistent reference)
     bool          trailing_ratchet_on_mid_ = false;
 
-    // Market-On-Close — kolejka czekająca na closing cross (nie w księdze)
+    // Market-On-Close — a queue waiting for the closing cross (not in the book)
     struct MocOrder {
         Side          side;
         std::int32_t  qty;
@@ -3326,8 +3326,8 @@ private:
     std::uint64_t moc_submitted_          = 0;
     std::uint64_t moc_cancelled_unfilled_ = 0;
 
-    // Limit-On-Close — jak MOC, ale z limit price (uczestniczy w price
-    // discovery crossu; resztki też nie restują)
+    // Limit-On-Close — like MOC, but with a limit price (participates in price
+    // of the cross's discovery; remainders also do not rest)
     struct LocOrder {
         Side          side;
         std::int32_t  price_ticks;
@@ -3342,24 +3342,24 @@ private:
     // Short-Sale Restriction (SEC Rule 201 — uptick rule)
     bool          ssr_active_     = false;
     bool          ssr_armed_      = false;     // circuit breaker uzbrojony
-    std::int32_t  ssr_trigger_px_ = 0;         // spadek ≤ tej ceny aktywuje SSR
+    std::int32_t  ssr_trigger_px_ = 0;         // a drop ≤ this price activates SSR
     std::uint64_t ssr_trips_      = 0;
 
     // Iceberg refresh jitter (anti-detection) — deterministyczny LCG,
-    // ta sama sekwencja operacji daje te same refreshe (replay-safe)
+    // the same sequence of operations yields the same refreshes (replay-safe)
     std::int32_t  ice_jitter_bps_ = 0;         // 0 = off; 2000 = ±20%
     std::uint64_t ice_jitter_rng_ = 0x9E3779B97F4A7C15ULL;
 
     // Auction imbalance extensions
     std::uint64_t auction_extensions_ = 0;
 
-    // Faza sesji (lifecycle opt-in; default CONTINUOUS = backward compat)
+    // Session phase (lifecycle opt-in; default CONTINUOUS = backward compat)
     SessionPhase session_phase_ = SessionPhase::CONTINUOUS;
 
     // GTX — resztki skasowane po crossie
     std::uint64_t gtx_cancelled_after_cross_ = 0;
 
-    // Wash-trade surveillance w aukcji (ten sam client po obu stronach crossa)
+    // Wash-trade surveillance in the auction (the same client on both sides of the cross)
     std::uint64_t auction_wash_trade_flags_  = 0;   // Σ flagged clients (all crosses)
     std::uint64_t last_auction_wash_clients_ = 0;   // z ostatniego crossu
 
@@ -3372,11 +3372,11 @@ private:
     };
     std::unordered_map<std::uint64_t, RateBucket> rate_buckets_;
     bool          rate_limiting_enabled_ = false;
-    bool          in_internal_submit_    = false;   // bypass dla resubmitów engine
+    bool          in_internal_submit_    = false;   // bypass for the engine's resubmits
     std::uint64_t rate_limited_rejects_  = 0;
 
     // Market Maker Protection — auto-mass-cancel quotes po N fillach makera
-    // w oknie T (klasyka rynków opcyjnych: ochrona przed sweep stale quotes)
+    // within a window T (a classic of options markets: protection against a sweep of stale quotes)
     struct MmpConfig {
         std::uint64_t window_ns;
         std::uint32_t max_fills;
@@ -3386,7 +3386,7 @@ private:
     };
     std::unordered_map<std::uint64_t, MmpConfig> mmp_;
     std::vector<std::uint64_t> mmp_pending_trips_;   // deferred — mass_cancel
-                                                      // nie może lecieć w match loop
+                                                      // must not run inside the match loop
     std::uint64_t mmp_trips_total_ = 0;
     bool          mmp_enabled_     = false;
 
@@ -3412,13 +3412,13 @@ private:
             const std::uint64_t cid = mmp_pending_trips_.back();
             mmp_pending_trips_.pop_back();
             ++mmp_trips_total_;
-            (void)mass_cancel(cid);   // kasuje też pending stopy konta
+            (void)mass_cancel(cid);   // also cancels the account's pending stops
         }
     }
 
     bool consume_rate_token(std::uint64_t cid) noexcept {
         auto it = rate_buckets_.find(cid);
-        if (it == rate_buckets_.end()) return true;   // konto bez limitu
+        if (it == rate_buckets_.end()) return true;   // account without a limit
         RateBucket& rb = it->second;
         const std::uint64_t now = mono_ns_now();
         if (now > rb.last_refill_ns) {
@@ -3504,7 +3504,7 @@ private:
     // Per-OrderType acceptance counters (10 values)
     std::uint64_t accepts_by_type_[10]{};
 
-    // Mid-price ring buffer (MID_RING_CAP zdefiniowane wyżej w sekcji microprice)
+    // Mid-price ring buffer (MID_RING_CAP defined above in the microprice section)
     std::int32_t  mid_ring_[MID_RING_CAP]{};
     std::size_t   mid_ring_head_  = 0;
     std::size_t   mid_ring_count_ = 0;
@@ -3530,12 +3530,12 @@ public:
     // Top-of-book change tracking
     // ====================================================================
     //
-    // poll_tob_change(): zwraca true gdy best_bid lub best_ask zmieniło się
-    // od ostatniego wywołania. Resetuje state. Strategie używają jako trigger
+    // poll_tob_change(): returns true when best_bid or best_ask changed
+    // since the last call. Resets state. Strategies use it as a trigger
     // do re-quote / decision points.
     //
-    // total_tob_changes() — kumulatywny licznik zmian TOB (każdy submit/
-    // cancel/fill który zmienił best_bid lub best_ask).
+    // total_tob_changes() — a cumulative counter of TOB changes (every submit/
+    // cancel/fill that changed best_bid or best_ask).
     bool poll_tob_change() noexcept {
         const bool changed = (best_bid_ticks_ != last_observed_bid_ticks_)
                           || (best_ask_ticks_ != last_observed_ask_ticks_);
@@ -3548,8 +3548,8 @@ public:
         }
         if (changed) {
             const std::uint64_t now = mono_ns_now();
-            // Quote-flicker: zmiana TOB pomiędzy ostatnim fillem a teraz?
-            // Jeśli od poprzedniej zmiany TOB nie było ŻADNEGO trade, to flicker.
+            // Quote-flicker: a TOB change between the last fill and now?
+            // If there was NO trade since the previous TOB change, it is a flicker.
             if (last_tob_change_ts_ns_ != 0 &&
                 last_fill_ts_ns_ < last_tob_change_ts_ns_) {
                 ++quote_flicker_count_;
@@ -3572,17 +3572,17 @@ public:
         return changed;
     }
 
-    // Quote-life — agregowany czas TOB residency w ns / liczba zmian.
-    // Aproksymacja: liczone od poll do poll. Strategia powinna pollować
-    // regularnie żeby wynik był adekwatny.
+    // Quote-life — aggregated TOB residency time in ns / number of changes.
+    // Approximation: counted from poll to poll. The strategy should poll
+    // regularly so the result is meaningful.
     std::uint64_t mean_tob_life_ns() const noexcept {
         if (stats_.total_tob_changes < 2) return 0;
         return total_tob_life_ns_ / (stats_.total_tob_changes - 1);
     }
     std::uint64_t total_tob_life_ns() const noexcept { return total_tob_life_ns_; }
 
-    // Spread-compression detector — ustawia threshold (ticks) poniżej
-    // którego każda zmiana TOB jest zliczana jako "compression event".
+    // Spread-compression detector — sets a threshold (ticks) below
+    // which every TOB change is counted as a "compression event".
     void set_spread_compression_threshold(std::int32_t threshold_ticks) noexcept {
         spread_compression_threshold_ticks_ = threshold_ticks;
     }
@@ -3596,7 +3596,7 @@ public:
     //
     // VPIN (Volume-Synchronized Probability of Informed Trading; Easley/
     // de Prado/O'Hara 2012). Aproksymacja: cumulative |buy - sell| / total.
-    // Wysoka wartość = informacyjny flow (jeden side dominuje).
+    // A high value = informative flow (one side dominates).
     std::uint64_t taker_buy_volume() const noexcept  { return taker_buy_volume_; }
     std::uint64_t taker_sell_volume() const noexcept { return taker_sell_volume_; }
     std::uint64_t taker_buy_count() const noexcept   { return taker_buy_count_; }
@@ -3617,17 +3617,17 @@ public:
         return static_cast<std::uint32_t>(std::abs(b - s) * 10000 / total);
     }
 
-    // Quote flicker — TOB zmienił się bez intervening trade.
-    // Wysokie = quote stuffing lub pure quoting noise.
+    // Quote flicker — TOB changed without an intervening trade.
+    // High = quote stuffing or pure quoting noise.
     std::uint64_t quote_flicker_count() const noexcept { return quote_flicker_count_; }
 
     // Volume-at-price profile — kumulatywne exec qty per tick.
-    // Strategie używają do detection support/resistance.
+    // Strategies use it to detect support/resistance.
     std::uint64_t volume_at_price(std::int32_t price_ticks) const noexcept {
         if (price_ticks < 0 || price_ticks >= LEVELS) return 0;
         return volume_at_price_[static_cast<std::size_t>(price_ticks)];
     }
-    // Point-of-control: tick z największą historyczną volume.
+    // Point-of-control: the tick with the largest historical volume.
     std::int32_t point_of_control_ticks() const noexcept {
         std::int32_t best_tick = -1;
         std::uint64_t best_vol  = 0;
@@ -3644,9 +3644,9 @@ public:
     // TOB stability streak
     // ====================================================================
     //
-    // current_tob_unchanged_streak() — # konsekutywnych pollów, w których
-    // TOB nie zmienił się. max_tob_unchanged_streak_observed() — historyczne max.
-    // Wysoka wartość = stable book; niska = noisy/active flow.
+    // current_tob_unchanged_streak() — # of consecutive polls in which
+    // TOB did not change. max_tob_unchanged_streak_observed() — the historical max.
+    // A high value = a stable book; low = noisy/active flow.
     std::uint64_t current_tob_unchanged_streak() const noexcept {
         return tob_unchanged_streak_;
     }
@@ -3658,9 +3658,9 @@ public:
     // Time-weighted spread (TWAS)
     // ====================================================================
     //
-    // Strategia okresowo wywołuje sample_time_weighted_spread(); akumulujemy
-    // (spread × dt) gdzie dt = czas od poprzedniego sampla. Mean TWAS =
-    // Σ spread×dt / Σ dt. Bardziej miarodajne niż arithmetic mean spread.
+    // The strategy periodically invokes sample_time_weighted_spread(); we accumulate
+    // (spread × dt) where dt = time since the previous sample. Mean TWAS =
+    // Σ spread×dt / Σ dt. More representative than the arithmetic mean spread.
     void sample_time_weighted_spread() noexcept {
         if (!has_bid() || !has_ask()) return;
         const std::uint64_t now = mono_ns_now();
@@ -3687,8 +3687,8 @@ public:
     // Trade tape statistics
     // ====================================================================
     //
-    // Skanuje całe ring buffer (do TAPE_CAP wpisów) i wylicza statystyki
-    // ostatnich N trades. min/max/mean qty + cena std-dev jako volatility
+    // Scans the whole ring buffer (up to TAPE_CAP entries) and computes statistics
+    // the last N trades. min/max/mean qty + price std-dev as volatility
     // estimator.
     struct TapeStats {
         std::int32_t  n_samples;
@@ -3720,7 +3720,7 @@ public:
         }
         s.mean_qty         = static_cast<double>(sum_qty) / static_cast<double>(n);
         s.mean_price_ticks = static_cast<double>(sum_px)  / static_cast<double>(n);
-        // 2nd pass dla std-dev (numerically stable byłby Welford; tu prosty).
+        // 2nd pass for std-dev (Welford would be numerically stable; here a simple one).
         double var = 0.0;
         for (std::size_t k = 0; k < n; ++k) {
             const Trade& t = tape_[(tape_head_ + TAPE_CAP - n + k) % TAPE_CAP];
@@ -3728,7 +3728,7 @@ public:
             var += d * d;
         }
         var /= static_cast<double>(n);
-        // sqrt bez <cmath> – uproszczenie via std::sqrt
+        // sqrt without <cmath> – simplification via std::sqrt
         s.price_stddev_ticks = std::sqrt(var);
         return s;
     }
@@ -3737,11 +3737,11 @@ public:
     // Hurst exponent (single-window R/S estimate z tape prices)
     // ====================================================================
     //
-    // H ≈ log(R/S) / log(N) gdzie R = range mean-adjusted cumulative
+    // H ≈ log(R/S) / log(N) where R = range mean-adjusted cumulative
     // deviations, S = std-dev. Random walk → ~0.5; trending → >0.5;
-    // mean-reverting → <0.5. Single-window = crude (proper estymator robi
-    // regresję po wielu oknach), ale wystarcza jako rough regime signal.
-    // Zwraca 0.0 gdy <8 trades; 0.5 gdy ceny płaskie (S=0).
+    // mean-reverting → <0.5. Single-window = crude (a proper estimator does
+    // regression over many windows), but it suffices as a rough regime signal.
+    // Returns 0.0 when <8 trades; 0.5 when prices are flat (S=0).
     double hurst_rs_estimate() const noexcept {
         const std::size_t n = std::min(tape_count_, TAPE_CAP);
         if (n < 8) return 0.0;
@@ -3770,8 +3770,8 @@ public:
     // Trade arrival rate
     // ====================================================================
     //
-    // trades_per_second(): liczone z first/last tape ts. 0 gdy <2 trades.
-    // Wysoka wartość = active flow; spike = breakout/news.
+    // trades_per_second(): computed from the first/last tape ts. 0 when <2 trades.
+    // A high value = active flow; a spike = breakout/news.
     double trades_per_second() const noexcept {
         const std::size_t n = std::min(tape_count_, TAPE_CAP);
         if (n < 2) return 0.0;
@@ -3790,8 +3790,8 @@ public:
     // ====================================================================
     //
     // realized_volatility_log_returns(): Σ (log(p_i/p_{i-1}))² across tape.
-    // Aproksymacja microstructure σ²; przemnóż przez (samples_per_year/N)
-    // by uzyskać annualized vol.
+    // Approximation of microstructure σ²; multiply by (samples_per_year/N)
+    // to obtain annualized vol.
     double realized_volatility_log_returns() const noexcept {
         const std::size_t n = std::min(tape_count_, TAPE_CAP);
         if (n < 2) return 0.0;
@@ -3813,11 +3813,11 @@ public:
     // Spread bias + queue replenishment (TOB micro-dynamics)
     // ====================================================================
     //
-    // Każdy poll_tob_micro() jest punktem obserwacyjnym dla:
-    //  • spread_bias: porównanie mid-bid vs ask-mid; gdy aksy są blisko mid,
-    //    bid trzyma; gdy bidy blisko mid, ask trzyma. Wskazówka kto presser.
-    //  • queue_replenish: gdy TOB qty wzrosło względem poprzedniego polla =
-    //    market makery dorzucają liquidity. Spadek = consumption.
+    // Every poll_tob_micro() is an observation point for:
+    //  • spread_bias: comparison of mid-bid vs ask-mid; when asks are close to mid,
+    //    the bid holds; when bids are close to mid, the ask holds. A hint who is pressing.
+    //  • queue_replenish: when TOB qty grew relative to the previous poll =
+    //    market makers are adding liquidity. A drop = consumption.
     void poll_tob_micro() noexcept {
         if (has_bid() && !has_ask()) { ++one_sided_bid_only_; return; }
         if (!has_bid() && has_ask()) { ++one_sided_ask_only_; return; }
@@ -3855,7 +3855,7 @@ public:
     // ====================================================================
     //
     // λ = Σ Δp × v / Σ v² (slope of regression: price change ~ signed volume).
-    // Wysokie λ = każda jednostka volume mocno rusza ceną (illiquid; toxic).
+    // High λ = each unit of volume moves the price a lot (illiquid; toxic).
     double kyle_lambda() const noexcept {
         if (cum_signed_volume_sq_ <= 0.0) return 0.0;
         return cum_price_volume_product_ / cum_signed_volume_sq_;
@@ -3869,8 +3869,8 @@ public:
     // ====================================================================
     //
     // set_latency_arb_window_ns(ε): uzbrojenie alertu na same-side aggressors
-    // w odstępie ≤ ε ns. Wysokie counts = exchange-co-located HFT chasing
-    // venue updates faster niż konkurencja.
+    // within ≤ ε ns. High counts = exchange-co-located HFT chasing
+    // venue updates faster than the competition.
     void set_latency_arb_window_ns(std::uint64_t window_ns) noexcept {
         larb_window_ns_ = window_ns;
     }
@@ -3882,9 +3882,9 @@ public:
     // Per-side last fill timestamps
     // ====================================================================
     //
-    // Adverse selection: jeśli last_buy_fill znacznie świeższy niż last_sell,
-    // to BUY taker dominują — bid pressing. Liquidity providers użyją tych
-    // metryk do skew quote'ów.
+    // Adverse selection: if last_buy_fill is much fresher than last_sell,
+    // then BUY takers dominate — bid pressing. Liquidity providers will use these
+    // metrics to skew their quotes.
     std::uint64_t last_buy_fill_ts_ns()  const noexcept { return last_buy_fill_ts_ns_; }
     std::uint64_t last_sell_fill_ts_ns() const noexcept { return last_sell_fill_ts_ns_; }
 
@@ -3892,9 +3892,9 @@ public:
     // Iceberg refresh counter
     // ====================================================================
     //
-    // Iceberg orderzy z dużym ukrytym reserve robią wiele refreshy. Wysokie
-    // = oznaka long-term institutional accumulation. Per-order tracking byłoby
-    // optymalniejsze, ale globalny licznik wystarcza dla orientacji.
+    // Iceberg orders with a large hidden reserve do many refreshes. High
+    // = a sign of long-term institutional accumulation. Per-order tracking would be
+    // more optimal, but a global counter is enough for orientation.
     std::uint64_t iceberg_refresh_count() const noexcept {
         return iceberg_refresh_count_;
     }
@@ -3903,16 +3903,16 @@ public:
     // Largest resting order — wall detector
     // ====================================================================
     //
-    // O(LEVELS × orders_per_level). Wykorzystywane okresowo, nie hot.
-    // Wall = dużo qty w jednym orderze — może oznaczać iceberg, hidden
-    // intent, lub bluff/manipulację (spoofing).
+    // O(LEVELS × orders_per_level). Used periodically, not hot.
+    // Wall = a lot of qty in a single order — may indicate an iceberg, hidden
+    // intent, or a bluff/manipulation (spoofing).
     // ====================================================================
     // Depth concentration index
     // ====================================================================
     //
     // depth_concentration_bps(side, top_n): qty w top_n najlepszych levels
-    // jako % całkowitej qty po tej stronie (bps). Wysokie = liquidity blisko
-    // best price (tight book); niskie = depth rozłożona (thicker tail).
+    // as a % of the total qty on that side (bps). High = liquidity close to
+    // the best price (tight book); low = depth spread out (thicker tail).
     std::int32_t depth_concentration_bps(Side side, std::int32_t top_n) const noexcept {
         std::int64_t top = 0, total = 0;
         std::int32_t cnt = 0;
@@ -3943,7 +3943,7 @@ public:
     // Active book averages
     // ====================================================================
     //
-    // avg_resting_qty_per_order(): średnia qty per resting order (Σ qty/order_count).
+    // avg_resting_qty_per_order(): mean qty per resting order (Σ qty/order_count).
     // Wysoka = institutional/iceberg-heavy; niska = retail/algo-heavy.
     double avg_resting_qty_per_order() const noexcept {
         std::int64_t total_qty = 0;
@@ -3955,7 +3955,7 @@ public:
         if (total_orders == 0) return 0.0;
         return static_cast<double>(total_qty) / static_cast<double>(total_orders);
     }
-    // active_price_levels(): ile poziomów cenowych ma orders.
+    // active_price_levels(): how many price levels have orders.
     std::int32_t active_price_levels() const noexcept {
         std::int32_t n = 0;
         for (std::int32_t p = 0; p < LEVELS; ++p) {
@@ -3964,10 +3964,10 @@ public:
         return n;
     }
 
-    // Histogram głębokości kolejek: rozkład order_count po aktywnych
-    // levelach. Biny: 1, 2, 3-4, 5-8, 9-16, 17+. Dużo masy w binie 0 =
-    // rozproszona księga (cienkie levele); masa wysoko = crowded queues
-    // (konkurencja o FIFO priority). Zwraca liczbę aktywnych leveli.
+    // Queue-depth histogram: the distribution of order_count across active
+    // levels. Bins: 1, 2, 3-4, 5-8, 9-16, 17+. A lot of mass in bin 0 =
+    // a dispersed book (thin levels); mass up high = crowded queues
+    // (competition for FIFO priority). Returns the number of active levels.
     std::int32_t queue_depth_histogram(std::uint32_t out_bins[6]) const noexcept {
         for (int i = 0; i < 6; ++i) out_bins[i] = 0;
         std::int32_t active = 0;
@@ -3991,7 +3991,7 @@ public:
     // Mid-price ring buffer (last 16) + momentum signal
     // ====================================================================
     //
-    // sample_mid_to_ring() — strategia wywołuje okresowo. Mid-momentum =
+    // sample_mid_to_ring() — the strategy calls it periodically. Mid-momentum =
     // (latest - oldest) per sample interval; signal trendu w short horizon.
     void sample_mid_to_ring() noexcept {
         if (!has_bid() || !has_ask()) return;
@@ -4032,7 +4032,7 @@ public:
     // ====================================================================
     //
     // Buy-side vs sell-side decomposition. Sygnalizuje asymmetric impact:
-    // buy_lambda > sell_lambda → buyers płacą drożej (asymmetric supply curve).
+    // buy_lambda > sell_lambda → buyers pay more (asymmetric supply curve).
     double kyle_lambda_buy() const noexcept {
         if (cum_vsq_buy_ <= 0.0) return 0.0;
         return cum_pv_buy_ / cum_vsq_buy_;
@@ -4048,7 +4048,7 @@ public:
     // Spread regime classifier
     // ====================================================================
     //
-    // Thresholds dzielą czas na 3 bucketsy. Use case: classify market into
+    // Thresholds split time into 3 buckets. Use case: classify the market into
     // calm / normal / stressed regimes (volatility & impact regimes differ).
     void set_spread_regime_thresholds(std::int32_t tight, std::int32_t wide) noexcept {
         spread_regime_tight_thresh_ = tight;
@@ -4071,7 +4071,7 @@ public:
     // TOB skewness — bid_qty vs ask_qty asymmetry
     // ====================================================================
     //
-    // Zwraca (best_bid_qty - best_ask_qty) / (sum) × 10000 bps.
+    // Returns (best_bid_qty - best_ask_qty) / (sum) × 10000 bps.
     // Pozytywny = bid_qty dominuje (passive demand).
     std::int32_t tob_skewness_bps() const noexcept {
         if (!has_bid() || !has_ask()) return 0;
@@ -4086,7 +4086,7 @@ public:
     // Mid-VWAP divergence
     // ====================================================================
     //
-    // mid_minus_tape_vwap_ticks() — current mid względem cumulative VWAP z tape.
+    // mid_minus_tape_vwap_ticks() — current mid relative to the cumulative VWAP from the tape.
     // >0 = price drifted up from average; <0 = drifted down.
     std::int32_t mid_minus_tape_vwap_ticks() const noexcept {
         const std::int32_t vwap = tape_vwap_ticks();
@@ -4120,7 +4120,7 @@ public:
     // ====================================================================
     //
     // sample_spread_to_histogram() — bucketuje current spread do 32-bin hist.
-    // Bin index = min(31, spread). Bin 31 jest catch-all dla >= 31 ticków.
+    // Bin index = min(31, spread). Bin 31 is the catch-all for >= 31 ticks.
     void sample_spread_to_histogram() noexcept {
         if (!has_bid() || !has_ask()) return;
         const std::int32_t s = best_ask_ticks_ - best_bid_ticks_;
@@ -4133,7 +4133,7 @@ public:
         return bin < SPREAD_HIST_BINS ? spread_histogram_[bin] : 0;
     }
     std::uint64_t spread_histogram_total() const noexcept { return spread_hist_total_; }
-    // Median spread w bps — pierwszy bin z cumulative >= 50%.
+    // Median spread in bps — the first bin with cumulative >= 50%.
     std::int32_t spread_histogram_median_ticks() const noexcept {
         if (spread_hist_total_ == 0) return -1;
         const std::uint64_t target = spread_hist_total_ / 2;
@@ -4149,8 +4149,8 @@ public:
     // Top-K largest resting orders
     // ====================================================================
     //
-    // Wypełnia out_qty[] do max K największych remaining qty. Zwraca ile
-    // znaleziono. Prostą O(N×K) selection — używać tylko okresowo na małym K.
+    // Fills out_qty[] with up to K largest remaining qty. Returns how many
+    // were found. A simple O(N×K) selection — use only periodically with small K.
     // ====================================================================
     // Tick-by-tick price change distribution (9 bins, -4..+4 clipped)
     // ====================================================================
@@ -4178,16 +4178,16 @@ public:
     // HFT toxicity composite score
     // ====================================================================
     //
-    // Skalowane 0..10000 bps. Blend trzech sygnałów:
+    // Scaled 0..10000 bps. A blend of three signals:
     //   • VPIN: |buy-sell|/total volume
-    //   • |Kyle λ| znormalizowany przez mean_qty (proxy)
+    //   • |Kyle λ| normalized by mean_qty (proxy)
     //   • CTR (cancel-to-trade) clamped do 100
-    // Każda komponenta równo ważona (33% × 33% × 33%).
+    // Each component equally weighted (33% × 33% × 33%).
     // ====================================================================
-    // Per-side trade VWAP (z całego tape; buy-taker vs sell-taker)
+    // Per-side trade VWAP (from the whole tape; buy-taker vs sell-taker)
     // ====================================================================
     //
-    // buy_vwap_ticks() / sell_vwap_ticks() — VWAP osobno dla każdego kierunku
+    // buy_vwap_ticks() / sell_vwap_ticks() — VWAP separately for each direction
     // taker order flow. Asymmetric: buy_vwap > mid → bullish; sell_vwap < mid → bearish.
     std::int32_t buy_vwap_ticks() const noexcept {
         if (cum_buy_volume_ == 0) return 0;
@@ -4199,7 +4199,7 @@ public:
         return static_cast<std::int32_t>(
             cum_sell_notional_ticks_ / static_cast<std::int64_t>(cum_sell_volume_));
     }
-    // buy_vs_sell_vwap_spread_ticks: dodatni gdy buy_taker_vwap > sell_taker_vwap
+    // buy_vs_sell_vwap_spread_ticks: positive when buy_taker_vwap > sell_taker_vwap
     std::int32_t buy_vs_sell_vwap_spread_ticks() const noexcept {
         const auto b = buy_vwap_ticks();
         const auto s = sell_vwap_ticks();
@@ -4211,7 +4211,7 @@ public:
     // Inter-trade time gap statistics
     // ====================================================================
     //
-    // Mean / min / max gap ns między kolejnymi trades. Niskie = burst flow,
+    // Mean / min / max gap ns between consecutive trades. Low = burst flow,
     // wysokie = quiet periods. Distribution shape = clustering metryka.
     std::uint64_t inter_trade_gap_min_ns() const noexcept {
         return inter_trade_gap_count_ == 0 ? 0 : inter_trade_gap_min_ns_;
@@ -4239,8 +4239,8 @@ public:
     // ====================================================================
     //
     // Mierzone per order — od submit_ts do first_fill_ts (ns). Reflektuje:
-    //  • dla maker: queue wait time przed pierwszym matchem
-    //  • dla taker: matching engine latency
+    //  • for the maker: queue wait time before the first match
+    //  • for the taker: matching engine latency
     std::uint64_t first_fill_latency_count() const noexcept {
         return first_fill_latency_count_;
     }
@@ -4259,9 +4259,9 @@ public:
     // Submission burst detector
     // ====================================================================
     //
-    // set_burst_window_ns(ε): incrementuj counter "burst run" gdy następuje
-    // submit w odstępie ≤ ε od poprzedniego. Burst signal = volatility regime
-    // change lub coordinated order entry.
+    // set_burst_window_ns(ε): increment the "burst run" counter when a
+    // submit occurs within ≤ ε of the previous one. A burst signal = volatility regime
+    // change or coordinated order entry.
     void set_burst_window_ns(std::uint64_t window_ns) noexcept {
         burst_window_ns_ = window_ns;
     }
@@ -4272,11 +4272,11 @@ public:
     // Order completion histogram
     // ====================================================================
     //
-    // Cztery kategorie completion:
-    //  • filled_fully — match wzięło całą qty
-    //  • cancelled_partial — cancel po częściowym fillu
-    //  • cancelled_unfilled — cancel bez żadnego fillu
-    //  • expired_partial / expired_unfilled — analogicznie ale przez GTD/DAY
+    // Four completion categories:
+    //  • filled_fully — the match took the whole qty
+    //  • cancelled_partial — cancel after a partial fill
+    //  • cancelled_unfilled — cancel without any fill
+    //  • expired_partial / expired_unfilled — analogously but via GTD/DAY
     // Ratio = filled_fully / total_orders_added — book "execution efficiency".
     std::uint64_t completion_filled_fully() const noexcept     { return completion_filled_fully_; }
     std::uint64_t completion_cancelled_partial() const noexcept{ return completion_cancelled_partial_; }
@@ -4294,9 +4294,9 @@ public:
     // Time-weighted mid (TWAP-of-mid)
     // ====================================================================
     //
-    // Strategia okresowo wywołuje sample_time_weighted_mid(). Akumuluje
-    // (mid × dt) między samplami. mean = sum / total_dt. Lepszy benchmark
-    // niż simple mid snapshot.
+    // The strategy periodically invokes sample_time_weighted_mid(). It accumulates
+    // (mid × dt) between samples. mean = sum / total_dt. A better benchmark
+    // than a simple mid snapshot.
     void sample_time_weighted_mid() noexcept {
         if (!has_bid() || !has_ask()) return;
         const std::int32_t mid = (best_bid_ticks_ + best_ask_ticks_) / 2;
@@ -4308,7 +4308,7 @@ public:
         }
         if (now > last_twmid_sample_ts_ns_) {
             const std::uint64_t dt = now - last_twmid_sample_ts_ns_;
-            // Trapezoidal: dla stabilnej średniej używamy poprzedniego mid × dt
+            // Trapezoidal: for a stable mean we use the previous mid × dt
             twmid_sum_ticks_x_ns_ +=
                 static_cast<std::int64_t>(last_twmid_sample_ticks_) *
                 static_cast<std::int64_t>(dt);
@@ -4326,7 +4326,7 @@ public:
         return twmid_total_dt_ns_;
     }
 
-    // Mean trade qty across całego cumulative tape
+    // Mean trade qty across the whole cumulative tape
     double mean_trade_qty() const noexcept {
         if (stats_.total_fills == 0) return 0.0;
         return static_cast<double>(stats_.total_volume) /
@@ -4337,7 +4337,7 @@ public:
     // Per-side maker fills
     // ====================================================================
     //
-    // Liczba maker orderów fully filled per side. BUY maker fully filled =
+    // Number of maker orders fully filled per side. BUY maker fully filled =
     // strong sell pressure ate complete bid. SELL maker fully filled =
     // strong buy pressure. Asymmetry → directional bias indicator.
     std::uint64_t maker_fills_buy_side() const noexcept  { return maker_fills_buy_side_; }
@@ -4347,7 +4347,7 @@ public:
     // Mean fill notional (Σ price × qty / Σ fills)
     // ====================================================================
     //
-    // Większy = block trading / institutional flow; mniejszy = retail/algo.
+    // Larger = block trading / institutional flow; smaller = retail/algo.
     double mean_fill_notional_ticks() const noexcept {
         if (stats_.total_fills == 0) return 0.0;
         // Recompute from tape (cumulative buy + sell notionals are tape-derived)
@@ -4361,15 +4361,15 @@ public:
     // Most-active levels by qty (top-K)
     // ====================================================================
     //
-    // top_k_active_levels_by_qty(out_prices, out_qtys, k): zwraca top-K
-    // poziomów cenowych z największą total_qty. O(LEVELS × K) — okresowe.
+    // top_k_active_levels_by_qty(out_prices, out_qtys, k): returns the top-K
+    // price levels with the largest total_qty. O(LEVELS × K) — periodic.
     // ====================================================================
     // Depth pyramid score
     // ====================================================================
     //
     // depth_pyramid_steepness_bps(side, depth_n): slope between best level qty
-    // i N-tego level qty. Wysokie = stromy spadek głębokości (tightly stacked
-    // best level, thin tail); niskie = równomierne rozłożenie depth.
+    // and the N-th level qty. High = a steep depth drop-off (tightly stacked
+    // best level, thin tail); low = an even spread of depth.
     // (qty_at_best - qty_at_n-th_level) / qty_at_best × 10000.
     std::int32_t depth_pyramid_steepness_bps(Side side, std::int32_t depth_n) const noexcept {
         if (depth_n < 2) return 0;
@@ -4450,7 +4450,7 @@ public:
     // ====================================================================
     //
     // sample_ema_imbalance() — periodyczny hook. EMA filtruje noise z imbalance.
-    // alpha = 0.1 default (responsywność: 10 sampli ~ ε90 decay).
+    // alpha = 0.1 default (responsiveness: 10 samples ~ ε90 decay).
     void set_ema_imbalance_alpha(double a) noexcept {
         if (a > 0.0 && a <= 1.0) ema_imbalance_alpha_ = a;
     }
@@ -4497,8 +4497,8 @@ public:
     // Signed-volume EMA (order flow filter)
     // ====================================================================
     //
-    // EMA z signed qty (+qty BUY, -qty SELL) per trade. Sygnał direction
-    // bardziej responsywny niż cumulative flow imbalance.
+    // EMA of signed qty (+qty BUY, -qty SELL) per trade. A direction signal
+    // more responsive than the cumulative flow imbalance.
     double ema_signed_volume() const noexcept { return ema_signed_volume_; }
     bool   ema_signed_volume_ready() const noexcept { return ema_signed_volume_init_; }
 
@@ -4506,13 +4506,13 @@ public:
     // Cont-Kukanov Order Flow Imbalance (OFI)
     // ====================================================================
     //
-    // Klasyczna formuła z Cont/Kukanov 2014:
+    // The classic formula from Cont/Kukanov 2014:
     //   OFI = ΔW_b - ΔW_a
-    // gdzie:
-    //   ΔW_b: +q_b jeśli bid price up; q_b - q_b_prev jeśli unchanged; -q_b_prev jeśli down
-    //   ΔW_a: -q_a jeśli ask price up; q_a_prev - q_a jeśli unchanged; +q_a_prev jeśli down
-    // (Strona ask jest invertowana — wzrost asku zmniejsza buy pressure.)
-    // (Nazwa _ck dla disambiguation względem prostszego sample_ofi() wyżej.)
+    // where:
+    //   ΔW_b: +q_b if bid price up; q_b - q_b_prev if unchanged; -q_b_prev if down
+    //   ΔW_a: -q_a if ask price up; q_a_prev - q_a if unchanged; +q_a_prev if down
+    // (The ask side is inverted — a rise in the ask reduces buy pressure.)
+    // (The _ck name for disambiguation from the simpler sample_ofi() above.)
     void sample_ofi_ck() noexcept {
         if (!has_bid() || !has_ask()) return;
         const std::int32_t bq = levels_[best_bid_ticks_].total_qty;
@@ -4571,7 +4571,7 @@ public:
     // ====================================================================
     //
     // sample_maker_survival(): snapshot wszystkich aktywnych order_id; w
-    // kolejnym pollu zlicza ile z poprzedniego snapshota nadal żyje.
+    // on the next poll counts how many from the previous snapshot are still alive.
     // mean_survival_ratio = total_survivors / total_orders_prev_sampled.
     void sample_maker_survival() {
         ++maker_survival_total_polls_;
@@ -4619,7 +4619,7 @@ public:
                               static_cast<double>(t);
     }
     double markov_trend_persistence_bps() const noexcept {
-        // (P(B|B) + P(S|S)) - 1.0 × 10000 — pozytywne = trending; ujemne = reverting
+        // (P(B|B) + P(S|S)) - 1.0 × 10000 — positive = trending; negative = reverting
         const auto bb_tot = markov_BB_ + markov_BS_;
         const auto ss_tot = markov_SB_ + markov_SS_;
         if (bb_tot == 0 || ss_tot == 0) return 0.0;
@@ -4634,8 +4634,8 @@ public:
     // Queue depth at maker arrival (FIFO position rejestrowana na enqueue)
     // ====================================================================
     //
-    // Strategia obserwuje: gdy nowy maker wpada na pusty level → great queue
-    // priority; gdy na crowded level → low priority.
+    // The strategy observes: when a new maker lands on an empty level → great queue
+    // priority; when on a crowded level → low priority.
     double mean_queue_depth_at_arrival() const noexcept {
         if (queue_depth_arrival_count_ == 0) return 0.0;
         return static_cast<double>(queue_depth_arrival_sum_) /
@@ -4652,20 +4652,20 @@ public:
     // Trade momentum count from tape (last N net direction)
     // ====================================================================
     //
-    // Wraca signed value: +N gdy ostatnie N to BUY-takers; -N gdy SELL-takers.
+    // Returns a signed value: +N when the last N are BUY-takers; -N when SELL-takers.
     // Range: [-min(n, tape_count), +min(n, tape_count)].
     // ====================================================================
     // Inter-trade gap autocorrelation lag-1
     // ====================================================================
     //
     // ACF₁ = Σ x_i × x_{i-1} / Σ x_{i-1}² (uncentered estimator).
-    // Pozytywne = trended timing; ujemne = alternating; ≈0 = uncorrelated.
+    // Positive = trended timing; negative = alternating; ≈0 = uncorrelated.
     double inter_trade_gap_autocorr_lag1() const noexcept {
         if (gap_autocorr_xx_sum_ <= 0.0) return 0.0;
         // Clamp do [-1,1]: autokorelacja z definicji tam zyje. Niecentrowany
         // estymator na danych zaleznych od zegara (inter-trade gaps) potrafi
         // chwilowo przekroczyc 1 (rozne float-ordering g++/clang -> flaky test
-        // acf_bounded). Clamp = poprawny zakres ACF, deterministyczny wynik.
+        // acf_bounded). Clamp = the correct ACF range, a deterministic result.
         const double acf = gap_autocorr_xy_sum_ / gap_autocorr_xx_sum_;
         return acf < -1.0 ? -1.0 : (acf > 1.0 ? 1.0 : acf);
     }
@@ -4674,8 +4674,8 @@ public:
     // Slippage budget guard
     // ====================================================================
     //
-    // set_slippage_guard_threshold_ticks(T): counter ile fill events miało
-    // |fill_px - mid_pre| > T. Pure detection (nie blokuje matchu).
+    // set_slippage_guard_threshold_ticks(T): a counter of how many fill events had
+    // |fill_px - mid_pre| > T. Pure detection (does not block the match).
     void set_slippage_guard_threshold_ticks(std::int32_t t) noexcept {
         slippage_guard_threshold_ticks_ = t;
     }
@@ -4687,8 +4687,8 @@ public:
     // NBBO violation audit (defensive)
     // ====================================================================
     //
-    // Liczy fillów które wyglądały na "off-NBBO" (taker limit znacząco poza
-    // mid). Sanity — w correct engine powinno być 0 dla quiet markets.
+    // Counts fills that looked "off-NBBO" (taker limit significantly beyond
+    // mid). Sanity — in a correct engine it should be 0 for quiet markets.
     std::uint64_t nbbo_violations_count() const noexcept {
         return nbbo_violations_count_;
     }
@@ -4703,18 +4703,18 @@ public:
     // OCO (One-Cancels-Other) — bracket orders
     // ====================================================================
     //
-    // link_oco(a, b): łączy dwa RESTING ordery w parę. Completion jednej nogi
-    // (full fill / cancel / expire / auction fill) automatycznie kasuje drugą.
-    // Partial fill NIE triggeruje (tylko pełne wypełnienie). modify() nogi
-    // ZACHOWUJE parę (cancel-replace, order_id bez zmian); jeśli
-    // zmodyfikowana noga od razu w pełni się wypełni, partner pada normalnie.
-    // Pending STOP może być nogą (kasowany przez cancel_pending_stop).
+    // link_oco(a, b): links two RESTING orders into a pair. Completion of one leg
+    // (full fill / cancel / expire / auction fill) automatically cancels the other.
+    // A partial fill does NOT trigger (only a full fill). modify() of a leg
+    // PRESERVES the pair (cancel-replace, order_id unchanged); if
+    // the modified leg fills fully immediately, the partner falls normally.
+    // A pending STOP may be a leg (cancelled by cancel_pending_stop).
     bool link_oco(std::uint64_t a, std::uint64_t b) noexcept {
         if (a == 0 || b == 0 || a == b) return false;
         if (id_index_.find(a) == id_index_.end()) return false;
         if (id_index_.find(b) == id_index_.end()) return false;
         if (oco_partner_.count(a) != 0 || oco_partner_.count(b) != 0)
-            return false;   // któraś noga już w innej parze
+            return false;   // one of the legs is already in another pair
         oco_partner_[a] = b;
         oco_partner_[b] = a;
         return true;
@@ -4740,12 +4740,12 @@ public:
     //
     // submit_bracket(side, entry_price, qty, tp_price, sl_trigger):
     //   1. Submituje entry LIMIT/DAY.
-    //   2. Po FULL fillu entry automatycznie armuje exity po przeciwnej
-    //      stronie: take-profit LIMIT/GTC @ tp_price + stop-loss STOP
-    //      (market-on-trigger) @ sl_trigger, zlinkowane jako para OCO.
-    //   3. Cancel/expire entry przed fillem = disarm (exity nie powstają).
-    // Partial fill nie armuje (tylko pełne wypełnienie). Zwraca entry_id
-    // lub 0 przy reject.
+    //   2. After a FULL fill of the entry it automatically arms exits on the opposite
+    //      side: take-profit LIMIT/GTC @ tp_price + stop-loss STOP
+    //      (market-on-trigger) @ sl_trigger, linked as an OCO pair.
+    //   3. Cancel/expire the entry before the fill = disarm (exits are not created).
+    // A partial fill does not arm (only a full fill). Returns entry_id
+    // or 0 on reject.
     std::uint64_t submit_bracket(Side side, std::int32_t entry_price_ticks,
                                   std::int32_t qty,
                                   std::int32_t tp_price_ticks,
@@ -4759,8 +4759,8 @@ public:
                    TimeInForce::DAY, 0, client_id);
         if (entry_id == 0) return 0;
         if (id_index_.find(entry_id) == id_index_.end()) {
-            // Entry wypełniony natychmiast jako taker (LIMIT/DAY nie jest
-            // IOC, więc brak w indeksie == full fill) — armuj od razu
+            // Entry filled immediately as a taker (LIMIT/DAY is not
+            // IOC, so absence from the index == full fill) — arm right away
             arm_bracket_exits(spec);
         } else {
             bracket_specs_[entry_id] = spec;
@@ -4775,7 +4775,7 @@ public:
     // ====================================================================
     //
     // Klasyka mikrostruktury: px > mid → BUY-initiated, px < mid → SELL,
-    // px == mid → tick test. accuracy = % zgodności z faktycznym taker_side.
+    // px == mid → tick test. accuracy = % agreement with the actual taker_side.
     double lee_ready_accuracy() const noexcept {
         if (lr_total_classified_ == 0) return 0.0;
         return static_cast<double>(lr_correct_) /
@@ -4790,8 +4790,8 @@ public:
     // Per-account VWAP
     // ====================================================================
     //
-    // VWAP wszystkich fillów danego client_id (maker i taker side łącznie).
-    // 0 = brak fillów dla tego konta.
+    // VWAP of all fills of a given client_id (maker and taker side combined).
+    // 0 = no fills for this account.
     std::int32_t account_vwap_ticks(std::uint64_t client_id) const noexcept {
         const auto it = account_vwap_.find(client_id);
         if (it == account_vwap_.end() || it->second.volume == 0) return 0;
@@ -4803,14 +4803,14 @@ public:
     // Book integrity audit (struktura intrusive list + agregaty)
     // ====================================================================
     //
-    // Defensywny self-check invariantów:
-    //   • prev/next spójne (doubly-linked)
+    // Defensive self-check of invariants:
+    //   • prev/next consistent (doubly-linked)
     //   • order->price_ticks == index levelu
-    //   • lvl.order_count == faktyczna liczba node'ów
+    //   • lvl.order_count == the actual number of nodes
     //   • lvl.total_qty == Σ displayed_qty
     //   • lvl.total_hidden == Σ (total - filled - displayed)
-    //   • lvl.tail wskazuje ostatni node
-    // Zwraca liczbę naruszeń (0 = księga spójna). O(LEVELS + orders).
+    //   • lvl.tail points to the last node
+    // Returns the number of violations (0 = book consistent). O(LEVELS + orders).
     std::uint64_t audit_book_integrity() const noexcept {
         std::uint64_t violations = 0;
         for (std::int32_t p = 0; p < LEVELS; ++p) {
@@ -4888,8 +4888,8 @@ public:
     // Last-N rolling VWAP z tape
     // ====================================================================
     //
-    // last_n_vwap_ticks(n): VWAP ostatnich min(n, tape_count) trades. Daje
-    // bardziej responsywny VWAP niż cumulative (zapomina old data).
+    // last_n_vwap_ticks(n): VWAP of the last min(n, tape_count) trades. Gives
+    // a more responsive VWAP than cumulative (forgets old data).
     std::int32_t last_n_vwap_ticks(std::size_t n) const noexcept {
         const std::size_t avail = std::min(tape_count_, TAPE_CAP);
         const std::size_t use   = std::min(n, avail);
@@ -4910,7 +4910,7 @@ public:
     // ====================================================================
     //
     // IS = Σ (fill_px - decision_mid) × qty × side_sign across all fills.
-    // Pozytywny = trader stracił na ruchu rynku (adverse selection).
+    // Positive = the trader lost on the market move (adverse selection).
     // mean_implementation_shortfall_ticks_per_share() — average cost per share.
     std::int64_t cumulative_implementation_shortfall_ticks_qty() const noexcept {
         return cum_implementation_shortfall_ticks_qty_;
@@ -4941,11 +4941,11 @@ public:
             for (const Order* o = levels_[p].head; o != nullptr; o = o->next_at_level) {
                 const std::int32_t left = o->total_qty - o->filled_qty;
                 if (left <= 0) continue;
-                // Wstaw do sortowanej tablicy (insertion-sort top-K)
+                // Insert into the sorted array (insertion-sort top-K)
                 std::size_t pos = std::min(filled, k - 1);
                 if (left > out_qty[pos] || filled < k) {
                     if (filled < k) ++filled;
-                    // znajdź miejsce
+                    // find the spot
                     std::size_t i_ins = std::min(filled - 1, k - 1);
                     while (i_ins > 0 && out_qty[i_ins - 1] < left) {
                         out_qty[i_ins] = out_qty[i_ins - 1];
@@ -4973,8 +4973,8 @@ public:
     // Per-reason / per-TIF / per-OrderType breakdowns
     // ====================================================================
     //
-    // Compliance dashboard — gdzie się odbijają zlecenia (kategoria błędów)
-    // i jakie typy/TIF preferują traderzy. Acceptance ratio = added / submitted.
+    // Compliance dashboard — where orders bounce (the error category)
+    // and which types/TIF traders prefer. Acceptance ratio = added / submitted.
     std::uint64_t rejections_by_reason(RejectReason r) const noexcept {
         const auto i = static_cast<std::size_t>(r);
         return i < 18 ? rejections_by_reason_[i] : 0;
@@ -5024,10 +5024,10 @@ public:
     // for_each_order — read-only iterator po wszystkich aktywnych orderach
     // ====================================================================
     //
-    // Wywołuje Visitor(const Order&) dla każdego aktywnego ordera (we wszystkich
-    // levels, w FIFO order per level, najlepsze ceny pierwsze). Replay/audit.
+    // Calls Visitor(const Order&) for each active order (across all
+    // levels, in FIFO order per level, best prices first). Replay/audit.
     // ====================================================================
-    // Event sequence numbers — monotonic, dla consumer gap detection / dedup
+    // Event sequence numbers — monotonic, for consumer gap detection / dedup
     // ====================================================================
     std::uint64_t last_event_seq_num() const noexcept { return last_emitted_seq_; }
 
@@ -5035,8 +5035,8 @@ public:
     // BookHealth — jednorazowy dashboard snapshot (zero alocacji)
     // ====================================================================
     //
-    // Aggreguje najbardziej przydatne metryki dla operator panel / monitoring
-    // / circuit-breaker decyzji w jeden tani odczyt.
+    // Aggregates the most useful metrics for an operator panel / monitoring
+    // / circuit-breaker decisions into one cheap read.
     struct BookHealth {
         // Liquidity
         std::int32_t  spread_ticks;
@@ -5087,8 +5087,8 @@ public:
     // Hidden liquidity ratio (visible vs hidden capacity)
     // ====================================================================
     //
-    // Iceberg/HIDDEN orders mają część qty niewidoczną w L1/L2 depth.
-    // Ratio = Σ hidden / (Σ visible + Σ hidden). Wysokie = dużo dark liquidity.
+    // Iceberg/HIDDEN orders have part of their qty invisible in L1/L2 depth.
+    // Ratio = Σ hidden / (Σ visible + Σ hidden). High = a lot of dark liquidity.
     double hidden_liquidity_ratio() const noexcept {
         std::int64_t vis = 0, hid = 0;
         for (std::int32_t p = 0; p < LEVELS; ++p) {
@@ -5101,7 +5101,7 @@ public:
     }
 
     // Per-side resting order counts (visible only — hidden zliczone osobno).
-    // O(LEVELS) — używaj okresowo, nie w hot pathy.
+    // O(LEVELS) — use periodically, not on the hot path.
     std::int32_t resting_order_count(Side side) const noexcept {
         std::int32_t n = 0;
         if (side == Side::BUY) {
@@ -5118,7 +5118,7 @@ public:
 
     template <typename Visitor>
     void for_each_order(Visitor v) const noexcept {
-        // Bids od best w dół
+        // Bids from best downward
         for (std::int32_t p = best_bid_ticks_; p >= 0 && p != NO_BID_TICKS; --p) {
             const PriceLevel& lvl = levels_[p];
             for (const Order* o = lvl.head; o != nullptr; o = o->next_at_level) {
@@ -5126,7 +5126,7 @@ public:
             }
             if (p == 0) break;
         }
-        // Asks od best w górę
+        // Asks from best upward
         for (std::int32_t p = best_ask_ticks_;
              p < LEVELS && p != NO_ASK_TICKS; ++p) {
             const PriceLevel& lvl = levels_[p];
@@ -5136,7 +5136,7 @@ public:
         }
     }
 
-    // current_tob_snapshot(): immutable read bez resetu state.
+    // current_tob_snapshot(): immutable read without resetting state.
     bool tob_has_changed_since_last_poll() const noexcept {
         return (best_bid_ticks_ != last_observed_bid_ticks_)
             || (best_ask_ticks_ != last_observed_ask_ticks_);
@@ -5146,9 +5146,9 @@ public:
     // Multi-level imbalance
     // ====================================================================
     //
-    // imbalance_bps_n(n_levels): agregowany imbalance po N najgłębszych
-    // poziomach per side, nie tylko TOB. Realny order flow signal — TOB
-    // imbalance łatwo manipulowany, ale depth-3 lub depth-5 trudniej.
+    // imbalance_bps_n(n_levels): aggregated imbalance over the N deepest
+    // levels per side, not just TOB. A real order-flow signal — TOB
+    // imbalance is easily manipulated, but depth-3 or depth-5 is harder.
     std::int32_t imbalance_bps_n(std::int32_t n_levels) const noexcept {
         if (!has_bid() || !has_ask()) return 0;
         std::int64_t b = 0, a = 0;
@@ -5170,9 +5170,9 @@ public:
     // Market impact estimator (pre-trade analytics)
     // ====================================================================
     //
-    // predicted_vwap_ticks(side, qty): symuluje walk-the-book bez modyfikacji
-    // księgi. Zwraca expected VWAP (ticks) jeśli order o `qty` byłby IOC.
-    // 0 = brak liquidity. Side::BUY zjada asks, Side::SELL zjada bids.
+    // predicted_vwap_ticks(side, qty): simulates walk-the-book without modifying
+    // of the book. Returns the expected VWAP (ticks) if an order of `qty` were IOC.
+    // 0 = no liquidity. Side::BUY eats asks, Side::SELL eats bids.
     std::int32_t predicted_vwap_ticks(Side side, std::int32_t qty) const noexcept {
         if (qty <= 0) return 0;
         std::int64_t notional_ticks = 0;
@@ -5200,8 +5200,8 @@ public:
         return static_cast<std::int32_t>(notional_ticks / filled);
     }
 
-    // slippage_ticks: predicted_vwap - mid. Signed dla BUY positive (płacę więcej),
-    // SELL negative (dostaję mniej). Wartość bezwzględna = oczekiwany koszt.
+    // slippage_ticks: predicted_vwap - mid. Signed: for BUY positive (I pay more),
+    // SELL negative (I get less). The absolute value = the expected cost.
     std::int32_t predicted_slippage_ticks(Side side, std::int32_t qty) const noexcept {
         if (!has_bid() || !has_ask()) return 0;
         const std::int32_t mid = (best_bid_ticks_ + best_ask_ticks_) / 2;
@@ -5210,9 +5210,9 @@ public:
         return vwap - mid;
     }
 
-    // depth_available_ticks(side, max_price_offset): suma qty dostępnej do
-    // ceny mid ± offset. Używane do szybkiego "ile mogę kupić bez przeskakiwania
-    // > N ticków od mid?".
+    // depth_available_ticks(side, max_price_offset): the sum of qty available up to
+    // the mid ± offset price. Used for a quick "how much can I buy without jumping
+    // > N ticks from mid?".
     std::int32_t depth_within_offset(Side side, std::int32_t max_offset) const noexcept {
         if (!has_bid() || !has_ask()) return 0;
         const std::int32_t mid = (best_bid_ticks_ + best_ask_ticks_) / 2;
@@ -5235,15 +5235,15 @@ public:
     // Sweep-to-fill metrics
     // ====================================================================
     //
-    // avg_levels_per_sweep — średnia liczba price levels per egzekucja.
-    // Wysoka wartość = thin book / large orders (toxic flow indicator).
+    // avg_levels_per_sweep — the mean number of price levels per execution.
+    // A high value = a thin book / large orders (a toxic-flow indicator).
     double avg_levels_per_sweep() const noexcept {
         if (stats_.total_sweeps == 0) return 0.0;
         return static_cast<double>(stats_.sum_levels_touched) /
                static_cast<double>(stats_.total_sweeps);
     }
 
-    // multi_level_sweep_ratio — proporcja sweepów które uderzyły w >=2 levels.
+    // multi_level_sweep_ratio — the proportion of sweeps that hit >=2 levels.
     double multi_level_sweep_ratio() const noexcept {
         if (stats_.total_sweeps == 0) return 0.0;
         return static_cast<double>(stats_.multi_level_sweeps) /
@@ -5255,9 +5255,9 @@ public:
     // ====================================================================
     //
     // Tracked w match_at_level po fill + w cancel_internal.
-    // Dla każdego completed lifecycle (fill or cancel), record age_ns
+    // For each completed lifecycle (fill or cancel), record age_ns
     // = now - submit_ts_ns_. Wykorzystywane do detection toxic queue
-    // (gdy orders szybko fillowane = aggressive flow; długo czekające =
+    // (when orders are filled quickly = aggressive flow; long-waiting =
     // resting MM).
     std::uint64_t total_completed_lifecycles() const noexcept {
         return age_stats_count_;
@@ -5273,8 +5273,8 @@ public:
     // Execution quality / TCA metrics
     // ====================================================================
     //
-    // Quoted spread — okresowo sampluj wywołując sample_quoted_spread() z
-    // pętli marketdata. Mean quoted spread = Σ obs / N.
+    // Quoted spread — sample periodically by calling sample_quoted_spread() from
+    // the marketdata loop. Mean quoted spread = Σ obs / N.
     // Effective spread — accumulowany per fill w match_against():
     //   eff_spread = 2 × |fill_px - mid_pre_match|
     // Relacja eff/quoted < 1 → price improvement; > 1 → adverse selection.
@@ -5294,7 +5294,7 @@ public:
         return static_cast<double>(stats_.total_effective_spread_2x_ticks) /
                static_cast<double>(stats_.total_effective_spread_samples);
     }
-    // Realized vs quoted ratio (TCA klasyka). 0 == brak danych.
+    // Realized vs quoted ratio (a TCA classic). 0 == no data.
     double effective_to_quoted_ratio() const noexcept {
         const double q = mean_quoted_spread_ticks();
         if (q <= 0.0) return 0.0;
@@ -5305,7 +5305,7 @@ public:
     // Cancel-to-trade ratio (CTR) — per-book i per-account
     // ====================================================================
     //
-    // SEC Rule 15c3-5 / MiFID II RTS 9: nadmierny CTR (>50:1) wskazuje na
+    // SEC Rule 15c3-5 / MiFID II RTS 9: an excessive CTR (>50:1) indicates
     // quote stuffing / spoofing. Wyliczane na podstawie cumulative stats.
     double cancel_to_trade_ratio() const noexcept {
         if (stats_.total_fills == 0) return 0.0;
@@ -5360,7 +5360,7 @@ public:
     // ====================================================================
     //
     // spread_ticks — best_ask - best_bid (>=0 in continuous mode).
-    // Zwraca -1 gdy nie ma quote po którejś stronie.
+    // Returns -1 when there is no quote on one of the sides.
     std::int32_t spread_ticks() const noexcept {
         if (!has_bid() || !has_ask()) return -1;
         return best_ask_ticks_ - best_bid_ticks_;
@@ -5376,19 +5376,19 @@ public:
         return static_cast<std::int32_t>((sprd * 10000 / 2) / mid);
     }
 
-    // weighted_mid_ticks — alias dla microprice (popularna nazwa w lit).
+    // weighted_mid_ticks — alias for microprice (a popular name in the literature).
     std::int32_t weighted_mid_ticks() const noexcept { return microprice_ticks(); }
 
     // ====================================================================
     // Mass quote — atomic batch submission (market maker scenario)
     // ====================================================================
     //
-    // MM zwykle wystawia 2-stronną kwotę (bid + ask) atomowo, żeby nie być
-    // expozowany na chwilowy ruch przy non-atomic submissions. mass_quote()
-    // atomic: ALL-OR-NONE (jeśli jeden by failed, NIC nie idzie).
+    // An MM usually posts a 2-sided quote (bid + ask) atomically, to avoid being
+    // exposed to a momentary move with non-atomic submissions. mass_quote()
+    // atomic: ALL-OR-NONE (if one would fail, NOTHING goes through).
     //
-    // Caller dostarcza array `quotes[n]`. Każdy element to {side, price, qty}.
-    // Zwraca liczbę przyjętych zleceń (== n on success, 0 na pierwszy fail).
+    // The caller supplies the array `quotes[n]`. Each element is {side, price, qty}.
+    // Returns the number of accepted orders (== n on success, 0 on the first fail).
     struct Quote {
         Side          side;
         std::int32_t  price_ticks;
@@ -5397,7 +5397,7 @@ public:
     std::size_t mass_quote(const Quote* quotes, std::size_t n,
                             std::uint64_t client_id,
                             std::uint64_t* out_ids = nullptr) noexcept {
-        // 2-pass: faza walidacji (sprawdzimy że pula i ceny OK), faza submit.
+        // 2-pass: a validation phase (we check that the pool and prices are OK), then a submit phase.
         if (active_orders_ + n > MAX_ORDERS) {
             ++stats_.total_orders_rejected;
             tally_rejection(RejectReason::POOL_EXHAUSTED);
@@ -5411,14 +5411,14 @@ public:
                                             : RejectReason::PRICE_OUT_OF_RANGE);
                 return 0;
             }
-            // POST_ONLY semantic — quote nie może krzyżować rynku
+            // POST_ONLY semantic — a quote must not cross the market
             if (would_cross(q.side, q.price_ticks)) {
                 ++stats_.total_orders_rejected;
                 tally_rejection(RejectReason::POST_ONLY_WOULD_CROSS);
                 return 0;
             }
         }
-        // Wszystko OK — submit each
+        // All OK — submit each
         for (std::size_t i = 0; i < n; ++i) {
             const auto& q = quotes[i];
             const std::uint64_t id = submit(q.side, q.price_ticks, q.qty,
@@ -5434,7 +5434,7 @@ public:
     // Liquidity heatmap data — N levels per side z rozszerzonym info
     // ====================================================================
     //
-    // Zwraca strukturę gęstej płynności wokół top of book.
+    // Returns a structure of dense liquidity around the top of book.
     struct LiquiditySnapshot {
         DepthLevel    bid_levels[10];
         DepthLevel    ask_levels[10];
@@ -5447,8 +5447,8 @@ public:
         std::int32_t  microprice_ticks;
     };
 
-    // Auction mode — caller wywołuje przed batch submit dla cross.
-    // Po enter_auction_mode(), każdy submit pomija matching i siedzi w księdze.
+    // Auction mode — the caller invokes it before a batch submit for the cross.
+    // After enter_auction_mode(), every submit skips matching and sits in the book.
     // Po exit_auction_mode() + run_auction(), single-price cross matched FIFO.
     void enter_auction_mode() noexcept { in_auction_mode_ = true; }
     void exit_auction_mode()  noexcept { in_auction_mode_ = false; }
@@ -5460,8 +5460,8 @@ public:
     bool audit_log_enabled() const noexcept { return audit_enabled_; }
     std::size_t audit_log_size() const noexcept { return audit_log_.size(); }
 
-    // pop_audit_records: skopiuj do `out` (max max_n), wyczyść z bufora.
-    // Zwraca ile pobranych.
+    // pop_audit_records: copy to `out` (max max_n), clear from the buffer.
+    // Returns how many were retrieved.
     std::size_t pop_audit_records(AuditRecord* out, std::size_t max_n) noexcept {
         const std::size_t n = std::min(max_n, audit_log_.size());
         for (std::size_t i = 0; i < n; ++i) out[i] = audit_log_[i];

@@ -241,7 +241,7 @@ void test_oms_short_and_replace() {
     SECTION("OMS Short P&L + Replace");
     auto close = [](double a, double b) { const double d = a - b; return (d < 0 ? -d : d) < 0.01; };
 
-    // --- Short P&L: sprzedaj wysoko, odkup nisko → zysk ---
+    // --- Short P&L: sell high, buy back low → profit ---
     {
         OMS oms(10000, 100000000.0);
         oms.fill_order((oms.submit_order("AAPL", Side::SELL, 50.00, 100))->order_id, 100, 50.00);
@@ -263,7 +263,7 @@ void test_oms_short_and_replace() {
         ASSERT(p->net_qty == -50, "flip_to_short_50");
         ASSERT(close(to_float(p->avg_price), 12.00), "flip_avg_is_fill_px");
         ASSERT(close(to_float(p->realized_pnl), 200.0), "flip_realized_200");
-        // Cover short 50 @ $11 → +$50 → razem $250
+        // Cover short 50 @ $11 → +$50 → total $250
         oms.fill_order((oms.submit_order("X", Side::BUY, 11.00, 50))->order_id, 50, 11.00);
         p = oms.get_position("X");
         ASSERT(p->net_qty == 0, "flip_fully_closed");
@@ -280,20 +280,20 @@ void test_oms_short_and_replace() {
         const Order* r = oms.get_order(o->order_id);
         ASSERT(r->quantity == 80 && close(to_float(r->price), 101.00), "replace_new_px_qty");
     }
-    {   // amend ponad limit pozycji → odrzucony, zlecenie bez zmian
+    {   // amend above the position limit → rejected, order unchanged
         OMS oms(100, 1000000.0);
         Order* a = oms.submit_order("AAPL", Side::BUY, 10.00, 50);
         ASSERT(!oms.replace_order(a->order_id, 10.00, 200), "replace_rejects_over_limit");
         ASSERT(oms.get_order(a->order_id)->quantity == 50, "replace_unchanged_on_reject");
     }
 
-    {   // #83 prowizje: brutto vs netto. $0.01/akcja, round-trip 100 akcji.
+    {   // #83 commissions: gross vs net. $0.01/share, round-trip 100 shares.
         OMS oms(10000, 100000000.0, /*commission_per_share=*/0.01);
         oms.fill_order(oms.submit_order("AAPL", Side::BUY,  10.00, 100)->order_id, 100, 10.00);
         oms.fill_order(oms.submit_order("AAPL", Side::SELL, 12.00, 100)->order_id, 100, 12.00);
         const Position* p = oms.get_position("AAPL");
         ASSERT(close(to_float(p->realized_pnl), 200.0), "fee_gross_pnl_200");   // (12-10)*100
-        ASSERT(close(to_float(p->fees), 2.0), "fee_total_2");                   // 200 akcji * $0.01
+        ASSERT(close(to_float(p->fees), 2.0), "fee_total_2");                   // 200 shares * $0.01
         ASSERT(close(to_float(p->net_pnl()), 198.0), "fee_net_pnl_198");
         ASSERT(close(to_float(oms.total_fees()), 2.0), "fee_oms_total_2");
     }
@@ -303,7 +303,7 @@ void test_oms_short_and_replace() {
         oms.submit_order("AAA", Side::BUY,  10.00, 100);   // SENT
         oms.submit_order("BBB", Side::SELL, 20.00, 50);    // SENT
         Order* f = oms.submit_order("AAA", Side::BUY, 10.00, 100);
-        oms.fill_order(f->order_id, 100, 10.00);           // FILLED — nie anulowalne
+        oms.fill_order(f->order_id, 100, 10.00);           // FILLED — not cancellable
         ASSERT(oms.cancel_all() == 2, "cancelall_two_open");
         ASSERT(oms.get_position("AAA")->pending_qty == 0, "cancelall_releases_pending");
         // per-symbol
@@ -313,7 +313,7 @@ void test_oms_short_and_replace() {
         ASSERT(o2.cancel_all_symbol("AAA") == 1, "cancelall_symbol_one");
     }
 
-    {   // #172 wygasanie GTD: purge_expired anuluje wygasle, zostawia bez expiry.
+    {   // #172 GTD expiry: purge_expired cancels expired ones, leaves those without expiry.
         OMS oms(100000, 1000000000.0);
         OMSReject why = OMSReject::NONE;
         Order* g = oms.submit_order("AAA", Side::BUY, 10.0, 100, &why, /*expire_ns=*/5000);
@@ -323,11 +323,11 @@ void test_oms_short_and_replace() {
         ASSERT(oms.get_order(d->order_id)->status == OrderStatus::SENT, "gtd_no_expiry_kept");
     }
 
-    {   // #180 open_order_notional: kapital w pracujacych zleceniach (reszta).
+    {   // #180 open_order_notional: capital in working orders (remainder).
         OMS oms(100000, 1000000000.0);
         Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);   // notional 1000
         Order* b = oms.submit_order("BBB", Side::SELL, 20.0, 50);   // notional 1000
-        oms.fill_order(a->order_id, 40, 10.0);                      // reszta 60 -> 600
+        oms.fill_order(a->order_id, 40, 10.0);                      // remainder 60 -> 600
         ASSERT(close(oms.open_order_notional(), 1600.0), "open_notional_partial");  // 600 + 1000
         oms.cancel_order(b->order_id);
         ASSERT(close(oms.open_order_notional(), 600.0), "open_notional_after_cancel");
@@ -350,11 +350,11 @@ void test_oms_short_and_replace() {
         OMS oms(100000, 1000000000.0);
         ASSERT(oms.is_flat() && oms.open_position_count() == 0, "flat_empty");
         Order* o = oms.submit_order("AAA", Side::BUY, 10.0, 100);
-        ASSERT(!oms.is_flat(), "flat_false_working_order");          // pracujace zlecenie
-        oms.fill_order(o->order_id, 100, 10.0);                      // pozycja 100
+        ASSERT(!oms.is_flat(), "flat_false_working_order");          // working order
+        oms.fill_order(o->order_id, 100, 10.0);                      // position 100
         ASSERT(oms.open_position_count() == 1 && !oms.is_flat(), "flat_false_open_position");
         Order* s = oms.submit_order("AAA", Side::SELL, 11.0, 100);
-        oms.fill_order(s->order_id, 100, 11.0);                      // netto 0
+        oms.fill_order(s->order_id, 100, 11.0);                      // net 0
         ASSERT(oms.open_position_count() == 0 && oms.is_flat(), "flat_after_close");
     }
 
@@ -369,7 +369,7 @@ void test_oms_short_and_replace() {
         ASSERT(oms.working_order_count() == 0 && oms.done_order_count() == 2, "wo_after_cancel");
     }
 
-    {   // #204 reset_session_counters (zeruje statystyki, zostawia pozycje/zlecenia).
+    {   // #204 reset_session_counters (zeros statistics, leaves positions/orders).
         OMS oms(100000, 1000000000.0);
         Order* o = oms.submit_order("AAA", Side::BUY, 10.0, 100);
         oms.fill_order(o->order_id, 50, 10.0);                   // fills 1, PARTIAL
@@ -404,18 +404,18 @@ void test_oms_short_and_replace() {
         ASSERT(empt.inventory_value() == 0, "inventory_value_flat_zero");
     }
 
-    {   // #228 fill_ratio (wykonane / zlecone akcje).
+    {   // #228 fill_ratio (filled / ordered shares).
         OMS oms(1000000, 1000000000.0);
-        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);   // zlecone 100
-        oms.fill_order(a->order_id, 60, 10.0);                      // wykonane 60
-        Order* b = oms.submit_order("BBB", Side::BUY, 10.0, 100);   // zlecone razem 200
-        oms.fill_order(b->order_id, 100, 10.0);                     // wykonane razem 160
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);   // ordered 100
+        oms.fill_order(a->order_id, 60, 10.0);                      // filled 60
+        Order* b = oms.submit_order("BBB", Side::BUY, 10.0, 100);   // ordered total 200
+        oms.fill_order(b->order_id, 100, 10.0);                     // filled total 160
         ASSERT(oms.total_ordered_shares() == 200 && oms.total_filled_shares() == 160,
                "fillratio_accumulators");
         ASSERT(close(oms.fill_ratio(), 0.8), "fillratio_080");      // 160/200
     }
 
-    {   // #236 avg_commission_per_share (prowizja 0.01/akcja).
+    {   // #236 avg_commission_per_share (commission 0.01/share).
         OMS oms(1000000, 1000000000.0, /*commission_per_share=*/0.01);
         Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
         oms.fill_order(a->order_id, 100, 10.0);                     // fee 1.0, filled 100
@@ -491,7 +491,7 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.avg_fill_size(), 50.0), "avgfill_50");     // 100 / 2
     }
 
-    {   // #166 runtime zmiana prowizji.
+    {   // #166 runtime commission change.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
         oms.set_commission(0.01);
@@ -501,7 +501,7 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(oms.total_fees()), 1.0), "comm_new_rate_applied");
     }
 
-    {   // #151 liczniki operacji cyklu zycia (fills/cancels/replaces).
+    {   // #151 lifecycle operation counters (fills/cancels/replaces).
         OMS oms(100000, 1000000000.0);
         Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
         oms.fill_order(a->order_id, 50, 10.0);            // fill 1
@@ -515,7 +515,7 @@ void test_oms_short_and_replace() {
         ASSERT(oms.total_submitted() == 2, "ops_submitted_2");   // #160 (AAA, BBB)
     }
 
-    {   // #141 avg_fill_price — zlecenie wypelniane po dwoch cenach.
+    {   // #141 avg_fill_price — an order filled at two prices.
         OMS oms(100000, 1000000000.0);
         Order* o = oms.submit_order("AAPL", Side::BUY, 100.00, 100);
         oms.fill_order(o->order_id, 40, 100.00);                  // 40 @ 100.00
@@ -549,7 +549,7 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(oms.total_net_pnl()), 147.0), "agg_net_147");            // 150 - 3 fees
     }
 
-    {   // #96 unrealized P&L (mark-to-market) dla long i short.
+    {   // #96 unrealized P&L (mark-to-market) for long and short.
         OMS oms(10000, 100000000.0);
         oms.fill_order(oms.submit_order("AAPL", Side::BUY, 50.00, 100)->order_id, 100, 50.00);
         const Position* lp = oms.get_position("AAPL");
@@ -558,7 +558,7 @@ void test_oms_short_and_replace() {
         OMS oms2(10000, 100000000.0);
         oms2.fill_order(oms2.submit_order("AAPL", Side::SELL, 50.00, 100)->order_id, 100, 50.00);
         const Position* sp = oms2.get_position("AAPL");
-        ASSERT(close(to_float(sp->unrealized_pnl(to_fixed(48.00))), 200.0), "mtm_short_profit"); // short zyskuje gdy spada
+        ASSERT(close(to_float(sp->unrealized_pnl(to_fixed(48.00))), 200.0), "mtm_short_profit"); // short profits when it drops
         ASSERT(close(to_float(sp->total_pnl(to_fixed(48.00))), 200.0), "mtm_total_short");       // realized 0 + unrl 200
     }
 
@@ -574,7 +574,7 @@ void test_oms_short_and_replace() {
         Order* ok = oms.submit_order("AAPL", Side::BUY, 1.0, 10, &why);
         ASSERT(ok && why == OMSReject::NONE && oms.last_reject() == OMSReject::NONE,
                "rej_none_on_success");
-        // #136 statystyki odrzucen per powod (powyzej: 1x kazdy typ).
+        // #136 reject statistics per reason (above: 1x each type).
         ASSERT(oms.reject_count(OMSReject::INVALID_INPUT) == 1, "rejcnt_invalid");
         ASSERT(oms.reject_count(OMSReject::ORDER_VALUE) == 1, "rejcnt_value");
         ASSERT(oms.reject_count(OMSReject::POSITION_LIMIT) == 1, "rejcnt_position");
@@ -670,10 +670,10 @@ void test_router() {
     SmartOrderRouter empty_router;
     rd = empty_router.route_order("BUY", 100);
     ASSERT(!rd.valid, "router_no_venues_invalid");
-    // #125 reject reason: brak venue vs brak plynnosci
+    // #125 reject reason: no venue vs no liquidity
     ASSERT(rd.reject_reason == RouteReject::NO_VENUES, "router_reject_no_venues");
     SmartOrderRouter dry(RoutingStrategy::BEST_PRICE);
-    dry.add_venue(Venue("A", 100, 0.0));         // venue jest, ale bez quote
+    dry.add_venue(Venue("A", 100, 0.0));         // venue exists, but without a quote
     const RouteDecision rdl = dry.route_order("BUY", 100);
     ASSERT(!rdl.valid && rdl.reject_reason == RouteReject::NO_LIQUIDITY,
            "router_reject_no_liquidity");
@@ -1722,7 +1722,7 @@ void test_itch_book() {
     ASSERT(book.qty_at('B', 150.00) == 0, "itchbook_replace_clears_old");
     ASSERT(close(book.best_bid(), 150.01), "itchbook_replace_new_best_bid");
 
-    book.on_execute(999, 10);                     // nieznany ref → orphan
+    book.on_execute(999, 10);                     // unknown ref → orphan
     ASSERT(book.orphans() == 1, "itchbook_orphan_counted");
 
     // #87 mikrostruktura: mid + top-of-book imbalance.
@@ -1759,7 +1759,7 @@ void test_itch_book() {
     int64_t f2 = fb.expected_fill('B', 1000, v);                // only 600 liquidity
     ASSERT(f2 == 600, "itchbook_fill_partial_600");
 
-    // #123 top_levels: top N poziomow po stronie.
+    // #123 top_levels: top N levels per side.
     itch::ITCHOrderBook tb;
     tb.on_add(1, 'B', 100.00, 100);
     tb.on_add(2, 'B',  99.99, 200);
@@ -1783,7 +1783,7 @@ void test_itch_book() {
     ASSERT(close(di.depth_imbalance(1), 1.0/3.0), "itchbook_depth_imb_1");  // (100-50)/150
     ASSERT(close(di.depth_imbalance(2), 0.5), "itchbook_depth_imb_2");      // (300-100)/400
 
-    // #155 vwap_depth: VWAP top-N poziomow.
+    // #155 vwap_depth: VWAP of the top-N levels.
     itch::ITCHOrderBook vd;
     vd.on_add(1, 'S', 100.00, 100);
     vd.on_add(2, 'S', 100.02, 300);
@@ -1819,7 +1819,7 @@ void test_itch_book() {
     ASSERT(close(li.liquidity_imbalance_within(1), 100.0/700.0), "itchbook_liqimb_1tick");
 
     // #174 total_shares + level_count (rozmiar i grubosc ksiazki).
-    // #223 fillable_shares (do ceny limit).
+    // #223 fillable_shares (up to the limit price).
     // lw aski: 100.00(100), 100.01(200), 100.05(300)
     ASSERT(lw.fillable_shares('B', 100.01) == 300, "itchbook_fillable_buy_mid");  // <=100.01
     ASSERT(lw.fillable_shares('B', 100.05) == 600, "itchbook_fillable_buy_all");
@@ -1829,11 +1829,11 @@ void test_itch_book() {
     ASSERT(fs.fillable_shares('S', 99.98) == 400, "itchbook_fillable_sell_both"); // >=99.98
     ASSERT(fs.fillable_shares('S', 99.99) == 150, "itchbook_fillable_sell_top");  // >=99.99
 
-    // #247 price_to_fill (najgorszy poziom do sweep'a).
+    // #247 price_to_fill (the worst level to sweep).
     itch::ITCHOrderBook pf;
     pf.on_add(1, 'S', 100.00, 100); pf.on_add(2, 'S', 100.02, 200); pf.on_add(3, 'S', 100.05, 300);
     ASSERT(close(pf.price_to_fill('B', 100), 100.00), "itchbook_ptf_buy_top");   // 100 @ best
-    ASSERT(close(pf.price_to_fill('B', 250), 100.02), "itchbook_ptf_buy_mid");   // 100+150 -> 2gi poziom
+    ASSERT(close(pf.price_to_fill('B', 250), 100.02), "itchbook_ptf_buy_mid");   // 100+150 -> 2nd level
     ASSERT(pf.price_to_fill('B', 700) == 0.0, "itchbook_ptf_insufficient");      // > 600 dostepne
     pf.on_add(4, 'B', 99.99, 150); pf.on_add(5, 'B', 99.98, 250);
     ASSERT(close(pf.price_to_fill('S', 200), 99.98), "itchbook_ptf_sell");       // 150+50 -> 99.98
@@ -1855,21 +1855,21 @@ void test_itch_book() {
     sl.on_add(2, 'S', 100.00, 100); sl.on_add(3, 'S', 100.02, 200);  // asks
     // mid = 99.99; BUY 100 -> vwap 100.00 -> (100.00-99.99)/99.99*10000 ~ 1.0001 bps
     ASSERT(close(sl.slippage_bps('B', 100), 1.00010001), "itchbook_slippage_buy_100");
-    // wieksze zlecenie zjada glebszy poziom -> wieksza slippage
+    // a larger order eats a deeper level -> larger slippage
     ASSERT(sl.slippage_bps('B', 200) > sl.slippage_bps('B', 100), "itchbook_slippage_monotone");
-    // SELL 50 wchodzi w bid 99.98 -> (99.99-99.98)/99.99*10000 ~ 1.0001 bps
+    // SELL 50 hits bid 99.98 -> (99.99-99.98)/99.99*10000 ~ 1.0001 bps
     ASSERT(close(sl.slippage_bps('S', 50), 1.00010001), "itchbook_slippage_sell_50");
     itch::ITCHOrderBook nlq;                                // ksiega jednostronna -> 0
     nlq.on_add(1, 'B', 99.98, 100);
     ASSERT(nlq.slippage_bps('B', 100) == 0.0, "itchbook_slippage_no_ask_liq");
 
-    // #231 round_trip_cost_bps (kup+sprzedaj).
+    // #231 round_trip_cost_bps (buy+sell).
     // sl: bid 99.98 / ask 100.00, mid 99.99; buy 100 slip ~1bps, sell 50 slip ~1bps
     ASSERT(close(sl.round_trip_cost_bps(100), 2.0 * (0.01/99.99*10000.0)),
            "itchbook_round_trip_cost");
     ASSERT(nlq.round_trip_cost_bps(100) == 0.0, "itchbook_round_trip_onesided");
 
-    // #207 spread_ticks (calkowita liczba ticow $0.01).
+    // #207 spread_ticks (total number of $0.01 ticks).
     itch::ITCHOrderBook st;
     st.on_add(1, 'B', 100.00, 100); st.on_add(2, 'S', 100.02, 100);  // 2 ticki
     ASSERT(st.spread_ticks() == 2, "itchbook_spread_ticks_2");
@@ -1926,11 +1926,11 @@ void test_itch_book() {
 
     // #215 notional_imbalance (wazony wartoscia, rozny od depth_imbalance).
     itch::ITCHOrderBook ni;
-    ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 szt.
-    ni.on_add(2, 'S', 100.00, 150);  // ask $: 100*150 = 15000, 150 szt.
-    // notional: (10000-15000)/25000 = -0.2 ; depth (szt): (200-150)/350 = +0.1428
+    ni.on_add(1, 'B', 50.00, 200);   // bid $: 50*200 = 10000, 200 shares.
+    ni.on_add(2, 'S', 100.00, 150);  // ask $: 100*150 = 15000, 150 shares.
+    // notional: (10000-15000)/25000 = -0.2 ; depth (shares): (200-150)/350 = +0.1428
     ASSERT(close(ni.notional_imbalance(1), -0.2), "itchbook_notional_imb");
-    ASSERT(ni.depth_imbalance(1) > 0.0, "itchbook_depth_imb_differs_sign");  // przeciwny znak
+    ASSERT(ni.depth_imbalance(1) > 0.0, "itchbook_depth_imb_differs_sign");  // opposite sign
 
     // #183 locked / crossed book.
     itch::ITCHOrderBook nb;
@@ -1952,7 +1952,7 @@ void test_multicast_gap_recovery() {
     SECTION("Multicast Gap Recovery (#82)");
     multicast::GapRecovery gr;
     gr.observe(1); gr.observe(2);
-    gr.observe(5);                                // luka: brak 3,4
+    gr.observe(5);                                // gap: missing 3,4
     ASSERT(gr.has_gaps() && gr.missing_count() == 2, "gaprec_two_missing");
     uint64_t lo = 0, hi = 0;
     ASSERT(gr.next_request(lo, hi) && lo == 3 && hi == 4, "gaprec_request_range");
@@ -1963,14 +1963,14 @@ void test_multicast_gap_recovery() {
     ASSERT(gr.recovered == 2, "gaprec_recovered_count");
     ASSERT(!gr.on_retransmit(99), "gaprec_unknown_retransmit_false");
 
-    gr.observe(8);                               // luka: brak 6,7
+    gr.observe(8);                               // gap: missing 6,7
     gr.observe(6);                               // a late primary fills 6
     ASSERT(gr.missing_count() == 1 && gr.recovered == 3, "gaprec_late_primary_recovers");
 
     // #149 lista zakresow luk (ciagle przedzialy).
     multicast::GapRecovery mr2;
-    mr2.observe(1); mr2.observe(5);                      // brak 2,3,4 -> [2,4]
-    mr2.observe(10);                                     // brak 6,7,8,9 -> [6,9]
+    mr2.observe(1); mr2.observe(5);                      // missing 2,3,4 -> [2,4]
+    mr2.observe(10);                                     // missing 6,7,8,9 -> [6,9]
     const auto rngs = mr2.missing_ranges();
     ASSERT(rngs.size() == 2, "gaprec_two_ranges");
     ASSERT(rngs[0].first == 2 && rngs[0].second == 4, "gaprec_range_2_4");
@@ -1979,30 +1979,30 @@ void test_multicast_gap_recovery() {
     // #156 recovery_completeness.
     multicast::GapRecovery rc2;
     ASSERT(std::fabs(rc2.recovery_completeness() - 1.0) < 1e-9, "gaprec_complete_when_empty");
-    rc2.observe(1); rc2.observe(4);                     // brak 2,3
+    rc2.observe(1); rc2.observe(4);                     // missing 2,3
     ASSERT(std::fabs(rc2.recovery_completeness() - 0.0) < 1e-9, "gaprec_complete_0");
     rc2.on_retransmit(2);                               // recovered 1, missing 1
     ASSERT(std::fabs(rc2.recovery_completeness() - 0.5) < 1e-9, "gaprec_complete_half");
     rc2.on_retransmit(3);                               // recovered 2, missing 0
     ASSERT(std::fabs(rc2.recovery_completeness() - 1.0) < 1e-9, "gaprec_complete_full");
 
-    // #110 ReorderBuffer — dostarcza zawsze w kolejnosci, trzyma "przyszle".
+    // #110 ReorderBuffer — always delivers in order, holds "future" ones.
     multicast::ReorderBuffer<int> rb;
     rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2
     ASSERT(rb.out.size() == 1 && rb.out[0] == 10, "reorder_inorder_deliver");
-    rb.push(3, 30);                              // luka przy 2 -> buforuj
+    rb.push(3, 30);                              // gap at 2 -> buffer
     rb.push(4, 40);                              // buforuj
     ASSERT(rb.out.size() == 1 && rb.buffered() == 2, "reorder_holds_future");
     rb.push(2, 20);                              // wypelnia luke -> drain 2,3,4
     ASSERT(rb.buffered() == 0, "reorder_drained");
     ASSERT(rb.out.size() == 4 && rb.out[1] == 20 && rb.out[2] == 30 && rb.out[3] == 40,
            "reorder_delivered_in_order");
-    rb.push(2, 99);                              // < expected -> duplikat
+    rb.push(2, 99);                              // < expected -> duplicate
     ASSERT(rb.duplicates == 1 && rb.out.size() == 4, "reorder_drops_duplicate");
 
-    // #115 snapshot vs retransmisja: duza luka -> snapshot resync.
+    // #115 snapshot vs retransmission: a big gap -> snapshot resync.
     multicast::GapRecovery sr;
-    sr.observe(1); sr.observe(10);               // brak 2..9 (8 pakietow)
+    sr.observe(1); sr.observe(10);               // missing 2..9 (8 packets)
     ASSERT(sr.missing_count() == 8, "snap_big_gap");
     ASSERT(sr.recommend_snapshot(5), "snap_recommend_over_threshold");   // 8>=5
     ASSERT(!sr.recommend_snapshot(20), "snap_no_recommend_under");
@@ -2011,19 +2011,19 @@ void test_multicast_gap_recovery() {
 
     // #122 MultiChannelRecovery — agregacja po kanalach feedu.
     multicast::MultiChannelRecovery mc;
-    mc.observe(1, 1); mc.observe(1, 3);          // kanal 1: luka (brak 2)
-    mc.observe(2, 5); mc.observe(2, 6);          // kanal 2: w kolejnosci
+    mc.observe(1, 1); mc.observe(1, 3);          // channel 1: gap (missing 2)
+    mc.observe(2, 5); mc.observe(2, 6);          // channel 2: in order
     ASSERT(mc.channel_count() == 2, "mcr_two_channels");
     ASSERT(mc.any_gaps() && mc.total_missing() == 1, "mcr_gap_in_ch1");
     ASSERT(mc.on_retransmit(1, 2), "mcr_recover_ch1");
     ASSERT(!mc.any_gaps() && mc.total_recovered() == 1, "mcr_all_recovered");
 
     // #132 FeedRateMeter — sliding-window rate.
-    multicast::FeedRateMeter fr(1000);                    // okno 1000 ns
+    multicast::FeedRateMeter fr(1000);                    // 1000 ns window
     fr.on_message(100); fr.on_message(200); fr.on_message(300);
     ASSERT(fr.count(300) == 3, "rate_3_in_window");
     ASSERT(std::fabs(fr.rate_per_sec(300) - 3e6) < 1.0, "rate_per_sec_3M");  // 3*1e9/1000
-    ASSERT(fr.count(1301) == 0, "rate_window_expired");   // wszystkie starsze niz okno
+    ASSERT(fr.count(1301) == 0, "rate_window_expired");   // all older than the window
 
     // #163 peak rate (burst).
     multicast::FeedRateMeter pm(1000);
@@ -2033,12 +2033,12 @@ void test_multicast_gap_recovery() {
     ASSERT(pm.count(1300) == 1 && pm.peak_count() == 3, "rate_peak_holds");
     ASSERT(std::fabs(pm.peak_rate_per_sec() - 3e6) < 1.0, "rate_peak_rate_3M");
 
-    // #171 DedupWindow — at-most-once (odrzuca duplikaty).
+    // #171 DedupWindow — at-most-once (rejects duplicates).
     multicast::DedupWindow dw(100);
     ASSERT(dw.accept(1), "dedup_1_new");
     ASSERT(!dw.accept(1), "dedup_1_dup");
     ASSERT(dw.accept(2), "dedup_2_new");
-    ASSERT(dw.accept(5), "dedup_5_new_gap_ok");     // luka OK, to nie duplikat
+    ASSERT(dw.accept(5), "dedup_5_new_gap_ok");     // gap OK, this is not a duplicate
     ASSERT(!dw.accept(5), "dedup_5_dup");
     ASSERT(dw.duplicates == 2, "dedup_count");
 
@@ -2049,18 +2049,18 @@ void test_multicast_gap_recovery() {
     bp.on_dequeue();                                     // depth 2
     ASSERT(bp.depth() == 2 && bp.peak_depth == 3, "bp_peak_retained");
     ASSERT(bp.overloaded(2) && !bp.overloaded(5), "bp_overloaded_threshold");
-    bp.on_dequeue(10);                                   // nie schodzi ponizej 0
+    bp.on_dequeue(10);                                   // does not go below 0
     ASSERT(bp.depth() == 0, "bp_no_underflow");
 
     // #187 LossRateMeter — agregatowa stopa utraty.
     multicast::LossRateMeter lrm;
-    const uint64_t seqs[] = {1, 2, 3, 5, 6};             // brak 4; zakres 1..6
+    const uint64_t seqs[] = {1, 2, 3, 5, 6};             // missing 4; range 1..6
     for (uint64_t s : seqs) lrm.on_packet(s);
     ASSERT(lrm.expected() == 6 && lrm.received == 5, "loss_expected_received");
     ASSERT(lrm.lost() == 1, "loss_count");
     ASSERT(std::fabs(lrm.loss_rate() - 1.0/6.0) < 1e-9, "loss_rate");
 
-    // #195 OutOfOrderMeter — odsetek pakietow poza kolejnoscia.
+    // #195 OutOfOrderMeter — the fraction of out-of-order packets.
     multicast::OutOfOrderMeter ooo;
     const uint64_t oseq[] = {1, 2, 4, 3, 5};             // 3 przychodzi po 4
     for (uint64_t s : oseq) ooo.on_packet(s);
@@ -2071,12 +2071,12 @@ void test_multicast_gap_recovery() {
     multicast::SequenceResetDetector srd(1000);
     ASSERT(!srd.on_seq(5000), "srd_init_no_reset");
     ASSERT(!srd.on_seq(5001), "srd_normal");
-    ASSERT(!srd.on_seq(4999), "srd_small_reorder_not_reset");   // spadek 2 < 1000
+    ASSERT(!srd.on_seq(4999), "srd_small_reorder_not_reset");   // drop 2 < 1000
     ASSERT(srd.on_seq(10), "srd_big_drop_is_reset");            // 5001 -> 10
     ASSERT(srd.resets == 1, "srd_reset_count");
     ASSERT(!srd.on_seq(11), "srd_normal_after_reset");          // nowa baza 10
 
-    // #211 SnapshotRequestThrottle — min odstep miedzy zadaniami.
+    // #211 SnapshotRequestThrottle — min interval between requests.
     multicast::SnapshotRequestThrottle srt(1000);               // min 1000 ns
     ASSERT(srt.allow(0), "srt_first_allowed");
     ASSERT(!srt.allow(500), "srt_throttled_500");               // 500 < 1000 od 0
@@ -2089,16 +2089,16 @@ void test_multicast_gap_recovery() {
     multicast::TokenBucket tb(5.0, 1000.0);                     // 5 tokenow, 1000/s
     for (int i = 0; i < 5; ++i) ASSERT(tb.try_consume(0, 1.0), "tb_burst_ok");  // 5 od reki
     ASSERT(!tb.try_consume(0, 1.0), "tb_empty");               // 6ty pusto
-    // po 2.5 ms uzupelni ~2.5 tokena -> dwa consume ok, trzeci nie
+    // after 2.5 ms it refills ~2.5 tokens -> two consumes ok, the third not
     ASSERT(tb.try_consume(2500000, 1.0), "tb_refill_1");
     ASSERT(tb.try_consume(2500000, 1.0), "tb_refill_2");
     ASSERT(!tb.try_consume(2500000, 1.0), "tb_refill_exhausted");
 
-    // #227 ConflationBuffer — najnowszy stan per klucz + licznik konflacji.
+    // #227 ConflationBuffer — the latest state per key + a conflation counter.
     multicast::ConflationBuffer cb;
-    cb.update(1, 100.0);              // klucz 1
+    cb.update(1, 100.0);              // key 1
     cb.update(1, 101.0);             // nadpisanie -> konflacja 1
-    cb.update(2, 50.0);             // nowy klucz
+    cb.update(2, 50.0);             // new key
     cb.update(1, 102.0);            // konflacja 2
     ASSERT(cb.pending() == 2 && cb.conflated == 2, "conflate_pending_count");
     double v = 0.0;
@@ -2108,13 +2108,13 @@ void test_multicast_gap_recovery() {
     cb.drain();
     ASSERT(cb.pending() == 0, "conflate_drain");
 
-    // #235 LatencyTracker — EWMA + szczyt opoznienia.
+    // #235 LatencyTracker — EWMA + peak latency.
     multicast::LatencyTracker lt(0.5);
     lt.sample(100);                  // ewma 100, max 100
     ASSERT(std::fabs(lt.avg_ns() - 100.0) < 1e-9 && lt.peak_ns() == 100, "lat_first");
     lt.sample(200);                  // ewma 0.5*200+0.5*100 = 150, max 200
     ASSERT(std::fabs(lt.avg_ns() - 150.0) < 1e-9 && lt.peak_ns() == 200, "lat_blend_peak");
-    lt.sample(50);                   // ewma 0.5*50+0.5*150 = 100, max 200 (peak zostaje)
+    lt.sample(50);                   // ewma 0.5*50+0.5*150 = 100, max 200 (peak remains)
     ASSERT(std::fabs(lt.avg_ns() - 100.0) < 1e-9 && lt.peak_ns() == 200, "lat_peak_retained");
     ASSERT(lt.count == 3, "lat_count");
 
@@ -2122,11 +2122,11 @@ void test_multicast_gap_recovery() {
     multicast::ContiguousTracker ct;            // next_expected 1
     ct.receive(1);
     ASSERT(ct.contiguous_high() == 1, "contig_first");
-    ct.receive(3);                              // luka: brak 2 -> buforuj 3
+    ct.receive(3);                              // gap: missing 2 -> buffer 3
     ASSERT(ct.contiguous_high() == 1 && ct.buffered() == 1, "contig_gap_buffered");
     ct.receive(2);                              // wypelnia luke -> wciaga 2 i 3
     ASSERT(ct.contiguous_high() == 3 && ct.buffered() == 0, "contig_filled_pulls_ahead");
-    ct.receive(1);                              // duplikat -> ignoruj
+    ct.receive(1);                              // duplicate -> ignore
     ASSERT(ct.contiguous_high() == 3, "contig_duplicate_ignored");
 
     // #257 SlidingWindowRate — count within a moving window (1000 ns).
@@ -2212,7 +2212,7 @@ void test_multicast_gap_recovery() {
     ps.reset();
     ASSERT(ps.packets == 0 && ps.mean_bytes() == 0.0, "ps_reset");
 
-    // #142 InterArrivalMeter — min/max/avg/jitter odstepow.
+    // #142 InterArrivalMeter — min/max/avg/jitter of the gaps.
     multicast::InterArrivalMeter im;
     im.on_message(0); im.on_message(100); im.on_message(150); im.on_message(400);
     ASSERT(im.min_gap_ns() == 50, "iam_min_50");          // gaps: 100,50,250
@@ -2223,7 +2223,7 @@ void test_multicast_gap_recovery() {
     // #91 A/B line arbitration — the first line wins, the second is deduped; B patches A's gap.
     multicast::ABLineArbitrator arb;
     ASSERT(arb.on_packet(1, true),  "ab_a1_new");
-    ASSERT(!arb.on_packet(1, false), "ab_b1_dup");        // B's 1 = duplikat
+    ASSERT(!arb.on_packet(1, false), "ab_b1_dup");        // B's 1 = duplicate
     ASSERT(arb.on_packet(2, true),  "ab_a2_new");
     ASSERT(arb.on_packet(4, true),  "ab_a4_gap");          // A jumped → missing 3
     ASSERT(arb.has_gaps() && arb.missing_count() == 1, "ab_gap_3_pending");
@@ -2232,9 +2232,9 @@ void test_multicast_gap_recovery() {
     ASSERT(!arb.on_packet(4, false), "ab_b4_dup");
     ASSERT(arb.a_first == 3 && arb.b_first == 1, "ab_first_counts");
 
-    // #98 staleness: brak pakietu > timeout = martwy feed.
+    // #98 staleness: no packet > timeout = dead feed.
     multicast::FeedStalenessMonitor sm;
-    ASSERT(!sm.check(1000, 500), "stale_not_started");   // brak pierwszego pakietu
+    ASSERT(!sm.check(1000, 500), "stale_not_started");   // no first packet
     sm.on_packet(1000);
     ASSERT(!sm.check(1400, 500), "stale_fresh");          // 400 <= 500
     ASSERT(sm.check(1600, 500), "stale_after_timeout");   // 600 > 500
@@ -2243,7 +2243,7 @@ void test_multicast_gap_recovery() {
     ASSERT(!sm.check(1800, 500), "stale_recovered");
 }
 
-// Momentum #85 — trend-following; znak decyzji odwrotny do mean-reversion.
+// Momentum #85 — trend-following; the decision sign is opposite to mean-reversion.
 void test_momentum() {
     SECTION("Momentum Strategy (#85)");
     MomentumStrategy m(/*window=*/3, /*threshold_pct=*/0.1, /*order_size=*/100);
@@ -2265,10 +2265,10 @@ void test_momentum() {
     ASSERT(mrdn.valid && mrdn.side == Side::BUY, "meanrev_opposite_side");
 }
 
-// Donchian #124 — wybicie z kanalu (przebicie N-okresowego max/min).
+// Donchian #124 — channel breakout (breaking the N-period max/min).
 void test_donchian() {
     SECTION("Donchian Breakout (#124)");
-    DonchianBreakout up(3, 100);                  // kanal z 3 poprzednich
+    DonchianBreakout up(3, 100);                  // channel from the previous 3
     up.on_market_data("X", 100.0);
     up.on_market_data("X", 101.0);
     up.on_market_data("X", 99.0);                 // window full: hi=101, lo=99
@@ -2286,7 +2286,7 @@ void test_donchian() {
     fl.on_market_data("Z", 100.0);
     fl.on_market_data("Z", 101.0);
     fl.on_market_data("Z", 99.0);
-    const Signal sf = fl.on_market_data("Z", 100.0);  // wewnatrz [99,101]
+    const Signal sf = fl.on_market_data("Z", 100.0);  // inside [99,101]
     ASSERT(!sf.valid, "donchian_inside_channel_holds");
 }
 
@@ -2297,14 +2297,14 @@ void test_rsi() {
     up.on_market_data("X", 100.0);                // baseline
     up.on_market_data("X", 101.0);
     up.on_market_data("X", 102.0);
-    const Signal su = up.on_market_data("X", 103.0);  // okno pelne: same zyski -> RSI=100
+    const Signal su = up.on_market_data("X", 103.0);  // window full: all gains -> RSI=100
     ASSERT(su.valid && su.side == Side::SELL, "rsi_overbought_sells");
 
     RSIStrategy dn(3, 70.0, 30.0, 100);
     dn.on_market_data("Y", 100.0);
     dn.on_market_data("Y", 99.0);
     dn.on_market_data("Y", 98.0);
-    const Signal sd = dn.on_market_data("Y", 97.0);   // same straty -> RSI=0
+    const Signal sd = dn.on_market_data("Y", 97.0);   // all losses -> RSI=0
     ASSERT(sd.valid && sd.side == Side::BUY, "rsi_oversold_buys");
 }
 
@@ -2314,31 +2314,31 @@ void test_ma_crossover() {
     MACrossover x(2, 3, 100);                          // fast=2, slow=3
     x.on_market_data("X", 100.0);
     x.on_market_data("X", 100.0);
-    x.on_market_data("X", 100.0);                      // setup, fast==slow, brak sygnalu
+    x.on_market_data("X", 100.0);                      // setup, fast==slow, no signal
     const Signal up = x.on_market_data("X", 110.0);    // fast 105 > slow 103.3 -> golden cross
     ASSERT(up.valid && up.side == Side::BUY, "macross_golden_buys");
-    const Signal dn = x.on_market_data("X", 90.0);     // fast 100 == slow 100 -> nie above -> death cross
+    const Signal dn = x.on_market_data("X", 90.0);     // fast 100 == slow 100 -> not above -> death cross
     ASSERT(dn.valid && dn.side == Side::SELL, "macross_death_sells");
 }
 
-// Volatility #165 — kroczaca zmiennosc zwrotow + vol-targeting sizing.
+// Volatility #165 — rolling return volatility + vol-targeting sizing.
 void test_volatility() {
     SECTION("Volatility Estimator (#165)");
     VolatilityEstimator c(4);
-    for (int i = 0; i < 5; ++i) c.on_price(100.0);          // stala cena -> zero vol
+    for (int i = 0; i < 5; ++i) c.on_price(100.0);          // constant price -> zero vol
     ASSERT(c.volatility() == 0.0, "vol_constant_zero");
 
     VolatilityEstimator v(4);
     v.on_price(100.0); v.on_price(110.0); v.on_price(100.0); v.on_price(110.0); v.on_price(100.0);
     ASSERT(v.volatility() > 0.0, "vol_varying_positive");
     ASSERT(v.samples() == 4, "vol_samples");
-    // vol-targeting: duza zmiennosc (~10%) vs cel 1% -> mniejsza pozycja
+    // vol-targeting: high volatility (~10%) vs 1% target -> smaller position
     ASSERT(v.target_size(1000, 0.01) < 1000, "vol_target_size_smaller");
-    // brak zmiennosci -> base_size
+    // no volatility -> base_size
     ASSERT(c.target_size(1000, 0.01) == 1000, "vol_target_size_base_when_calm");
 }
 
-// EMA #173 — wykladnicza srednia kroczaca.
+// EMA #173 — exponential moving average.
 void test_ema() {
     SECTION("EMA (#173)");
     EMA e(0.5);
@@ -2352,17 +2352,17 @@ void test_ema() {
     ASSERT(!p.ready(), "ema_reset");
 }
 
-// MACD #182 — momentum z trzech EMA.
+// MACD #182 — momentum from three EMAs.
 void test_macd() {
     SECTION("MACD (#182)");
     MACD m;                                   // 12/26/9
-    for (int i = 1; i <= 60; ++i) m.update(100.0 + i);   // monotoniczny wzrost
+    for (int i = 1; i <= 60; ++i) m.update(100.0 + i);   // monotonic rise
     ASSERT(m.ready(), "macd_ready");
     ASSERT(m.macd() > 0.0, "macd_positive_on_uptrend");   // fast EMA nad slow
     ASSERT(m.bullish(), "macd_bullish_on_uptrend");
     ASSERT(std::fabs(m.histogram() - (m.macd() - m.signal())) < 1e-9, "macd_histogram_def");
     MACD d;
-    for (int i = 1; i <= 60; ++i) d.update(200.0 - i);   // monotoniczny spadek
+    for (int i = 1; i <= 60; ++i) d.update(200.0 - i);   // monotonic drop
     ASSERT(d.macd() < 0.0, "macd_negative_on_downtrend");
     ASSERT(!d.bullish(), "macd_not_bullish_on_downtrend");
 }
@@ -2371,12 +2371,12 @@ void test_macd() {
 void test_stochastic() {
     SECTION("Stochastic (#190)");
     Stochastic up(5);
-    for (int i = 1; i <= 5; ++i) up.update(i);            // 1..5, cur=5 = szczyt
+    for (int i = 1; i <= 5; ++i) up.update(i);            // 1..5, cur=5 = peak
     ASSERT(up.ready(), "stoch_ready");
     ASSERT(std::fabs(up.percent_k() - 100.0) < 1e-9, "stoch_k_top_100");
     ASSERT(up.overbought(), "stoch_overbought");
     Stochastic dn(5);
-    for (int i = 0; i < 5; ++i) dn.update(5.0 - i);       // 5,4,3,2,1, cur=1 = dno
+    for (int i = 0; i < 5; ++i) dn.update(5.0 - i);       // 5,4,3,2,1, cur=1 = trough
     ASSERT(std::fabs(dn.percent_k() - 0.0) < 1e-9, "stoch_k_bottom_0");
     ASSERT(dn.oversold(), "stoch_oversold");
     Stochastic mid(3);
@@ -2387,14 +2387,14 @@ void test_stochastic() {
     ASSERT(std::fabs(flat.percent_k() - 50.0) < 1e-9, "stoch_k_flat_neutral");
 }
 
-// WMA #198 — liniowo wazona srednia.
+// WMA #198 — linearly weighted moving average.
 void test_wma() {
     SECTION("WMA (#198)");
     WMA w(3);
     w.update(1.0); w.update(2.0); w.update(3.0);          // (1*1+2*2+3*3)/(1+2+3)=14/6
     ASSERT(w.ready(), "wma_ready");
     ASSERT(std::fabs(w.value() - 14.0/6.0) < 1e-9, "wma_weighted");
-    // przesuniecie okna: dochodzi 4, wypada 1 -> (2*1+3*2+4*3)/6 = 20/6
+    // window shift: 4 comes in, 1 drops out -> (2*1+3*2+4*3)/6 = 20/6
     w.update(4.0);
     ASSERT(std::fabs(w.value() - 20.0/6.0) < 1e-9, "wma_window_slide");
     WMA s(1);
@@ -2402,20 +2402,20 @@ void test_wma() {
     ASSERT(std::fabs(s.value() - 42.0) < 1e-9, "wma_period1_is_last");
 }
 
-// HullMA #206 — niskoopozniona srednia na bazie WMA.
+// HullMA #206 — a low-lag average built on WMA.
 void test_hull_ma() {
     SECTION("HullMA (#206)");
     HullMA c(9);
     for (int i = 0; i < 30; ++i) c.update(50.0);          // stala -> HMA = stala
     ASSERT(c.ready(), "hma_ready");
     ASSERT(std::fabs(c.value() - 50.0) < 1e-9, "hma_constant");
-    // rosnacy trend -> HMA rosnie i (niska zwloka) wyprzedza prosta srednia okna
+    // rising trend -> HMA rises and (low lag) leads the window's simple average
     HullMA r(9);
     for (int i = 1; i <= 29; ++i) r.update(static_cast<double>(i));
     const double prev = r.value();
     r.update(30.0);
     ASSERT(r.value() > prev, "hma_rises_on_uptrend");
-    ASSERT(r.value() > 15.5, "hma_low_lag_above_mean");  // srednia 1..30 = 15.5
+    ASSERT(r.value() > 15.5, "hma_low_lag_above_mean");  // average 1..30 = 15.5
 }
 
 // DEMA #214 — podwojna EMA o niskiej zwloce.
@@ -2430,10 +2430,10 @@ void test_dema() {
     const double prev = r.value();
     r.update(21.0);
     ASSERT(r.value() > prev, "dema_rises_on_uptrend");
-    ASSERT(r.value() > 15.0, "dema_low_lag");             // sledzi swieze (1..21 srednia ~11)
+    ASSERT(r.value() > 15.0, "dema_low_lag");             // tracks fresh values (1..21 average ~11)
 }
 
-// TEMA #222 — potrojna EMA, najnizsza zwloka.
+// TEMA #222 — triple EMA, the lowest lag.
 void test_tema() {
     SECTION("TEMA (#222)");
     TEMA c(5);
@@ -2445,21 +2445,21 @@ void test_tema() {
     const double prev = r.value();
     r.update(21.0);
     ASSERT(r.value() > prev, "tema_rises_on_uptrend");
-    ASSERT(r.value() > 15.0, "tema_low_lag");             // niska zwloka na rampie
+    ASSERT(r.value() > 15.0, "tema_low_lag");             // low lag on a ramp
 }
 
-// TRIX #230 — oscylator momentum z potrojnej EMA.
+// TRIX #230 — momentum oscillator from a triple EMA.
 void test_trix() {
     SECTION("TRIX (#230)");
     TRIX c(5);
-    for (int i = 0; i < 40; ++i) c.update(50.0);          // stala -> brak zmiany -> 0
+    for (int i = 0; i < 40; ++i) c.update(50.0);          // constant -> no change -> 0
     ASSERT(c.ready(), "trix_ready");
     ASSERT(std::fabs(c.value() - 0.0) < 1e-9, "trix_flat_zero");
     TRIX up(5);
     for (int i = 1; i <= 40; ++i) up.update(static_cast<double>(i));  // rosnaco
     ASSERT(up.value() > 0.0, "trix_positive_on_uptrend");
     TRIX dn(5);
-    for (int i = 0; i < 30; ++i) dn.update(100.0 - i);   // malejaco (ceny dodatnie)
+    for (int i = 0; i < 30; ++i) dn.update(100.0 - i);   // decreasing (positive prices)
     ASSERT(dn.value() < 0.0, "trix_negative_on_downtrend");
 }
 
@@ -2678,21 +2678,21 @@ void test_rolling_stddev() {
     ASSERT(std::fabs(sd.value() - std::sqrt(8.0 / 3.0)) < 1e-9, "rsd_sample_std");
 }
 
-// Ensemble #140 — glosowanie sygnalow (zgoda >= min_agree).
+// Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
     auto mk = [](Side s, int32_t q) {
         Signal sig; sig.valid = true; sig.side = s; sig.quantity = q; sig.price = 100.0;
         std::strncpy(sig.stock, "X", 8); return sig;
     };
-    // 2 BUY vs 1 SELL, min_agree 2 -> BUY z suma qty 150
+    // 2 BUY vs 1 SELL, min_agree 2 -> BUY with total qty 150
     Signal arr[3] = { mk(Side::BUY, 100), mk(Side::BUY, 50), mk(Side::SELL, 80) };
     const Signal r = combine_signals(arr, 3, 2);
     ASSERT(r.valid && r.side == Side::BUY && r.quantity == 150, "ensemble_majority_buy");
-    // 1 vs 1, min_agree 2 -> brak zgody -> HOLD
+    // 1 vs 1, min_agree 2 -> no agreement -> HOLD
     Signal tie[2] = { mk(Side::BUY, 100), mk(Side::SELL, 100) };
     ASSERT(!combine_signals(tie, 2, 2).valid, "ensemble_tie_holds");
-    // min_agree 3 ale tylko 2 BUY -> HOLD
+    // min_agree 3 but only 2 BUY -> HOLD
     ASSERT(!combine_signals(arr, 3, 3).valid, "ensemble_below_threshold_holds");
 }
 
@@ -2711,7 +2711,7 @@ void test_trailing_stop() {
     ASSERT(!ts.active(), "ts_inactive_after");
     ASSERT(!ts.update(90.0), "ts_no_retrigger");
 
-    // short, entry 100, trail 5 -> stop 105; spadek zaciska, wzrost wybija
+    // short, entry 100, trail 5 -> stop 105; a drop tightens, a rise triggers
     TrailingStop ss(false, 100.0, 5.0);
     ASSERT(close(ss.stop(), 105.0), "ts_short_initial");
     ASSERT(!ss.update(90.0), "ts_short_ratchet");        // stop -> 95
@@ -2734,17 +2734,17 @@ void test_pov_algo() {
     ASSERT(low.on_market_volume(4) == 0, "pov_tiny_vol_no_slice");   // 0.4 < 0.5
 }
 
-// SignalThrottle #104 — minimalny odstep miedzy sygnalami per symbol.
+// SignalThrottle #104 — minimum interval between signals per symbol.
 void test_signal_throttle() {
     SECTION("Signal Throttle (#104)");
     SignalThrottle th(5);                                  // min 5 sekwencji
-    ASSERT(th.allow("AAPL", 0), "throttle_first_passes");  // pierwszy zawsze
+    ASSERT(th.allow("AAPL", 0), "throttle_first_passes");  // the first one always
     ASSERT(!th.allow("AAPL", 3), "throttle_too_soon");      // 3 < 5 -> stlumiony
     ASSERT(th.allow("AAPL", 5), "throttle_after_cooldown"); // 5 >= 5
     ASSERT(th.allow("MSFT", 1), "throttle_per_symbol_indep"); // inny symbol niezalezny
     ASSERT(th.suppressed() == 1, "throttle_suppressed_count");
     th.reset_symbol("AAPL");
-    ASSERT(th.allow("AAPL", 6), "throttle_reset_symbol");   // po resecie znow przechodzi
+    ASSERT(th.allow("AAPL", 6), "throttle_reset_symbol");   // after the reset it passes again
 }
 
 // VWAPTracker #113 — rynkowy VWAP + slippage egzekucji w bps.
@@ -2756,7 +2756,7 @@ void test_vwap_tracker() {
     v.on_trade(102.0, 100);                       // VWAP = (10000+10200)/200 = 101
     ASSERT(close(v.vwap(), 101.0), "vwap_value");
     ASSERT(v.volume() == 200, "vwap_volume");
-    // BUY @102 vs VWAP 101 -> (102-101)/101*1e4 = +99.01 bps (gorzej)
+    // BUY @102 vs VWAP 101 -> (102-101)/101*1e4 = +99.01 bps (worse)
     ASSERT(close(v.slippage_bps(102.0, true), 99.0099), "vwap_buy_slippage_positive");
     // SELL @102 vs VWAP 101 -> pobilismy VWAP -> ujemne
     ASSERT(v.slippage_bps(102.0, false) < 0.0, "vwap_sell_beats_negative");
@@ -2801,7 +2801,7 @@ void test_router_ewma_partial() {
         ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "ewma_reroutes_to_B");
     }
 
-    // --- Partial single-venue: zlecenie > top-of-book size ---
+    // --- Partial single-venue: order > top-of-book size ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("V", 100, 0.0));
@@ -2856,7 +2856,7 @@ void test_router_ewma_partial() {
         ASSERT(close(r.nbbo_mid(), 100.01), "nbbo_mid");
     }
 
-    // --- #109 available_liquidity: suma top-of-book po aktywnych venue ---
+    // --- #109 available_liquidity: sum of top-of-book across active venues ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("A", 100, 0.0));
@@ -2880,7 +2880,7 @@ void test_router_ewma_partial() {
         r.route_order("BUY", 50);              // A -> +50
         ASSERT(r.venue_routed_shares("A") == 150, "tca_routed_A_150");
         ASSERT(r.venue_routed_shares("B") == 0, "tca_routed_B_0");
-        // SPLIT rozbija miedzy oba (prog 100)
+        // SPLIT divides between both (threshold 100)
         SmartOrderRouter rs(RoutingStrategy::SPLIT, 100);
         rs.add_venue(Venue("X", 100, 0.0));
         rs.add_venue(Venue("Y", 100, 0.0));
@@ -2899,7 +2899,7 @@ void test_router_ewma_partial() {
     {
         auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
-        r.add_venue(Venue("A", 100, 0.002));         // taker fee 0.002/akcja
+        r.add_venue(Venue("A", 100, 0.002));         // taker fee 0.002/share
         r.update_quote("A", 10.0, 11.0, 1000, 1000);
         r.route_order("BUY", 100);                    // fee 0.2
         r.route_order("BUY", 50);                     // fee 0.1
@@ -2951,7 +2951,7 @@ void test_router_ewma_partial() {
         r.route_order("BUY", 10); r.route_order("BUY", 10);   // 2 udane
         ASSERT(close(r.reject_rate(), 0.0), "rejrate_all_ok");
         ASSERT(r.avg_routing_latency_ns() >= 0.0, "rejrate_avg_lat_nonneg");
-        SmartOrderRouter e;                                    // brak venue -> reject
+        SmartOrderRouter e;                                    // no venue -> reject
         e.route_order("BUY", 10);
         ASSERT(close(e.reject_rate(), 1.0), "rejrate_all_rejected");
     }
@@ -2969,20 +2969,20 @@ void test_router_ewma_partial() {
         ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "remove_B_still_routes");
     }
 
-    // --- #176 set_venue_fee (runtime zmiana taryfy -> routing all-in) ---
+    // --- #176 set_venue_fee (runtime fee change -> routing all-in) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
-        r.add_venue(Venue("A", 100, 0.02));            // drozszy taker
-        r.add_venue(Venue("B", 100, 0.01));            // tanszy
+        r.add_venue(Venue("A", 100, 0.02));            // pricier taker
+        r.add_venue(Venue("B", 100, 0.01));            // cheaper
         r.update_quote("A", 10.0, 11.0, 100, 100);
         r.update_quote("B", 10.0, 11.0, 100, 100);     // ten sam quote
         ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "fee_default_B_cheaper");
-        ASSERT(r.set_venue_fee("A", 0.0), "fee_set_A_zero");   // A teraz all-in 11.00
+        ASSERT(r.set_venue_fee("A", 0.0), "fee_set_A_zero");   // A now all-in 11.00
         ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "A") == 0, "fee_reroute_A");
         ASSERT(!r.set_venue_fee("GHOST", 0.0), "fee_unknown_false");
     }
 
-    // --- #184 is_marketable (pre-route guard dla limit orderow) ---
+    // --- #184 is_marketable (pre-route guard for limit orders) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("A", 100, 0.01));
@@ -2995,7 +2995,7 @@ void test_router_ewma_partial() {
         ASSERT(!empt.is_marketable(true, 100.0), "mkt_no_liquidity_false");
     }
 
-    // --- #192 reset_session_stats (pelny reset TCA, venue zostaja) ---
+    // --- #192 reset_session_stats (full TCA reset, venues remain) ---
     {
         SmartOrderRouter rss(RoutingStrategy::BEST_PRICE);
         rss.add_venue(Venue("A", 100, 0.01));
@@ -3180,12 +3180,12 @@ void test_router_ewma_partial() {
     // --- #216 venue_share_pct (koncentracja egzekucji) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
-        r.add_venue(Venue("A", 100, 0.0));             // tanszy (fee 0) -> tu trafi routing
+        r.add_venue(Venue("A", 100, 0.0));             // cheaper (fee 0) -> routing goes here
         r.add_venue(Venue("B", 100, 0.01));
         r.update_quote("A", 10.0, 11.0, 1000, 1000);
         r.update_quote("B", 10.0, 11.0, 1000, 1000);
         r.route_order("BUY", 30);
-        r.route_order("BUY", 70);                       // razem 100, wszystko na A
+        r.route_order("BUY", 70);                       // total 100, all on A
         ASSERT(std::fabs(r.venue_share_pct("A") - 100.0) < 1e-9, "vsp_A_full");
         ASSERT(std::fabs(r.venue_share_pct("B") - 0.0) < 1e-9, "vsp_B_zero");
         ASSERT(r.venue_share_pct("GHOST") == 0.0, "vsp_unknown_zero");
@@ -3197,7 +3197,7 @@ void test_router_ewma_partial() {
         r.add_venue(Venue("A", 100, 0.0));
         r.add_venue(Venue("B", 100, 0.0));
         r.update_quote("A", 10.0, 11.0, 100, 100);     // ask size 100
-        r.update_quote("B", 10.0, 11.0, 100, 200);     // ask size 200 -> razem 300
+        r.update_quote("B", 10.0, 11.0, 100, 200);     // ask size 200 -> total 300
         ASSERT(r.fill_shortfall(true, 250) == 0, "shortfall_covered");
         ASSERT(r.fill_shortfall(true, 400) == 100, "shortfall_100");      // 400 - 300
         ASSERT(r.fill_shortfall(true, 300) == 0, "shortfall_exact");
@@ -3205,13 +3205,13 @@ void test_router_ewma_partial() {
         ASSERT(std::fabs(r.fillable_ratio(true, 250) - 1.0) < 1e-9, "ratio_full");
     }
 
-    // --- #232 avg_fee_per_share (TCA: netto taker/maker) ---
+    // --- #232 avg_fee_per_share (TCA: net taker/maker) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
-        r.add_venue(Venue("A", 100, 0.002));           // taker fee 0.002/akcja
+        r.add_venue(Venue("A", 100, 0.002));           // taker fee 0.002/share
         r.update_quote("A", 10.0, 11.0, 1000, 1000);
         r.route_order("BUY", 100);                      // fee 0.2
-        r.route_order("BUY", 100);                      // fee 0.2, razem 0.4 / 200 szt
+        r.route_order("BUY", 100);                      // fee 0.2, total 0.4 / 200 shares
         ASSERT(std::fabs(r.avg_fee_per_share() - 0.002) < 1e-9, "avgfee_taker");
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.avg_fee_per_share() == 0.0, "avgfee_empty_zero");
@@ -3226,7 +3226,7 @@ void test_backtester() {
     bt.on_order(true);  bt.on_trade(+100.0);
     bt.on_order(true);  bt.on_trade(-40.0);
     bt.on_order(true);  bt.on_trade(+60.0);
-    bt.on_order(false);                          // submitted, nie filled
+    bt.on_order(false);                          // submitted, not filled
     const auto r = bt.compute();
     ASSERT(r.trades == 3, "bt_trades_3");
     ASSERT(r.wins == 2 && r.losses == 1, "bt_win_loss");
@@ -3249,7 +3249,7 @@ void test_backtester() {
     ASSERT(std::fabs(er.largest_loss + 5.0) < 1e-9, "bt_largest_loss");
     ASSERT(std::fabs(er.expectancy - 6.0) < 1e-9, "bt_expectancy");  // 30/5
 
-    // #102 atrybucja per-tag (np. per strategia).
+    // #102 per-tag attribution (e.g. per strategy).
     backtest::Backtester t;
     t.on_trade(100.0, "momentum");
     t.on_trade(-30.0, "meanrev");
@@ -3283,7 +3283,7 @@ void test_risk_price_band() {
     lim.max_orders_per_second   = 1000000;
     RiskManager r(lim);
 
-    // Bez ceny referencyjnej band jest pomijany — pierwsze zlecenie przechodzi.
+    // Without a reference price the band is skipped — the first order passes.
     ASSERT(r.check_order("AAPL", Side::BUY, 150.00, 10).action == RiskAction::ALLOW,
            "band_no_ref_allows");
 
@@ -3326,7 +3326,7 @@ void test_risk_price_band() {
     ASSERT(r4.check_order("TSLA", Side::BUY, 250.0, 1).action == RiskAction::ALLOW,
            "restrict_lifted_allows");
 
-    // #106 asymetryczne limity: long 1000, short tylko 300.
+    // #106 asymmetric limits: long 1000, short only 300.
     RiskLimits al;
     al.max_position_per_symbol = 1000;
     al.max_short_per_symbol    = 300;
@@ -3344,7 +3344,7 @@ void test_risk_price_band() {
     ASSERT(r6.check_order("AAPL", Side::BUY,  10.0, 500).action == RiskAction::ALLOW,
            "asym_long_500_ok");                              // long pod 1000 OK mimo short-capu
 
-    // #114 bezpiecznik serii strat: 3 stratne z rzedu -> kill switch.
+    // #114 loss-streak breaker: 3 losing in a row -> kill switch.
     RiskLimits cl;
     cl.max_consecutive_losses = 3;
     RiskManager r7(cl);
@@ -3352,14 +3352,14 @@ void test_risk_price_band() {
     ASSERT(!r7.is_kill_switch_active() && r7.get_consecutive_losses() == 2, "consec_2_ok");
     r7.update_pnl(-10.0);                                    // 3. -> trip
     ASSERT(r7.is_kill_switch_active(), "consec_3_trips_kill");
-    // zysk w srodku zeruje serie
+    // a profit in the middle resets the streak
     RiskManager r8(cl);
     r8.update_pnl(-10.0); r8.update_pnl(-10.0); r8.update_pnl(+5.0);
     ASSERT(r8.get_consecutive_losses() == 0, "consec_win_resets");
     r8.update_pnl(-10.0); r8.update_pnl(-10.0);
     ASSERT(!r8.is_kill_switch_active(), "consec_no_trip_after_reset");
 
-    // #121 powod zatrzasniecia kill switcha.
+    // #121 reason the kill switch latched.
     RiskManager rk(lim);
     ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");
     rk.activate_kill_switch();
@@ -3372,7 +3372,7 @@ void test_risk_price_band() {
     ASSERT(rcr.get_kill_reason() == KillReason::CONSECUTIVE_LOSSES, "killreason_consec");
     RiskLimits cb; cb.max_daily_loss = 100;
     RiskManager rbk(cb);
-    rbk.update_pnl(-200.0);                                   // ponad dzienny limit
+    rbk.update_pnl(-200.0);                                   // above the daily limit
     rbk.check_order("AAPL", Side::BUY, 10.0, 1);              // circuit breaker w check
     ASSERT(rbk.get_kill_reason() == KillReason::CIRCUIT_BREAKER, "killreason_circuit");
 
@@ -3385,7 +3385,7 @@ void test_risk_price_band() {
     rl.set_limits(tighter);
     ASSERT(rl.get_limits().max_position_per_symbol == 100, "setlim_applied");
     ASSERT(rl.check_order("AAPL", Side::BUY, 1.0, 500).action == RiskAction::REJECT,
-           "setlim_after_rejects");                    // 500 > 100 teraz
+           "setlim_after_rejects");                    // 500 > 100 now
 
     // #137 zapytania o ekspozycje (|pos+pend|, total = niezmiennik O(1)).
     RiskManager re(lim);
@@ -3398,25 +3398,25 @@ void test_risk_price_band() {
     ASSERT(re.get_exposure("AAPL") == 100 && re.get_total_exposure() == 150,
            "exp_invariant_after_fill");
 
-    // #144 dzienny limit obrotu (turnover).
+    // #144 daily turnover limit.
     RiskLimits tl;
     tl.max_daily_traded_notional = 1000.0;
     RiskManager rt(tl);
     ASSERT(rt.check_order("AAPL", Side::BUY, 10.0, 10).action == RiskAction::ALLOW,
            "turnover_under_ok");
-    rt.add_traded_notional(1500.0);                     // przekroczony obrot
+    rt.add_traded_notional(1500.0);                     // turnover exceeded
     ASSERT(std::fabs(rt.get_traded_notional() - 1500.0) < 1e-9, "turnover_tracked");
     ASSERT(rt.check_order("AAPL", Side::BUY, 10.0, 10).action == RiskAction::REJECT,
            "turnover_over_rejects");
 
-    // #153 ekspozycja nominalna w $.
+    // #153 notional exposure in $.
     RiskManager rn(lim);
     rn.update_reference_price("AAPL", 150.0);
-    rn.on_order_sent("AAPL", Side::BUY, 100);          // 100 sztuk
+    rn.on_order_sent("AAPL", Side::BUY, 100);          // 100 shares
     ASSERT(std::fabs(rn.get_position_notional("AAPL") - 15000.0) < 1e-6, "notional_15000");
     ASSERT(rn.get_position_notional("MSFT") == 0.0, "notional_no_ref_zero");
 
-    // #161 per-symbol override limitu pozycji.
+    // #161 per-symbol position-limit override.
     RiskLimits pl; pl.max_position_per_symbol = 1000;
     RiskManager rp(pl);
     ASSERT(rp.check_order("TSLA", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
@@ -3430,9 +3430,9 @@ void test_risk_price_band() {
     ASSERT(rp.check_order("TSLA", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
            "symlim_override_removed");
 
-    // #167 wczesne ostrzezenie limitu (cap 1000).
+    // #167 early limit warning (cap 1000).
     RiskManager rw(pl);
-    rw.on_order_sent("AAPL", Side::BUY, 700);          // ekspozycja 700 = 70%
+    rw.on_order_sent("AAPL", Side::BUY, 700);          // exposure 700 = 70%
     ASSERT(!rw.is_near_position_limit("AAPL", 80.0), "warn_below_80pct");   // 700 < 800
     ASSERT(rw.is_near_position_limit("AAPL", 60.0), "warn_above_60pct");    // 700 >= 600
 
@@ -3492,14 +3492,14 @@ void test_risk_price_band() {
     // #245 headroom_shares (cap 1000, symetryczny short).
     RiskLimits hrl; hrl.max_position_per_symbol = 1000;
     RiskManager rhr(hrl);
-    rhr.on_order_sent("AAPL", Side::BUY, 300);                              // pozycja +300
+    rhr.on_order_sent("AAPL", Side::BUY, 300);                              // position +300
     ASSERT(rhr.headroom_shares("AAPL", Side::BUY) == 700, "headroom_buy");  // 1000 - 300
     ASSERT(rhr.headroom_shares("AAPL", Side::SELL) == 1300, "headroom_sell"); // 1000 + 300 (flip)
-    ASSERT(rhr.headroom_shares("MSFT", Side::BUY) == 1000, "headroom_fresh"); // pelny cap
+    ASSERT(rhr.headroom_shares("MSFT", Side::BUY) == 1000, "headroom_fresh"); // full cap
 
     // #259 projected_exposure (resulting |position| after a hypothetical fill).
     RiskManager rpe(hrl);
-    rpe.on_order_sent("AAPL", Side::BUY, 300);                              // pozycja +300
+    rpe.on_order_sent("AAPL", Side::BUY, 300);                              // position +300
     ASSERT(rpe.projected_exposure("AAPL", Side::BUY, 200) == 500, "projexp_buy");   // |300+200|
     ASSERT(rpe.projected_exposure("AAPL", Side::SELL, 100) == 200, "projexp_sell"); // |300-100|
     ASSERT(rpe.projected_exposure("AAPL", Side::SELL, 500) == 200, "projexp_flip"); // |300-500|
@@ -3512,7 +3512,7 @@ void test_risk_price_band() {
     ASSERT(!rpe.would_breach_position("MSFT", Side::BUY, 1000), "breach_fresh_at_cap"); // exactly cap
     ASSERT(rpe.would_breach_position("MSFT", Side::BUY, 1001), "breach_fresh_over");
 
-    // #189 limit wartosci pozycji per symbol ($10k; shares hojne).
+    // #189 per-symbol position value limit ($10k; shares generous).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;
     snl.max_position_per_symbol = 100000;
@@ -3527,14 +3527,14 @@ void test_risk_price_band() {
            "symnotional_over_rejects"); // 300*50 = 15000 > 10000
 
     // #197 current_drawdown_pct (high-water mark).
-    RiskManager rdd;                       // domyslne limity
+    RiskManager rdd;                       // default limits
     rdd.update_pnl(1000.0);                 // peak 1000, daily 1000
     ASSERT(std::fabs(rdd.current_drawdown_pct() - 0.0) < 1e-6, "dd_at_peak_zero");
     rdd.update_pnl(-300.0);                 // daily 700 -> dd = 300/1000 = 30%
     ASSERT(std::fabs(rdd.current_drawdown_pct() - 30.0) < 1e-6, "dd_30pct");
     ASSERT(std::fabs(rdd.get_peak_pnl() - 1000.0) < 1e-6, "dd_peak_1000");
     RiskManager rzz;
-    rzz.update_pnl(-500.0);                 // peak 0 -> brak referencji
+    rzz.update_pnl(-500.0);                 // peak 0 -> no reference
     ASSERT(std::fabs(rzz.current_drawdown_pct() - 0.0) < 1e-6, "dd_no_peak_zero");
 
     // #267 drawdown_headroom_pct (limit 10%).
@@ -3554,29 +3554,29 @@ void test_risk_price_band() {
     rdd2.update_pnl(500.0);                   // daily 1200 -> new high -> dd 0
     ASSERT(std::fabs(rdd2.current_drawdown_dollars() - 0.0) < 1e-6, "dd_dollars_new_high");
 
-    // #205 consecutive_losses_remaining (breaker serii strat, prog 3).
+    // #205 consecutive_losses_remaining (loss-streak breaker, threshold 3).
     RiskLimits cll; cll.max_consecutive_losses = 3;
     RiskManager rcl(cll);
     ASSERT(rcl.consecutive_losses_remaining() == 3, "clr_full_at_start");
-    rcl.update_pnl(-10.0);                  // strata 1
+    rcl.update_pnl(-10.0);                  // loss 1
     ASSERT(rcl.consecutive_losses_remaining() == 2, "clr_after_one_loss");
-    rcl.update_pnl(-10.0);                  // strata 2
+    rcl.update_pnl(-10.0);                  // loss 2
     ASSERT(rcl.consecutive_losses_remaining() == 1, "clr_after_two_losses");
-    rcl.update_pnl(5.0);                    // zysk zeruje serie
+    rcl.update_pnl(5.0);                    // a profit resets the streak
     ASSERT(rcl.consecutive_losses_remaining() == 3, "clr_reset_on_win");
-    RiskManager rcd;                        // domyslnie wylaczony (0)
+    RiskManager rcd;                        // disabled by default (0)
     ASSERT(rcd.consecutive_losses_remaining() == -1, "clr_disabled");
 
     // #213 remaining_loss_budget (max_daily_loss 1000).
     RiskLimits lbl; lbl.max_daily_loss = 1000;
     RiskManager rlb(lbl);
     ASSERT(std::fabs(rlb.remaining_loss_budget() - 1000.0) < 1e-6, "rlb_full_at_start");
-    rlb.update_pnl(-300.0);                 // budzet 700
+    rlb.update_pnl(-300.0);                 // budget 700
     ASSERT(std::fabs(rlb.remaining_loss_budget() - 700.0) < 1e-6, "rlb_after_loss");
-    rlb.update_pnl(-800.0);                 // za prog -> clamp 0
+    rlb.update_pnl(-800.0);                 // past the threshold -> clamp 0
     ASSERT(std::fabs(rlb.remaining_loss_budget() - 0.0) < 1e-6, "rlb_clamped_zero");
     RiskManager rlp(lbl);
-    rlp.update_pnl(500.0);                  // zysk zwieksza budzet -> 1500
+    rlp.update_pnl(500.0);                  // a profit increases the budget -> 1500
     ASSERT(std::fabs(rlp.remaining_loss_budget() - 1500.0) < 1e-6, "rlb_profit_extends");
 
     // #307 loss_budget_utilization_pct (same 1000 limit).
@@ -3586,14 +3586,14 @@ void test_risk_price_band() {
     rlu.update_pnl(-250.0);                  // 250 of 1000 -> 25%
     ASSERT(std::fabs(rlu.loss_budget_utilization_pct() - 25.0) < 1e-6, "lbu_quarter");
 
-    // #221 daily_turnover_pct (limit obrotu 100000).
+    // #221 daily_turnover_pct (turnover limit 100000).
     RiskLimits tnl; tnl.max_daily_traded_notional = 100000.0;
     RiskManager rtn(tnl);
     rtn.add_traded_notional(30000.0);
     ASSERT(std::fabs(rtn.daily_turnover_pct() - 30.0) < 1e-6, "turnover_30pct");
-    rtn.add_traded_notional(20000.0);       // razem 50000
+    rtn.add_traded_notional(20000.0);       // total 50000
     ASSERT(std::fabs(rtn.daily_turnover_pct() - 50.0) < 1e-6, "turnover_50pct");
-    RiskManager rtd;                        // limit wylaczony (0)
+    RiskManager rtd;                        // limit disabled (0)
     rtd.add_traded_notional(50000.0);
     ASSERT(std::fabs(rtd.daily_turnover_pct() - 0.0) < 1e-6, "turnover_disabled");
 
@@ -3623,9 +3623,9 @@ void test_risk_price_band() {
     ASSERT(r5.check_order("PENY", Side::BUY, 0.01, 1000).action == RiskAction::ALLOW,
            "qtycap_at_limit_ok");
     ASSERT(r5.check_order("PENY", Side::BUY, 0.01, 1001).action == RiskAction::REJECT,
-           "qtycap_over_rejects");   // tani notional ($10), ale 1001 szt. > limit
+           "qtycap_over_rejects");   // cheap notional ($10), but 1001 shares > limit
 
-    // #175 prog minimalnej ceny (penny-stock filter).
+    // #175 minimum price threshold (penny-stock filter).
     RiskLimits ml;
     ml.min_price = 1.0;
     RiskManager rmp(ml);
@@ -3656,12 +3656,12 @@ void test_fix_session() {
         ASSERT(s.peek_outbound_seq() == 2, "fix_seq_incremented");
     }
 
-    // --- #119 inbound SequenceReset: ustaw oczekiwany seq, ignoruj wsteczny ---
+    // --- #119 inbound SequenceReset: set the expected seq, ignore a backward one ---
     {
         fix::FIXSession si;
         si.observe_inbound(1, 100);
         ASSERT(si.expected_inbound_seq() == 2, "seqreset_expected_2");
-        const auto g = si.observe_inbound(5, 200);                 // luka 2..4
+        const auto g = si.observe_inbound(5, 200);                 // gap 2..4
         ASSERT(g.valid && si.expected_inbound_seq() == 6, "seqreset_after_gap_6");
         si.apply_inbound_sequence_reset(10);                       // NewSeqNo=10
         ASSERT(si.expected_inbound_seq() == 10, "seqreset_applied_10");
@@ -3669,7 +3669,7 @@ void test_fix_session() {
         ASSERT(si.expected_inbound_seq() == 10, "seqreset_ignores_backwards");
     }
 
-    // --- ResendRequest niesie BeginSeqNo(7)/EndSeqNo(16) i bumpuje licznik ---
+    // --- ResendRequest carries BeginSeqNo(7)/EndSeqNo(16) and bumps the counter ---
     {
         fix::FIXSession s;
         char buf[256];
@@ -3756,11 +3756,11 @@ void test_fix_session() {
         ASSERT(mc1.is_valid() && mc1.get_msg_type()[0] == 'q', "fix_masscancel_q_valid");
         ASSERT(std::strcmp(mc1.get_field(530), "1") == 0, "fix_masscancel_by_symbol");
         ASSERT(std::strcmp(mc1.get_symbol(), "AAPL") == 0, "fix_masscancel_symbol");
-        s.build_mass_cancel(buf, sizeof(buf), "MC2", '7', nullptr, '|'); // wszystkie
+        s.build_mass_cancel(buf, sizeof(buf), "MC2", '7', nullptr, '|'); // all
         FIXMessage mc2; mc2.parse(buf);
         ASSERT(std::strcmp(mc2.get_field(530), "7") == 0, "fix_masscancel_all");
 
-        // #201 OrderMassCancelReport (35=r) — odpowiedz gieldy.
+        // #201 OrderMassCancelReport (35=r) — the exchange's response.
         s.build_mass_cancel_report(buf, sizeof(buf), "MC2", '7', 5, '|');
         FIXMessage mcr; mcr.parse(buf);
         ASSERT(mcr.is_valid() && mcr.get_msg_type()[0] == 'r', "fix_mcr_r_valid");
@@ -3775,7 +3775,7 @@ void test_fix_session() {
         ASSERT(std::strcmp(mdr.get_field(263), "1") == 0, "fix_mdr_subtype");
         ASSERT(mdr.get_int(264) == 1 && std::strcmp(mdr.get_symbol(), "AAPL") == 0, "fix_mdr_depth_symbol");
 
-        // #217 MarketDataSnapshotFullRefresh (35=W) — odpowiedz na 35=V.
+        // #217 MarketDataSnapshotFullRefresh (35=W) — response to 35=V.
         s.build_md_snapshot(buf, sizeof(buf), "MDR1", "AAPL", 99.98, 100, 100.02, 200, '|');
         FIXMessage mdw; mdw.parse(buf);
         ASSERT(mdw.is_valid() && mdw.get_msg_type()[0] == 'W', "fix_mdw_W_valid");
@@ -3785,7 +3785,7 @@ void test_fix_session() {
         ASSERT(std::strcmp(mdw.get_field(269), "0") == 0, "fix_mdw_first_is_bid"); // pierwszy wpis = bid
         ASSERT(std::fabs(mdw.get_double(270) - 99.98) < 1e-6, "fix_mdw_bid_px");
 
-        // #225 MarketDataIncrementalRefresh (35=X) — przyrostowa zmiana bid.
+        // #225 MarketDataIncrementalRefresh (35=X) — incremental bid change.
         s.build_md_incremental(buf, sizeof(buf), "MDR1", '1', '0', "AAPL", 100.05, 500, '|');
         FIXMessage mdx; mdx.parse(buf);
         ASSERT(mdx.is_valid() && mdx.get_msg_type()[0] == 'X', "fix_mdx_X_valid");
@@ -3794,7 +3794,7 @@ void test_fix_session() {
         ASSERT(std::fabs(mdx.get_double(270) - 100.05) < 1e-6 && mdx.get_int(271) == 500,
                "fix_mdx_px_size");
 
-        // #233 MarketDataRequestReject (35=Y) — odrzucenie subskrypcji.
+        // #233 MarketDataRequestReject (35=Y) — subscription rejection.
         s.build_md_request_reject(buf, sizeof(buf), "MDR1", '0', '|');  // unknown symbol
         FIXMessage mdy; mdy.parse(buf);
         ASSERT(mdy.is_valid() && mdy.get_msg_type()[0] == 'Y', "fix_mdy_Y_valid");
@@ -3809,7 +3809,7 @@ void test_fix_session() {
         ASSERT(exr.valid && exr.exec_type == '2' && exr.ord_status == '2', "fix_execrep_type_status");
         ASSERT(exr.last_qty == 100 && std::fabs(exr.last_px - 150.25) < 1e-6, "fix_execrep_last");
         ASSERT(exr.cum_qty == 100 && exr.leaves_qty == 0, "fix_execrep_cum_leaves");
-        // wiadomosc nie-8 -> invalid
+        // a non-8 message -> invalid
         s.build_new_order(buf, sizeof(buf), "ORDX", "AAPL", Side::BUY, 50, 10.0, '|');
         FIXMessage notexec; notexec.parse(buf);
         ASSERT(!fix::FIXSession::parse_exec_report(notexec).valid, "fix_execrep_non8_invalid");
@@ -3924,7 +3924,7 @@ void test_fix_session() {
         ps.process_inbound(lo, 3000);
         ASSERT(ps.state() == fix::SessionState::LOGOUT, "fix_pi_logout_state");
 
-        // #158 inbound TestRequest -> zapamietaj 112, odpowiedz Heartbeatem.
+        // #158 inbound TestRequest -> remember 112, respond with a Heartbeat.
         fix::FIXSession ts; ts.set_comp_ids("ME", "EX");
         char tb[256];
         ts.build_test_request(tb, sizeof(tb), "TR123", '|');
@@ -3959,7 +3959,7 @@ void test_fix_session() {
         ASSERT(std::atoi(er.get_field(32)) == 40, "fix_exec_last_qty");  // LastQty
         ASSERT(std::atoi(er.get_field(151)) == 60, "fix_exec_leaves_qty"); // LeavesQty
 
-        // #126 Session-level Reject (35=3) — np. po negatywnym validate_new_order.
+        // #126 Session-level Reject (35=3) — e.g. after a negative validate_new_order.
         s.build_reject(buf, sizeof(buf), 42, "D", 1, "Required tag missing", '|');
         FIXMessage rj; rj.parse(buf);
         ASSERT(rj.is_valid() && rj.get_msg_type()[0] == '3', "fix_reject_valid");
@@ -3967,14 +3967,14 @@ void test_fix_session() {
         ASSERT(std::atoi(rj.get_field(373)) == 1, "fix_reject_reason_code");
         ASSERT(std::strcmp(rj.get_field(372), "D") == 0, "fix_reject_refmsgtype");
 
-        // #133 Business Message Reject (35=j) — np. nieznany symbol.
+        // #133 Business Message Reject (35=j) — e.g. an unknown symbol.
         s.build_business_reject(buf, sizeof(buf), "D", "ORD9", 2, "Unknown symbol", '|');
         FIXMessage bj; bj.parse(buf);
         ASSERT(bj.is_valid() && bj.get_msg_type()[0] == 'j', "fix_busreject_valid");
         ASSERT(std::strcmp(bj.get_field(379), "ORD9") == 0, "fix_busreject_refid");
         ASSERT(std::atoi(bj.get_field(380)) == 2, "fix_busreject_reason");
 
-        // #143 OrderCancelReject (35=9) — odrzucenie cancel/replace (np. za pozno).
+        // #143 OrderCancelReject (35=9) — rejection of cancel/replace (e.g. too late).
         s.build_cancel_reject(buf, sizeof(buf), "CXL1", "ORD1", "EXG1", '2', '2', 0,
                               "Too late to cancel", '|');
         FIXMessage cr; cr.parse(buf);
@@ -3986,7 +3986,7 @@ void test_fix_session() {
 }
 
 
-// FIX order state #111 — kliencka maszyna stanu z ExecutionReportow (35=8).
+// FIX order state #111 — a client-side state machine from ExecutionReports (35=8).
 void test_fix_order_state() {
     SECTION("FIX Order State (#111)");
     fix::FIXSession s; s.set_comp_ids("ME", "EX");
@@ -4014,7 +4014,7 @@ void test_fix_order_state() {
     ASSERT(tr.on_exec_report(m3) == fix::OrdState::UNKNOWN, "fixstate_unknown_clordid");
 }
 
-// OUCH order state #89 — kliencka maszyna stanu (token → live/partial/filled).
+// OUCH order state #89 — a client-side state machine (token → live/partial/filled).
 void test_ouch_order_state() {
     SECTION("OUCH Order State (#89)");
     ouch::OUCHOrderTracker t;
@@ -4067,7 +4067,7 @@ void test_ouch_order_state() {
     ASSERT(t.remaining("TOK1") == 100 && t.filled("TOK1") == 0, "ouchstate_broken_unfilled");
     ASSERT(t.brokens() == 1, "ouchstate_broken_count");
 
-    // #112 Order Replaced ('U'): encode → decode (nowy + poprzedni token).
+    // #112 Order Replaced ('U'): encode → decode (new + previous token).
     n = OUCHMessage::encode_replaced(buf, "NEWTOK", "TOK1", 80, 151.00, 4242);
     const OUCHResponse rp = OUCHMessage::parse_response(buf, n);
     ASSERT(std::strcmp(rp.type, "REPLACED") == 0, "ouch_replaced_parsed");
@@ -4083,8 +4083,8 @@ void test_ouch_order_state() {
     ASSERT(rb.shares == 50 && rb.match_number == 99001, "ouch_broken_fields");
     ASSERT(rb.reason[0] == 'E', "ouch_broken_reason");
 
-    // #178 Cancel Reject ('I'): gielda odrzuca probe anulowania.
-    n = OUCHMessage::encode_cancel_reject(buf, "TOK9", 'T');   // T = too late (juz wykonane)
+    // #178 Cancel Reject ('I'): the exchange rejects the cancel attempt.
+    n = OUCHMessage::encode_cancel_reject(buf, "TOK9", 'T');   // T = too late (already executed)
     const OUCHResponse cr = OUCHMessage::parse_response(buf, n);
     ASSERT(std::strcmp(cr.type, "CXL_REJECT") == 0, "ouch_cxlrej_parsed");
     ASSERT(std::strcmp(cr.token, "TOK9") == 0, "ouch_cxlrej_token");
@@ -4092,7 +4092,7 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 15).type, "ERROR") == 0,
            "ouch_cxlrej_short_error");
 
-    // #186 Cancel Pending ('P'): anulowanie przyjete, jeszcze nie finalne.
+    // #186 Cancel Pending ('P'): cancellation accepted, not yet final.
     n = OUCHMessage::encode_cancel_pending(buf, "TOK5");
     const OUCHResponse cp = OUCHMessage::parse_response(buf, n);
     ASSERT(std::strcmp(cp.type, "CXL_PEND") == 0, "ouch_cxlpend_parsed");
@@ -4117,7 +4117,7 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 9).type, "ERROR") == 0,
            "ouch_sysevent_short_error");
 
-    // #210 Restated ('R'): gielda zmienia parametry bez prosby klienta.
+    // #210 Restated ('R'): the exchange changes parameters without a client request.
     auto closepr = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
     n = OUCHMessage::encode_restated(buf, "TOK8", 80, 100.05, 'P');
     const OUCHResponse rs = OUCHMessage::parse_response(buf, n);
@@ -4134,7 +4134,7 @@ void test_ouch_order_state() {
     ASSERT(OUCHMessage::expected_length('R') == 24, "ouch_explen_restated");
     ASSERT(OUCHMessage::expected_length('Z') == 0, "ouch_explen_unknown");
 
-    // #152 parse_order — strona gieldy dekoduje zlecenia klienta O/X/U.
+    // #152 parse_order — the exchange side decodes the client's O/X/U orders.
     auto closep = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);
     const OUCHOrder eo = OUCHMessage::parse_order(buf, n);
@@ -4159,14 +4159,14 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
                        "non-positive shares") == 0, "ouch_modify_zero_rejected");
 
-    // #169 validate_order — gateway gieldy waliduje zlecenie klienta.
+    // #169 validate_order — the exchange gateway validates the client's order.
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 150.25);
     ASSERT(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)) == nullptr,
            "ouch_validate_ok");
     n = OUCHMessage::enter_order(buf, "TOK1", 'B', 0, "AAPL", 150.25);   // shares 0
     ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
                        "non-positive shares") == 0, "ouch_validate_zero_shares");
-    n = OUCHMessage::enter_order(buf, "TOK1", 'X', 100, "AAPL", 150.25); // zla strona
+    n = OUCHMessage::enter_order(buf, "TOK1", 'X', 100, "AAPL", 150.25); // wrong side
     ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
                        "invalid side") == 0, "ouch_validate_bad_side");
 
@@ -4330,7 +4330,7 @@ void test_soupbin_ouch_session() {
     oc.consume(oresp, orlen);
     ASSERT(oc.accepts() == 1 && oc.executes() == 1, "pack_enter_order_roundtrip");
 
-    // #139 Login Rejected — parsuj powod odmowy.
+    // #139 Login Rejected — parse the rejection reason.
     OuchSessionClient cr;
     uint8_t jpkt[8];
     pack_header(jpkt, PacketType::LOGIN_REJECTED, 1);

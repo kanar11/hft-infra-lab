@@ -6,7 +6,7 @@
 #include <cstdint>
 
 // Fixed-point price: stored as integer ticks (1 tick = 0.01)
-// Stała cena - przechowywana jako liczba całkowita (1 tick = 0,01)
+// Fixed-point price - stored as an integer (1 tick = 0.01)
 using Price = std::int64_t;
 
 struct Order {
@@ -18,13 +18,13 @@ struct Order {
 
 class OrderBook {
     // NOTE: std::map allocates per-node on insert (not ideal for HFT).
-    // UWAGA: std::map przydziela pamięć dla każdego węzła przy wstawianiu (nieidealne dla HFT)
+    // NOTE: std::map allocates memory for each node on insertion (not ideal for HFT)
     // Production systems use pre-allocated flat arrays indexed by price level.
-    // Systemy produkcyjne używają wstępnie przydzielonych płaskich tablic indeksowanych poziomem ceny
+    // Production systems use pre-allocated flat arrays indexed by price level
     // Using std::map here for clarity; see lockfree/spsc_queue.cpp for
-    // Używamy std::map tutaj dla jasności; zobacz lockfree/spsc_queue.cpp na przykład
+    // We use std::map here for clarity; see lockfree/spsc_queue.cpp for an example of
     // an example of pre-allocated, cache-friendly data structures.
-    // wstępnie przydzielonych, przyjaznych dla cache'u struktur danych
+    // pre-allocated, cache-friendly data structures
     std::map<Price, int, std::greater<Price>> bids;
     std::map<Price, int> asks;
     std::uint64_t trades = 0;

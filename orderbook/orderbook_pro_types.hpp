@@ -1,13 +1,13 @@
 /*
- * orderbook_pro_types.hpp — model danych dla FullOrderBook.
+ * orderbook_pro_types.hpp — data model for FullOrderBook.
  *
- * Wydzielone z orderbook_pro.hpp: stałe siatki cenowej, enumy (typy zleceń,
- * TIF, STP, statusy, eventy, reject reasons, fazy sesji) oraz POD-y księgi
+ * Extracted from orderbook_pro.hpp: price-grid constants, enums (order types,
+ * TIF, STP, statuses, events, reject reasons, session phases) and book PODs
  * (Order, PriceLevel, Trade, BookStats, BookEvent, TopOfBook, DepthLevel).
  *
- * Te typy są samodzielne — nie zależą od FullOrderBook ani BookCluster, więc
- * konsumenci (strategie, risk, logger) mogą includować sam model bez ciągnięcia
- * całego silnika matchingu.
+ * These types are standalone — they depend on neither FullOrderBook nor BookCluster, so
+ * consumers (strategies, risk, logger) can include just the model without pulling in
+ * the whole matching engine.
  */
 #pragma once
 
@@ -17,133 +17,133 @@
 
 namespace orderbook_pro {
 
-// Stałe wire / model (mogłyby trafić do common/, ale chcemy żeby orderbook_pro
-// był standalone i nie wymagał innych modułów poza common/types).
-inline constexpr std::int32_t PRICE_MIN_TICKS = 0;            // dolny brzeg siatki
-inline constexpr std::int32_t NO_BID_TICKS    = -1;           // sentinel "brak quote"
-inline constexpr std::int32_t NO_ASK_TICKS    = INT32_MAX;    // sentinel po stronie ask
+// Wire / model constants (could live in common/, but we want orderbook_pro
+// to be standalone and not require modules other than common/types).
+inline constexpr std::int32_t PRICE_MIN_TICKS = 0;            // lower edge of the grid
+inline constexpr std::int32_t NO_BID_TICKS    = -1;           // sentinel "no quote"
+inline constexpr std::int32_t NO_ASK_TICKS    = INT32_MAX;    // sentinel on the ask side
 
 
-// Typ zlecenia — DEC2025 NASDAQ + IEX taxonomies.
+// Order type — DEC2025 NASDAQ + IEX taxonomies.
 enum class OrderType : std::uint8_t {
-    LIMIT       = 0,   // standardowe limit order
-    IOC         = 1,   // Immediate-Or-Cancel: weź co możesz teraz, resztę KASUJ
-    FOK         = 2,   // Fill-Or-Kill: cała qty albo nic
-    POST_ONLY   = 3,   // ALO — odrzuć jeśli zostałbyś takerem (cross na entry)
-    ICEBERG     = 4,   // pokazuj tylko `displayed_qty`, ukrywaj resztę
-    STOP        = 5,   // trigger-on-price; po triggerze staje się LIMIT/MARKET
-    PEG         = 6,   // peg do mid albo best bid/ask + offset
-    MARKET      = 7,   // bez ceny, zjadasz aż do wyczerpania
-    HIDDEN      = 8,   // NIE pokazywane w L1/L2 depth ani trade tape (dark pool semantyka)
-    AON         = 9,   // All-Or-None: fill jak FOK ale persiste w księdze (czeka)
+    LIMIT       = 0,   // standard limit order
+    IOC         = 1,   // Immediate-Or-Cancel: take what you can now, CANCEL the rest
+    FOK         = 2,   // Fill-Or-Kill: full qty or nothing
+    POST_ONLY   = 3,   // ALO — reject if you would become a taker (cross on entry)
+    ICEBERG     = 4,   // show only `displayed_qty`, hide the rest
+    STOP        = 5,   // trigger-on-price; after trigger becomes LIMIT/MARKET
+    PEG         = 6,   // peg to mid or best bid/ask + offset
+    MARKET      = 7,   // no price, you consume until exhausted
+    HIDDEN      = 8,   // NOT shown in L1/L2 depth or trade tape (dark-pool semantics)
+    AON         = 9,   // All-Or-None: fills like FOK but persists in the book (waits)
 };
 
 
 // Time in force.
 enum class TimeInForce : std::uint8_t {
-    DAY = 0,   // ważne do końca sesji
-    GTC = 1,   // Good-Till-Cancel — przeżywa nocny rollover
-    IOC = 2,   // Immediate-Or-Cancel (redundancja z OrderType::IOC dla wygody)
+    DAY = 0,   // valid until end of session
+    GTC = 1,   // Good-Till-Cancel — survives overnight rollover
+    IOC = 2,   // Immediate-Or-Cancel (redundant with OrderType::IOC for convenience)
     FOK = 3,   // Fill-Or-Kill
-    GTD = 4,   // Good-Til-Date — expire_ts_ns_ pokazuje kiedy
-    GTX = 5,   // Good-Til-Cross — resztka kasowana po najbliższym crossie aukcyjnym
+    GTD = 4,   // Good-Til-Date — expire_ts_ns_ shows when
+    GTX = 5,   // Good-Til-Cross — remainder cancelled after the next auction cross
 };
 
 
-// Self-trade prevention — co robić gdy nasze ID konta uderza w nasze quote.
+// Self-trade prevention — what to do when our account ID hits our own quote.
 enum class SelfTradePrevention : std::uint8_t {
-    NONE              = 0,   // pozwól wash trade (zwykle ZAKAZANE, ale dla testów)
-    CANCEL_NEWEST     = 1,   // przychodzące zlecenie anulowane
-    CANCEL_OLDEST     = 2,   // resting zlecenie anulowane
-    CANCEL_BOTH       = 3,   // oba kasowane
-    DECREMENT_AND_CXL = 4,   // mniejsza qty z kart wzajemnie (NASDAQ DAC)
+    NONE              = 0,   // allow wash trade (usually FORBIDDEN, but for tests)
+    CANCEL_NEWEST     = 1,   // incoming order cancelled
+    CANCEL_OLDEST     = 2,   // resting order cancelled
+    CANCEL_BOTH       = 3,   // both cancelled
+    DECREMENT_AND_CXL = 4,   // decrement the smaller qty from both (NASDAQ DAC)
 };
 
 
-// Status pojedynczego Ordera w lifecycle.
+// Status of a single Order in its lifecycle.
 enum class OrderStatus : std::uint8_t {
-    NEW              = 0,   // zaakceptowane, jeszcze nie w księdze (queue join in progress)
-    OPEN             = 1,   // w księdze, czeka na egzekucję
-    PARTIALLY_FILLED = 2,   // częściowo wypełnione, resztki czekają
-    FILLED           = 3,   // całkowicie wypełnione
-    CANCELLED        = 4,   // skasowane przez usera
-    REJECTED         = 5,   // odrzucone przed wejściem (locked/crossed/POST_ONLY cross)
+    NEW              = 0,   // accepted, not yet in the book (queue join in progress)
+    OPEN             = 1,   // in the book, waiting for execution
+    PARTIALLY_FILLED = 2,   // partially filled, remainder waiting
+    FILLED           = 3,   // completely filled
+    CANCELLED        = 4,   // cancelled by the user
+    REJECTED         = 5,   // rejected before entry (locked/crossed/POST_ONLY cross)
     EXPIRED          = 6,   // GTD/DAY/IOC/FOK expired
-    REPLACED         = 7,   // cancel+resubmit przez modify()
+    REPLACED         = 7,   // cancel+resubmit via modify()
 };
 
 
-// Typ eventu generowanego przez book (callback OnEvent).
+// Type of event generated by the book (OnEvent callback).
 enum class EventType : std::uint8_t {
-    ACCEPT       = 0,   // order zaakceptowany do księgi (NEW → OPEN)
-    REJECT       = 1,   // odrzucony przed dodaniem
-    FILL         = 2,   // egzekucja (może być częściowa lub pełna)
+    ACCEPT       = 0,   // order accepted into the book (NEW → OPEN)
+    REJECT       = 1,   // rejected before being added
+    FILL         = 2,   // execution (may be partial or full)
     CANCEL       = 3,   // user cancel
     EXPIRE       = 4,   // expire (GTD/DAY)
     REPLACE      = 5,   // modify success
-    BOOK_UPDATE  = 6,   // książka zmieniła się (top of book / depth)
+    BOOK_UPDATE  = 6,   // book changed (top of book / depth)
 };
 
 
-// Reason code dla REJECT — żeby caller wiedział czemu zlecenie odrzucone.
+// Reason code for REJECT — so the caller knows why the order was rejected.
 enum class RejectReason : std::uint8_t {
     NONE                  = 0,
-    PRICE_OUT_OF_RANGE    = 1,   // price < 0 lub price >= LEVELS
+    PRICE_OUT_OF_RANGE    = 1,   // price < 0 or price >= LEVELS
     QTY_ZERO_OR_NEGATIVE  = 2,
-    POOL_EXHAUSTED        = 3,   // brak miejsca w order pool
-    POST_ONLY_WOULD_CROSS = 4,   // POST_ONLY a zlecenie krzyżuje rynek
-    FOK_NOT_FILLABLE      = 5,   // FOK i niewystarczająca płynność
-    SELF_TRADE_BLOCKED    = 6,   // STP zadziałało
-    DUPLICATE_ID          = 7,   // ID już istnieje w księdze
+    POOL_EXHAUSTED        = 3,   // no room in the order pool
+    POST_ONLY_WOULD_CROSS = 4,   // POST_ONLY but the order crosses the market
+    FOK_NOT_FILLABLE      = 5,   // FOK and insufficient liquidity
+    SELF_TRADE_BLOCKED    = 6,   // STP triggered
+    DUPLICATE_ID          = 7,   // ID already exists in the book
     LOCKED_MARKET         = 8,   // bid == ask (cross protection)
-    CROSSED_MARKET        = 9,   // bid > ask (rynek skrzyżowany)
+    CROSSED_MARKET        = 9,   // bid > ask (crossed market)
     HALTED                = 10,  // book halted (trading halt)
     MIN_QTY_NOT_MET       = 11,  // matched < min_qty constraint
-    LULD_BAND_BREACH      = 12,  // cena poza Limit Up / Limit Down bandami
-    SSR_RESTRICTED        = 13,  // short sale przy aktywnym SSR ≤ best bid (Rule 201)
-    REDUCE_ONLY_NO_POSITION = 14, // reduce-only bez pozycji do zredukowania
-    RATE_LIMITED          = 15,  // konto przekroczyło token bucket (msg rate)
-    MARKET_CLOSED         = 16,  // sesja w fazie CLOSED — submity odrzucane
-    MMP_TRIPPED           = 17,  // market maker protection aktywna — quotes blokowane do resetu
+    LULD_BAND_BREACH      = 12,  // price outside Limit Up / Limit Down bands
+    SSR_RESTRICTED        = 13,  // short sale with active SSR ≤ best bid (Rule 201)
+    REDUCE_ONLY_NO_POSITION = 14, // reduce-only with no position to reduce
+    RATE_LIMITED          = 15,  // account exceeded the token bucket (msg rate)
+    MARKET_CLOSED         = 16,  // session in CLOSED phase — submits rejected
+    MMP_TRIPPED           = 17,  // market maker protection active — quotes blocked until reset
 };
 
 
-// Faza sesji giełdowej. Book startuje w CONTINUOUS (backward compat) —
-// lifecycle używasz opt-in przez begin_pre_open()/open_market()/...
+// Exchange session phase. The book starts in CONTINUOUS (backward compat) —
+// you opt into the lifecycle via begin_pre_open()/open_market()/...
 enum class SessionPhase : std::uint8_t {
-    PRE_OPEN   = 0,   // orders queue do opening cross, brak continuous match
-    CONTINUOUS = 1,   // normalny matching
-    CLOSING    = 2,   // orders queue do closing cross
-    CLOSED     = 3,   // submity odrzucane (MARKET_CLOSED); cancel dozwolony
+    PRE_OPEN   = 0,   // orders queue for the opening cross, no continuous match
+    CONTINUOUS = 1,   // normal matching
+    CLOSING    = 2,   // orders queue for the closing cross
+    CLOSED     = 3,   // submits rejected (MARKET_CLOSED); cancel allowed
 };
 
 
-// Pojedyncze zlecenie w księdze — POD, cache-aligned (jedna linia 64 B).
+// A single order in the book — POD, cache-aligned (one 64 B line).
 //
-// Intrusive linked list: każdy Order trzyma next_at_level_/prev_at_level_
-// w obrębie swojego PriceLevel. Cancel = O(1) unlink bez search.
+// Intrusive linked list: each Order holds next_at_level_/prev_at_level_
+// within its PriceLevel. Cancel = O(1) unlink without search.
 struct alignas(64) Order {
-    std::uint64_t  id;                  // unikalny order_id (caller-provided lub auto)
-    std::uint64_t  client_id;            // ID klienta (do STP)
-    std::int32_t   price_ticks;          // cena w tickach
-    std::int32_t   total_qty;            // całkowite qty zlecenia
-    std::int32_t   filled_qty;           // ile wypełnione do tej pory
-    std::int32_t   displayed_qty;        // dla ICEBERG: ile widoczne; LIMIT: == total
+    std::uint64_t  id;                  // unique order_id (caller-provided or auto)
+    std::uint64_t  client_id;            // client ID (for STP)
+    std::int32_t   price_ticks;          // price in ticks
+    std::int32_t   total_qty;            // total order qty
+    std::int32_t   filled_qty;           // how much filled so far
+    std::int32_t   displayed_qty;        // for ICEBERG: how much is visible; LIMIT: == total
     Side           side;                 // BUY / SELL
-    OrderType      type;                 // typ zlecenia
+    OrderType      type;                 // order type
     TimeInForce    tif;                  // time in force
-    OrderStatus    status;               // bieżący stan
-    std::uint64_t  submit_ts_ns;         // monotonic timestamp wpływu do księgi
-    std::uint64_t  expire_ts_ns;         // dla GTD; 0 = nigdy
-    std::int32_t   stop_trigger_ticks;   // dla STOP/PEG: cena triggera/peg base
-    std::int32_t   peg_offset_ticks;     // dla PEG: offset od best bid/ask/mid
-    std::int32_t   peg_cap_ticks;        // dla PEG: limit cap (BUY: max, SELL: min); 0 = brak
-    std::int32_t   decision_mid_ticks;   // snapshot mid przy submit — dla IS (Implementation Shortfall)
-    std::int32_t   iceberg_display_size; // dla ICEBERG: rozmiar refresh (0 = nie-iceberg)
-    std::uint64_t  first_fill_ts_ns;     // ts pierwszego fill (0 jeśli nic nie wypełnione)
+    OrderStatus    status;               // current state
+    std::uint64_t  submit_ts_ns;         // monotonic timestamp of entry into the book
+    std::uint64_t  expire_ts_ns;         // for GTD; 0 = never
+    std::int32_t   stop_trigger_ticks;   // for STOP/PEG: trigger price / peg base
+    std::int32_t   peg_offset_ticks;     // for PEG: offset from best bid/ask/mid
+    std::int32_t   peg_cap_ticks;        // for PEG: limit cap (BUY: max, SELL: min); 0 = none
+    std::int32_t   decision_mid_ticks;   // mid snapshot at submit — for IS (Implementation Shortfall)
+    std::int32_t   iceberg_display_size; // for ICEBERG: refresh size (0 = not an iceberg)
+    std::uint64_t  first_fill_ts_ns;     // ts of first fill (0 if nothing filled)
     Order*         next_at_level;        // intrusive list (FIFO)
     Order*         prev_at_level;
-    Order*         next_free;            // free list w pool (gdy slot wolny)
+    Order*         next_free;            // free list in the pool (when the slot is free)
 
     void reset() noexcept {
         id = 0;
@@ -176,13 +176,13 @@ struct alignas(64) Order {
 };
 
 
-// Pojedynczy price level: head/tail FIFO + agregaty dla L2.
+// A single price level: head/tail FIFO + aggregates for L2.
 struct alignas(64) PriceLevel {
-    Order*        head            = nullptr;   // pierwsza w kolejce (najwcześniej zaplanowana)
-    Order*        tail            = nullptr;   // ostatnia (most recent join)
-    std::int32_t  total_qty       = 0;          // Σ displayed_qty (widoczna płynność)
-    std::int32_t  total_hidden    = 0;          // Σ ICEBERG hidden (niewidoczne)
-    std::int32_t  order_count     = 0;          // ile zleceń w kolejce (do queue position)
+    Order*        head            = nullptr;   // first in the queue (earliest scheduled)
+    Order*        tail            = nullptr;   // last (most recent join)
+    std::int32_t  total_qty       = 0;          // Σ displayed_qty (visible liquidity)
+    std::int32_t  total_hidden    = 0;          // Σ ICEBERG hidden (invisible)
+    std::int32_t  order_count     = 0;          // how many orders in the queue (for queue position)
 
     bool empty() const noexcept { return head == nullptr; }
     void clear() noexcept {
@@ -193,19 +193,19 @@ struct alignas(64) PriceLevel {
 };
 
 
-// Pojedyncza egzekucja na trade tape.
+// A single execution on the trade tape.
 struct alignas(32) Trade {
-    std::uint64_t  exec_id;          // unikalny ID egzekucji (monotoniczny)
+    std::uint64_t  exec_id;          // unique execution ID (monotonic)
     std::uint64_t  maker_order_id;
     std::uint64_t  taker_order_id;
     std::int32_t   price_ticks;
     std::int32_t   qty;
-    Side           taker_side;       // która strona była agresorem
+    Side           taker_side;       // which side was the aggressor
     std::uint64_t  ts_ns;
 };
 
 
-// Snapshot statyk księgi (informational, lazy).
+// Snapshot of book stats (informational, lazy).
 struct BookStats {
     std::uint64_t  total_orders_added       = 0;
     std::uint64_t  total_orders_cancelled   = 0;
@@ -213,7 +213,7 @@ struct BookStats {
     std::uint64_t  total_orders_rejected    = 0;
     std::uint64_t  total_orders_expired     = 0;
     std::uint64_t  total_fills              = 0;
-    std::uint64_t  total_volume             = 0;     // Σ qty wszystkich fills
+    std::uint64_t  total_volume             = 0;     // Σ qty of all fills
     std::uint64_t  total_locked_rejects     = 0;
     std::uint64_t  total_self_trade_blocks  = 0;
     std::uint64_t  peak_order_pool_used     = 0;
@@ -227,36 +227,36 @@ struct BookStats {
     std::uint64_t  multi_level_sweeps       = 0;          // taker matched >= 2 price levels
     std::uint64_t  sum_levels_touched       = 0;          // Σ levels traversed (per sweep)
     std::uint64_t  priority_preserved_mods  = 0;          // modify qty-DOWN same-price
-    std::uint64_t  priority_lost_mods       = 0;          // modify zmieniający cenę / qty UP
-    std::uint64_t  total_quoted_spread_ticks_obs = 0;     // Σ best_ask-best_bid przy obserwacji
-    std::uint64_t  total_quoted_spread_samples   = 0;     // ile próbek (do mean spread)
+    std::uint64_t  priority_lost_mods       = 0;          // modify changing price / qty UP
+    std::uint64_t  total_quoted_spread_ticks_obs = 0;     // Σ best_ask-best_bid at observation time
+    std::uint64_t  total_quoted_spread_samples   = 0;     // number of samples (for mean spread)
     std::uint64_t  total_effective_spread_2x_ticks = 0;   // Σ 2×|fill_px - mid| (signed)
-    std::uint64_t  total_effective_spread_samples  = 0;   // ile fillów (do mean effective)
+    std::uint64_t  total_effective_spread_samples  = 0;   // number of fills (for mean effective)
 };
 
 
-// Event przekazywany do callbacka.
+// Event passed to the callback.
 struct BookEvent {
     EventType     type;
-    std::uint64_t order_id;          // dla ACCEPT/REJECT/CANCEL/EXPIRE/REPLACE/FILL
-    std::uint64_t maker_id;          // dla FILL: maker side
+    std::uint64_t order_id;          // for ACCEPT/REJECT/CANCEL/EXPIRE/REPLACE/FILL
+    std::uint64_t maker_id;          // for FILL: maker side
     std::int32_t  price_ticks;
-    std::int32_t  qty;               // dla FILL: ile, dla CANCEL: pozostała qty
+    std::int32_t  qty;               // for FILL: how much, for CANCEL: remaining qty
     OrderStatus   resulting_status;
-    RejectReason  reject_reason;     // tylko dla REJECT
+    RejectReason  reject_reason;     // only for REJECT
     std::uint64_t ts_ns;
     std::uint64_t seq_num = 0;       // monotonic — consumer dedup / gap detect
-    std::uint64_t client_id = 0;     // konto (0 = nieznane/anonim) — drop copy
+    std::uint64_t client_id = 0;     // account (0 = unknown/anonymous) — drop copy
 };
 
 
-// Top-of-book quote — najczęstsza struktura konsumowana przez strategie.
+// Top-of-book quote — the structure most often consumed by strategies.
 struct TopOfBook {
     std::int32_t  best_bid_ticks;
     std::int32_t  best_ask_ticks;
-    std::int32_t  bid_qty;            // displayed na best bid
-    std::int32_t  ask_qty;            // displayed na best ask
-    std::int32_t  bid_count;          // ile zleceń na best bid
+    std::int32_t  bid_qty;            // displayed at best bid
+    std::int32_t  ask_qty;            // displayed at best ask
+    std::int32_t  bid_count;          // how many orders at best bid
     std::int32_t  ask_count;
 };
 

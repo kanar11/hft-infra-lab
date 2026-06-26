@@ -1,13 +1,13 @@
 /*
- * FIXOrderTracker — kliencka maszyna stanu zlecenia FIX (expansion #111).
+ * FIXOrderTracker — a client-side FIX order state machine (expansion #111).
  *
- * Symetrycznie do OUCHOrderTracker (#89): po wyslaniu NewOrderSingle (35=D)
- * gielda odsyla ExecutionReporty (35=8) z OrdStatus (39), CumQty (14),
- * LeavesQty (151). Tracker sledzi cykl zycia per ClOrdID (tag 11): czy zlecenie
- * jest New/PartiallyFilled/Filled/Canceled/Rejected i ile juz wypelnione.
+ * Symmetric to OUCHOrderTracker (#89): after sending a NewOrderSingle (35=D)
+ * the exchange sends back ExecutionReports (35=8) with OrdStatus (39), CumQty (14),
+ * LeavesQty (151). The tracker follows the lifecycle per ClOrdID (tag 11): whether the order
+ * is New/PartiallyFilled/Filled/Canceled/Rejected and how much is already filled.
  *
- *   on_new(cl_ord_id, qty)       — zarejestruj wyslane zlecenie
- *   on_exec_report(FIXMessage)   — zaaplikuj raport 35=8 (po m.parse())
+ *   on_new(cl_ord_id, qty)       — register a sent order
+ *   on_exec_report(FIXMessage)   — apply a 35=8 report (after m.parse())
  *
  * OrdStatus (tag 39): 0=New, 1=PartiallyFilled, 2=Filled, 4=Canceled, 8=Rejected.
  */
@@ -64,8 +64,8 @@ public:
         orders_[cl_ord_id] = Record{OrdState::NEW, qty, 0, qty};
     }
 
-    // on_exec_report: zaaplikuj sparsowany ExecutionReport (35=8). Zwraca nowy
-    // stan (UNKNOWN gdy brak ClOrdID albo nieznane zlecenie — desync).
+    // on_exec_report: apply a parsed ExecutionReport (35=8). Returns the new
+    // state (UNKNOWN when there is no ClOrdID or an unknown order — desync).
     OrdState on_exec_report(const FIXMessage& m) {
         const char* id = m.get_field(11);            // ClOrdID
         if (!id) return OrdState::UNKNOWN;

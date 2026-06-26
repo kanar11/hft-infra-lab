@@ -1,7 +1,7 @@
 /*
- * orderbook_pro_demo — testy + benchmark dla FullOrderBook.
+ * orderbook_pro_demo — tests + benchmark for FullOrderBook.
  *
- * Pokrywa wszystkie ścieżki API:
+ * Covers all API paths:
  *   - LIMIT add/cancel/modify (priority preserve vs lose)
  *   - IOC/FOK lifecycle
  *   - POST_ONLY reject when crossing
@@ -65,7 +65,7 @@ void test_basic_add_and_match() {
     (void)id3;
     ASSERT(b.stats().total_fills >= 1,            "basic_cross_makes_fill");
     ASSERT(b.stats().total_volume == 100,         "basic_cross_volume_100");
-    // Po fill'u brak asków
+    // After the fill there are no asks
     ASSERT(!b.has_ask(),                          "basic_ask_gone_after_full_fill");
     ASSERT(b.best_bid_ticks() == 10000,           "basic_best_bid_unchanged");
 }
@@ -104,10 +104,10 @@ void test_modify_priority_preserve_down_only() {
 
 void test_ioc_takes_what_can_then_cancels() {
     Book b;
-    b.submit(Side::SELL, 10100, 50);    // tylko 50 dostępne
+    b.submit(Side::SELL, 10100, 50);    // only 50 available
     auto buy = b.submit(Side::BUY, 10100, 100, OrderType::IOC);
     (void)buy;
-    // 50 wykonane, 50 cancelled — IOC nie zostaje w księdze
+    // 50 executed, 50 cancelled — IOC does not stay in the book
     ASSERT(b.stats().total_volume == 50,      "ioc_executes_available");
     ASSERT(!b.has_bid(),                       "ioc_no_residual_in_book");
 }
@@ -121,7 +121,7 @@ void test_fok_kills_if_not_fully_fillable() {
                         TimeInForce::FOK, 0, 0, 0, &rr);
     ASSERT(buy == 0,                                "fok_returns_zero");
     ASSERT(rr == RejectReason::FOK_NOT_FILLABLE,    "fok_reason");
-    // SELL nadal w księdze, nic się nie wykonało
+    // SELL still in the book, nothing executed
     ASSERT(b.has_ask(),                              "fok_seller_intact");
     ASSERT(b.stats().total_fills == 0,               "fok_no_fills");
 }
@@ -135,10 +135,10 @@ void test_post_only_rejects_when_would_cross() {
                               TimeInForce::DAY, 0, 0, 0, &rr);
     ASSERT(cross_buy == 0,                              "post_only_reject");
     ASSERT(rr == RejectReason::POST_ONLY_WOULD_CROSS,   "post_only_reason");
-    // SELL nietknięty
+    // SELL untouched
     ASSERT(b.has_ask(),                                  "post_only_no_match");
 
-    // POST_ONLY na NIEKRZYŻUJĄCYM levelu — przechodzi
+    // POST_ONLY on a NON-CROSSING level — passes
     auto safe_buy = b.submit(Side::BUY, 10000, 50, OrderType::POST_ONLY);
     ASSERT(safe_buy > 0,                                  "post_only_safe_accepts");
 }
@@ -168,7 +168,7 @@ void test_iceberg_displays_partial() {
 void test_top_of_book() {
     Book b;
     b.submit(Side::BUY,  10000, 200);
-    b.submit(Side::BUY,  10000, 100);   // 2 zlecenia na tym samym poziomie
+    b.submit(Side::BUY,  10000, 100);   // 2 orders at the same level
     b.submit(Side::SELL, 10100, 150);
 
     auto tob = b.top_of_book();
@@ -184,7 +184,7 @@ void test_top_of_book() {
 void test_microprice_skews_toward_smaller_side() {
     Book b;
     b.submit(Side::BUY,  10000, 100);
-    b.submit(Side::SELL, 10100, 900);     // ask thicker → micro w stronę bid
+    b.submit(Side::SELL, 10100, 900);     // ask thicker → micro toward the bid
     const auto mid   = b.mid_ticks();
     const auto micro = b.microprice_ticks();
     ASSERT(mid == 10050,                  "micro_mid_50_50");
@@ -237,7 +237,7 @@ void test_queue_position_fifo() {
     ASSERT(b.queue_position(a) == 0,   "queue_a_first");
     ASSERT(b.queue_position(c) == 1,   "queue_c_second");
     ASSERT(b.queue_position(d) == 2,   "queue_d_third");
-    b.cancel(c);   // d powinno awansować
+    b.cancel(c);   // d should be promoted
     ASSERT(b.queue_position(a) == 0,   "queue_a_still_first_after_cancel");
     ASSERT(b.queue_position(d) == 1,   "queue_d_promoted");
 }
@@ -251,7 +251,7 @@ void test_trade_tape_and_vwap() {
     Book b;
     b.submit(Side::SELL, 10100, 50);
     b.submit(Side::SELL, 10110, 50);
-    b.submit(Side::BUY,  10120, 100);    // przechodzi 50 @ 10100 + 50 @ 10110
+    b.submit(Side::BUY,  10120, 100);    // passes through 50 @ 10100 + 50 @ 10110
 
     Trade tape[8];
     auto got = b.recent_trades(tape, 8);
@@ -271,11 +271,11 @@ void test_stp_cancel_newest() {
     // Maker z client_id=42
     b.submit(Side::SELL, 10100, 100, OrderType::LIMIT,
              TimeInForce::DAY, 0, /*client_id=*/42);
-    // Taker z tego samego konta
+    // Taker from the same account
     auto t = b.submit(Side::BUY, 10100, 100, OrderType::LIMIT,
                       TimeInForce::DAY, 0, /*client_id=*/42);
     (void)t;
-    // STP zabija takera → fill ZERO, seller nadal w księdze
+    // STP kills the taker → fill ZERO, seller still in the book
     ASSERT(b.stats().total_self_trade_blocks >= 1, "stp_block_counter");
     ASSERT(b.has_ask(),                            "stp_maker_intact");
 }
@@ -316,7 +316,7 @@ void test_snapshot_roundtrip() {
 
 void test_auction_clearing_price() {
     Book b;
-    // Auction mode: submit pomija match, orders sit w księdze do batch cross.
+    // Auction mode: submit skips the match, orders sit in the book until batch cross.
     b.enter_auction_mode();
     b.submit(Side::BUY, 10010, 50);
     b.submit(Side::BUY, 10005, 100);
@@ -326,7 +326,7 @@ void test_auction_clearing_price() {
     b.submit(Side::SELL, 10010, 200);
     b.exit_auction_mode();
 
-    // Po sit-and-wait → run_auction znajdzie clearing 10005 (matched=150)
+    // After sit-and-wait → run_auction finds clearing 10005 (matched=150)
     auto r = b.run_auction();
     ASSERT(r.executed,                                "auction_executed");
     ASSERT(r.clearing_price_ticks > 0,                "auction_clearing_set");
@@ -358,7 +358,7 @@ void test_delta_queue_basic() {
            msgs[1].sequence_no < msgs[2].sequence_no,
            "delta_seq_monotonic");
 
-    // Pop drugi raz — kolejka pusta
+    // Pop a second time — queue empty
     ASSERT(b.pop_delta_queue(msgs, 8) == 0, "delta_queue_drained");
 }
 
@@ -380,7 +380,7 @@ void test_delta_on_cancel() {
     b.enable_delta_queue(true);
     auto id = b.submit(Side::BUY, 10000, 100);
     Book::DeltaMessage tmp[4];
-    b.pop_delta_queue(tmp, 4);   // wyrzuć Add
+    b.pop_delta_queue(tmp, 4);   // drop the Add
 
     b.cancel(id);
     Book::DeltaMessage msgs[4];
@@ -434,7 +434,7 @@ void test_mass_quote_rejected_if_crosses() {
     };
     auto n = b.mass_quote(q, 2, /*client=*/42, nullptr);
     ASSERT(n == 0,                           "mq_atomic_reject_all_or_none");
-    // Resting sell intakt — nic z mass_quote nie weszło
+    // Resting sell intact — nothing from mass_quote entered
     ASSERT(b.best_ask_ticks() == 10000,      "mq_book_unmodified");
 }
 
@@ -473,7 +473,7 @@ void test_book_cluster_basic() {
     ASSERT(aapl != nullptr && msft != nullptr,  "cluster_books_distinct");
     ASSERT(aapl != msft,                         "cluster_books_independent");
 
-    // LEVELS=16384 — ceny muszą się mieścić < 16384
+    // LEVELS=16384 — prices must fit < 16384
     aapl->submit(Side::BUY,  10000, 100);
     aapl->submit(Side::SELL, 10010, 100);
     msft->submit(Side::BUY,  11000, 50);
@@ -499,11 +499,11 @@ void test_hidden_not_in_l1_or_l2() {
     Book b;
     auto h = b.submit(Side::SELL, 10100, 500, OrderType::HIDDEN);
     ASSERT(h > 0,                                "hidden_accepted");
-    // L1 — HIDDEN nie pojawia się w top of book
+    // L1 — HIDDEN does not appear in top of book
     ASSERT(!b.has_ask(),                          "hidden_no_visible_ask");
     auto tob = b.top_of_book();
     ASSERT(tob.best_ask_ticks == NO_ASK_TICKS,    "hidden_tob_ask_sentinel");
-    // L2 depth — pusta strona ask
+    // L2 depth — empty ask side
     DepthLevel bids[5], asks[5];
     std::int32_t bn=0, an=0;
     b.depth(5, bids, asks, &bn, &an);
@@ -516,8 +516,8 @@ void test_hidden_does_not_match_continuous() {
     Book b;
     // HIDDEN sell @ 10100, size 500
     b.submit(Side::SELL, 10100, 500, OrderType::HIDDEN);
-    // Aggressive BUY @ 10100 size 100 — chciałby zjeść hidden, ale
-    // dark-pool nie matchuje continuous → BUY zostaje w księdze
+    // Aggressive BUY @ 10100 size 100 — would like to eat the hidden, but
+    // the dark-pool does not match continuous → BUY stays in the book
     auto buy = b.submit(Side::BUY, 10100, 100);
     ASSERT(buy > 0,                               "hidden_buy_accepted");
     ASSERT(b.stats().total_fills == 0,            "hidden_no_continuous_fill");
@@ -554,8 +554,8 @@ void test_halt_does_not_block_cancel() {
     Book b;
     auto id = b.submit(Side::BUY, 10000, 100);
     b.halt("EMERGENCY");
-    // Cancel zlecenia POWINNO działać nawet podczas haltu (compliance:
-    // trader musi móc się wycofać).
+    // Cancelling an order SHOULD work even during a halt (compliance:
+    // the trader must be able to back out).
     ASSERT(b.cancel(id),                          "halt_cancel_works");
     ASSERT(!b.has_bid(),                          "halt_cancel_removed");
 }
@@ -566,7 +566,7 @@ void test_halt_does_not_block_cancel() {
 
 void test_min_qty_rejected_when_not_met() {
     Book b;
-    b.submit(Side::SELL, 10100, 50);   // tylko 50 dostępne
+    b.submit(Side::SELL, 10100, 50);   // only 50 available
     // BUY 100 z min_qty=75 — fillable=50 < 75 → REJECT
     RejectReason rr = RejectReason::NONE;
     auto id = b.submit(Side::BUY, 10100, 100, OrderType::LIMIT,
@@ -605,7 +605,7 @@ void test_audit_log_records_lifecycle() {
     ASSERT(recs[0].seq_no < recs[1].seq_no,         "audit_seq_monotonic");
     ASSERT(recs[0].order_id == id,                  "audit_order_id");
     ASSERT(recs[1].order_id == id,                  "audit_cancel_id");
-    // Pop ponownie — pusta
+    // Pop again — empty
     ASSERT(b.pop_audit_records(recs, 8) == 0,       "audit_drained");
 }
 
@@ -776,13 +776,13 @@ void test_exposure_cancel_releases_open_qty() {
 
 void test_trade_size_distribution_classifies() {
     Book b;
-    // Małe: 50
+    // Small: 50
     b.submit(Side::SELL, 10100, 50);
     b.submit(Side::BUY,  10100, 50);
-    // Średnie: 500
+    // Medium: 500
     b.submit(Side::SELL, 10100, 500);
     b.submit(Side::BUY,  10100, 500);
-    // Duże: 5000
+    // Large: 5000
     b.submit(Side::SELL, 10100, 5000);
     b.submit(Side::BUY,  10100, 5000);
 
@@ -805,7 +805,7 @@ void test_tape_twap() {
     b.submit(Side::BUY,  10000, 100);    // trade @ 10000
     b.submit(Side::SELL, 10010, 200);
     b.submit(Side::BUY,  10010, 200);    // trade @ 10010
-    // TWAP: (10000 + 10010) / 2 = 10005 (sztywno, nieważne size)
+    // TWAP: (10000 + 10010) / 2 = 10005 (fixed, regardless of size)
     ASSERT(b.tape_twap_ticks() == 10005,              "twap_arithmetic_mean");
     // VWAP weighted by qty: (10000*100 + 10010*200) / 300 = 10006
     ASSERT(b.tape_vwap_ticks() == 10006,              "vwap_weighted_by_qty");
@@ -866,7 +866,7 @@ void test_tob_poll_after_new_quote() {
     Book b;
     b.submit(Side::BUY, 10000, 100);
     b.poll_tob_change();   // consume initial
-    // Lepszy bid → TOB zmiana
+    // Better bid → TOB change
     b.submit(Side::BUY, 10010, 50);
     ASSERT(b.poll_tob_change(),                       "tob_better_bid_detected");
     ASSERT(!b.poll_tob_change(),                       "tob_drained");
@@ -876,7 +876,7 @@ void test_tob_poll_unchanged_when_lower_bid() {
     Book b;
     b.submit(Side::BUY, 10010, 100);
     b.poll_tob_change();
-    // Gorszy bid (poniżej best) → TOB bez zmian
+    // Worse bid (below best) → TOB unchanged
     b.submit(Side::BUY, 9995, 50);
     ASSERT(!b.poll_tob_change(),                       "tob_no_change_lower_bid");
 }
@@ -900,13 +900,13 @@ void test_cross_arb_detected() {
     auto* spy = cluster.book("SPY");
     auto* ivv = cluster.book("IVV");
 
-    // SPY: bid 10010 → mogę sprzedać tu drogo
+    // SPY: bid 10010 → I can sell here at a high price
     spy->submit(Side::BUY,  10010, 100);
     spy->submit(Side::SELL, 10020, 100);
-    // IVV: ask 10005 → mogę kupić tu tanio
+    // IVV: ask 10005 → I can buy here cheaply
     ivv->submit(Side::BUY,  10000, 100);
     ivv->submit(Side::SELL, 10005, 100);
-    // ARB: kupić IVV @ 10005, sprzedać SPY @ 10010 = 5 ticki zysku
+    // ARB: buy IVV @ 10005, sell SPY @ 10010 = 5 ticks profit
 
     orderbook_pro::BookCluster<8, 16384, 4096>::ArbOpportunity opps[4];
     auto n = cluster.detect_cross_arb(opps, 4);
@@ -926,7 +926,7 @@ void test_cross_arb_none_when_aligned() {
 
     xyz->submit(Side::BUY,  10000, 100);
     xyz->submit(Side::SELL, 10010, 100);
-    // ABC top of book: bid below XYZ ask → brak arb
+    // ABC top of book: bid below XYZ ask → no arb
     abc->submit(Side::BUY,  10000, 100);
     abc->submit(Side::SELL, 10010, 100);
 
@@ -1060,7 +1060,7 @@ void test_quoted_spread_sampler() {
 
 void test_quoted_spread_skips_one_sided() {
     Book b;
-    b.submit(Side::BUY, 10000, 10);   // tylko bid
+    b.submit(Side::BUY, 10000, 10);   // bid only
     b.sample_quoted_spread();          // skips
     ASSERT(b.stats().total_quoted_spread_samples == 0, "qspread_no_one_sided");
 }
@@ -1068,7 +1068,7 @@ void test_quoted_spread_skips_one_sided() {
 void test_effective_spread_recorded_on_fill() {
     Book b;
     b.submit(Side::SELL, 10010, 100);
-    b.submit(Side::BUY,  10000, 100);  // ustawia mid = 10005
+    b.submit(Side::BUY,  10000, 100);  // sets mid = 10005
     // taker BUY na 10010, fillowany na 10010, mid_pre=10005 → eff = 2×5 = 10
     b.submit(Side::BUY,  10010, 100);
     ASSERT(b.stats().total_effective_spread_samples >= 1, "eff_sample_recorded");
@@ -1105,7 +1105,7 @@ void test_predicted_vwap_buy_single_level() {
     Book b;
     b.submit(Side::BUY,  9999, 100);   // ustaw mid
     b.submit(Side::SELL, 10010, 200);
-    // Predict buy 100 → wszystko z 10010 → VWAP = 10010
+    // Predict buy 100 → all from 10010 → VWAP = 10010
     ASSERT(b.predicted_vwap_ticks(Side::BUY, 100) == 10010, "vwap_single_lvl");
 }
 
@@ -1122,7 +1122,7 @@ void test_predicted_vwap_partial_liquidity() {
     Book b;
     b.submit(Side::BUY,  9999, 100);
     b.submit(Side::SELL, 10010, 30);
-    // Buy 100 ale tylko 30 dostępne — VWAP across just those 30
+    // Buy 100 but only 30 available — VWAP across just those 30
     ASSERT(b.predicted_vwap_ticks(Side::BUY, 100) == 10010, "vwap_partial");
 }
 
@@ -1163,7 +1163,7 @@ void test_spread_compression_threshold() {
     Book b;
     b.set_spread_compression_threshold(3);
     b.submit(Side::BUY,  10000, 100);
-    b.submit(Side::SELL, 10005, 100);   // spread=5, nie compressed
+    b.submit(Side::SELL, 10005, 100);   // spread=5, not compressed
     (void)b.poll_tob_change();
     b.submit(Side::SELL, 10002, 100);   // spread=2, compressed
     (void)b.poll_tob_change();
@@ -1212,7 +1212,7 @@ void test_quote_flicker_zero_when_trade_intervenes() {
     b.submit(Side::BUY, 10000, 100);
     b.submit(Side::SELL, 10010, 100);
     (void)b.poll_tob_change();
-    // Trade happens between polls (zmienia TOB)
+    // Trade happens between polls (changes the TOB)
     b.submit(Side::BUY, 10010, 100);        // fill consumes ask, TOB shift
     (void)b.poll_tob_change();
     ASSERT(b.quote_flicker_count() == 0,    "flicker_zero_w_trade");
@@ -1259,7 +1259,7 @@ void test_time_weighted_spread_accumulates() {
     b.submit(Side::BUY,  10000, 100);
     b.submit(Side::SELL, 10005, 100);
     b.sample_time_weighted_spread();   // first sample — sets baseline
-    // mała pętla zajmująca czas
+    // small loop to burn time
     for (volatile int i = 0; i < 1000; ++i) {}
     b.sample_time_weighted_spread();
     ASSERT(b.mean_time_weighted_spread_ticks() >= 0.0,
@@ -1415,7 +1415,7 @@ void test_trades_per_second_returns_nonneg() {
     Book b;
     b.submit(Side::SELL, 10100, 100);
     b.submit(Side::BUY,  10100, 50);
-    // some work between trades — daje delta ts_ns
+    // some work between trades — yields a delta ts_ns
     for (volatile int i = 0; i < 1000; ++i) {}
     b.submit(Side::SELL, 10100, 100);
     b.submit(Side::BUY,  10100, 50);
@@ -1451,7 +1451,7 @@ void test_spread_bias_bid_side() {
 void test_spread_bias_neutral() {
     Book b;
     b.submit(Side::BUY,  10000, 100);
-    b.submit(Side::SELL, 10010, 100);   // mid=10005, oba offset=5 → neutral
+    b.submit(Side::SELL, 10010, 100);   // mid=10005, both offset=5 → neutral
     b.poll_tob_micro();
     ASSERT(b.spread_bias_neutral() == 1, "bias_neutral_1");
 }
@@ -1498,7 +1498,7 @@ void test_latency_arb_off_by_default() {
 
 void test_latency_arb_detected_same_side_back_to_back() {
     Book b;
-    b.set_latency_arb_window_ns(1'000'000'000ULL);  // 1 second — bardzo szeroki
+    b.set_latency_arb_window_ns(1'000'000'000ULL);  // 1 second — very wide
     b.submit(Side::SELL, 10100, 50);
     b.submit(Side::BUY,  10100, 50);    // BUY fill #1
     b.submit(Side::SELL, 10101, 50);
@@ -1948,7 +1948,7 @@ void test_inter_trade_gap_after_two_trades() {
     b.submit(Side::SELL, 10100, 50);
     b.submit(Side::BUY,  10100, 50);
     ASSERT(b.inter_trade_gap_sample_count() >= 1, "gap_samples_ge_1");
-    // mean ≤ max (sanity — both unsigned, niezależne od konkretnych wartości)
+    // mean ≤ max (sanity — both unsigned, independent of the concrete values)
     ASSERT(b.inter_trade_gap_mean_ns() <= b.inter_trade_gap_max_ns(),
                                                    "gap_mean_le_max");
 }
@@ -2141,7 +2141,7 @@ void test_depth_pyramid_steepness_steep() {
     b.submit(Side::BUY, 10000, 1000);   // best
     b.submit(Side::BUY, 9999,  100);
     b.submit(Side::BUY, 9998,  10);
-    // 1→3 spadek: (1000 - 10)/1000 × 10000 = 9900
+    // 1→3 drop: (1000 - 10)/1000 × 10000 = 9900
     const auto s = b.depth_pyramid_steepness_bps(Side::BUY, 3);
     ASSERT(s > 9000,                          "pyramid_steep");
 }
@@ -2201,7 +2201,7 @@ void test_ema_imbalance_smooths() {
     auto id = b.submit(Side::BUY, 10000, 200);    // bid grows MORE one-sided
     (void)id;
     b.sample_ema_imbalance();
-    // EMA powinien się przesunąć w kierunku nowego sygnału, ale wolniej
+    // EMA should move toward the new signal, but more slowly
     const double second = b.ema_imbalance_bps();
     ASSERT(second != first,                         "ema_smoothed_moves");
 }
@@ -2282,7 +2282,7 @@ void test_maker_survival_after_two_polls() {
     b.submit(Side::BUY, 10000, 100);
     b.submit(Side::BUY, 9999,  100);
     b.sample_maker_survival();        // poll 1: snapshot 2 ids
-    // None cancelled — wszystkie powinny przeżyć
+    // None cancelled — all should survive
     b.sample_maker_survival();        // poll 2: 2/2 survivors
     ASSERT(b.maker_survival_total_polls() == 2,  "survival_polls_2");
     ASSERT(b.maker_survival_ratio() == 1.0,       "survival_ratio_1.0");
@@ -2319,7 +2319,7 @@ void test_markov_alternating() {
 
 void test_queue_depth_at_arrival_empty_level() {
     Book b;
-    b.submit(Side::BUY, 10000, 100);   // pierwszy na level → qd=0
+    b.submit(Side::BUY, 10000, 100);   // first on the level → qd=0
     ASSERT(b.queue_depth_arrival_samples() == 1,    "qda_samples_1");
     ASSERT(b.mean_queue_depth_at_arrival() == 0.0,  "qda_mean_0");
     ASSERT(b.max_queue_depth_at_arrival() == 0,     "qda_max_0");
@@ -2468,9 +2468,9 @@ void test_book_integrity_clean() {
 void test_partial_fill_rest_displays_remaining() {
     Book b;
     b.submit(Side::SELL, 10100, 30);
-    // Taker BUY 100 @ 10100: fill 30, resztka 70 wchodzi do księgi
+    // Taker BUY 100 @ 10100: fill 30, remainder 70 enters the book
     b.submit(Side::BUY, 10100, 100);
-    // L2 depth na 10100 (bid side) powinno pokazywać 70, nie 100
+    // L2 depth at 10100 (bid side) should show 70, not 100
     ASSERT(b.total_volume_at_price(10100) == 70, "partial_rest_shows_70");
     ASSERT(b.audit_book_integrity() == 0,         "partial_rest_integrity");
 }
@@ -2484,7 +2484,7 @@ void test_hidden_no_drift_after_partial_cancel() {
     auto id = b.submit(Side::BUY, 10000, 100);   // maker
     b.submit(Side::SELL, 10000, 30);              // partial fill 30
     b.cancel(id);                                  // cancel resztki 70
-    // Stara formuła T-D w unlink driftowała total_hidden do -30 → ratio 1.0
+    // Old T-D formula in unlink drifted total_hidden to -30 → ratio 1.0
     ASSERT(b.hidden_liquidity_ratio() == 0.0, "hidden_no_drift_0");
     ASSERT(b.audit_book_integrity() == 0,      "hidden_drift_audit_0");
 }
@@ -2507,7 +2507,7 @@ void test_auction_partial_fill_depth_correct() {
     b.exit_auction_mode();
     auto r = b.run_auction();
     ASSERT(r.executed && r.matched_qty == 60,    "auction_pf_matched_60");
-    // BUY partial: 60 filled, 40 resztki → depth == 40 (stary kod: 100)
+    // BUY partial: 60 filled, 40 remainder → depth == 40 (old code: 100)
     ASSERT(b.total_volume_at_price(10000) == 40, "auction_pf_depth_40");
     ASSERT(b.audit_book_integrity() == 0,         "auction_pf_audit_0");
 }
@@ -2551,7 +2551,7 @@ void test_snapshot_next_id_no_collision() {
     const auto written = b.serialize_snapshot(buf.data(), buf.size());
     Book b2;
     ASSERT(b2.load_snapshot(buf.data(), written),  "id_snap_loaded");
-    auto id2 = b2.submit(Side::BUY, 9999, 50);     // auto id — musi być nowy
+    auto id2 = b2.submit(Side::BUY, 9999, 50);     // auto id — must be new
     ASSERT(id2 != 0,                                "id_new_accepted");
     ASSERT(id2 != id1,                              "id_no_collision");
     ASSERT(b2.find_order(id1) != nullptr,           "id_old_still_reachable");
@@ -2581,7 +2581,7 @@ void test_hurst_trending_bounded() {
         b.submit(Side::BUY,  10100 + i * 10, 50);
     }
     // Monotoniczny trend → H > 0.5 (persistence); single-window crude,
-    // więc tylko luźne bounds
+    // so only loose bounds
     const double h = b.hurst_rs_estimate();
     ASSERT(h > 0.5 && h < 1.2, "hurst_trend_gt_half");
 }
@@ -2595,7 +2595,7 @@ void test_modify_down_iceberg_hidden_consistent() {
     auto ice = b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
                          TimeInForce::DAY, 0, 0, /*displayed=*/100);
     // Decrease 1000 → 500: 100 z displayed, 400 z hidden reserve.
-    // Stary kod nie ruszał total_hidden → audit łapał violation.
+    // Old code did not touch total_hidden → audit caught a violation.
     ASSERT(b.modify(ice, 10100, 500) == ice,        "mod_ice_same_id");
     ASSERT(b.audit_book_integrity() == 0,            "mod_ice_audit_0");
     auto* o = b.find_order(ice);
@@ -2606,10 +2606,10 @@ void test_modify_down_iceberg_neighbor_depth() {
     Book b;
     auto ice = b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
                          TimeInForce::DAY, 0, 0, /*displayed=*/100);
-    b.submit(Side::SELL, 10100, 50);                 // sąsiad na tym samym levelu
+    b.submit(Side::SELL, 10100, 50);                 // neighbour on the same level
     (void)b.modify(ice, 10100, 500);
-    // Stary kod odejmował min(delta, level_total)=150 od level total →
-    // depth 0 i zgubione 50 sąsiada; ma być 50
+    // Old code subtracted min(delta, level_total)=150 from the level total →
+    // depth 0 and the neighbour's lost 50; it should be 50
     ASSERT(b.total_volume_at_price(10100) == 50,     "mod_ice_neighbor_50");
     ASSERT(b.audit_book_integrity() == 0,             "mod_ice_neighbor_audit");
 }
@@ -2676,7 +2676,7 @@ void test_oco_unlink_breaks_pair() {
     b.link_oco(a, c);
     ASSERT(b.unlink_oco(a),                         "oco_unlink_ok");
     b.submit(Side::BUY, 10100, 100);                // full fill nogi a
-    // Po unlink noga c przeżywa fill nogi a
+    // After unlink, leg c survives the fill of leg a
     ASSERT(b.find_order(c) != nullptr,              "oco_unlinked_survives");
     ASSERT(b.oco_triggered_cancels() == 0,          "oco_unlink_no_trig");
 }
@@ -2689,8 +2689,8 @@ void test_cancel_pending_stop_direct() {
     Book b;
     auto sid = b.submit_stop(Side::SELL, 9900, 0, 100);
     ASSERT(sid != 0 && b.stop_orders_count() == 1, "stop_pending_1");
-    // Stara wersja: cancel_internal wymagał is_active() → STOP NEW niemożliwy
-    // do anulowania (kill switch go pomijał)
+    // Old version: cancel_internal required is_active() → STOP NEW impossible
+    // to cancel (the kill switch skipped it)
     ASSERT(b.cancel(sid),                          "stop_cancellable");
     ASSERT(b.stop_orders_count() == 0,             "stop_removed");
     ASSERT(b.find_order(sid) == nullptr,           "stop_not_in_index");
@@ -2707,7 +2707,7 @@ void test_mass_cancel_includes_pending_stops() {
 
 void test_bracket_arms_on_immediate_fill() {
     Book b;
-    b.submit(Side::SELL, 10100, 100);              // liquidity dla entry
+    b.submit(Side::SELL, 10100, 100);              // liquidity for the entry
     auto e = b.submit_bracket(Side::BUY, 10100, 100, /*tp*/10200, /*sl*/9900);
     ASSERT(e != 0,                                 "bracket_entry_ok");
     ASSERT(b.brackets_armed() == 1,                "bracket_armed_now");
@@ -2734,7 +2734,7 @@ void test_bracket_tp_fill_cancels_sl() {
     b.submit(Side::SELL, 10100, 100);
     b.submit_bracket(Side::BUY, 10100, 100, 10200, 9900);   // armed od razu
     b.submit(Side::BUY, 10200, 100);               // taker fills TP
-    // OCO: full fill TP → pending SL stop auto-cancelled (ścieżka STOP/NEW)
+    // OCO: full fill TP → pending SL stop auto-cancelled (STOP/NEW path)
     ASSERT(b.stop_orders_count() == 0,             "bracket_sl_auto_cxl");
     ASSERT(b.oco_triggered_cancels() == 1,         "bracket_oco_trig_1");
     ASSERT(b.active_oco_pairs() == 0,              "bracket_pairs_0");
@@ -2786,13 +2786,13 @@ void test_trailing_stop_triggers_on_drop() {
     b.submit(Side::SELL, 10100, 10);
     b.submit(Side::BUY,  10100, 10);    // rally
     b.check_stop_triggers();             // ratchet → 10050
-    b.submit(Side::BUY, 10040, 100);    // bid — liquidity dla market stopa
+    b.submit(Side::BUY, 10040, 100);    // bid — liquidity for the market stop
     b.submit(Side::SELL, 10050, 10);
     b.submit(Side::BUY,  10050, 10);    // drop → last_trade 10050
     b.check_stop_triggers();             // 10050 <= 10050 → TRIGGER → market SELL
     ASSERT(b.stop_orders_count() == 0,              "trail_triggered");
     ASSERT(b.stats().total_stop_triggers == 1,      "trail_trig_stat");
-    // Market SELL 100 zjadł bid 10040
+    // Market SELL 100 ate the bid 10040
     ASSERT(b.total_volume_at_price(10040) == 0,     "trail_filled_bid");
 }
 
@@ -2810,7 +2810,7 @@ void test_trailing_stop_buy_ratchets_down() {
 }
 
 void test_trailing_stop_rejects_without_reference() {
-    Book b;   // pusta księga — brak last_trade i brak mid
+    Book b;   // empty book — no last_trade and no mid
     RejectReason rr = RejectReason::NONE;
     auto ts = b.submit_trailing_stop(Side::SELL, 50, 0, 100, 0, 0, &rr);
     ASSERT(ts == 0,                                 "trail_no_ref_rejected");
@@ -2849,13 +2849,13 @@ void test_moc_fills_at_clearing() {
 void test_moc_remainder_cancelled() {
     Book b;
     b.enter_auction_mode();
-    b.submit(Side::SELL, 10005, 30);    // tylko 30 kontra-liquidity
+    b.submit(Side::SELL, 10005, 30);    // only 30 counter-liquidity
     b.exit_auction_mode();
     b.submit_moc(Side::BUY, 100);
     auto r = b.run_closing_auction();
     ASSERT(r.executed,                           "moc_pf_executed");
     ASSERT(r.matched_qty == 30,                  "moc_pf_matched_30");
-    // Resztka 70 nie restuje — market semantics
+    // Remainder 70 does not rest — market semantics
     ASSERT(b.moc_cancelled_unfilled() == 1,      "moc_pf_leftover_cxl");
     ASSERT(b.total_volume_at_price(10005) == 0,  "moc_pf_book_clean");
     ASSERT(b.audit_book_integrity() == 0,         "moc_pf_audit_0");
@@ -2886,9 +2886,9 @@ void test_noii_indicative_without_execution() {
     ASSERT(noii.clearing_price_ticks == 10005,    "noii_clearing_10005");
     ASSERT(noii.matched_qty == 60,                "noii_matched_60");
     ASSERT(noii.surplus_bid_qty == 40,            "noii_surplus_bid_40");
-    // Księga NIETKNIĘTA — oba ordery nadal resting (100 + 60 displayed)
+    // Book UNTOUCHED — both orders still resting (100 + 60 displayed)
     ASSERT(b.total_volume_at_price(10005) == 160, "noii_book_untouched");
-    // Faktyczny cross zgadza się z indicative
+    // The actual cross matches the indicative
     auto r = b.run_auction();
     ASSERT(r.executed && r.matched_qty == 60 &&
            r.clearing_price_ticks == 10005,       "noii_matches_actual");
@@ -2906,19 +2906,19 @@ void test_loc_queue_and_cancel() {
 void test_loc_fills_and_remainder_cancelled() {
     Book b;
     b.enter_auction_mode();
-    b.submit(Side::BUY, 10005, 50);     // kontra tylko 50
+    b.submit(Side::BUY, 10005, 50);     // counter only 50
     b.exit_auction_mode();
     b.submit_loc(Side::SELL, 10005, 80);
     auto r = b.run_closing_auction();
     ASSERT(r.executed && r.matched_qty == 50,     "loc_cross_50");
-    // Resztka 30 nie restuje — on-close semantics
+    // Remainder 30 does not rest — on-close semantics
     ASSERT(b.loc_cancelled_unfilled() == 1,       "loc_leftover_cxl");
     ASSERT(b.total_volume_at_price(10005) == 0,   "loc_book_clean");
     ASSERT(b.audit_book_integrity() == 0,          "loc_audit_0");
 }
 
 void test_loc_provides_price_discovery_for_moc() {
-    Book b;   // pusta księga — LOC daje cenę, MOC crossuje z nim
+    Book b;   // empty book — LOC provides a price, MOC crosses with it
     b.submit_loc(Side::SELL, 10005, 50);
     b.submit_moc(Side::BUY, 50);
     auto r = b.run_closing_auction();
@@ -2986,7 +2986,7 @@ void test_reduce_only_rejects_without_position() {
     ASSERT(rr == RejectReason::REDUCE_ONLY_NO_POSITION, "ro_reason");
     ASSERT(b.rejections_by_reason(RejectReason::REDUCE_ONLY_NO_POSITION) == 1,
                                                        "ro_tally");
-    // Zły kierunek: long position + reduce-only BUY też odpada
+    // Wrong direction: long position + reduce-only BUY is also rejected
     Book c;
     c.submit(Side::SELL, 10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 9);
     c.submit(Side::BUY,  10100, 100, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
@@ -2999,9 +2999,9 @@ void test_reduce_only_rejects_without_position() {
 // ──────────────────────────────────────────────
 
 void test_replay_determinism_identical_state() {
-    // Ta sama sekwencja operacji na dwóch księgach musi dać identyczny stan.
-    // Chroni przed nondeterminizmem (np. iteracja po unordered_map wpływająca
-    // na wynik matchingu). Scenariusz przechodzi przez: limit, partial taker,
+    // The same sequence of operations on two books must yield an identical state.
+    // Guards against nondeterminism (e.g. iteration over unordered_map affecting
+    // the matching result). The scenario goes through: limit, partial taker,
     // iceberg, modify (price change), cancel, OCO fill-cancels-partner.
     auto scenario = [](Book& b) {
         b.submit(Side::BUY,  10000, 100);
@@ -3010,13 +3010,13 @@ void test_replay_determinism_identical_state() {
         auto x = b.submit(Side::BUY, 9995, 50);
         b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
                  TimeInForce::DAY, 0, 0, /*displayed=*/100);
-        (void)b.modify(x, 9996, 40);                      // price change, ten sam id
+        (void)b.modify(x, 9996, 40);                      // price change, the same id
         b.submit(Side::SELL, 10000, 40);                  // hits bid
         b.cancel(x);
         auto a1 = b.submit(Side::SELL, 10005, 20);
         auto a2 = b.submit(Side::BUY,  9990, 20);
         b.link_oco(a1, a2);
-        b.submit(Side::BUY, 10005, 20);                   // fill a1 → OCO kasuje a2
+        b.submit(Side::BUY, 10005, 20);                   // fill a1 → OCO cancels a2
     };
     Book b1;
     Book b2;
@@ -3046,8 +3046,8 @@ void test_iceberg_refresh_uses_original_display() {
     b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
              TimeInForce::DAY, 0, 0, /*displayed=*/250);
     ASSERT(b.total_volume_at_price(10100) == 250,  "ice_init_250");
-    b.submit(Side::BUY, 10100, 250);    // zjada cały displayed
-    // Refresh do ORYGINALNEGO display size 250 (stary kod: hardcoded 100)
+    b.submit(Side::BUY, 10100, 250);    // eats the entire displayed
+    // Refresh to the ORIGINAL display size 250 (old code: hardcoded 100)
     ASSERT(b.total_volume_at_price(10100) == 250,  "ice_refresh_250");
     ASSERT(b.iceberg_refresh_count() == 1,         "ice_refresh_cnt_1");
     ASSERT(b.audit_book_integrity() == 0,           "ice_refresh_audit_0");
@@ -3055,7 +3055,7 @@ void test_iceberg_refresh_uses_original_display() {
 
 void test_iceberg_display_clamped_to_qty() {
     Book b;
-    // displayed > qty — stary kod wpuszczał displayed=200 przy total=100
+    // displayed > qty — old code let displayed=200 through with total=100
     // (level total 200, hidden -100 → audit violation)
     b.submit(Side::SELL, 10100, 100, OrderType::ICEBERG,
              TimeInForce::DAY, 0, 0, /*displayed=*/200);
@@ -3071,8 +3071,8 @@ void test_iceberg_snapshot_preserves_refresh_size() {
     const auto written = b.serialize_snapshot(buf.data(), buf.size());
     Book b2;
     ASSERT(b2.load_snapshot(buf.data(), written),  "ice_snap_loaded");
-    b2.submit(Side::BUY, 10100, 250);   // zjada displayed w odtworzonej księdze
-    // Refresh size przetrwał round-trip (snapshot v2)
+    b2.submit(Side::BUY, 10100, 250);   // eats the displayed in the restored book
+    // Refresh size survived the round-trip (snapshot v2)
     ASSERT(b2.total_volume_at_price(10100) == 250, "ice_snap_refresh_250");
     ASSERT(b2.audit_book_integrity() == 0,          "ice_snap_audit_0");
 }
@@ -3120,7 +3120,7 @@ void test_iceberg_jitter_within_band() {
     b.set_iceberg_refresh_jitter_bps(2000);   // ±20%
     b.submit(Side::SELL, 10100, 1000, OrderType::ICEBERG,
              TimeInForce::DAY, 0, 0, /*displayed=*/100);
-    b.submit(Side::BUY, 10100, 100);    // zjada displayed → refresh z jitterem
+    b.submit(Side::BUY, 10100, 100);    // eats displayed → refresh with jitter
     const std::int32_t refilled = b.total_volume_at_price(10100);
     ASSERT(refilled >= 80 && refilled <= 120,      "ice_jitter_band_80_120");
     ASSERT(b.audit_book_integrity() == 0,           "ice_jitter_audit_0");
@@ -3162,7 +3162,7 @@ void test_auction_extension_on_imbalance() {
     ASSERT(r.surplus_bid_qty == 150,                "ext_surplus_150");
     ASSERT(r.clearing_price_ticks == 10005,         "ext_indicative_px");
     ASSERT(b.auction_extensions_count() == 1,       "ext_counter_1");
-    // Księga NIETKNIĘTA — 200 + 50 displayed nadal na levelu
+    // Book UNTOUCHED — 200 + 50 displayed still on the level
     ASSERT(b.total_volume_at_price(10005) == 250,   "ext_book_intact");
 }
 
@@ -3174,7 +3174,7 @@ void test_auction_extension_then_cross() {
     b.exit_auction_mode();
     (void)b.try_run_auction(100);        // extension
     b.enter_auction_mode();
-    b.submit(Side::SELL, 10005, 150);    // kontra dosypana w extension
+    b.submit(Side::SELL, 10005, 150);    // counter added during the extension
     b.exit_auction_mode();
     auto r = b.try_run_auction(100);     // surplus 0 → cross
     ASSERT(r.executed,                              "ext2_crossed");
@@ -3214,7 +3214,7 @@ void test_peg_cap_initial_clamp() {
     Book b;
     b.submit(Side::BUY,  10010, 100);
     b.submit(Side::SELL, 10030, 100);
-    // initial = best_bid 10010, cap 10005 → wchodzi od razu na 10005
+    // initial = best_bid 10010, cap 10005 → enters immediately at 10005
     b.submit_peg(Side::BUY, 0, 50, 0, 0, nullptr, /*cap*/10005);
     ASSERT(b.total_volume_at_price(10005) == 50,  "peg_cap_init_10005");
 }
@@ -3225,7 +3225,7 @@ void test_peg_cap_sell_floor() {
     b.submit(Side::SELL, 10020, 100);
     b.submit_peg(Side::SELL, 0, 50, 0, 0, nullptr, /*cap*/10015);
     b.submit(Side::SELL, 10010, 30);    // best_ask → 10010
-    b.reprice_pegs();                    // target 10010, podłoga → 10015
+    b.reprice_pegs();                    // target 10010, floor → 10015
     ASSERT(b.total_volume_at_price(10015) == 50,  "peg_cap_sell_at_10015");
     ASSERT(b.audit_book_integrity() == 0,          "peg_cap_sell_audit_0");
 }
@@ -3243,13 +3243,13 @@ void test_snapshot_with_pending_stop_roundtrip() {
     const auto written = b.serialize_snapshot(buf.data(), buf.size());
     ASSERT(written > 0,                             "stop_snap_written");
     Book b2;
-    // Stary kod: header count zawierał stopa, ale rekord nie był pisany —
-    // len check failował i load zwracał false
+    // Old code: the header count included the stop, but the record was not written —
+    // the len check failed and load returned false
     ASSERT(b2.load_snapshot(buf.data(), written),   "stop_snap_load_ok");
     ASSERT(b2.stop_orders_count() == 1,             "stop_snap_restored");
     ASSERT(b2.total_volume_at_price(10000) == 100,  "stop_snap_book_intact");
-    // Trigger działa w odtworzonej księdze
-    b2.submit(Side::SELL, 10000, 100);    // zjada bid (trade @ 10000, bez triggera)
+    // Trigger works in the restored book
+    b2.submit(Side::SELL, 10000, 100);    // eats the bid (trade @ 10000, no trigger)
     b2.submit(Side::BUY,  9900, 5);
     b2.submit(Side::SELL, 9900, 5);       // trade @ 9900 → warunek triggera
     b2.check_stop_triggers();
@@ -3267,11 +3267,11 @@ void test_snapshot_restores_peg_reprice() {
     const auto written = b.serialize_snapshot(buf.data(), buf.size());
     Book b2;
     ASSERT(b2.load_snapshot(buf.data(), written),   "peg_snap_load_ok");
-    // Stary kod: peg trafiał do levels, ale nie do peg_orders_ → martwy peg
+    // Old code: the peg landed in levels but not in peg_orders_ → dead peg
     ASSERT(b2.peg_orders_count() == 1,              "peg_snap_in_vector");
     b2.submit(Side::BUY, 10005, 30);
     b2.reprice_pegs();
-    // Peg podążył: 10000 → 10005 (dołącza do limita 30)
+    // Peg followed: 10000 → 10005 (joins the limit of 30)
     ASSERT(b2.total_volume_at_price(10005) == 80,   "peg_snap_reprices_80");
     ASSERT(b2.audit_book_integrity() == 0,           "peg_snap_audit_0");
 }
@@ -3281,8 +3281,8 @@ void test_clear_frees_pending_stops() {
     b.submit_stop(Side::SELL, 9900, 0, 50);
     ASSERT(b.active_orders() == 1,                  "clear_stop_alloc_1");
     b.clear();
-    // Stary kod: clear zwalniał tylko ordery z levels — pending stop
-    // przeciekał (slot ani w free-list, ani osiągalny)
+    // Old code: clear freed only orders from levels — the pending stop
+    // leaked (the slot was neither in the free-list nor reachable)
     ASSERT(b.active_orders() == 0,                  "clear_stop_freed");
     ASSERT(b.stop_orders_count() == 0,              "clear_stop_vector_empty");
 }
@@ -3305,7 +3305,7 @@ void test_rate_limit_burst_capacity() {
                     TimeInForce::DAY, 0, 7, 0, &rr) == 0, "rl_4_rejected");
     ASSERT(rr == RejectReason::RATE_LIMITED,        "rl_reason");
     ASSERT(b.rate_limited_rejects() == 1,           "rl_counter_1");
-    // Inne konto i cid 0 — bez limitu
+    // Another account and cid 0 — no limit
     ASSERT(b.submit(Side::BUY, 9996, 10, OrderType::LIMIT,
                     TimeInForce::DAY, 0, 8) != 0,   "rl_other_acct_ok");
     ASSERT(b.submit(Side::BUY, 9995, 10) != 0,      "rl_cid0_ok");
@@ -3317,8 +3317,8 @@ void test_rate_limit_stop_trigger_bypasses() {
     b.submit_stop(Side::SELL, 9900, 9890, 50, 0, 7);
     ASSERT(b.submit(Side::BUY, 10000, 10, OrderType::LIMIT,
                     TimeInForce::DAY, 0, 7) != 0,   "rl_token_used");
-    // Token wyczerpany — ale trigger stopa to internal resubmit → bypass
-    b.submit(Side::SELL, 10000, 10);    // cid 0 zjada bid 7 → trade @ 10000
+    // Token exhausted — but the stop trigger is an internal resubmit → bypass
+    b.submit(Side::SELL, 10000, 10);    // cid 0 eats bid 7 → trade @ 10000
     b.submit(Side::BUY,  9900, 5);
     b.submit(Side::SELL, 9900, 5);      // trade @ 9900 → warunek triggera
     b.check_stop_triggers();
@@ -3338,7 +3338,7 @@ void test_auction_wash_trade_flagged() {
     b.exit_auction_mode();
     auto r = b.run_auction();
     ASSERT(r.executed && r.matched_qty == 50,        "wash_cross_ok");
-    // Client 7 wziął udział po obu stronach → flagged
+    // Client 7 participated on both sides → flagged
     ASSERT(b.last_auction_wash_clients() == 1,       "wash_last_1");
     ASSERT(b.auction_wash_trade_flags() == 1,        "wash_total_1");
 }
@@ -3361,7 +3361,7 @@ void test_auction_wash_clean_different_clients() {
 
 void test_cluster_snapshot_roundtrip() {
     using Cluster = orderbook_pro::BookCluster<4, 16384, 2048>;
-    // Heap — dwa klastry na stacku to za dużo (4 księgi × ~1 MB każdy)
+    // Heap — two clusters on the stack is too much (4 books × ~1 MB each)
     std::unique_ptr<Cluster> c1(new Cluster());
     std::unique_ptr<Cluster> c2(new Cluster());
     c1->register_symbol("AAPL");
@@ -3403,7 +3403,7 @@ void test_session_full_day_lifecycle() {
     using Phase = orderbook_pro::SessionPhase;
     Book b;
     ASSERT(b.session_phase() == Phase::CONTINUOUS,   "phase_default_cont");
-    // Pre-open: crossing orders czekają bez matchu
+    // Pre-open: crossing orders wait without matching
     b.begin_pre_open();
     ASSERT(b.session_phase() == Phase::PRE_OPEN,     "phase_preopen");
     b.submit(Side::BUY,  10005, 100);
@@ -3416,7 +3416,7 @@ void test_session_full_day_lifecycle() {
     // Continuous: normalny match (resztka bida 40)
     b.submit(Side::SELL, 10005, 40);
     ASSERT(b.total_volume_at_price(10005) == 0,      "continuous_match_ok");
-    // Closing: orders + MOC czekają na cross
+    // Closing: orders + MOC wait for the cross
     b.begin_closing();
     ASSERT(b.session_phase() == Phase::CLOSING,      "phase_closing");
     b.submit(Side::SELL, 10005, 30);
@@ -3429,7 +3429,7 @@ void test_session_full_day_lifecycle() {
 
 void test_session_closed_rejects_submits() {
     Book b;
-    auto resting = b.submit(Side::BUY, 9000, 10);    // przed zamknięciem
+    auto resting = b.submit(Side::BUY, 9000, 10);    // before the close
     b.begin_closing();
     (void)b.close_market();
     RejectReason rr = RejectReason::NONE;
@@ -3441,12 +3441,12 @@ void test_session_closed_rejects_submits() {
     ASSERT(b.submit_loc(Side::BUY, 10000, 10) == 0,  "closed_loc_rej");
     ASSERT(b.rejections_by_reason(RejectReason::MARKET_CLOSED) == 4,
                                                       "closed_tally_4");
-    // Cancel pozostaje dozwolony (czyszczenie GTC po sesji)
+    // Cancel remains allowed (clearing GTC after the session)
     ASSERT(b.cancel(resting),                        "closed_cancel_ok");
 }
 
 // ──────────────────────────────────────────────
-// Halt z reopen przez aukcję (#64)
+// Halt with reopen via auction (#64)
 // ──────────────────────────────────────────────
 
 void test_halt_for_auction_queues_and_reopens() {
@@ -3454,13 +3454,13 @@ void test_halt_for_auction_queues_and_reopens() {
     b.halt_for_auction();
     ASSERT(b.halt_reopen_pending(),                  "pause_pending");
     b.submit(Side::BUY,  10005, 40);
-    b.submit(Side::SELL, 10005, 40);   // crossing — ale pauza → queue
+    b.submit(Side::SELL, 10005, 40);   // crossing — but pause → queue
     ASSERT(b.stats().total_fills == 0,               "pause_no_match");
     auto r = b.resume_with_auction();
     ASSERT(r.executed && r.matched_qty == 40,        "reopen_cross_40");
     ASSERT(!b.halt_reopen_pending(),                 "pause_cleared");
     ASSERT(b.halt_auction_reopens() == 1,            "reopen_count_1");
-    // Continuous znów działa
+    // Continuous works again
     b.submit(Side::SELL, 10000, 5);
     b.submit(Side::BUY,  10000, 5);
     ASSERT(b.stats().total_fills >= 2,               "continuous_after_reopen");
@@ -3478,7 +3478,7 @@ void test_luld_breach_triggers_auction_pause() {
                     TimeInForce::DAY, 0, 0, 0, &rr) == 0, "luld_breach_rej");
     ASSERT(rr == RejectReason::LULD_BAND_BREACH,     "luld_reason");
     ASSERT(b.halt_reopen_pending(),                  "luld_paused");
-    // Order entry trwa: in-band crossing order czeka zamiast matchować
+    // Order entry continues: an in-band crossing order waits instead of matching
     b.submit(Side::BUY, 10010, 30);
     ASSERT(b.stats().total_fills == 0,               "luld_pause_no_match");
     auto r = b.resume_with_auction();
@@ -3487,12 +3487,12 @@ void test_luld_breach_triggers_auction_pause() {
 }
 
 // ──────────────────────────────────────────────
-// Drop copy — strumień eventów jednego konta (#65)
+// Drop copy — event stream of a single account (#65)
 // ──────────────────────────────────────────────
 
 void test_drop_copy_filters_by_account() {
     struct Cap { int n; std::uint64_t cli; };
-    static Cap cap;   // lambda bez capture → konwersja na fn ptr
+    static Cap cap;   // lambda without capture → conversion to fn ptr
     cap = Cap{0, 0};
     Book b;
     b.set_drop_copy(7, [](const BookEvent& ev, void* ctx) {
@@ -3500,17 +3500,17 @@ void test_drop_copy_filters_by_account() {
         ++c->n;
         c->cli = ev.client_id;
     }, &cap);
-    // Klient 7 maker + klient 8 taker → drop copy widzi tylko eventy "7"
+    // Client 7 maker + client 8 taker → drop copy sees only "7" events
     b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
     b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
-    // ACCEPT(7) + FILL maker(7) = 2; ACCEPT(8)/FILL taker(8) pominięte
+    // ACCEPT(7) + FILL maker(7) = 2; ACCEPT(8)/FILL taker(8) skipped
     ASSERT(cap.n == 2,                              "dc_two_events");
     ASSERT(cap.cli == 7,                            "dc_client_7");
     ASSERT(b.drop_copy_events() == 2,               "dc_counter_2");
     // cid 0 niewidoczny
     b.submit(Side::BUY, 9000, 10);
     ASSERT(cap.n == 2,                              "dc_ignores_cid0");
-    // Cancel i reject klienta 7 też w strumieniu
+    // Cancel and reject of client 7 also in the stream
     auto id7 = b.submit(Side::SELL, 10200, 10, OrderType::LIMIT,
                          TimeInForce::DAY, 0, 7);    // ACCEPT → 3
     b.cancel(id7);                                   // CANCEL → 4
@@ -3532,7 +3532,7 @@ void test_drop_copy_sees_replace_stop_auction() {
     (void)b.modify(id, 10000, 60);                    // in-place REPLACE → 2
     b.submit_stop(Side::SELL, 9900, 0, 10, 0, 7);     // ACCEPT → 3
     ASSERT(cap.n == 3,                          "dc2_replace_stop_3");
-    // Auction fill klienta 7 też w strumieniu
+    // Auction fill of client 7 also in the stream
     Book c;
     cap = Cap{0};
     c.set_drop_copy(7, [](const BookEvent&, void* ctx) {
@@ -3542,7 +3542,7 @@ void test_drop_copy_sees_replace_stop_auction() {
     c.submit(Side::BUY,  10005, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
     c.submit(Side::SELL, 10005, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
     c.exit_auction_mode();
-    (void)c.run_auction();   // ACCEPT(7)=1, FILL(7)=2; eventy "8" pominięte
+    (void)c.run_auction();   // ACCEPT(7)=1, FILL(7)=2; "8" events skipped
     ASSERT(cap.n == 2,                          "dc2_auction_fill_seen");
 }
 
@@ -3555,12 +3555,12 @@ void test_modify_preserves_oco_link() {
     auto a = b.submit(Side::SELL, 10100, 100);
     auto c = b.submit(Side::BUY,  9900,  50);
     b.link_oco(a, c);
-    // Price change → cancel+resubmit; stary kod kasował tu partnera
+    // Price change → cancel+resubmit; old code cancelled the partner here
     ASSERT(b.modify(a, 10090, 100) == a,        "moco_same_id");
     ASSERT(b.find_order(c) != nullptr,           "moco_partner_alive");
     ASSERT(b.oco_partner_of(a) == c,             "moco_link_restored");
     ASSERT(b.active_oco_pairs() == 1,            "moco_pair_1");
-    // Semantyka OCO nietknięta: fill zmodyfikowanej nogi kasuje partnera
+    // OCO semantics untouched: a fill of the modified leg cancels the partner
     b.submit(Side::BUY, 10090, 100);
     ASSERT(b.find_order(c) == nullptr,           "moco_fill_cancels_partner");
     ASSERT(b.oco_triggered_cancels() == 1,       "moco_trig_1");
@@ -3571,8 +3571,8 @@ void test_modify_filled_resubmit_cancels_partner() {
     auto a = b.submit(Side::SELL, 10100, 100);
     auto c = b.submit(Side::BUY,  9900,  50);
     b.link_oco(a, c);
-    b.submit(Side::BUY, 10000, 100);             // czekający bid (cid 0)
-    // Modify SELL → 10000: resubmit crossuje bid → full fill → partner pada
+    b.submit(Side::BUY, 10000, 100);             // waiting bid (cid 0)
+    // Modify SELL → 10000: resubmit crosses the bid → full fill → partner falls
     (void)b.modify(a, 10000, 100);
     ASSERT(b.find_order(a) == nullptr,           "moco2_filled");
     ASSERT(b.find_order(c) == nullptr,           "moco2_partner_cancelled");
@@ -3581,14 +3581,14 @@ void test_modify_filled_resubmit_cancels_partner() {
 }
 
 // ──────────────────────────────────────────────
-// Bracket przeżywa modify (#69)
+// Bracket survives modify (#69)
 // ──────────────────────────────────────────────
 
 void test_modify_preserves_bracket_spec() {
     Book b;
     auto e = b.submit_bracket(Side::BUY, 10000, 100, /*tp*/10200, /*sl*/9900);
     ASSERT(b.pending_bracket_specs() == 1,        "mbr_spec_1");
-    (void)b.modify(e, 9995, 100);                  // price change — stary kod disarmował
+    (void)b.modify(e, 9995, 100);                  // price change — old code disarmed
     ASSERT(b.pending_bracket_specs() == 1,        "mbr_spec_survives");
     b.submit(Side::SELL, 9995, 100);               // fill entry
     ASSERT(b.brackets_armed() == 1,               "mbr_armed");
@@ -3601,7 +3601,7 @@ void test_modify_bracket_qty_down_scales_exits() {
     auto e = b.submit_bracket(Side::BUY, 10000, 100, 10200, 9900);
     (void)b.modify(e, 10000, 60);                  // in-place qty down
     b.submit(Side::SELL, 10000, 60);               // full fill entry (60)
-    // Exity hedgują finalną qty 60, nie oryginalne 100
+    // Exits hedge the final qty 60, not the original 100
     ASSERT(b.brackets_armed() == 1,               "mbr2_armed");
     ASSERT(b.total_volume_at_price(10200) == 60,  "mbr2_tp_60");
     ASSERT(b.stop_orders_count() == 1,            "mbr2_sl_1");
@@ -3609,7 +3609,7 @@ void test_modify_bracket_qty_down_scales_exits() {
 }
 
 // ──────────────────────────────────────────────
-// Histogram głębokości kolejek (#70)
+// Queue-depth histogram (#70)
 // ──────────────────────────────────────────────
 
 void test_queue_depth_histogram() {
@@ -3630,39 +3630,39 @@ void test_queue_depth_histogram() {
 }
 
 // ──────────────────────────────────────────────
-// Trailing stop na mid (#71)
+// Trailing stop on mid (#71)
 // ──────────────────────────────────────────────
 
 void test_trailing_mid_ratchet_without_trades() {
     Book b;
     b.set_trailing_ratchet_on_mid(true);
     b.submit(Side::SELL, 10000, 10);
-    b.submit(Side::BUY,  10000, 10);    // lt = 10000 (ref dla entry)
+    b.submit(Side::BUY,  10000, 10);    // lt = 10000 (ref for the entry)
     auto ts = b.submit_trailing_stop(Side::SELL, 50, /*limit*/10030, 100);
-    // Quotes idą w górę BEZ żadnego trade'u → mid 10105
+    // Quotes move up WITHOUT any trade → mid 10105
     auto b1 = b.submit(Side::BUY, 10100, 10);
     b.submit(Side::SELL, 10110, 10);
     b.check_stop_triggers();             // ratchet z mid: 10105-50 = 10055
     auto* o = b.find_order(ts);
     ASSERT(o && o->stop_trigger_ticks == 10055, "tmid_ratchet_10055");
     ASSERT(b.stop_orders_count() == 1,          "tmid_pending");
-    // Mid spada do 10055: bid 10100 → 10000
+    // Mid drops to 10055: bid 10100 → 10000
     b.cancel(b1);
     b.submit(Side::BUY, 10000, 10);      // mid (10000+10110)/2 = 10055
     b.check_stop_triggers();              // 10055 ≤ 10055 → TRIGGER
     ASSERT(b.stop_orders_count() == 0,          "tmid_triggered");
-    // SELL LIMIT 10030×100 nie crossuje bidu 10000 → restuje w całości
+    // SELL LIMIT 10030×100 does not cross the bid 10000 → rests in full
     ASSERT(b.total_volume_at_price(10030) == 100, "tmid_resubmit_100");
     ASSERT(b.audit_book_integrity() == 0,        "tmid_audit_0");
 }
 
 void test_trailing_default_ignores_mid() {
-    Book b;   // flaga off — ratchet tylko z last_trade
+    Book b;   // flag off — ratchet only from last_trade
     b.submit(Side::SELL, 10000, 10);
     b.submit(Side::BUY,  10000, 10);
     auto ts = b.submit_trailing_stop(Side::SELL, 50, 0, 100);
     b.submit(Side::BUY,  10100, 10);
-    b.submit(Side::SELL, 10110, 10);    // mid 10105, ale zero trade'ów
+    b.submit(Side::SELL, 10110, 10);    // mid 10105, but zero trades
     b.check_stop_triggers();
     auto* o = b.find_order(ts);
     ASSERT(o && o->stop_trigger_ticks == 9950,  "tdef_no_mid_ratchet");
@@ -3682,7 +3682,7 @@ void test_gtx_remainder_cancelled_after_cross() {
     b.exit_auction_mode();
     auto r = b.run_auction();
     ASSERT(r.executed && r.matched_qty == 60,    "gtx_cross_60");
-    // GTX resztka 40 skasowana; DAY spectator przeżył
+    // GTX remainder 40 cancelled; DAY spectator survived
     ASSERT(b.total_volume_at_price(10005) == 0,  "gtx_remainder_gone");
     ASSERT(b.total_volume_at_price(9990) == 10,  "gtx_day_survives");
     ASSERT(b.gtx_cancelled_after_cross() == 1,   "gtx_counter_1");
@@ -3714,18 +3714,18 @@ void test_mmp_full_scenario() {
     b.submit(Side::BUY, 10102, 30);
     ASSERT(b.mmp_tripped(7),                      "mmp_tripped");
     ASSERT(b.mmp_trips_total() == 1,              "mmp_trips_1");
-    // Pozostałe quotes (10103, 10104) auto-skasowane
+    // Remaining quotes (10103, 10104) auto-cancelled
     ASSERT(b.total_volume_at_price(10103) == 0,   "mmp_remaining_cancelled");
     ASSERT(b.total_volume_at_price(10104) == 0,   "mmp_remaining2_cancelled");
-    // Nowy quote 7 odrzucony do resetu
+    // New quote 7 rejected until reset
     RejectReason rr = RejectReason::NONE;
     ASSERT(b.submit(Side::SELL, 10110, 10, OrderType::LIMIT,
                     TimeInForce::DAY, 0, 7, 0, &rr) == 0, "mmp_new_quote_rej");
     ASSERT(rr == RejectReason::MMP_TRIPPED,       "mmp_reject_reason");
-    // Inne konto handluje normalnie
+    // Another account trades normally
     ASSERT(b.submit(Side::SELL, 10110, 10, OrderType::LIMIT,
                     TimeInForce::DAY, 0, 8) != 0,  "mmp_other_acct_ok");
-    // Reset → 7 znów może quote'ować
+    // Reset → 7 can quote again
     b.mmp_reset(7);
     ASSERT(!b.mmp_tripped(7),                     "mmp_reset_clears");
     ASSERT(b.submit(Side::SELL, 10111, 10, OrderType::LIMIT,
@@ -3735,7 +3735,7 @@ void test_mmp_full_scenario() {
 
 void test_mmp_under_threshold_no_trip() {
     Book b;
-    b.set_mmp(7, 5, 1'000'000'000ULL);   // wysoki próg
+    b.set_mmp(7, 5, 1'000'000'000ULL);   // high threshold
     for (int i = 0; i < 3; ++i)
         b.submit(Side::SELL, 10100 + i, 10, OrderType::LIMIT,
                  TimeInForce::DAY, 0, 7);
@@ -3745,21 +3745,21 @@ void test_mmp_under_threshold_no_trip() {
 }
 
 // ──────────────────────────────────────────────
-// Anti-internalization — STP na poziomie firmy (#74)
+// Anti-internalization — firm-level STP (#74)
 // ──────────────────────────────────────────────
 
 void test_anti_internalization_blocks_same_firm() {
     Book b;
     b.set_stp_policy(SelfTradePrevention::CANCEL_OLDEST);
     b.set_client_firm(7, 100);
-    b.set_client_firm(8, 100);    // oba konta w firmie 100
-    // Konto 8 maker SELL, konto 7 taker BUY — różne konta, ta sama firma
+    b.set_client_firm(8, 100);    // both accounts in firm 100
+    // Account 8 maker SELL, account 7 taker BUY — different accounts, same firm
     b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
     b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
     ASSERT(b.stats().total_self_trade_blocks == 1, "antiint_blocked");
     ASSERT(b.firm_self_trade_blocks() == 1,        "antiint_firm_counter");
     ASSERT(b.stats().total_fills == 0,             "antiint_no_fill");
-    // CANCEL_OLDEST skasował makera 8; taker 7 restuje jako bid
+    // CANCEL_OLDEST cancelled maker 8; taker 7 rests as a bid
     ASSERT(b.total_volume_at_price(10100) == 50,   "antiint_taker_rests");
 }
 
@@ -3767,7 +3767,7 @@ void test_anti_internalization_allows_different_firm() {
     Book b;
     b.set_stp_policy(SelfTradePrevention::CANCEL_OLDEST);
     b.set_client_firm(7, 100);
-    b.set_client_firm(8, 200);    // różne firmy
+    b.set_client_firm(8, 200);    // different firms
     b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
     b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
     ASSERT(b.stats().total_self_trade_blocks == 0, "antiint_diff_firm_ok");
@@ -3777,7 +3777,7 @@ void test_anti_internalization_allows_different_firm() {
 void test_anti_internalization_account_level_still_works() {
     Book b;
     b.set_stp_policy(SelfTradePrevention::CANCEL_NEWEST);
-    // Brak przypisania firm — ten sam client_id nadal blokowany
+    // No firm assignment — the same client_id is still blocked
     b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
     b.submit(Side::BUY,  10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 7);
     ASSERT(b.stats().total_self_trade_blocks == 1, "antiint_acct_blocked");
@@ -3786,7 +3786,7 @@ void test_anti_internalization_account_level_still_works() {
 }
 
 void test_anti_internalization_off_when_stp_none() {
-    Book b;   // stp NONE — firmy ignorowane
+    Book b;   // stp NONE — firms ignored
     b.set_client_firm(7, 100);
     b.set_client_firm(8, 100);
     b.submit(Side::SELL, 10100, 50, OrderType::LIMIT, TimeInForce::DAY, 0, 8);
@@ -3811,7 +3811,7 @@ void test_reject_qty_zero() {
 
 void test_stop_buy_trigger() {
     Book b;
-    // Resting sell @ 10100 (płynność dla triggered STOP)
+    // Resting sell @ 10100 (liquidity for the triggered STOP)
     b.submit(Side::SELL, 10100, 200);
     // STOP BUY: trigger@10050, limit=10100
     auto stop_id = b.submit_stop(Side::BUY, /*trigger=*/10050,
@@ -3820,7 +3820,7 @@ void test_stop_buy_trigger() {
     ASSERT(b.stop_orders_count() == 1,               "stop_count_1");
     ASSERT(b.stats().total_fills == 0,               "stop_pre_trigger_no_fills");
 
-    // Symuluj trade @ 10050 — triggeruje STOP
+    // Simulate a trade @ 10050 — triggers the STOP
     b.submit(Side::SELL, 10050, 50);
     b.submit(Side::BUY,  10050, 50);   // fill → last_trade=10050
     ASSERT(b.last_trade_ticks() == 10050, "stop_last_trade_recorded");
@@ -3828,7 +3828,7 @@ void test_stop_buy_trigger() {
     b.check_stop_triggers();
     ASSERT(b.stop_orders_count() == 0,                "stop_consumed");
     ASSERT(b.stats().total_stop_triggers == 1,        "stop_trigger_count");
-    // STOP stał się LIMIT 10100, wykonał vs resting sell
+    // STOP became LIMIT 10100, executed vs the resting sell
     ASSERT(b.stats().total_volume >= 100,             "stop_executed_qty");
 }
 
@@ -3847,7 +3847,7 @@ void test_peg_initial_and_reprice() {
     const auto* po = b.find_order(peg);
     ASSERT(po && po->price_ticks == 9999,           "peg_initial_price");
 
-    // Top of book się zmienia — bid podnosi się do 10001
+    // Top of book changes — the bid rises to 10001
     b.submit(Side::BUY, 10001, 200);
     ASSERT(b.best_bid_ticks() == 10001,             "best_bid_moved_up");
     b.reprice_pegs();
@@ -3870,7 +3870,7 @@ void test_mass_cancel_by_client() {
     auto cancelled = b.mass_cancel(42);
     ASSERT(cancelled == 3,                          "mass_cancel_3_for_42");
     ASSERT(b.stats().total_mass_cancels == 3,       "mass_cancel_stat");
-    // client 99 ocalał
+    // client 99 survived
     ASSERT(b.best_bid_ticks() == 10000,             "mass_cancel_other_intact");
 }
 
@@ -3884,10 +3884,10 @@ void test_gtd_expiry_sweep() {
     auto id1 = b.submit(Side::BUY, 10000, 100, OrderType::LIMIT, TimeInForce::GTD);
     auto id2 = b.submit(Side::BUY, 9999,  100, OrderType::LIMIT, TimeInForce::GTD);
     (void)id2;
-    // Ręcznie ustaw expire_ts_ns w jednym (test path — w realu robi to caller
-    // poprzez bardziej rozbudowane submit które przyjmuje expire_ts).
+    // Manually set expire_ts_ns in one (test path — in reality the caller does it
+    // via a more elaborate submit that accepts expire_ts).
     auto* o1 = const_cast<Order*>(b.find_order(id1));
-    if (o1) o1->expire_ts_ns = 1000;  // bardzo dawne ts
+    if (o1) o1->expire_ts_ns = 1000;  // very old ts
 
     auto expired = b.expire_gtd(/*now_ns=*/5000);
     ASSERT(expired == 1,                            "gtd_1_expired");
@@ -3911,7 +3911,7 @@ void test_walk_the_book() {
     ASSERT(r.avg_price_ticks == 10105,                   "walk_avg_price");
     ASSERT(r.levels_touched == 2,                        "walk_levels_2");
     ASSERT(r.worst_price_ticks == 10110,                 "walk_worst_price");
-    // Sprawdź że to PREVIEW — book nietknięty
+    // Check that it is a PREVIEW — book untouched
     ASSERT(b.total_volume_at_price(10100) == 50,         "walk_no_modify_book");
 }
 
@@ -3946,7 +3946,7 @@ void test_volume_profile() {
     DepthLevel prof[10];
     auto n = b.volume_profile(9990, 10100, prof, 10);
     ASSERT(n == 4,                              "vol_profile_4_levels");
-    // Sortowane rosnąco: 9995, 9999, 10000, 10100
+    // Sorted ascending: 9995, 9999, 10000, 10100
     ASSERT(prof[0].price_ticks == 9995 && prof[0].qty == 300, "vol_p0");
     ASSERT(prof[1].price_ticks == 9999 && prof[1].qty == 200, "vol_p1");
     ASSERT(prof[2].price_ticks == 10000 && prof[2].qty == 100, "vol_p2");
@@ -3994,7 +3994,7 @@ void benchmark(int iterations) {
     add_lat.reserve(iterations);
     cancel_lat.reserve(iterations);
 
-    // Wstępna populacja — kilka levelów dla realnego match flow
+    // Initial population — a few levels for realistic match flow
     for (int i = 0; i < 20; ++i) {
         b.submit(Side::BUY,  10000 - i,  100);
         b.submit(Side::SELL, 10100 + i,  100);
@@ -4011,7 +4011,7 @@ void benchmark(int iterations) {
         add_lat.push_back(
             std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 
-        if (id != 0 && (i & 3) == 0) {   // co 4-te zlecenie cancel
+        if (id != 0 && (i & 3) == 0) {   // every 4th order cancel
             const auto c0 = std::chrono::high_resolution_clock::now();
             b.cancel(id);
             const auto c1 = std::chrono::high_resolution_clock::now();
@@ -4049,7 +4049,7 @@ void benchmark(int iterations) {
     std::printf("    pool peak used:   %lu / %lu\n",
                 b.pool_used_high_water(), b.pool_capacity());
 
-    // Ścieżka crossing (taker) — droższa od resting add (match_at_level +
+    // Crossing path (taker) — more expensive than a resting add (match_at_level +
     // record_trade + analytics hooks per fill); mierzona osobno
     std::vector<std::int64_t> cross_lat;
     cross_lat.reserve(2000);
@@ -4064,9 +4064,9 @@ void benchmark(int iterations) {
     std::printf("  cross p50:      %lld ns\n", static_cast<long long>(pct(cross_lat, 0.50)));
     std::printf("  cross p99:      %lld ns\n", static_cast<long long>(pct(cross_lat, 0.99)));
 
-    // Burst aktywności PO pomiarach latencji (nie zaburza percentyli) —
-    // benchmark sam nie crossuje (fills=0), a sekcja analytics potrzebuje
-    // trade'ów żeby pokazać metryki w akcji.
+    // Burst of activity AFTER the latency measurements (does not skew percentiles) —
+    // the benchmark itself does not cross (fills=0), and the analytics section needs
+    // trades to show the metrics in action.
     for (int i = 0; i < 200; ++i) {
         const std::int32_t px = 10050 + (i % 7) - 3;
         b.submit(Side::SELL, px, 20 + (i % 30));
@@ -4091,8 +4091,8 @@ void benchmark(int iterations) {
     std::printf("    active_levels:      %d\n",   b.active_price_levels());
     std::printf("    audit_violations:   %lu\n",  b.audit_book_integrity());
 
-    // Koszt per-call metryk — które można wołać na hot path (O(1) accumulatory),
-    // a które tylko okresowo (O(LEVELS) / O(tape) skany)
+    // Per-call cost of metrics — which can be called on the hot path (O(1) accumulators),
+    // and which only periodically (O(LEVELS) / O(tape) scans)
     auto time_calls = [](const char* name, auto&& fn, int n) {
         volatile std::int64_t sink = 0;
         const auto t0 = std::chrono::high_resolution_clock::now();

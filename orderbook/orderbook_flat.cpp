@@ -2,23 +2,23 @@
  * orderbook_flat — sanity test + head-to-head benchmark FlatOrderBook
  *                   vs baseline std::map.
  *
- * Co testujemy:
- *   1. sanity   — drobne scenariusze (best_bid/ask, matching, cancel/modify
- *                 z ID, niezmienniki book'a). Wykonywane zawsze.
- *   2. uniform  — N losowych zleceń, ceny równomiernie 10000..10199 ticków.
- *                 Realistyczne dla testowania matching engine pod obciążeniem.
- *   3. realistic — N losowych zleceń z rozkładem skupionym wokół mid'a:
- *                 60% ±10 ticków (przy rynku), 30% ±50, 9% ±100, 1% long tail.
- *                 Bliżej tego co widać w realnym order flow.
+ * What we test:
+ *   1. sanity   — small scenarios (best_bid/ask, matching, cancel/modify
+ *                 with ID, book invariants). Always run.
+ *   2. uniform  — N random orders, prices uniformly 10000..10199 ticks.
+ *                 Realistic for stress-testing the matching engine.
+ *   3. realistic — N random orders with a distribution clustered around the mid:
+ *                 60% ±10 ticks (at market), 30% ±50, 9% ±100, 1% long tail.
+ *                 Closer to what you see in real order flow.
  *
- * Każdy bench ma DWA przebiegi:
- *   a) throughput — zegar tylko raz przed/po pętli → ns/op średnie
- *   b) latency    — zegar per op → histogram p50/p95/p99/p99.9
+ * Each bench has TWO passes:
+ *   a) throughput — clock only once before/after the loop → mean ns/op
+ *   b) latency    — clock per op → p50/p95/p99/p99.9 histogram
  *
- * Uruchomienie:
+ * Run:
  *   ./orderbook/orderbook_flat                # default: 1M ops
  *   ./orderbook/orderbook_flat 100000         # 100k ops (CI sanity bench)
- *   ./orderbook/orderbook_flat 5000000        # 5M ops (poważny benchmark)
+ *   ./orderbook/orderbook_flat 5000000        # 5M ops (serious benchmark)
  */
 #include "orderbook_flat.hpp"
 
@@ -30,8 +30,8 @@
 #include <vector>
 
 
-// std::map reference (kopia z benchmark_orderbook.cpp) — żeby porównanie
-// było apples-to-apples z FlatOrderBook na tym samym strumieniu zleceń.
+// std::map reference (copy from benchmark_orderbook.cpp) — so the comparison
+// is apples-to-apples with FlatOrderBook on the same order stream.
 namespace ref {
 class MapOrderBook {
     std::map<std::int32_t, std::int32_t, std::greater<std::int32_t>> bids;
@@ -67,8 +67,8 @@ private:
 }  // namespace ref
 
 
-// Deterministyczny strumień zleceń — LCG zamiast std::mt19937 (szybszy,
-// nie zaśmieca latency histogramu zbędnymi alokacjami).
+// Deterministic order stream — LCG instead of std::mt19937 (faster,
+// does not pollute the latency histogram with needless allocations).
 struct Op { std::int32_t price; std::int32_t qty; bool is_buy; };
 
 struct LCG {
@@ -78,7 +78,7 @@ struct LCG {
 };
 
 
-// Uniform: ceny równomiernie 10000..10199 (200-tick band).
+// Uniform: prices uniformly 10000..10199 (200-tick band).
 static std::vector<Op> make_ops_uniform(int n) {
     std::vector<Op> ops;
     ops.reserve(static_cast<std::size_t>(n));
@@ -93,11 +93,11 @@ static std::vector<Op> make_ops_uniform(int n) {
 }
 
 
-// Realistic: większość zleceń koło mid'a, długi ogon.
-//   mid = 10100, distributiona piecewise:
-//     bucket 0 (60%): mid ± 10  ticków       → "przy rynku"
-//     bucket 1 (30%): mid ± 50  ticków       → "mid-spread"
-//     bucket 2 (9%):  mid ± 100 ticków       → "far quotes"
+// Realistic: most orders near the mid, long tail.
+//   mid = 10100, piecewise distribution:
+//     bucket 0 (60%): mid ± 10  ticks        → "at market"
+//     bucket 1 (30%): mid ± 50  ticks        → "mid-spread"
+//     bucket 2 (9%):  mid ± 100 ticks        → "far quotes"
 //     bucket 3 (1%):  10000..10199 uniform   → "outlier / long tail"
 static std::vector<Op> make_ops_realistic(int n) {
     constexpr std::int32_t MID = 10100;
@@ -122,7 +122,7 @@ static std::vector<Op> make_ops_realistic(int n) {
 }
 
 
-// Throughput pass — jeden zegar przed/po, jedna liczba ns/op.
+// Throughput pass — one clock before/after, a single ns/op number.
 template <typename Book>
 static std::int64_t run_throughput(Book& book, const std::vector<Op>& ops) noexcept {
     const auto t0 = std::chrono::high_resolution_clock::now();
@@ -145,12 +145,12 @@ struct LatencyStats {
 };
 
 
-// Latency pass — zegar per op, sort, percentyle. Sampluje co N-tą operację
-// żeby koszt clock'a nie zdominował pomiarów sub-100ns. Próbka 100k ops
-// daje statystycznie istotne percentyle dla każdego rozkładu.
+// Latency pass — clock per op, sort, percentiles. Samples every N-th operation
+// so the clock cost does not dominate sub-100ns measurements. A 100k-op sample
+// gives statistically significant percentiles for any distribution.
 template <typename Book>
 static LatencyStats run_latency(Book& book, const std::vector<Op>& ops) {
-    // Sampluj max 100k operacji, równomiernie rozłożonych.
+    // Sample at most 100k operations, evenly spaced.
     const int sample_size = std::min(100000, static_cast<int>(ops.size()));
     const int stride      = std::max(1, static_cast<int>(ops.size()) / sample_size);
 
@@ -190,8 +190,8 @@ static LatencyStats run_latency(Book& book, const std::vector<Op>& ops) {
 }
 
 
-// Sanity test (mały) — szybki check że add/match/cancel/modify działają.
-// Zachowany w identycznej formie co poprzednio — to regression test.
+// Sanity test (small) — a quick check that add/match/cancel/modify work.
+// Kept in the identical form as before — this is a regression test.
 static int sanity() {
     orderbook::FlatOrderBook<16384> b;
     b.add_buy(10050, 10);
@@ -202,7 +202,7 @@ static int sanity() {
     if (b.best_ask() != 10080) return 2;
     if (b.trades()   != 0)     return 3;
 
-    b.add_buy(10080, 15);  // krzyżuje: 15 buy @ 10080 vs 12 ask @ 10080 → 1 trade, 3 buy left
+    b.add_buy(10080, 15);  // crosses: 15 buy @ 10080 vs 12 ask @ 10080 → 1 trade, 3 buy left
     if (b.trades() != 1)             return 4;
     if (b.bid_qty_at(10080) != 3)    return 5;
     if (b.ask_qty_at(10080) != 0)    return 6;
@@ -256,8 +256,8 @@ static void print_scenario(const char* name, int n,
 }
 
 
-// Bench dla jednego scenariusza: 4 przebiegi (2 booki × throughput + latency),
-// każdy na świeżym booku żeby cache był wygrzany identycznie.
+// Bench for one scenario: 4 passes (2 books × throughput + latency),
+// each on a fresh book so the cache is warmed identically.
 static void run_scenario(const char* name, int n, const std::vector<Op>& ops) {
     orderbook::FlatOrderBook<65536> flat_thru_book;
     const std::int64_t flat_thru_ns = run_throughput(flat_thru_book, ops);

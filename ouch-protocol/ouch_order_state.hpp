@@ -1,16 +1,16 @@
 /*
- * OUCHOrderTracker — kliencka maszyna stanu zlecenia OUCH (expansion #89).
+ * OUCHOrderTracker — a client-side OUCH order state machine (expansion #89).
  *
- * OUCHMessage encode/decode obsluguje POJEDYNCZE wiadomosci; nikt nie sledzil
- * CYKLU ZYCIA zlecenia po stronie klienta (token -> live/partial/filled/
- * cancelled/rejected + ile akcji jeszcze otwarte). To brakujacy element: po
- * wyslaniu Enter Order klient musi wiedziec co sie z nim dzieje, gdy przychodza
- * raporty Accepted/Executed/Cancelled.
+ * OUCHMessage encode/decode handles SINGLE messages; nobody tracked
+ * the order LIFECYCLE on the client side (token -> live/partial/filled/
+ * cancelled/rejected + how many shares are still open). This is the missing piece: after
+ * sending an Enter Order the client must know what happens to it, when
+ * Accepted/Executed/Cancelled reports arrive.
  *
- * Cykl: NEW (wyslane) -> LIVE (Accepted) -> [PARTIAL po czesciowym Executed] ->
+ * Cycle: NEW (sent) -> LIVE (Accepted) -> [PARTIAL after a partial Executed] ->
  *       FILLED (remaining=0) | CANCELLED (Cancelled) | REJECTED (Error)
  *
- * Karm on_new() przy wysylce, on_response() kazdym sparsowanym OUCHResponse.
+ * Feed on_new() at send time, on_response() with each parsed OUCHResponse.
  */
 #pragma once
 
@@ -25,8 +25,8 @@ namespace ouch {
 
 enum class OrderState : uint8_t {
     NEW       = 0,   // wyslane, czekamy na Accepted
-    LIVE      = 1,   // Accepted — zlecenie aktywne w ksiedze
-    PARTIAL   = 2,   // czesciowo wypelnione, reszta aktywna
+    LIVE      = 1,   // Accepted — order active in the book
+    PARTIAL   = 2,   // partially filled, remainder active
     FILLED    = 3,   // calkowicie wypelnione
     CANCELLED = 4,   // anulowane
     REJECTED  = 5,   // odrzucone (Error)
@@ -47,11 +47,11 @@ inline const char* order_state_str(OrderState s) noexcept {
 class OUCHOrderTracker {
     struct Record {
         OrderState state;
-        int32_t    original;     // pierwotna ilosc
-        int32_t    remaining;    // ile jeszcze otwarte
-        int32_t    filled;       // ile wypelnione
-        int64_t    order_ref;    // z Accepted (0 dopoki nieznane)
-        bool       pending_cancel; // wyslano Cancel, czekamy na potwierdzenie (#159)
+        int32_t    original;     // original quantity
+        int32_t    remaining;    // how many still open
+        int32_t    filled;       // how many filled
+        int64_t    order_ref;    // from Accepted (0 until known)
+        bool       pending_cancel; // Cancel sent, awaiting confirmation (#159)
     };
     std::unordered_map<std::string, Record> orders_;
     uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
@@ -63,14 +63,14 @@ class OUCHOrderTracker {
     }
 
 public:
-    // on_new: zarejestruj wyslane Enter Order (token + zlecona ilosc).
+    // on_new: register a sent Enter Order (token + ordered quantity).
     void on_new(const char* token, int32_t shares) noexcept {
         orders_[token] = Record{OrderState::NEW, shares, shares, 0, 0, false};
         ordered_shares_ += shares;   // #250
     }
 
-    // on_cancel_sent: klient wyslal Cancel Order ('X') — oznacz pending cancel
-    // (#159). Potwierdzenie 'C' (Cancelled) wyczysci flage. Tylko dla aktywnych.
+    // on_cancel_sent: the client sent a Cancel Order ('X') — mark pending cancel
+    // (#159). The 'C' (Cancelled) confirmation clears the flag. Only for active ones.
     void on_cancel_sent(const char* token) noexcept {
         Record* rec = find(token);
         if (rec && (rec->state == OrderState::LIVE || rec->state == OrderState::PARTIAL))
@@ -81,8 +81,8 @@ public:
         return (it != orders_.end()) && it->second.pending_cancel;
     }
 
-    // on_response: zaaplikuj raport gieldy. Zwraca nowy stan (lub REJECTED gdy
-    // raport dotyczy nieznanego tokenu — desync).
+    // on_response: apply an exchange report. Returns the new state (or REJECTED when
+    // the report concerns an unknown token — desync).
     OrderState on_response(const OUCHResponse& r) noexcept {
         Record* rec = find(r.token);
         if (!rec) { ++rejected_; return OrderState::REJECTED; }
@@ -103,8 +103,8 @@ public:
             rec->pending_cancel = false;   // #159: request potwierdzony
             ++cancelled_;
         } else if (std::strcmp(r.type, "BROKEN") == 0) {
-            // Broken Trade (#134): gielda uniewaznia wczesniejszy fill -> odwroc
-            // ksiegowanie (akcje wracaja do "otwarte"). Stan z FILLED -> LIVE/PARTIAL.
+            // Broken Trade (#134): the exchange invalidates an earlier fill -> reverse
+            // the accounting (shares return to "open"). State from FILLED -> LIVE/PARTIAL.
             const int32_t back = (r.shares < rec->filled) ? r.shares : rec->filled;
             rec->filled    -= back;
             rec->remaining += back;
@@ -141,10 +141,10 @@ public:
         return total > 0 ? static_cast<double>(it->second.filled) / static_cast<double>(total) : 0.0;
     }
     size_t   order_count() const noexcept { return orders_.size(); }
-    // total_filled_shares / total_remaining_shares: agregaty wolumenu po WSZYSTKICH
-    // sledzonych zleceniach (#242). filled = ile juz wykonano lacznie, remaining =
-    // ile jeszcze pracuje. Portfelowy obraz egzekucji niezalezny od pojedynczego
-    // tokenu (do sizing / monitoringu zaleglosci).
+    // total_filled_shares / total_remaining_shares: volume aggregates over ALL
+    // tracked orders (#242). filled = how much has executed in total, remaining =
+    // how much is still working. A portfolio view of execution independent of a single
+    // token (for sizing / backlog monitoring).
     int32_t total_filled_shares() const noexcept {
         int32_t s = 0;
         for (const auto& [tok, rec] : orders_) s += rec.filled;

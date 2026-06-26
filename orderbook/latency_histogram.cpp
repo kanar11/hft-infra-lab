@@ -1,7 +1,7 @@
 // Order book latency histogram benchmark
-// Test wydajności histogramu opóźnienia księgi zleceń
+// Order book latency histogram benchmark
 // Measures per-order processing latency and reports p50/p95/p99/p99.9/max
-// Mierzy opóźnienie przetwarzania na zlecenie i raportuje p50/p95/p99/p99,9/max
+// Measures per-order processing latency and reports p50/p95/p99/p99.9/max
 // Build: g++ -O2 -std=c++17 latency_histogram.cpp -o latency_histogram
 #include <iostream>
 #include <iomanip>
@@ -14,7 +14,7 @@
 #include <cstdint>
 
 // Fixed-point price: stored as integer ticks (1 tick = 0.01)
-// Stała cena - przechowywana jako liczba całkowita (1 tick = 0,01)
+// Fixed-point price - stored as an integer (1 tick = 0.01)
 using Price = std::int64_t;
 
 struct Order {
@@ -26,9 +26,9 @@ struct Order {
 
 class OrderBook {
     // NOTE: std::map allocates per-node on insert (not ideal for HFT).
-    // UWAGA: std::map przydziela pamięć dla każdego węzła przy wstawianiu (nieidealne dla HFT)
+    // NOTE: std::map allocates memory for each node on insertion (not ideal for HFT)
     // Production systems use pre-allocated flat arrays indexed by price level.
-    // Systemy produkcyjne używają wstępnie przydzielonych płaskich tablic indeksowanych poziomem ceny
+    // Production systems use pre-allocated flat arrays indexed by price level
     std::map<Price, int, std::greater<Price>> bids;
     std::map<Price, int> asks;
     std::uint64_t trades = 0;
@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
     latencies.reserve(N);
 
     // Warmup (cache priming, no measurement)
-    // Rozgrzewanie (zalewanie cache'u, bez pomiarów)
+    // Warmup (flooding the cache, no measurements)
     for (int i = 0; i < 1000 && i < N; i++) book.add_order(orders[i]);
 
     auto t_wall_start = std::chrono::high_resolution_clock::now();

@@ -5,7 +5,7 @@
 #include <cstdint>
 
 // Fixed-point price: stored as integer ticks (1 tick = 0.01)
-// Stała cena - przechowywana jako liczba całkowita (1 tick = 0,01)
+// Fixed-point price - stored as an integer (1 tick = 0.01)
 using Price = std::int64_t;
 
 static Price to_ticks(double p) { return static_cast<Price>(p * 100 + 0.5); }
@@ -64,7 +64,7 @@ public:
 
         Order& o = it->second;
         // Remove old order from book
-        // Usuń stare zlecenie z księgi
+        // Remove the old order from the book
         if (o.side == Side::BUY) {
             bids[o.price] -= o.quantity;
             if (bids[o.price] <= 0) bids.erase(o.price);
@@ -73,7 +73,7 @@ public:
             if (asks[o.price] <= 0) asks.erase(o.price);
         }
         // Add new order
-        // Dodaj nowe zlecenie
+        // Add a new order
         o.price = new_price;
         o.quantity = new_qty;
         o.status = OrderStatus::ACTIVE;
@@ -116,7 +116,7 @@ int main() {
     auto start = std::chrono::high_resolution_clock::now();
 
     // Add orders (prices in ticks: 10050 = $100.50)
-    // Dodaj zlecenia (ceny w tickach: 10050 = $100,50)
+    // Add orders (prices in ticks: 10050 = $100.50)
     book.add_order(1, to_ticks(100.50), 10, Side::BUY);
     book.add_order(2, to_ticks(100.30), 5, Side::BUY);
     book.add_order(3, to_ticks(101.00), 8, Side::SELL);
@@ -125,19 +125,19 @@ int main() {
     book.print_book();
 
     // Modify order 2: change price to 100.60
-    // Zmodyfikuj zlecenie 2: zmień cenę na 100,60
+    // Modify order 2: change the price to 100.60
     book.modify_order(2, to_ticks(100.60), 5);
     std::cout << "\nAfter modifying order 2 (100.30 -> 100.60):";
     book.print_book();
 
     // Cancel order 3
-    // Anuluj zlecenie 3
+    // Cancel order 3
     book.cancel_order(3);
     std::cout << "\nAfter cancelling order 3 (ask @ 101.00):";
     book.print_book();
 
     // Aggressive buy that crosses the spread
-    // Agresywny zakup, który przekracza spread
+    // An aggressive buy that crosses the spread
     book.add_order(5, to_ticks(100.80), 20, Side::BUY);
     std::cout << "\nAfter aggressive buy @ 100.80 x 20:";
     book.print_book();

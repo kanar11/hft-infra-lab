@@ -77,7 +77,7 @@ PYBIND11_MODULE(pyhft, m) {
              py::arg("max_position") = 1000,
              py::arg("max_order_value") = 100000.0)
         // Lambda owija 4-arg wariant — submit_order ma teraz dodatkowy
-        // OMSReject* out_reason (#88), ktorego nie wystawiamy do Pythona.
+        // OMSReject* out_reason (#88), which we do not expose to Python.
         .def("submit_order",
              [](OMS& self, const char* symbol, Side side, double price, uint32_t quantity) {
                  return self.submit_order(symbol, side, price, quantity);

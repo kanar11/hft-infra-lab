@@ -31,11 +31,11 @@
 namespace multicast {
 
 
-// FeedRateMeter — przepustowosc feedu w oknie czasu (expansion #132).
+// FeedRateMeter — feed throughput over a time window (expansion #132).
 //
-// Feed handler musi widziec biezacy rate (msgs/sec) by wykryc burst (ryzyko
-// przeladowania / drop) albo cisze. Sliding-window licznik znacznikow czasu:
-// przy kazdym pomiarze wyrzuca starsze niz okno, rozmiar = liczba w oknie.
+// The feed handler must see the current rate (msgs/sec) to detect a burst (risk
+// of overload / drop) or a lull. A sliding-window counter of timestamps:
+// at each measurement it evicts those older than the window, size = count in the window.
 struct FeedRateMeter {
     std::int64_t      window_ns;
     std::deque<std::int64_t> ts;
@@ -55,9 +55,9 @@ struct FeedRateMeter {
     double rate_per_sec(std::int64_t now_ns) {
         return static_cast<double>(count(now_ns)) * 1e9 / static_cast<double>(window_ns);
     }
-    // peak_count / peak_rate_per_sec (#163): najwyzsza liczba/rate w oknie kiedy-
-    // kolwiek zaobserwowana — wykrywa burst (ryzyko przeladowania) nawet jesli
-    // chwilowy rate jest niski.
+    // peak_count / peak_rate_per_sec (#163): the highest count/rate in the window ever
+    // observed — detects a burst (risk of overload) even if
+    // the instantaneous rate is low.
     std::size_t peak_count()        const noexcept { return peak_count_; }
     double      peak_rate_per_sec() const noexcept {
         return static_cast<double>(peak_count_) * 1e9 / static_cast<double>(window_ns);
@@ -117,17 +117,17 @@ struct GapRecovery {
     bool   has_gaps()      const noexcept { return !missing.empty(); }
     size_t missing_count() const noexcept { return missing.size(); }
 
-    // recovery_completeness (#156): ulamek wykrytych brakow ktore juz odzyskano
-    // = recovered / (recovered + jeszcze_brakuje). 1.0 = nic nie zalega (ksiega
-    // pewna), <1.0 = czesc luk wciaz otwarta. Metryka zdrowia recovery.
+    // recovery_completeness (#156): the fraction of detected gaps already recovered
+    // = recovered / (recovered + still_missing). 1.0 = nothing outstanding (the book
+    // is certain), <1.0 = some gaps still open. A recovery-health metric.
     double recovery_completeness() const noexcept {
         const std::uint64_t total = recovered + missing.size();
         return total > 0 ? static_cast<double>(recovered) / static_cast<double>(total) : 1.0;
     }
 
-    // missing_ranges (#149): braki zgrupowane w CIAGLE przedzialy [begin,end].
-    // next_request daje tylko min..max (moze obejmowac juz-odebrane); to daje
-    // dokladne zakresy do gap-fill request (efektywniejsza retransmisja).
+    // missing_ranges (#149): gaps grouped into CONTIGUOUS intervals [begin,end].
+    // next_request gives only min..max (may include already-received); this gives
+    // exact ranges for a gap-fill request (more efficient retransmission).
     std::vector<std::pair<std::uint64_t, std::uint64_t>> missing_ranges() const {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> out;
         if (missing.empty()) return out;
@@ -140,19 +140,19 @@ struct GapRecovery {
         return out;
     }
 
-    // recommend_snapshot (#115): gdy braki przekrocza prog, retransmisja per-pakiet
-    // jest nieoplacalna — realny feed handler prosi o pelny SNAPSHOT i resynca.
+    // recommend_snapshot (#115): when the gaps exceed a threshold, per-packet retransmission
+    // is not worthwhile — a real feed handler requests a full SNAPSHOT and resyncs.
     bool recommend_snapshot(std::size_t threshold) const noexcept {
         return threshold > 0 && missing.size() >= threshold;
     }
 
-    // snapshot_resync: po odebraniu snapshotu na seq `snapshot_seq` wszystko
-    // do niego wlacznie jest znane — czysci luki <= snapshot_seq i ustawia
-    // expected. Braki powyzej snapshotu zostaja (przyjda normalnym strumieniem).
+    // snapshot_resync: after receiving a snapshot at seq `snapshot_seq`, everything
+    // up to and including it is known — clears gaps <= snapshot_seq and sets
+    // expected. Gaps above the snapshot remain (they will arrive in the normal stream).
     void snapshot_resync(std::uint64_t snapshot_seq) noexcept {
         for (auto it = missing.begin(); it != missing.end(); ) {
             if (*it <= snapshot_seq) { it = missing.erase(it); ++recovered; }
-            else break;   // set posortowany rosnaco — reszta jest > snapshot_seq
+            else break;   // the set is sorted ascending — the rest is > snapshot_seq
         }
         if (snapshot_seq + 1 > expected) expected = snapshot_seq + 1;
         initialized = true;
@@ -229,12 +229,12 @@ struct MultiChannelRecovery {
 };
 
 
-// InterArrivalMeter — statystyki odstepow miedzy wiadomosciami (expansion #142).
+// InterArrivalMeter — statistics of gaps between messages (expansion #142).
 //
-// Sam rate (FeedRateMeter, #132) nie pokazuje JITTERA — feed moze miec srednio
-// 1M/s, ale z burstami i dziurami. Ten miernik sledzi min/max/avg gap miedzy
-// kolejnymi wiadomosciami: duzy max przy malym min = nierowny feed (ryzyko
-// kolejkowania / drop), istotne dla latency-sensitive konsumenta.
+// Rate alone (FeedRateMeter, #132) does not show JITTER — a feed may average
+// 1M/s, but with bursts and holes. This meter tracks min/max/avg gap between
+// consecutive messages: a large max with a small min = an uneven feed (risk
+// of queueing / drop), important for a latency-sensitive consumer.
 struct InterArrivalMeter {
     std::int64_t  last_ns = 0;
     bool          started = false;
@@ -263,14 +263,14 @@ struct InterArrivalMeter {
 };
 
 
-// DedupWindow — deduplikacja sekwencji (expansion #171).
+// DedupWindow — sequence deduplication (expansion #171).
 //
-// UDP potrafi DUPLIKOWAC pakiety (retransmisje, A/B line, multipath). Konsument
-// musi przetworzyc kazdy seq DOKLADNIE RAZ (at-most-once). DedupWindow pamieta
-// niedawno widziane numery w przesuwnym oknie i odrzuca powtorki. Rozni sie od
-// ReorderBuffer (kolejnosc) i GapRecovery (luki) — tu chodzi o duplikaty.
+// UDP can DUPLICATE packets (retransmissions, A/B line, multipath). The consumer
+// must process each seq EXACTLY ONCE (at-most-once). DedupWindow remembers
+// recently seen numbers in a sliding window and rejects duplicates. It differs from
+// ReorderBuffer (ordering) and GapRecovery (gaps) — here it is about duplicates.
 //
-//   accept(seq) -> true gdy NOWY (przekaz dalej), false gdy duplikat.
+//   accept(seq) -> true when NEW (forward on), false when a duplicate.
 struct DedupWindow {
     std::uint64_t window;
     std::uint64_t high = 0;
@@ -283,11 +283,11 @@ struct DedupWindow {
 
     bool accept(std::uint64_t seq) {
         if (!init) { init = true; high = seq; seen.insert(seq); return true; }
-        if (seq + window <= high) { ++duplicates; return false; }   // poza oknem -> traktuj jak dup
+        if (seq + window <= high) { ++duplicates; return false; }   // outside the window -> treat as a dup
         if (seen.count(seq))      { ++duplicates; return false; }
         seen.insert(seq);
         if (seq > high) high = seq;
-        // Prune: zapomnij numery ktore wypadly z okna (ogranicza pamiec).
+        // Prune: forget numbers that fell out of the window (bounds memory).
         while (!seen.empty() && *seen.begin() + window <= high) seen.erase(seen.begin());
         return true;
     }
@@ -295,15 +295,15 @@ struct DedupWindow {
 };
 
 
-// BackpressureMonitor — czy konsument nadaza za feedem (expansion #179).
+// BackpressureMonitor — whether the consumer keeps up with the feed (expansion #179).
 //
-// Feed multicast leci ze stala szybkoscia rynku; jesli book-builder / konsument
-// nie nadaza, kolejka rosnie i handlujesz na NIEAKTUALNYCH danych. Monitor liczy
-// zakolejkowane vs przetworzone, sledzi glebokosc i jej szczyt, i flaguje
-// przeciazenie po progu. Lekki: dwa liczniki.
+// The multicast feed runs at the market's steady rate; if the book-builder / consumer
+// does not keep up, the queue grows and you trade on STALE data. The monitor counts
+// enqueued vs processed, tracks depth and its peak, and flags
+// overload past a threshold. Lightweight: two counters.
 //
-//   on_enqueue() przy odbiorze pakietu, on_dequeue() po przetworzeniu;
-//   depth() = zaleglosc, overloaded(threshold) -> pora zrzucic/zsnapshotowac.
+//   on_enqueue() when a packet is received, on_dequeue() after processing;
+//   depth() = backlog, overloaded(threshold) -> time to drop/snapshot.
 struct BackpressureMonitor {
     std::uint64_t enqueued = 0;
     std::uint64_t dequeued = 0;
@@ -315,7 +315,7 @@ struct BackpressureMonitor {
         if (d > peak_depth) peak_depth = d;
     }
     void on_dequeue(std::uint64_t n = 1) noexcept {
-        dequeued += (n > depth() ? depth() : n);   // glebokosc nie schodzi ponizej 0
+        dequeued += (n > depth() ? depth() : n);   // depth does not go below 0
     }
     std::uint64_t depth() const noexcept { return enqueued - dequeued; }
     bool overloaded(std::uint64_t threshold) const noexcept { return depth() >= threshold; }
@@ -323,14 +323,14 @@ struct BackpressureMonitor {
 };
 
 
-// LossRateMeter — agregatowa stopa utraty pakietow (expansion #187).
+// LossRateMeter — aggregate packet-loss rate (expansion #187).
 //
-// GapRecovery sledzi KONKRETNE brakujace zakresy (do retransmisji); LossRateMeter
-// daje jedna liczbe SLA: ile % oczekiwanych pakietow nie dotarlo w calej sesji.
-// Oczekiwane = rozpietosc sekwencji (highest - first + 1); odebrane = licznik.
-// Zaklada brak duplikatow (najpierw DedupWindow); duplikaty zanizalyby strate.
+// GapRecovery tracks the SPECIFIC missing ranges (for retransmission); LossRateMeter
+// gives one SLA number: what % of expected packets did not arrive in the whole session.
+// Expected = the sequence span (highest - first + 1); received = a counter.
+// Assumes no duplicates (DedupWindow first); duplicates would understate the loss.
 //
-//   on_packet(seq) na kazdy odebrany; loss_rate() do dashboardu/alertu.
+//   on_packet(seq) for each received; loss_rate() for the dashboard/alert.
 struct LossRateMeter {
     std::uint64_t first = 0;
     std::uint64_t highest = 0;
@@ -355,13 +355,13 @@ struct LossRateMeter {
 };
 
 
-// OutOfOrderMeter — odsetek pakietow poza kolejnoscia (expansion #195).
+// OutOfOrderMeter — the fraction of out-of-order packets (expansion #195).
 //
-// Mierzy ile pakietow przyszlo Z NIZSZYM seq niz dotychczasowy max (czyli PO
-// pakiecie o wyzszym numerze) — objaw reorderingu na sciezce (multipath, ECMP,
-// kolejkowanie). Rozni sie od ReorderBuffer (naprawia kolejnosc) i LossRateMeter
-// (gubienie): to czysta DIAGNOSTYKA jakosci sieci. Wysoki ooo_rate sugeruje
-// problem z routingiem feedu, nie ze zrodlem.
+// Measures how many packets arrived with a LOWER seq than the running max (i.e. AFTER
+// a packet with a higher number) — a symptom of path reordering (multipath, ECMP,
+// queueing). It differs from ReorderBuffer (repairs ordering) and LossRateMeter
+// (loss): this is pure network-quality DIAGNOSTICS. A high ooo_rate suggests
+// a feed-routing problem, not the source.
 struct OutOfOrderMeter {
     std::uint64_t highest = 0;
     std::uint64_t total = 0;
@@ -371,7 +371,7 @@ struct OutOfOrderMeter {
     void on_packet(std::uint64_t seq) noexcept {
         ++total;
         if (!init) { highest = seq; init = true; return; }
-        if (seq < highest) ++out_of_order;   // przyszedl po wyzszym numerze
+        if (seq < highest) ++out_of_order;   // arrived after a higher number
         else               highest = seq;
     }
     double ooo_rate() const noexcept {
@@ -381,13 +381,13 @@ struct OutOfOrderMeter {
 };
 
 
-// SequenceResetDetector — wykrywa RESET sekwencji feedu (expansion #203).
+// SequenceResetDetector — detects a feed sequence RESET (expansion #203).
 //
-// Na starcie dnia / po restarcie publishera numer sekwencji cofa sie do niskiej
-// wartosci. Konsument MUSI to wykryc, bo inaczej potraktuje nowe niskie numery
-// jako gigantyczna luke (gap-recovery oszaleje) — zamiast tego trzeba WYCZYSCIC
-// ksiazke i zsnapshotowac od nowa. Prog odroznia reset (duzy spadek) od zwyklego
-// reorderingu (maly spadek): reset gdy seq + threshold < last.
+// At the start of day / after a publisher restart the sequence number rolls back to a low
+// value. The consumer MUST detect this, otherwise it treats the new low numbers
+// as a gigantic gap (gap-recovery goes crazy) — instead it must CLEAR
+// the book and re-snapshot from scratch. The threshold distinguishes a reset (a big drop) from ordinary
+// reordering (a small drop): a reset when seq + threshold < last.
 struct SequenceResetDetector {
     std::uint64_t threshold;
     std::uint64_t last = 0;
@@ -397,25 +397,25 @@ struct SequenceResetDetector {
     explicit SequenceResetDetector(std::uint64_t threshold_ = 1000) noexcept
         : threshold(threshold_) {}
 
-    // on_seq: zwraca true gdy wykryto reset (czas wyczyscic ksiazke).
+    // on_seq: returns true when a reset is detected (time to clear the book).
     bool on_seq(std::uint64_t seq) noexcept {
         if (!init) { last = seq; init = true; return false; }
-        const bool reset = (seq + threshold < last);   // duzy spadek = reset, nie reorder
-        if (reset) { ++resets; last = seq; }            // przyjmij nowa baze
-        else if (seq > last) last = seq;                // normalny postep; reorder nie cofa
+        const bool reset = (seq + threshold < last);   // a big drop = reset, not reorder
+        if (reset) { ++resets; last = seq; }            // accept the new base
+        else if (seq > last) last = seq;                // normal progress; a reorder does not roll back
         return reset;
     }
     void reset_state() noexcept { last = 0; init = false; resets = 0; }
 };
 
 
-// SnapshotRequestThrottle — dlawi zadania snapshotu (expansion #211).
+// SnapshotRequestThrottle — throttles snapshot requests (expansion #211).
 //
-// Gdy feed migocze, gap-recovery moze wyzwalac sie raz za razem i zasypac serwer
-// snapshotow zadaniami ("snapshot storm"), co pogarsza sytuacje. Throttle wymusza
-// MINIMALNY odstep miedzy zadaniami: allow() zwraca true tylko gdy minelo dosc
-// czasu od ostatniego, inaczej false (zliczane jako suppressed). Niezalezny od
-// logiki wykrywania luk — czysta kontrola tempa.
+// When the feed flickers, gap-recovery may fire again and again and flood the snapshot
+// server with requests ("snapshot storm"), which makes things worse. The throttle enforces
+// a MINIMUM interval between requests: allow() returns true only when enough
+// time has passed since the last one, otherwise false (counted as suppressed). Independent of
+// the gap-detection logic — pure rate control.
 struct SnapshotRequestThrottle {
     std::int64_t min_interval_ns;
     std::int64_t last_request_ns = 0;
@@ -425,7 +425,7 @@ struct SnapshotRequestThrottle {
     explicit SnapshotRequestThrottle(std::int64_t min_interval_ns_ = 1'000'000) noexcept
         : min_interval_ns(min_interval_ns_) {}
 
-    // allow: czy wolno teraz wyslac zadanie snapshotu.
+    // allow: whether a snapshot request may be sent now.
     bool allow(std::int64_t now_ns) noexcept {
         if (!requested || now_ns - last_request_ns >= min_interval_ns) {
             last_request_ns = now_ns;
@@ -439,13 +439,13 @@ struct SnapshotRequestThrottle {
 };
 
 
-// TokenBucket — rate limiter z burstami (expansion #219).
+// TokenBucket — a rate limiter with bursts (expansion #219).
 //
-// Klasyczny token bucket do PACINGU wychodzacych zadan (retransmit-request,
-// tempo zlecen, snapshot-request). W kazdej chwili masz do `capacity` tokenow;
-// uzupelniaja sie z tempem `refill_per_sec`. try_consume() bierze token jesli
-// jest. Rozni sie od SnapshotRequestThrottle (sztywny min-odstep): bucket DOPUSZCZA
-// krotki burst do pojemnosci, a dlawi dopiero przy trwale za wysokim tempie.
+// A classic token bucket for PACING outgoing requests (retransmit-request,
+// order rate, snapshot-request). At any moment you have up to `capacity` tokens;
+// they refill at the rate `refill_per_sec`. try_consume() takes a token if
+// one is available. It differs from SnapshotRequestThrottle (a fixed min-interval): the bucket ALLOWS
+// a short burst up to capacity, and only throttles under a sustained too-high rate.
 struct TokenBucket {
     double        capacity;
     double        tokens;
@@ -457,8 +457,8 @@ struct TokenBucket {
         : capacity(capacity_), tokens(capacity_),
           refill_per_ns(refill_per_sec / 1e9) {}
 
-    // try_consume: czy mozna pobrac n tokenow teraz. Najpierw dolewa wg uplywu
-    // czasu (cap do capacity), potem konsumuje jesli starcza.
+    // try_consume: whether n tokens can be taken now. First it tops up by elapsed
+    // time (cap to capacity), then consumes if there is enough.
     bool try_consume(std::int64_t now_ns, double n = 1.0) noexcept {
         if (!init) { init = true; last_ns = now_ns; }
         else {
@@ -473,20 +473,20 @@ struct TokenBucket {
 };
 
 
-// ConflationBuffer — trzyma tylko NAJNOWSZA wartosc per klucz (expansion #227).
+// ConflationBuffer — keeps only the LATEST value per key (expansion #227).
 //
-// Gdy konsument nie nadaza, nie ma sensu przetwarzac kazdej posredniej
-// aktualizacji ceny/ksiazki — liczy sie najnowszy STAN. ConflationBuffer
-// nadpisuje wartosc per klucz (np. symbol) i liczy ile aktualizacji ZDLAWIL
-// (skonflowal). Konsument okresowo drenuje najnowszy stan. Klasyczna technika
-// przy backpressure: zamiast kolejkowac w nieskonczonosc, skacz do najswiezszego.
+// When the consumer does not keep up, there is no point processing every intermediate
+// price/book update — only the latest STATE matters. ConflationBuffer
+// overwrites the value per key (e.g. symbol) and counts how many updates it THROTTLED
+// (conflated). The consumer periodically drains the latest state. A classic technique
+// under backpressure: instead of queueing indefinitely, jump to the freshest.
 struct ConflationBuffer {
-    std::map<std::uint64_t, double> latest;   // klucz -> najnowsza wartosc
+    std::map<std::uint64_t, double> latest;   // key -> latest value
     std::uint64_t conflated = 0;
 
     void update(std::uint64_t key, double value) {
         auto [it, inserted] = latest.try_emplace(key, value);
-        if (!inserted) { it->second = value; ++conflated; }   // nadpisanie = konflacja
+        if (!inserted) { it->second = value; ++conflated; }   // overwrite = conflation
     }
     bool get(std::uint64_t key, double& out) const {
         const auto it = latest.find(key);
@@ -495,16 +495,16 @@ struct ConflationBuffer {
         return true;
     }
     std::size_t pending() const noexcept { return latest.size(); }
-    void drain() noexcept { latest.clear(); }   // konsument pobral najnowszy stan
+    void drain() noexcept { latest.clear(); }   // the consumer took the latest state
 };
 
 
-// LatencyTracker — EWMA + szczyt opoznienia przetwarzania (expansion #235).
+// LatencyTracker — EWMA + peak processing latency (expansion #235).
 //
-// Feed handler chce wiedziec ile zajmuje OBSLUGA pakietu (parse + update ksiazki).
-// LatencyTracker laczy dwie miary: wygladzona srednia EWMA (trend, odporna na
-// pojedyncze skoki) i max_ns (najgorszy przypadek — to on lamie SLA). Rozni sie
-// od InterArrivalMeter (odstepy MIEDZY pakietami): tu mierzymy KOSZT obslugi.
+// The feed handler wants to know how long HANDLING a packet takes (parse + book update).
+// LatencyTracker combines two measures: a smoothed EWMA mean (trend, robust to
+// single spikes) and max_ns (the worst case — that is what breaks the SLA). It differs
+// from InterArrivalMeter (the gaps BETWEEN packets): here we measure the HANDLING cost.
 struct LatencyTracker {
     double        alpha;
     double        ewma = 0.0;
@@ -519,35 +519,35 @@ struct LatencyTracker {
         if (latency_ns > max_ns) max_ns = latency_ns;
         ++count;
     }
-    double       avg_ns()  const noexcept { return ewma; }     // wygladzona srednia
-    std::int64_t peak_ns() const noexcept { return max_ns; }   // najgorszy przypadek
+    double       avg_ns()  const noexcept { return ewma; }     // smoothed mean
+    std::int64_t peak_ns() const noexcept { return max_ns; }   // the worst case
     void reset() noexcept { ewma = 0.0; max_ns = 0; count = 0; }
 };
 
 
-// ContiguousTracker — najwyzszy CIAGLY seq (expansion #243).
+// ContiguousTracker — the highest CONTIGUOUS seq (expansion #243).
 //
-// Konsument moze bezpiecznie dzialac tylko na danych do ktorych NIE MA luk ponizej
-// (np. publikowac ksiazke, liczyc P&L). ContiguousTracker utrzymuje "cumulative
-// ack": najwyzszy numer taki, ze wszystkie ponizej dotarly. Pakiety poza
-// kolejnoscia laduja w buforze i sa wciagane, gdy luka sie wypelni. Inaczej niz
-// GapRecovery (sledzi KTORE seq brakuja) — tu jedna liczba: "do tad pewne".
+// The consumer can safely act only on data below which there are NO gaps
+// (e.g. publish the book, compute P&L). ContiguousTracker maintains a "cumulative
+// ack": the highest number such that everything below has arrived. Out-of-order
+// packets land in a buffer and are pulled in when the gap fills. Unlike
+// GapRecovery (which tracks WHICH seq are missing) — here one number: "certain up to here".
 struct ContiguousTracker {
-    std::uint64_t next_expected;        // pierwszy jeszcze nie-dostarczony seq
-    std::set<std::uint64_t> ahead;      // odebrane przedwczesnie (nad luka)
+    std::uint64_t next_expected;        // the first not-yet-delivered seq
+    std::set<std::uint64_t> ahead;      // received prematurely (above the gap)
 
     explicit ContiguousTracker(std::uint64_t start = 1) noexcept : next_expected(start) {}
 
     void receive(std::uint64_t seq) {
-        if (seq < next_expected) return;          // duplikat / stary — ignoruj
+        if (seq < next_expected) return;          // duplicate / old — ignore
         if (seq == next_expected) {
             ++next_expected;
             while (ahead.count(next_expected)) { ahead.erase(next_expected); ++next_expected; }
         } else {
-            ahead.insert(seq);                    // luka ponizej — odloz
+            ahead.insert(seq);                    // gap below — set aside
         }
     }
-    // contiguous_high: ostatni seq bez luki ponizej (0 gdy jeszcze nic ciaglego).
+    // contiguous_high: the last seq with no gap below (0 when nothing contiguous yet).
     std::uint64_t contiguous_high() const noexcept { return next_expected - 1; }
     std::size_t   buffered() const noexcept { return ahead.size(); }
     void reset(std::uint64_t start = 1) noexcept { next_expected = start; ahead.clear(); }

@@ -1,10 +1,10 @@
 /*
- * orderbook_pro_cluster.hpp — BookCluster<N>: wielo-symbolowy kontener.
+ * orderbook_pro_cluster.hpp — BookCluster<N>: multi-symbol container.
  *
- * Wydzielone z orderbook_pro.hpp. Wrapper na N niezależnych FullOrderBook'ów
- * z O(1) lookup po nazwie symbolu, cross-symbol arbitrage detection,
- * agregacjami klastra i własnym snapshotem ("OBCL"). Osobny moduł — zależy
- * od silnika (FullOrderBook), ale silnik nie zależy od niego.
+ * Extracted from orderbook_pro.hpp. A wrapper over N independent FullOrderBooks
+ * with O(1) lookup by symbol name, cross-symbol arbitrage detection,
+ * cluster aggregations and its own snapshot ("OBCL"). A separate module — it depends
+ * on the engine (FullOrderBook), but the engine does not depend on it.
  */
 #pragma once
 
@@ -15,24 +15,24 @@
 namespace orderbook_pro {
 
 // ====================================================================
-// BookCluster<N_SYMBOLS, ...> — wielo-symbolowa książka
+// BookCluster<N_SYMBOLS, ...> — multi-symbol book
 // ====================================================================
 //
-// Wrapper na N osobnych FullOrderBook'ów z O(1) lookup po nazwie symbolu.
-// Symbole są kodowane jako 8-char ASCII pakowane do uint64 (sym_to_key
-// idea: każdy znak w 8 bitach low-byte first).
+// A wrapper over N separate FullOrderBooks with O(1) lookup by symbol name.
+// Symbols are encoded as 8-char ASCII packed into a uint64 (sym_to_key
+// idea: each char in 8 bits, low-byte first).
 //
-// Po co? Realne venues handlują tysiące symboli — separate book per symbol
-// daje pełną izolację (one symbol's halt nie blokuje innych) + cache locality
-// (każdy book ma własne levels[], orders[]).
+// Why? Real venues trade thousands of symbols — a separate book per symbol
+// gives full isolation (one symbol's halt does not block others) + cache locality
+// (each book has its own levels[], orders[]).
 //
-// Konfiguracja: N_SYMBOLS = max liczba różnych symboli. LEVELS / MAX_ORDERS_PER_SYM
+// Configuration: N_SYMBOLS = max number of distinct symbols. LEVELS / MAX_ORDERS_PER_SYM
 // per-book.
 //
 // Cross-symbol features:
-//   - total_volume_across_all() — Σ wolumen wszystkich symboli
-//   - avg_spread_ticks() — średni spread w klastrze (proxy dla market quality)
-//   - busiest_symbol() — symbol z największą ilością aktywnych zleceń
+//   - total_volume_across_all() — Σ volume of all symbols
+//   - avg_spread_ticks() — mean spread in the cluster (proxy for market quality)
+//   - busiest_symbol() — the symbol with the most active orders
 template <std::size_t N_SYMBOLS = 16,
           std::int32_t LEVELS = 16384,
           std::int32_t MAX_ORDERS_PER_SYM = 8192>
@@ -46,8 +46,8 @@ class BookCluster {
 
     // sym → uint64 packing (8 chars LSB first)
     static std::uint64_t pack(const char* sym) noexcept {
-        // Najpierw zmierz długość przez memchr (cppcheck rozumie ten wzorzec
-        // i nie zgłasza arrayIndexOutOfBoundsCond na short-circuit z `sym[i]`).
+        // First measure the length via memchr (cppcheck understands this pattern
+        // and does not report arrayIndexOutOfBoundsCond on the short-circuit with `sym[i]`).
         std::uint64_t k = 0;
         const void* nul = std::memchr(sym, '\0', 8);
         const std::size_t n = nul
@@ -59,8 +59,8 @@ class BookCluster {
         return k;
     }
 
-    // Liniowy search po slotach. N_SYMBOLS ≤ 16 — szybsze niż unordered_map
-    // (1-2 cache lines mieści się w cache L1, branch predictor radzi sobie).
+    // Linear search over slots. N_SYMBOLS ≤ 16 — faster than unordered_map
+    // (1-2 cache lines fit in the L1 cache, the branch predictor copes).
     std::int32_t find_slot(const char* sym) const noexcept {
         const std::uint64_t key = pack(sym);
         for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
@@ -80,16 +80,16 @@ public:
     BookCluster(BookCluster&&)                 = delete;
     BookCluster& operator=(BookCluster&&)      = delete;
 
-    // Zarejestruj nowy symbol. Zwraca true on success, false gdy slot
-    // wyczerpany albo symbol już istnieje.
+    // Register a new symbol. Returns true on success, false when the slot
+    // is exhausted or the symbol already exists.
     bool register_symbol(const char* sym) noexcept {
         if (find_slot(sym) >= 0) return false;  // already registered
         for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
             if (!slot_used_[i]) {
                 slot_used_[i] = true;
-                // memcpy zamiast strncpy — gcc -Wstringop-truncation strzela
-                // gdy src może mieć 8 znaków bez NUL (load_snapshot podaje
-                // taki bufor). Długość przez memchr, ogon zerowany.
+                // memcpy instead of strncpy — gcc -Wstringop-truncation fires
+                // when src may have 8 chars without a NUL (load_snapshot passes
+                // such a buffer). Length via memchr, tail zeroed.
                 std::memset(symbols_[i], 0, 9);
                 const void* nul = std::memchr(sym, '\0', 8);
                 const std::size_t n = nul
@@ -125,8 +125,8 @@ public:
         return total;
     }
 
-    // avg_spread_ticks: średni spread po symbolach które mają obie strony quote.
-    // Zwraca -1 gdy żaden symbol nie ma TOB.
+    // avg_spread_ticks: mean spread over symbols that have both sides quoted.
+    // Returns -1 when no symbol has a TOB.
     std::int32_t avg_spread_ticks() const noexcept {
         std::int64_t sum = 0;
         std::int32_t cnt = 0;
@@ -138,7 +138,7 @@ public:
         return cnt > 0 ? static_cast<std::int32_t>(sum / cnt) : -1;
     }
 
-    // busiest_symbol: symbol z największym active_orders(). Zwraca nullptr gdy puste.
+    // busiest_symbol: the symbol with the largest active_orders(). Returns nullptr when empty.
     const char* busiest_symbol() const noexcept {
         std::size_t best = N_SYMBOLS;
         std::size_t best_count = 0;
@@ -181,8 +181,8 @@ public:
         }
         return t;
     }
-    // Volume-weighted average spread across cluster (ważone total_volume per symbol).
-    // Bardziej realistyczny niż simple avg — symbole z większym flow większy weight.
+    // Volume-weighted average spread across the cluster (weighted by total_volume per symbol).
+    // More realistic than a simple avg — symbols with more flow get more weight.
     double volume_weighted_avg_spread_ticks() const noexcept {
         std::int64_t weighted_spread = 0;
         std::uint64_t total_volume = 0;
@@ -200,7 +200,7 @@ public:
                static_cast<double>(total_volume);
     }
 
-    // Cluster-wide cumulative flow imbalance ważony po volumie per symbol.
+    // Cluster-wide cumulative flow imbalance weighted by volume per symbol.
     // Σ buy_vol / Σ (buy + sell) vol × 10000 (bps).
     std::int32_t cluster_flow_imbalance_bps() const noexcept {
         std::int64_t buy = 0, sell = 0;
@@ -218,9 +218,9 @@ public:
     // Cluster snapshot — multi-symbol recovery
     // ====================================================================
     //
-    // Wire format: 4 B magic "OBCL" + 4 B version + 8 B count, potem per
-    // symbol: 9 B nazwa + 8 B długość snapshotu księgi + bytes (format
-    // księgi v2, włącznie z pending stopami i pegami).
+    // Wire format: 4 B magic "OBCL" + 4 B version + 8 B count, then per
+    // symbol: 9 B name + 8 B book-snapshot length + bytes (book
+    // format v2, including pending stops and pegs).
     static constexpr std::uint32_t CLUSTER_SNAPSHOT_MAGIC   = 0x4C43424FU;  // "OBCL"
     static constexpr std::uint32_t CLUSTER_SNAPSHOT_VERSION = 1;
 
@@ -245,10 +245,10 @@ public:
         for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
             if (!slot_used_[i]) continue;
             std::memcpy(buf + off, symbols_[i], 9); off += 9;
-            // Długość przed snapshotem — serializuj za polem, wpisz potem
+            // Length before the snapshot — serialize after the field, write it afterwards
             const std::size_t blen = books_[i].serialize_snapshot(
                 buf + off + 8, cap - off - 8);
-            if (blen == 0) return 0;   // pusta księga pisze 16 B, 0 = błąd
+            if (blen == 0) return 0;   // an empty book writes 16 B, 0 = error
             const std::uint64_t blen64 = blen;
             std::memcpy(buf + off, &blen64, 8);
             off += 8 + blen;
@@ -266,7 +266,7 @@ public:
         if (magic != CLUSTER_SNAPSHOT_MAGIC)     return false;
         if (version != CLUSTER_SNAPSHOT_VERSION) return false;
         if (count > N_SYMBOLS)                   return false;
-        // Pełny reset klastra — książki używanych slotów też
+        // Full cluster reset — books of used slots too
         for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
             if (slot_used_[i]) books_[i].clear();
             slot_used_[i] = false;
@@ -291,7 +291,7 @@ public:
         return true;
     }
 
-    // Symbol z najwyższym book-level flow_imbalance (informational flow magnet).
+    // The symbol with the highest book-level flow_imbalance (informational flow magnet).
     const char* most_imbalanced_symbol() const noexcept {
         std::size_t best = N_SYMBOLS;
         std::int32_t best_abs = -1;
@@ -307,23 +307,23 @@ public:
     // Cross-symbol arbitrage detection
     // ====================================================================
     //
-    // Skanuje pary symboli w klastrze i raportuje sytuacje gdzie:
-    //   bid_X >= ask_Y  (możemy kupić na Y, sprzedać na X z profitem)
+    // Scans pairs of symbols in the cluster and reports situations where:
+    //   bid_X >= ask_Y  (we can buy on Y, sell on X for a profit)
     //
-    // Use case: arbitrage detection przy listing tej samej akcji na wielu
-    // venues (NASDAQ vs NYSE) lub ETF arb (SPY vs IVV vs VOO). W praktyce
-    // realny arb wymaga uwzględnienia opłat + slippage, ale ta funkcja daje
-    // RAW signal.
+    // Use case: arbitrage detection when the same stock is listed on multiple
+    // venues (NASDAQ vs NYSE) or ETF arb (SPY vs IVV vs VOO). In practice
+    // real arb requires accounting for fees + slippage, but this function gives
+    // a RAW signal.
     struct ArbOpportunity {
-        char         long_symbol[9];   // gdzie ASK (kupimy)
-        char         short_symbol[9];  // gdzie BID (sprzedamy)
-        std::int32_t buy_price_ticks;  // ask na long_symbol
-        std::int32_t sell_price_ticks; // bid na short_symbol
-        std::int32_t spread_ticks;     // sell - buy (zysk pre-fees)
+        char         long_symbol[9];   // where the ASK is (we will buy)
+        char         short_symbol[9];  // where the BID is (we will sell)
+        std::int32_t buy_price_ticks;  // ask on long_symbol
+        std::int32_t sell_price_ticks; // bid on short_symbol
+        std::int32_t spread_ticks;     // sell - buy (profit pre-fees)
         std::int32_t max_qty;          // min(ask_qty_long, bid_qty_short)
     };
 
-    // detect_cross_arb: wypełnia `out[]` (max max_n) lukami arb. Zwraca ile.
+    // detect_cross_arb: fills `out[]` (max max_n) with arb gaps. Returns how many.
     std::size_t detect_cross_arb(ArbOpportunity* out, std::size_t max_n) const noexcept {
         std::size_t found = 0;
         for (std::size_t i = 0; i < N_SYMBOLS && found < max_n; ++i) {
@@ -335,10 +335,10 @@ public:
                 const std::int32_t bid_i = books_[i].best_bid_ticks();
                 const std::int32_t ask_j = books_[j].best_ask_ticks();
                 if (bid_i > ask_j) {
-                    // Arb: kupić na j @ ask_j, sprzedać na i @ bid_i
+                    // Arb: buy on j @ ask_j, sell on i @ bid_i
                     ArbOpportunity& o = out[found++];
-                    // symbols_ jest zero-padded do 9 B (register_symbol) —
-                    // memcpy 9 kopiuje też NUL, bez strncpy-truncation warninga
+                    // symbols_ is zero-padded to 9 B (register_symbol) —
+                    // memcpy 9 also copies the NUL, no strncpy-truncation warning
                     std::memcpy(o.long_symbol,  symbols_[j], 9);
                     std::memcpy(o.short_symbol, symbols_[i], 9);
                     o.buy_price_ticks  = ask_j;
@@ -353,7 +353,7 @@ public:
         return found;
     }
 
-    // count_cross_arb: ile arb opportunities. Bez kopiowania do bufora.
+    // count_cross_arb: how many arb opportunities. Without copying to a buffer.
     std::size_t count_cross_arb() const noexcept {
         std::size_t cnt = 0;
         for (std::size_t i = 0; i < N_SYMBOLS; ++i) {
