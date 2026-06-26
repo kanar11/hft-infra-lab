@@ -411,8 +411,15 @@ public:
         // 1. Kill switch — reject everything if active
         if (kill_switch_active_) return make_reject("Kill switch active", t0);
 
+        // Pack the ticker into its key ONCE and reuse it everywhere below.
+        // sym_to_key loops over up to 8 chars; the restricted-set, price-band and
+        // position checks each used to recompute it, so the allow path packed the
+        // symbol 3× per order. Computed after the kill switch so an active halt
+        // (the cheapest reject) still pays nothing for it.
+        const uint64_t key = sym_to_key(symbol);
+
         // 1b. Restricted symbol — halt / Reg SHO / no locate / freeze.
-        if (!restricted_.empty() && restricted_.count(sym_to_key(symbol)))
+        if (!restricted_.empty() && restricted_.count(key))
             return make_reject("Symbol restricted", t0);
 
         // 2. Single-order value
@@ -432,7 +439,7 @@ public:
         //     Catches gross mistakes (e.g. 1500.00 instead of 150.00) before they
         //     reach the market. Skipped when the band is off or there is no ref price for the symbol.
         if (limits_.max_price_band_pct > 0.0) {
-            const auto rp = ref_price_.find(sym_to_key(symbol));
+            const auto rp = ref_price_.find(key);
             if (rp != ref_price_.end() && rp->second > 0.0) {
                 const double dev_pct = std::fabs(price - rp->second) / rp->second * 100.0;
                 if (dev_pct > limits_.max_price_band_pct)
@@ -445,8 +452,7 @@ public:
             && traded_notional_ >= limits_.max_daily_traded_notional)
             return make_reject("Daily traded notional limit", t0);
 
-        // 3 + 4. Position limits (per-symbol and portfolio) — shared lookup
-        const uint64_t key       = sym_to_key(symbol);
+        // 3 + 4. Position limits (per-symbol and portfolio) — reuse `key` from above
         const int32_t  signed_n  = signed_qty(side, quantity);
         const int32_t  cur_pos   = lookup(positions_, key);
         const int32_t  cur_pend  = lookup(pending_,   key);
