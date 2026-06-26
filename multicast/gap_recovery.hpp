@@ -154,6 +154,19 @@ struct GapRecovery {
         return total > 0 ? static_cast<double>(recovered) / static_cast<double>(total) : 1.0;
     }
 
+    // avg_gap_burst: average number of CONSECUTIVE missing sequences per gap event
+    // (#329) = (recovered + still-missing) / gap_events. Every sequence ever marked
+    // missing is either recovered or still outstanding, so the numerator is the total
+    // ever lost; the denominator is how many distinct gap EVENTS opened. ~1.0 = isolated
+    // single-packet drops (random loss); >> 1 = bursty loss (a NIC/kernel buffer
+    // overflow dropping a run of packets at once) — which points at a different fix
+    // (bigger buffers vs. line quality). 0 when no gap has occurred.
+    double avg_gap_burst() const noexcept {
+        return gap_events > 0
+            ? static_cast<double>(recovered + missing.size()) / static_cast<double>(gap_events)
+            : 0.0;
+    }
+
     // missing_ranges (#149): gaps grouped into CONTIGUOUS intervals [begin,end].
     // next_request gives only min..max (may include already-received); this gives
     // exact ranges for a gap-fill request (more efficient retransmission).

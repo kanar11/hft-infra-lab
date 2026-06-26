@@ -2016,6 +2016,20 @@ void test_multicast_gap_recovery() {
     rc2.on_retransmit(3);                               // recovered 2, missing 0
     ASSERT(std::fabs(rc2.recovery_completeness() - 1.0) < 1e-9, "gaprec_complete_full");
 
+    // #329 avg_gap_burst — consecutive-missing run per gap event.
+    multicast::GapRecovery agb;
+    ASSERT(agb.avg_gap_burst() == 0.0, "gaprec_burst_none");
+    agb.observe(1); agb.observe(2); agb.observe(5);     // one gap event, run of 2 (3,4)
+    ASSERT(agb.gap_events == 1 && std::fabs(agb.avg_gap_burst() - 2.0) < 1e-9, "gaprec_burst_2");
+    agb.observe(6);                                     // contiguous, no new gap
+    ASSERT(std::fabs(agb.avg_gap_burst() - 2.0) < 1e-9, "gaprec_burst_still_2");
+    agb.observe(8);                                     // second gap event, run of 1 (7)
+    // total lost = 3 (3,4,7) over 2 gap events -> 1.5
+    ASSERT(agb.gap_events == 2 && std::fabs(agb.avg_gap_burst() - 1.5) < 1e-9, "gaprec_burst_avg_1p5");
+    // recovering does not change the lifetime burst average (recovered+missing invariant)
+    agb.on_retransmit(3); agb.on_retransmit(4); agb.on_retransmit(7);
+    ASSERT(std::fabs(agb.avg_gap_burst() - 1.5) < 1e-9, "gaprec_burst_recover_invariant");
+
     // #110 ReorderBuffer — always delivers in order, holds "future" ones.
     multicast::ReorderBuffer<int> rb;
     rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2
