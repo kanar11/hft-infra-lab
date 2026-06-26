@@ -498,8 +498,16 @@ public:
     // see before walking past depth N — the sizing input for a sweep. Naturally
     // stops at the end of book (out-of-range levels contribute 0).
     int64_t cumulative_qty(char side, int n) const noexcept {
-        int64_t sum = 0;
-        for (int i = 0; i < n; ++i) sum += nth_level_qty(side, i);
+        if (n <= 0) return 0;
+        // Single linear walk of the top n levels. Calling nth_level_qty(i) per level
+        // re-walked the map from the touch each time → O(n^2); this is O(n) with the
+        // same level quantities summed in the same order.
+        int64_t sum = 0; int c = 0;
+        if (side == 'B') {
+            for (auto it = bids_.rbegin(); it != bids_.rend() && c < n; ++it, ++c) sum += it->second;
+        } else {
+            for (auto it = asks_.begin(); it != asks_.end() && c < n; ++it, ++c) sum += it->second;
+        }
         return sum;
     }
     // depth_notional: total $ notional resting across the top N price levels on a
@@ -507,11 +515,17 @@ public:
     // consume, the $ companion to cumulative_qty (#293, shares). Stops at the end of
     // book (an out-of-range level returns price 0). Uses nth_level_price/qty (#277).
     double  depth_notional(char side, int n) const noexcept {
-        double sum = 0.0;
-        for (int i = 0; i < n; ++i) {
-            const double px = nth_level_price(side, i);
-            if (px <= 0.0) break;
-            sum += px * static_cast<double>(nth_level_qty(side, i));
+        if (n <= 0) return 0.0;
+        // Single linear walk: the old version called nth_level_price(i) AND
+        // nth_level_qty(i) per level, each re-walking the map from the touch → O(n^2)
+        // (doubled). O(n) here, same per-level price*qty summed in the same order.
+        double sum = 0.0; int c = 0;
+        if (side == 'B') {
+            for (auto it = bids_.rbegin(); it != bids_.rend() && c < n; ++it, ++c)
+                sum += (static_cast<double>(it->first) / 100.0) * static_cast<double>(it->second);
+        } else {
+            for (auto it = asks_.begin(); it != asks_.end() && c < n; ++it, ++c)
+                sum += (static_cast<double>(it->first) / 100.0) * static_cast<double>(it->second);
         }
         return sum;
     }
