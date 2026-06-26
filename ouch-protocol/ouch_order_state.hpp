@@ -57,6 +57,8 @@ class OUCHOrderTracker {
     uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
     int64_t  ordered_shares_ = 0;   // cumulative shares ever ordered (#250)
     int64_t  broken_shares_  = 0;   // total shares unwound by Broken Trade messages (#320)
+    uint64_t exec_count_     = 0;   // number of Executed ('E') reports applied (#328)
+    int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -96,6 +98,7 @@ public:
             const int32_t exec = (r.shares < rec->remaining) ? r.shares : rec->remaining;
             rec->filled    += exec;
             rec->remaining -= exec;
+            if (exec > 0) { exec_shares_ += exec; ++exec_count_; }   // #328 per-execution
             if (rec->remaining <= 0) { rec->state = OrderState::FILLED; ++filled_; }
             else                       rec->state = OrderState::PARTIAL;
         } else if (std::strcmp(r.type, "CANCELLED") == 0) {
@@ -235,6 +238,18 @@ public:
     double broken_share_rate() const noexcept {
         return ordered_shares_ > 0
             ? static_cast<double>(broken_shares_) / static_cast<double>(ordered_shares_)
+            : 0.0;
+    }
+    // exec_count / avg_exec_shares: number of Executed ('E') reports applied and the
+    // average shares per execution (#328). Wire-level execution granularity from the
+    // OUCH feed: a small average = the order is being worked in many slices (iceberg /
+    // child orders), a large average = block fills. Distinct from fill_rate (#250, a
+    // ratio) and total_filled_shares (#242, net of Broken Trades) — this counts
+    // execution EVENTS as they arrived, unaffected by later breaks. 0 before any fill.
+    uint64_t exec_count() const noexcept { return exec_count_; }
+    double   avg_exec_shares() const noexcept {
+        return exec_count_ > 0
+            ? static_cast<double>(exec_shares_) / static_cast<double>(exec_count_)
             : 0.0;
     }
 };

@@ -4515,6 +4515,28 @@ void test_ouch_order_state() {
     ASSERT(bsr.brokens() == 2, "ouch_bsr_event_count");
     ouch::OUCHOrderTracker bsr0;
     ASSERT(std::fabs(bsr0.broken_share_rate()) < 1e-12, "ouch_bsr_zero");
+
+    // #328 exec_count / avg_exec_shares — per-execution slice granularity.
+    ouch::OUCHOrderTracker aes;
+    ASSERT(aes.exec_count() == 0 && aes.avg_exec_shares() == 0.0, "ouch_aes_empty");
+    aes.on_new("E1", 300);
+    n = OUCHMessage::encode_accepted(buf, "E1", 'B', 300, "AAPL", 50.0, 77001);
+    aes.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "E1", 100, 50.0, 1);   // slice 1: 100
+    aes.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "E1", 200, 50.0, 2);   // slice 2: 200 (fills)
+    aes.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(aes.exec_count() == 2, "ouch_aes_two_execs");
+    ASSERT(std::fabs(aes.avg_exec_shares() - 150.0) < 1e-9, "ouch_aes_avg_150"); // (100+200)/2
+    // an over-fill attempt clamps to remaining 0 -> exec 0 -> NOT counted
+    n = OUCHMessage::encode_executed(buf, "E1", 50, 50.0, 3);
+    aes.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(aes.exec_count() == 2, "ouch_aes_overfill_not_counted");
+    // a Broken Trade does NOT change the execution-event stats (#328 vs #320)
+    n = OUCHMessage::encode_broken_trade(buf, "E1", 100, 77001, 'E');
+    aes.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(aes.exec_count() == 2 && std::fabs(aes.avg_exec_shares() - 150.0) < 1e-9,
+           "ouch_aes_break_unaffected");
 }
 
 // OUCH ↔ SoupBinTCP #78 — full round-trip login→order→accepted→executed.
