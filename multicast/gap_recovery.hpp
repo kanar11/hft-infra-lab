@@ -77,7 +77,8 @@ private:
 
 struct GapRecovery {
     std::set<uint64_t> missing;          // known missing, awaiting retransmission
-    uint64_t expected    = 0;
+    uint64_t expected        = 0;
+    uint64_t primary_packets = 0;        // observe() call count (#321)
     bool     initialized = false;
     uint64_t gap_events  = 0;            // how many separate gap events
     uint64_t recovered   = 0;            // how many missing recovered
@@ -86,6 +87,7 @@ struct GapRecovery {
     // observe: primary feed. In order → OK; ahead → record a gap; behind
     // → either fills a known gap (recovered) or a pure duplicate.
     void observe(uint64_t seq) noexcept {
+        ++primary_packets;   // #321: count every feed call regardless of outcome
         if (!initialized) { initialized = true; expected = seq + 1; return; }
         if (seq == expected) { ++expected; return; }
         if (seq > expected) {
@@ -116,6 +118,15 @@ struct GapRecovery {
 
     bool   has_gaps()      const noexcept { return !missing.empty(); }
     size_t missing_count() const noexcept { return missing.size(); }
+    // duplicate_rate: fraction of primary feed packets that were true duplicates (#321)
+    // = duplicates / primary_packets. A non-zero rate indicates a sender retransmitting
+    // without being asked, or a mis-configured redundant line leaking onto this channel.
+    // 0.0 when no packets have arrived.
+    double duplicate_rate() const noexcept {
+        return primary_packets > 0
+            ? static_cast<double>(duplicates) / static_cast<double>(primary_packets)
+            : 0.0;
+    }
 
     // recovery_completeness (#156): the fraction of detected gaps already recovered
     // = recovered / (recovered + still_missing). 1.0 = nothing outstanding (the book
