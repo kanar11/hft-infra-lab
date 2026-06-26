@@ -844,6 +844,56 @@ public:
         return r;
     }
 
+    // DontKnowTrade (35=Q): the client repudiates an ExecutionReport (35=8, #101) it
+    // cannot reconcile — an execution for an order it has no record of (#327). Instead
+    // of silently dropping a mystery fill (which would desync the position), the client
+    // formally "DK"s it back to the venue, citing why. The defensive counterpart to the
+    // exchange→client ExecReport: it closes the loop on a desync rather than ignoring it.
+    //
+    // 127=DKReason (char):
+    //   A = Unknown symbol, B = Wrong side, C = Quantity exceeds order,
+    //   D = No matching order, E = Price exceeds limit, F = Calculation difference,
+    //   Z = Other.
+    // 58=Text: optional human-readable detail.
+    int build_dont_know_trade(char* out, int cap, const char* order_id, const char* exec_id,
+                              char dk_reason, const char* symbol, char side,
+                              uint32_t order_qty, const char* text = nullptr,
+                              char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        int n;
+        if (text && *text) {
+            n = std::snprintf(body, sizeof(body),
+                "35=Q%c49=%s%c56=%s%c34=%u%c37=%s%c17=%s%c127=%c%c55=%s%c54=%c%c38=%u%c58=%s%c",
+                delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+                order_id, delim, exec_id, delim, dk_reason, delim, symbol, delim, side, delim,
+                order_qty, delim, text, delim);
+        } else {
+            n = std::snprintf(body, sizeof(body),
+                "35=Q%c49=%s%c56=%s%c34=%u%c37=%s%c17=%s%c127=%c%c55=%s%c54=%c%c38=%u%c",
+                delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+                order_id, delim, exec_id, delim, dk_reason, delim, symbol, delim, side, delim,
+                order_qty, delim);
+        }
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
+    // DontKnowTrade — typed view of a parsed 35=Q message (#327). Symmetric to
+    // ExecReport (#241) / QuoteStatusReport (#319): parse once, access by field name.
+    struct DontKnowTrade {
+        char dk_reason = '\0';   // 127=DKReason ('\0' = absent)
+        bool valid     = false;  // true when msg type == "Q"
+    };
+
+    static DontKnowTrade parse_dont_know_trade(const FIXMessage& m) noexcept {
+        DontKnowTrade r;
+        if (std::strcmp(m.get_msg_type(), "Q") != 0) return r;
+        const char* s = m.get_field(127);
+        r.dk_reason = (s && *s) ? s[0] : '\0';
+        r.valid     = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

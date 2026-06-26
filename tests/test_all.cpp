@@ -4173,6 +4173,32 @@ void test_fix_session() {
             FIXMessage not_ai; not_ai.parse("35=S|117=X|55=AAPL|132=10.0|133=10.1|");
             ASSERT(!fix::FIXSession::parse_quote_status(not_ai).valid, "fix_qsr_non_AI_invalid");
         }
+
+        // #327 DontKnowTrade (35=Q) — client repudiates an unreconcilable ExecReport.
+        {
+            s.build_dont_know_trade(buf, sizeof(buf), "ORD9", "EXEC9", 'D', "AAPL", '1', 500,
+                                    nullptr, '|');   // D = No matching order
+            FIXMessage dk; dk.parse(buf);
+            ASSERT(dk.is_valid() && std::strcmp(dk.get_msg_type(), "Q") == 0, "fix_dk_Q_valid");
+            ASSERT(std::strcmp(dk.get_field(37), "ORD9") == 0
+                   && std::strcmp(dk.get_field(17), "EXEC9") == 0, "fix_dk_ids");
+            ASSERT(dk.get_field(127)[0] == 'D' && dk.get_int(38) == 500, "fix_dk_reason_qty");
+            ASSERT(dk.get_field(54)[0] == '1' && std::strcmp(dk.get_symbol(), "AAPL") == 0,
+                   "fix_dk_side_symbol");
+            const auto dkd = fix::FIXSession::parse_dont_know_trade(dk);
+            ASSERT(dkd.valid && dkd.dk_reason == 'D', "fix_dk_parsed");
+
+            // with optional 58=Text
+            s.build_dont_know_trade(buf, sizeof(buf), "ORD10", "EXEC10", 'C', "MSFT", '2', 100,
+                                    "Qty exceeds order", '|');
+            FIXMessage dk2; dk2.parse(buf);
+            ASSERT(dk2.is_valid() && std::strcmp(dk2.get_field(58), "Qty exceeds order") == 0,
+                   "fix_dk_text");
+
+            // a non-Q message must produce valid=false
+            FIXMessage not_q; not_q.parse("35=8|11=X|37=Y|17=Z|");
+            ASSERT(!fix::FIXSession::parse_dont_know_trade(not_q).valid, "fix_dk_non_Q_invalid");
+        }
     }
 }
 
