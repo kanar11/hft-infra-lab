@@ -252,6 +252,25 @@ public:
             ? static_cast<double>(exec_shares_) / static_cast<double>(exec_count_)
             : 0.0;
     }
+    // avg_order_size: mean ordered quantity per tracked order = total_ordered_shares
+    // / order_count (#337). The sizing companion to avg_exec_shares (#328, mean
+    // shares per execution): together they show how finely the venue slices orders
+    // (a large average order filled by a small average execution = heavy
+    // fragmentation). 0 when no orders are tracked.
+    double avg_order_size() const noexcept {
+        const size_t n = orders_.size();
+        return n > 0 ? static_cast<double>(ordered_shares_) / static_cast<double>(n) : 0.0;
+    }
+    // executions_per_order: mean number of Executed reports per tracked order =
+    // exec_count / order_count (#337). A direct fill-fragmentation measure: ~1 =
+    // clean block fills, high = orders worked in many small slices (iceberg /
+    // child orders) — more wire traffic and more signaling/market-impact risk.
+    // Distinct from avg_exec_shares (#328, shares per execution): this counts
+    // execution EVENTS per order. 0 when no orders are tracked.
+    double executions_per_order() const noexcept {
+        const size_t n = orders_.size();
+        return n > 0 ? static_cast<double>(exec_count_) / static_cast<double>(n) : 0.0;
+    }
 };
 
 }  // namespace ouch

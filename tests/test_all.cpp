@@ -4643,6 +4643,23 @@ void test_ouch_order_state() {
     aes.on_response(OUCHMessage::parse_response(buf, n));
     ASSERT(aes.exec_count() == 2 && std::fabs(aes.avg_exec_shares() - 150.0) < 1e-9,
            "ouch_aes_break_unaffected");
+
+    // #337 avg_order_size / executions_per_order — order sizing & fill fragmentation.
+    ouch::OUCHOrderTracker frag;
+    ASSERT(frag.avg_order_size() == 0.0 && frag.executions_per_order() == 0.0, "ouch_frag_empty");
+    frag.on_new("F1", 100);
+    frag.on_new("F2", 300);                                     // 2 orders, 400 ordered
+    ASSERT(std::fabs(frag.avg_order_size() - 200.0) < 1e-9, "ouch_frag_avg_order_200");
+    n = OUCHMessage::encode_accepted(buf, "F1", 'B', 100, "AAPL", 50.0, 78001);
+    frag.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "F1", 40, 50.0, 1);   // F1 slice 1
+    frag.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "F1", 60, 50.0, 2);   // F1 slice 2 (fills)
+    frag.on_response(OUCHMessage::parse_response(buf, n));
+    // 2 execution events across 2 tracked orders -> 1.0 executions/order
+    ASSERT(std::fabs(frag.executions_per_order() - 1.0) < 1e-9, "ouch_frag_exec_per_order");
+    // ordered total is unchanged by fills -> avg_order_size stays 200
+    ASSERT(std::fabs(frag.avg_order_size() - 200.0) < 1e-9, "ouch_frag_avg_order_stable");
 }
 
 // OUCH ↔ SoupBinTCP #78 — full round-trip login→order→accepted→executed.
