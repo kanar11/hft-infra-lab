@@ -766,6 +766,16 @@ public:
     int64_t  short_exposure() const noexcept {
         return (get_total_exposure() - net_exposure()) / 2;
     }
+    // portfolio_skew: directional tilt = net_exposure / gross_exposure (#323), in
+    // [-1, 1]. +1.0 = fully long (no offsetting shorts), -1.0 = fully short, 0.0 =
+    // market-neutral. Derived from existing (#299/#315) fields — no extra state.
+    // 0.0 when the book is flat (gross == 0) to avoid division by zero.
+    double portfolio_skew() const noexcept {
+        const int64_t gross = get_total_exposure();
+        return gross > 0
+            ? static_cast<double>(net_exposure()) / static_cast<double>(gross)
+            : 0.0;
+    }
     // exposure_utilization_pct: portfolio exposure as % of the limit (#181). How
     // much of the risk budget is used — the portfolio analog of is_near_position_limit.
     // 0 when the limit is off. Can exceed 100 only from a pre-limit state.
