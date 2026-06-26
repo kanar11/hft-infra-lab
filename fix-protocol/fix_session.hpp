@@ -894,6 +894,40 @@ public:
         return r;
     }
 
+    // TradeCaptureReport — typed view of a parsed 35=AE message (#336). Closes the
+    // round-trip with build_trade_capture_report (#287), symmetric to ExecReport
+    // (#241) / QuoteStatusReport (#319) / DontKnowTrade (#327): parse once, read by
+    // field. The post-trade / clearing layer consumes capture reports without
+    // digging through tags. valid=false when the message is not 35=AE.
+    struct TradeCaptureReport {
+        char    trade_report_id[32] = {};   // 571=TradeReportID
+        char    symbol[16]          = {};   // 55=Symbol
+        char    side                = '\0'; // 54=Side ('1'=Buy, '2'=Sell)
+        int32_t last_qty            = 0;    // 32=LastQty
+        double  last_px             = 0.0;  // 31=LastPx
+        char    trade_date[16]      = {};   // 75=TradeDate (YYYYMMDD)
+        bool    valid               = false;// true when msg type == "AE"
+    };
+
+    static TradeCaptureReport parse_trade_capture_report(const FIXMessage& m) noexcept {
+        TradeCaptureReport r;
+        if (std::strcmp(m.get_msg_type(), "AE") != 0) return r;   // valid stays false
+        const char* tri = m.get_field(571);
+        const char* sym = m.get_field(55);
+        const char* sd  = m.get_field(54);
+        const char* td  = m.get_field(75);
+        // sources are runtime pointers (no compile-time length) so strncpy bounded
+        // to size-1 over a value-initialized array stays nul-terminated.
+        if (tri) std::strncpy(r.trade_report_id, tri, sizeof(r.trade_report_id) - 1);
+        if (sym) std::strncpy(r.symbol,          sym, sizeof(r.symbol) - 1);
+        r.side     = (sd && *sd) ? sd[0] : '\0';
+        r.last_qty = m.get_int(32);
+        r.last_px  = m.get_double(31);
+        if (td)  std::strncpy(r.trade_date,      td,  sizeof(r.trade_date) - 1);
+        r.valid    = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

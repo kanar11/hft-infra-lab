@@ -4136,6 +4136,16 @@ void test_fix_session() {
         ASSERT(std::strcmp(tcr.get_field(75), "20260622") == 0, "fix_tcr_trade_date");
         ASSERT(!tcr.is_admin(), "fix_tcr_application");   // AE is multi-char -> application
 
+        // #336 parse_trade_capture_report — typed round-trip for 35=AE.
+        const auto tcrd = fix::FIXSession::parse_trade_capture_report(tcr);
+        ASSERT(tcrd.valid && std::strcmp(tcrd.trade_report_id, "TR1") == 0
+               && std::strcmp(tcrd.symbol, "AAPL") == 0, "fix_tcr_parsed_id_symbol");
+        ASSERT(tcrd.side == '1' && tcrd.last_qty == 100
+               && std::fabs(tcrd.last_px - 150.25) < 1e-6, "fix_tcr_parsed_side_qty_px");
+        ASSERT(std::strcmp(tcrd.trade_date, "20260622") == 0, "fix_tcr_parsed_date");
+        FIXMessage not_ae; not_ae.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_trade_capture_report(not_ae).valid, "fix_tcr_non_AE_invalid");
+
         // #295 BusinessMessageReject (35=j) — application-level rejection.
         s.build_business_reject(buf, sizeof(buf), 42, "D", 2, "Unknown symbol", '|');
         FIXMessage bmr; bmr.parse(buf);
