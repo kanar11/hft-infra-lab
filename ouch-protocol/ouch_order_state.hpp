@@ -56,6 +56,7 @@ class OUCHOrderTracker {
     std::unordered_map<std::string, Record> orders_;
     uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
     int64_t  ordered_shares_ = 0;   // cumulative shares ever ordered (#250)
+    int64_t  broken_shares_  = 0;   // total shares unwound by Broken Trade messages (#320)
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -110,6 +111,7 @@ public:
             rec->remaining += back;
             rec->state = (rec->filled > 0) ? OrderState::PARTIAL : OrderState::LIVE;
             ++broken_;
+            broken_shares_ += back;   // #320: accumulate unwound volume
         } else {  // ERROR / UNKNOWN
             rec->state = OrderState::REJECTED;
             ++rejected_;
@@ -222,6 +224,19 @@ public:
     uint64_t cancels()     const noexcept { return cancelled_; }
     uint64_t rejects()     const noexcept { return rejected_; }
     uint64_t brokens()     const noexcept { return broken_; }
+    // total_broken_shares: cumulative shares returned to "open" by Broken Trade
+    // messages (#320). The exchange rescinds a prior fill — shares move back from
+    // filled to remaining. Watching this versus total_filled_shares reveals how much
+    // of the executed volume was later invalidated. Distinct from broken_ (event count).
+    int64_t total_broken_shares() const noexcept { return broken_shares_; }
+    // broken_share_rate: total_broken_shares / ordered_shares (#320). Proportion of
+    // ordered volume that was filled and subsequently broken — a feed-quality signal.
+    // 0 when nothing has been ordered.
+    double broken_share_rate() const noexcept {
+        return ordered_shares_ > 0
+            ? static_cast<double>(broken_shares_) / static_cast<double>(ordered_shares_)
+            : 0.0;
+    }
 };
 
 }  // namespace ouch

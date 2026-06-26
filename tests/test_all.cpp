@@ -482,6 +482,28 @@ void test_oms_short_and_replace() {
         ASSERT(empt.avg_trade_price() == 0.0, "avg_trade_price_empty_zero");
     }
 
+    {   // #322 total_submitted_notional / avg_submitted_notional
+        OMS oms322(1000000, 1000000000.0);
+        // submit 100 @ $10 = $1000 and 50 @ $20 = $1000 => total = $2000, avg = $1000
+        Order* s1 = oms322.submit_order("AAA", Side::BUY, 10.0, 100);
+        Order* s2 = oms322.submit_order("BBB", Side::SELL, 20.0, 50);
+        (void)s1; (void)s2;
+        ASSERT(close(oms322.total_submitted_notional(), 2000.0), "oms_sub_notional_sum");
+        ASSERT(close(oms322.avg_submitted_notional(), 1000.0), "oms_avg_sub_notional");
+        // third order: 200 @ $5 = $1000 => total = $3000, avg = $1000
+        Order* s3 = oms322.submit_order("CCC", Side::BUY, 5.0, 200);
+        (void)s3;
+        ASSERT(close(oms322.total_submitted_notional(), 3000.0), "oms_sub_notional_3");
+        ASSERT(close(oms322.avg_submitted_notional(), 1000.0), "oms_avg_sub_notional_3");
+        // reset clears the counter
+        oms322.reset_session_counters();
+        ASSERT(oms322.total_submitted_notional() == 0.0, "oms_sub_notional_reset");
+        ASSERT(oms322.avg_submitted_notional() == 0.0, "oms_avg_sub_notional_reset");
+        // empty OMS returns 0
+        OMS oms322e(1000000, 1000000000.0);
+        ASSERT(oms322e.avg_submitted_notional() == 0.0, "oms_avg_sub_notional_empty");
+    }
+
     {   // #274 avg_fill_size (shares per fill).
         OMS oms(1000000, 1000000000.0);
         Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
@@ -2241,6 +2263,19 @@ void test_multicast_gap_recovery() {
     ASSERT(sm.is_stale() && sm.stale_events == 1, "stale_event_counted");
     sm.on_packet(1700);
     ASSERT(!sm.check(1800, 500), "stale_recovered");
+
+    // #321 GapRecovery::duplicate_rate / primary_packets
+    multicast::GapRecovery grdup;
+    grdup.observe(1); grdup.observe(2); grdup.observe(3);  // 3 in-order
+    grdup.observe(1); grdup.observe(2);                     // 2 duplicates (seq < expected, not missing)
+    grdup.observe(7);                                       // gap: 4,5,6 missing
+    // primary_packets = 6 observes total; duplicates = 2
+    ASSERT(grdup.primary_packets == 6, "grdup_primary_6");
+    ASSERT(grdup.duplicates == 2, "grdup_dup_count");
+    ASSERT(std::fabs(grdup.duplicate_rate() - 2.0/6.0) < 1e-9, "grdup_dup_rate");
+    // fresh tracker -> rate = 0
+    multicast::GapRecovery grfresh;
+    ASSERT(std::fabs(grfresh.duplicate_rate()) < 1e-12, "grdup_fresh_dup");
 }
 
 // Momentum #85 — trend-following; the decision sign is opposite to mean-reversion.
@@ -3503,6 +3538,21 @@ void test_risk_price_band() {
     // gross 500, net -500 -> long 0, short 500
     ASSERT(lse.long_exposure() == 0 && lse.short_exposure() == 500, "lse_all_short");
 
+    // #323 portfolio_skew = net / gross in [-1, 1]
+    RiskLimits skl; skl.max_portfolio_exposure = 10000;
+    RiskManager rskew(skl);
+    // flat book -> skew = 0
+    ASSERT(std::fabs(rskew.portfolio_skew()) < 1e-9, "skew_flat");
+    // fully long 300: gross 300, net 300 -> skew = 1.0
+    rskew.on_order_sent("AAPL", Side::BUY, 300);
+    ASSERT(std::fabs(rskew.portfolio_skew() - 1.0) < 1e-9, "skew_fully_long");
+    // add offsetting short 200: MSFT -200; gross 500, net 100 -> skew = 0.2
+    rskew.on_order_sent("MSFT", Side::SELL, 200);
+    ASSERT(std::fabs(rskew.portfolio_skew() - 100.0/500.0) < 1e-9, "skew_net_long");
+    // flip to net short: AAPL -> sell 600 more, AAPL net -300; gross 500, net -500 -> skew = -1
+    rskew.on_order_sent("AAPL", Side::SELL, 600);
+    ASSERT(std::fabs(rskew.portfolio_skew() - (-1.0)) < 1e-9, "skew_fully_short");
+
     // #237 position_utilization_pct (per symbol, cap 1000).
     RiskLimits pul; pul.max_position_per_symbol = 1000;
     RiskManager rpu(pul);
@@ -4327,6 +4377,26 @@ void test_ouch_order_state() {
     n = OUCHMessage::encode_executed(buf, "B", 250, 150.25, 1);
     lr.on_response(OUCHMessage::parse_response(buf, n));             // B -> remaining 50
     ASSERT(lr.largest_remaining() == 200, "ouch_lr_c_now_largest");  // C 200 > A 100 > B 50
+
+    // #320 total_broken_shares / broken_share_rate
+    ouch::OUCHOrderTracker bsr;
+    bsr.on_new("X1", 200); bsr.on_new("X2", 100);
+    n = OUCHMessage::encode_accepted(buf, "X1", 'B', 200, "AAPL", 50.0, 88001);
+    bsr.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "X1", 200, 50.0, 1);
+    bsr.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(bsr.total_broken_shares() == 0, "ouch_bsr_none_yet");
+    n = OUCHMessage::encode_broken_trade(buf, "X1", 100, 88001, 'E');
+    bsr.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(bsr.total_broken_shares() == 100, "ouch_bsr_100");
+    // ordered = 300, broken = 100 -> rate ~= 1/3
+    ASSERT(std::fabs(bsr.broken_share_rate() - 100.0/300.0) < 1e-9, "ouch_bsr_rate");
+    n = OUCHMessage::encode_broken_trade(buf, "X1", 50, 88001, 'E');
+    bsr.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(bsr.total_broken_shares() == 150, "ouch_bsr_150");
+    ASSERT(bsr.brokens() == 2, "ouch_bsr_event_count");
+    ouch::OUCHOrderTracker bsr0;
+    ASSERT(std::fabs(bsr0.broken_share_rate()) < 1e-12, "ouch_bsr_zero");
 }
 
 // OUCH ↔ SoupBinTCP #78 — full round-trip login→order→accepted→executed.
