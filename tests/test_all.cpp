@@ -3566,6 +3566,16 @@ void test_risk_price_band() {
     ASSERT(re.get_exposure("AAPL") == 100 && re.get_total_exposure() == 150,
            "exp_invariant_after_fill");
 
+    // #331 largest_symbol_exposure / exposure_concentration
+    ASSERT(re.largest_symbol_exposure() == 100, "exp_largest_symbol_aapl");   // AAPL 100 > MSFT 50
+    ASSERT(std::fabs(re.exposure_concentration() - 100.0/150.0) < 1e-9, "exp_concentration_two_thirds");
+    RiskManager rflat(lim);                              // flat book -> 0
+    ASSERT(rflat.largest_symbol_exposure() == 0 && rflat.exposure_concentration() == 0.0,
+           "exp_concentration_flat");
+    RiskManager rconc(lim);                              // single name -> fully concentrated
+    rconc.on_order_sent("AAPL", Side::BUY, 300);
+    ASSERT(std::fabs(rconc.exposure_concentration() - 1.0) < 1e-9, "exp_concentration_single_name");
+
     // #144 daily turnover limit.
     RiskLimits tl;
     tl.max_daily_traded_notional = 1000.0;

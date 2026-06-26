@@ -776,6 +776,35 @@ public:
             ? static_cast<double>(net_exposure()) / static_cast<double>(gross)
             : 0.0;
     }
+    // largest_symbol_exposure: the biggest single-symbol |position+pending| across the
+    // book (#331), in shares. The risk-concentration peak — which one instrument
+    // carries the most directional commitment (filled + working). Each symbol's
+    // |pos+pending| is one term of the total_abs_exposure_ sum, so this never exceeds
+    // get_total_exposure(). 0 when flat.
+    int64_t  largest_symbol_exposure() const noexcept {
+        int64_t m = 0;
+        for (const auto& [key, v] : positions_) {
+            const int64_t e = std::abs(static_cast<int64_t>(v) + lookup(pending_, key));
+            if (e > m) m = e;
+        }
+        for (const auto& [key, v] : pending_) {
+            if (positions_.find(key) != positions_.end()) continue;   // already counted above
+            const int64_t e = std::abs(static_cast<int64_t>(v));
+            if (e > m) m = e;
+        }
+        return m;
+    }
+    // exposure_concentration: largest_symbol_exposure / get_total_exposure (#331), in
+    // [0, 1]. 1.0 = the whole book is one instrument (max concentration risk), near 0 =
+    // exposure spread across many names (diversified). The answer to "how many eggs in
+    // one basket" — a desk caps this to force diversification, complementing the
+    // aggregate tilt views (net/long/short #299/#315). 0 when the book is flat.
+    double   exposure_concentration() const noexcept {
+        const int64_t total = get_total_exposure();
+        return total > 0
+            ? static_cast<double>(largest_symbol_exposure()) / static_cast<double>(total)
+            : 0.0;
+    }
     // exposure_utilization_pct: portfolio exposure as % of the limit (#181). How
     // much of the risk budget is used — the portfolio analog of is_near_position_limit.
     // 0 when the limit is off. Can exceed 100 only from a pre-limit state.
