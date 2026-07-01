@@ -713,6 +713,24 @@ public:
         const size_t l = losing_symbols();
         return l > 0 ? to_float(gross_loss()) / static_cast<double>(l) : 0.0;
     }
+    // largest_win / largest_loss: the SINGLE biggest winning / losing symbol by
+    // realized P&L (#355). Complements avg_win_per_symbol/avg_loss_per_symbol
+    // (#347, the mean): one big winner or loser can dominate the average, and
+    // this shows how much of it is concentrated in a single name. Fixed-point
+    // (×PRICE_SCALE), same raw units as gross_profit/gross_loss (#339);
+    // largest_loss is returned as a positive magnitude. 0 when there are no
+    // winning / losing symbols respectively.
+    int64_t largest_win() const noexcept {
+        int64_t mx = 0;
+        for (const auto& [key, p] : positions_) if (p.realized_pnl > mx) mx = p.realized_pnl;
+        return mx;
+    }
+    int64_t largest_loss() const noexcept {
+        int64_t mx = 0;
+        for (const auto& [key, p] : positions_)
+            if (p.realized_pnl < 0 && -p.realized_pnl > mx) mx = -p.realized_pnl;
+        return mx;
+    }
     // last_reject: reason for the last submit_order rejection (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
     // reject_count: how many orders were rejected for a given reason (#136, observability).

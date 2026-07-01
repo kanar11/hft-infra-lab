@@ -465,6 +465,11 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.avg_win_per_symbol(), 200.0), "oms_avgwin_unchanged"); // still 200/1
         ASSERT(empt.avg_win_per_symbol() == 0.0 && empt.avg_loss_per_symbol() == 0.0,
                "oms_avgwinloss_empty_zero");
+        // #355 largest_win / largest_loss — the single biggest name, vs the #347 mean.
+        // AAA is the only winner (+200); BBB (-100) beats DDD (-50) as the biggest loser.
+        ASSERT(close(to_float(oms.largest_win()), 200.0), "oms_largest_win_200");
+        ASSERT(close(to_float(oms.largest_loss()), 100.0), "oms_largest_loss_100");
+        ASSERT(empt.largest_win() == 0 && empt.largest_loss() == 0, "oms_largest_winloss_empty_zero");
         // no losing symbols + profit -> +inf (same convention as the Backtester)
         OMS pf_allwin(1000000, 1000000000.0);
         Order* pfw1 = pf_allwin.submit_order("WIN", Side::BUY, 10.0, 100);
