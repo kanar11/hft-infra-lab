@@ -2132,10 +2132,10 @@ void test_multicast_gap_recovery() {
     multicast::FeedRateMeter wrp(1000);
     for (int i = 0; i < 10000; ++i) wrp.on_message(i);
     ASSERT(wrp.count(9999) == 1000, "rate_wrap_window_1000");
-    // bounded window: 6000 simultaneous events exceed RB_SIZE-1 → count saturates.
+    // bounded window: 6000 simultaneous events exceed RING_SIZE-1 → count saturates.
     multicast::FeedRateMeter sat(1'000'000'000);
     for (int i = 0; i < 6000; ++i) sat.on_message(0);
-    ASSERT(sat.count(0) == static_cast<std::size_t>(multicast::FeedRateMeter::RB_SIZE - 1),
+    ASSERT(sat.count(0) == static_cast<std::size_t>(multicast::FeedRateMeter::RING_SIZE - 1),
            "rate_saturates_at_cap");
 
     // #171 DedupWindow — at-most-once (rejects duplicates).

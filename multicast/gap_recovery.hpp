@@ -27,6 +27,8 @@
 #include <iterator>
 #include <utility>
 
+#include "../common/ring_counter.hpp"
+
 namespace multicast {
 
 
@@ -36,29 +38,30 @@ namespace multicast {
 // of overload / drop) or a lull. A sliding-window counter of timestamps:
 // at each measurement it evicts those older than the window, size = count in the window.
 struct FeedRateMeter {
-    // Sliding window backed by a contiguous power-of-2 ring (no heap, no pointer
-    // chasing — replaces the old std::deque<int64_t>). The ring is L1-resident (32 KB)
-    // so insert/evict touch only hot cache lines and wrap with a bitmask (no idiv).
-    // Bounded: holds up to RB_SIZE-1 timestamps; on a burst beyond that the oldest are
-    // dropped and count() saturates — for burst DETECTION a floor of 4095 is already an
-    // unambiguous overload signal, and the bound keeps latency deterministic.
-    static constexpr int RB_SIZE = 4096;       // power of 2 → mask wrap
-    static constexpr int RB_MASK = RB_SIZE - 1;
+    // Sliding window backed by TimestampRing (common/ring_counter.hpp) — a
+    // contiguous power-of-2 ring (no heap, no pointer chasing), L1-resident
+    // (32 KB) so insert/evict touch only hot cache lines and wrap with a
+    // bitmask (no idiv). Bounded: holds up to RING_SIZE-1 timestamps; on a
+    // burst beyond that the oldest are dropped and count() saturates — for
+    // burst DETECTION a floor of 4095 is already an unambiguous overload
+    // signal, and the bound keeps latency deterministic. Same ring mechanics
+    // as RiskManager's order-rate limiter (risk/risk_manager.hpp).
+    static constexpr int RING_SIZE = 4096;
 
     std::int64_t window_ns;
 
     explicit FeedRateMeter(std::int64_t window_ns_ = 1'000'000'000) noexcept
-        : window_ns(window_ns_ > 0 ? window_ns_ : 1), ts_{} {}
+        : window_ns(window_ns_ > 0 ? window_ns_ : 1) {}
 
     void on_message(std::int64_t now_ns) noexcept {
-        push(now_ns);
-        evict(now_ns);
-        const std::size_t c = size();
+        ring_.push(now_ns);
+        ring_.evict(now_ns - window_ns);
+        const std::size_t c = ring_.count();
         if (c > peak_count_) peak_count_ = c;   // #163 burst peak
     }
     std::size_t count(std::int64_t now_ns) noexcept {
-        evict(now_ns);
-        return size();
+        ring_.evict(now_ns - window_ns);
+        return ring_.count();
     }
     double rate_per_sec(std::int64_t now_ns) noexcept {
         return static_cast<double>(count(now_ns)) * 1e9 / static_cast<double>(window_ns);
@@ -70,27 +73,11 @@ struct FeedRateMeter {
     double      peak_rate_per_sec() const noexcept {
         return static_cast<double>(peak_count_) * 1e9 / static_cast<double>(window_ns);
     }
-    void reset() noexcept { head_ = tail_ = 0; peak_count_ = 0; }
+    void reset() noexcept { ring_.reset(); peak_count_ = 0; }
 
 private:
-    std::int64_t ts_[RB_SIZE];   // ring of timestamps (oldest at head_)
-    int          head_ = 0;      // index of the oldest timestamp in the window
-    int          tail_ = 0;      // next write slot
+    TimestampRing<RING_SIZE> ring_;
     std::size_t  peak_count_ = 0;
-
-    std::size_t size() const noexcept {
-        return static_cast<std::size_t>((tail_ - head_ + RB_SIZE) & RB_MASK);
-    }
-    void push(std::int64_t now_ns) noexcept {
-        ts_[tail_] = now_ns;
-        tail_ = (tail_ + 1) & RB_MASK;
-        if (tail_ == head_) head_ = (head_ + 1) & RB_MASK;   // full → drop the oldest
-    }
-    void evict(std::int64_t now_ns) noexcept {
-        const std::int64_t cutoff = now_ns - window_ns;
-        while (head_ != tail_ && ts_[head_] <= cutoff)
-            head_ = (head_ + 1) & RB_MASK;
-    }
 };
 
 struct GapRecovery {
@@ -640,37 +627,29 @@ struct ContiguousTracker {
 // fall out of the window. Useful for windowed burst detection and capacity
 // checks: "how many messages did I receive in the last millisecond?".
 struct SlidingWindowRate {
-    // Same contiguous power-of-2 ring as FeedRateMeter (no heap, mask wrap, L1-resident).
-    // Bounded at RB_SIZE-1 events in the window; on overflow the oldest are dropped and
-    // count() saturates — acceptable for windowed burst/capacity checks.
-    static constexpr int RB_SIZE = 4096;       // power of 2 → mask wrap
-    static constexpr int RB_MASK = RB_SIZE - 1;
+    // Same TimestampRing ring as FeedRateMeter (common/ring_counter.hpp; no
+    // heap, mask wrap, L1-resident). Bounded at RING_SIZE-1 events in the
+    // window; on overflow the oldest are dropped and count() saturates —
+    // acceptable for windowed burst/capacity checks.
+    static constexpr int RING_SIZE = 4096;
 
     std::int64_t window_ns;
 
     explicit SlidingWindowRate(std::int64_t window_ns_ = 1'000'000'000) noexcept
-        : window_ns(window_ns_), ts_{} {}
+        : window_ns(window_ns_) {}
 
     void on_event(std::int64_t now_ns) noexcept {
-        ts_[tail_] = now_ns;
-        tail_ = (tail_ + 1) & RB_MASK;
-        if (tail_ == head_) head_ = (head_ + 1) & RB_MASK;     // full → drop the oldest
-        const std::int64_t cutoff = now_ns - window_ns;
-        while (head_ != tail_ && ts_[head_] <= cutoff)
-            head_ = (head_ + 1) & RB_MASK;
+        ring_.push(now_ns);
+        ring_.evict(now_ns - window_ns);
     }
-    std::size_t count() const noexcept {   // events within the window
-        return static_cast<std::size_t>((tail_ - head_ + RB_SIZE) & RB_MASK);
-    }
+    std::size_t count() const noexcept { return ring_.count(); }   // events within the window
     double rate_per_sec() const noexcept {
         return window_ns > 0 ? static_cast<double>(count()) * 1e9 / static_cast<double>(window_ns) : 0.0;
     }
-    void reset() noexcept { head_ = tail_ = 0; }
+    void reset() noexcept { ring_.reset(); }
 
 private:
-    std::int64_t ts_[RB_SIZE];   // ring of timestamps (oldest at head_)
-    int          head_ = 0;      // index of the oldest event in the window
-    int          tail_ = 0;      // next write slot
+    TimestampRing<RING_SIZE> ring_;
 };
 
 

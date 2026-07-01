@@ -25,7 +25,7 @@
  *     daily_pnl_ is the sum of realized profit/loss since the start of the session.
  *     peak_pnl_ is the maximum reached — the reference point for drawdown.
  *
- *  3. Rate limiter (order_timestamps_)
+ *  3. Rate limiter (rate_ring_)
  *     A circular queue of timestamps of the most recent orders. Stale entries
  *     (> 1s) are evicted on every check, so the size of this queue is the
  *     number of orders in the last second.
@@ -79,6 +79,7 @@
 #include "../common/types.hpp"
 #include "../common/symbol_key.hpp"
 #include "../common/time_utils.hpp"
+#include "../common/ring_counter.hpp"
 
 
 // ============================================================================
@@ -312,6 +313,7 @@ class RiskManager {
     // --------------------------------------------------------------------
     double daily_pnl_;
     double peak_pnl_;
+    double max_drawdown_dollars_ = 0.0;  // worst peak-to-trough $ decline this session (#340)
     int32_t consec_losses_ = 0;   // streak of losing update_pnl (#114)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
@@ -343,16 +345,11 @@ class RiskManager {
     // --------------------------------------------------------------------
     // State: rate limit
     //
-    // Fixed circular ring buffer of order timestamps (CLOCK_MONOTONIC).
-    // Replaces std::deque to eliminate pointer chasing and dynamic allocation.
-    // head_/tail_ are indices into ts_ring_; count = (tail - head) & MASK.
-    // Power-of-2 size allows bitmask wrap instead of modulo.
+    // Fixed circular ring buffer of order timestamps (CLOCK_MONOTONIC),
+    // shared mechanics with multicast's FeedRateMeter/SlidingWindowRate —
+    // see common/ring_counter.hpp. Covers up to 4096 orders/sec.
     // --------------------------------------------------------------------
-    static constexpr int RATE_BUF_SIZE = 4096;   // must be power of 2; covers up to 4096 orders/sec
-    static constexpr int RATE_BUF_MASK = RATE_BUF_SIZE - 1;
-    int64_t ts_ring_[RATE_BUF_SIZE] = {};   // value-init (cppcheck uninitMemberVar; never read before write)
-    int     ts_head_ = 0;   // next entry to evict (oldest)
-    int     ts_tail_ = 0;   // next slot to write (newest)
+    TimestampRing<4096> rate_ring_;
 
     // --------------------------------------------------------------------
     // State: statistics (for print_stats / monitoring)
@@ -565,6 +562,9 @@ public:
     void update_pnl(double pnl_change) noexcept {
         daily_pnl_ += pnl_change;
         if (daily_pnl_ > peak_pnl_) peak_pnl_ = daily_pnl_;
+        // Track the worst peak-to-trough decline ever seen this session (#340).
+        const double dd_now = peak_pnl_ - daily_pnl_;
+        if (dd_now > max_drawdown_dollars_) max_drawdown_dollars_ = dd_now;
         // Loss-streak breaker (#114): N losses in a row -> kill switch.
         if (pnl_change < 0.0) {
             ++consec_losses_;
@@ -709,9 +709,10 @@ public:
     void reset_daily() noexcept {
         daily_pnl_ = 0.0;
         peak_pnl_  = 0.0;
+        max_drawdown_dollars_ = 0.0;   // #340: new session, fresh high-water mark
         consec_losses_ = 0;
         traded_notional_ = 0.0;
-        ts_head_ = ts_tail_ = 0;
+        rate_ring_.reset();
         pending_.clear();
         kill_switch_active_ = false;
         kill_reason_        = KillReason::NONE;
@@ -930,6 +931,14 @@ public:
         const double dd = peak_pnl_ - daily_pnl_;
         return dd > 0.0 ? dd : 0.0;
     }
+    // max_drawdown_dollars: the WORST peak-to-trough decline observed this session
+    // (#340) — the running maximum of current_drawdown_dollars (#275), updated on
+    // every update_pnl. current_drawdown shows the drop RIGHT NOW (0 at a new high);
+    // this remembers the deepest trough the book ever sat in, even after a full
+    // recovery — the number a desk reports as the session's max drawdown and sizes
+    // limits on. The live counterpart to the Backtester's max_drawdown. Reset by
+    // reset_daily; 0 when the book has never been underwater.
+    double   max_drawdown_dollars() const noexcept { return max_drawdown_dollars_; }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
     // consecutive_losses_remaining: how many more losing fills IN A ROW until the
     // loss-streak breaker trips (#205, based on #114). -1 when the breaker is off,
@@ -1073,19 +1082,16 @@ private:
 
     // check_rate_limit: check #7 from check_order.
     //
-    // Circular ring buffer of timestamps: evict stale entries (>1s old)
-    // by advancing ts_head_, then compare count against the limit.
-    // O(1) amortized; contiguous memory avoids pointer chasing from std::deque.
+    // Evicts stale entries (>1s old) from rate_ring_, then compares count
+    // against the limit. O(1) amortized; contiguous memory avoids pointer
+    // chasing from std::deque.
     //
     // Returns true (ALLOW), false (REJECT).
     bool check_rate_limit(int64_t now) noexcept {
         const int64_t one_sec_ago = now - 1'000'000'000;
-        while (ts_head_ != ts_tail_ && ts_ring_[ts_head_] <= one_sec_ago)
-            ts_head_ = (ts_head_ + 1) & RATE_BUF_MASK;
-        const int count = (ts_tail_ - ts_head_ + RATE_BUF_SIZE) & RATE_BUF_MASK;
-        if (count >= limits_.max_orders_per_second) return false;
-        ts_ring_[ts_tail_] = now;
-        ts_tail_ = (ts_tail_ + 1) & RATE_BUF_MASK;
+        rate_ring_.evict(one_sec_ago);
+        if (static_cast<int32_t>(rate_ring_.count()) >= limits_.max_orders_per_second) return false;
+        rate_ring_.push(now);
         return true;
     }
 
