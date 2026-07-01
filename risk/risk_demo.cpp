@@ -142,13 +142,13 @@ void test_kill_switch_persistence() {
     const char* path = "/tmp/hft_risk_persist_test.txt";
     std::remove(path);
 
-    // Sesja 1: trigger kill, persist, "crash" (out of scope).
+    // Session 1: trigger kill, persist, "crash" (out of scope).
     {
         RiskManager rm;
         rm.set_persist_path(path);
         rm.activate_kill_switch();
     }
-    // Sesja 2: nowy proces, load — kill switch nadal active.
+    // Session 2: new process, load — kill switch still active.
     {
         RiskManager rm;
         rm.set_persist_path(path);

@@ -262,7 +262,7 @@ void test_oms_short_and_replace() {
     {
         OMS oms(10000, 100000000.0);
         oms.fill_order((oms.submit_order("X", Side::BUY, 10.00, 100))->order_id, 100, 10.00);
-        // SELL 150 @ $12: zamknij 100 long (realize $200) i flip do short 50 @ $12
+        // SELL 150 @ $12: close 100 long (realize $200) and flip to short 50 @ $12
         oms.fill_order((oms.submit_order("X", Side::SELL, 12.00, 150))->order_id, 150, 12.00);
         const Position* p = oms.get_position("X");
         ASSERT(p->net_qty == -50, "flip_to_short_50");
@@ -434,9 +434,9 @@ void test_oms_short_and_replace() {
         ASSERT(empt.avg_commission_per_share() == 0.0, "avgcomm_empty_zero");
     }
 
-    {   // #244 winning_symbols / losing_symbols (atrybucja P&L).
+    {   // #244 winning_symbols / losing_symbols (P&L attribution).
         OMS oms(1000000, 1000000000.0);
-        // A: long 100@10, zamknij @12 -> +200; B: @9 -> -100; C: @10 -> 0
+        // A: long 100@10, close @12 -> +200; B: @9 -> -100; C: @10 -> 0
         Order* a1 = oms.submit_order("AAA", Side::BUY, 10.0, 100); oms.fill_order(a1->order_id, 100, 10.0);
         Order* a2 = oms.submit_order("AAA", Side::SELL, 12.0, 100); oms.fill_order(a2->order_id, 100, 12.0);
         Order* b1 = oms.submit_order("BBB", Side::BUY, 10.0, 100); oms.fill_order(b1->order_id, 100, 10.0);
@@ -444,7 +444,7 @@ void test_oms_short_and_replace() {
         Order* c1 = oms.submit_order("CCC", Side::BUY, 10.0, 100); oms.fill_order(c1->order_id, 100, 10.0);
         Order* c2 = oms.submit_order("CCC", Side::SELL, 10.0, 100); oms.fill_order(c2->order_id, 100, 10.0);
         ASSERT(oms.winning_symbols() == 1, "winsym_one");   // AAA
-        ASSERT(oms.losing_symbols() == 1, "losesym_one");   // BBB (CCC = 0, pominiety)
+        ASSERT(oms.losing_symbols() == 1, "losesym_one");   // BBB (CCC = 0, skipped)
         // #298 symbol_win_rate — 1 winner / (1 winner + 1 loser) = 0.5 (CCC flat excluded).
         ASSERT(close(oms.symbol_win_rate(), 0.5), "symwinrate_half");
         OMS empt(1000000, 1000000000.0);
@@ -586,7 +586,7 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(r->avg_fill_price()), 100.60), "avg_fill_price_blended");
     }
 
-    {   // #128 count_by_status — observability stanu zlecen.
+    {   // #128 count_by_status — order-status observability.
         OMS oms(1000000, 1000000000.0);
         oms.submit_order("AAA", Side::BUY, 10.0, 100);                      // SENT
         Order* f = oms.submit_order("BBB", Side::BUY, 10.0, 100);
@@ -1798,7 +1798,7 @@ void test_itch_book() {
     ASSERT(close(book.execute_to_add_ratio(), 0.5), "itchbook_execute_add_ratio");
     ASSERT(fresh_ctr.execute_to_add_ratio() == 0.0, "itchbook_execute_add_ratio_no_adds");
 
-    // #87 mikrostruktura: mid + top-of-book imbalance.
+    // #87 microstructure: mid + top-of-book imbalance.
     itch::ITCHOrderBook mb;
     mb.on_add(10, 'B', 100.00, 300);              // best bid 300
     mb.on_add(11, 'S', 100.02, 100);              // best ask 100
@@ -1891,13 +1891,13 @@ void test_itch_book() {
     // within 1 tick: bid 400, ask 300 -> (400-300)/700 = 0.142857
     ASSERT(close(li.liquidity_imbalance_within(1), 100.0/700.0), "itchbook_liqimb_1tick");
 
-    // #174 total_shares + level_count (rozmiar i grubosc ksiazki).
+    // #174 total_shares + level_count (book size and depth).
     // #223 fillable_shares (up to the limit price).
     // lw aski: 100.00(100), 100.01(200), 100.05(300)
     ASSERT(lw.fillable_shares('B', 100.01) == 300, "itchbook_fillable_buy_mid");  // <=100.01
     ASSERT(lw.fillable_shares('B', 100.05) == 600, "itchbook_fillable_buy_all");
     ASSERT(lw.fillable_shares('B', 99.99) == 0, "itchbook_fillable_buy_none");    // < best ask
-    itch::ITCHOrderBook fs;                                                       // osobna ksiega na bidy
+    itch::ITCHOrderBook fs;                                                       // separate book for bids
     fs.on_add(10, 'B', 99.99, 150); fs.on_add(11, 'B', 99.98, 250);
     ASSERT(fs.fillable_shares('S', 99.98) == 400, "itchbook_fillable_sell_both"); // >=99.98
     ASSERT(fs.fillable_shares('S', 99.99) == 150, "itchbook_fillable_sell_top");  // >=99.99
@@ -1907,7 +1907,7 @@ void test_itch_book() {
     pf.on_add(1, 'S', 100.00, 100); pf.on_add(2, 'S', 100.02, 200); pf.on_add(3, 'S', 100.05, 300);
     ASSERT(close(pf.price_to_fill('B', 100), 100.00), "itchbook_ptf_buy_top");   // 100 @ best
     ASSERT(close(pf.price_to_fill('B', 250), 100.02), "itchbook_ptf_buy_mid");   // 100+150 -> 2nd level
-    ASSERT(pf.price_to_fill('B', 700) == 0.0, "itchbook_ptf_insufficient");      // > 600 dostepne
+    ASSERT(pf.price_to_fill('B', 700) == 0.0, "itchbook_ptf_insufficient");      // > 600 available
     pf.on_add(4, 'B', 99.99, 150); pf.on_add(5, 'B', 99.98, 250);
     ASSERT(close(pf.price_to_fill('S', 200), 99.98), "itchbook_ptf_sell");       // 150+50 -> 99.98
 
@@ -1924,14 +1924,14 @@ void test_itch_book() {
     ASSERT(lw.level_count('S') == 3, "itchbook_level_count_ask");
     ASSERT(lw.total_shares('B') == 0 && lw.level_count('B') == 0, "itchbook_empty_bid_side");
 
-    // #191 total_notional ($ glebokosci).
+    // #191 total_notional ($ depth).
     itch::ITCHOrderBook tn;
     tn.on_add(1, 'S', 100.00, 100);   // 10000.00
     tn.on_add(2, 'S', 100.02, 200);   // 20004.00
     ASSERT(close(tn.total_notional('S'), 30004.0), "itchbook_total_notional_ask");
     ASSERT(tn.total_notional('B') == 0.0, "itchbook_total_notional_empty_bid");
 
-    // #199 slippage_bps (koszt egzekucji vs mid).
+    // #199 slippage_bps (execution cost vs mid).
     itch::ITCHOrderBook sl;
     sl.on_add(1, 'B', 99.98, 100);                          // best bid
     sl.on_add(2, 'S', 100.00, 100); sl.on_add(3, 'S', 100.02, 200);  // asks
@@ -1941,7 +1941,7 @@ void test_itch_book() {
     ASSERT(sl.slippage_bps('B', 200) > sl.slippage_bps('B', 100), "itchbook_slippage_monotone");
     // SELL 50 hits bid 99.98 -> (99.99-99.98)/99.99*10000 ~ 1.0001 bps
     ASSERT(close(sl.slippage_bps('S', 50), 1.00010001), "itchbook_slippage_sell_50");
-    itch::ITCHOrderBook nlq;                                // ksiega jednostronna -> 0
+    itch::ITCHOrderBook nlq;                                // one-sided book -> 0
     nlq.on_add(1, 'B', 99.98, 100);
     ASSERT(nlq.slippage_bps('B', 100) == 0.0, "itchbook_slippage_no_ask_liq");
 
@@ -2126,9 +2126,9 @@ void test_multicast_gap_recovery() {
     rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2
     ASSERT(rb.out.size() == 1 && rb.out[0] == 10, "reorder_inorder_deliver");
     rb.push(3, 30);                              // gap at 2 -> buffer
-    rb.push(4, 40);                              // buforuj
+    rb.push(4, 40);                              // buffer it
     ASSERT(rb.out.size() == 1 && rb.buffered() == 2, "reorder_holds_future");
-    rb.push(2, 20);                              // wypelnia luke -> drain 2,3,4
+    rb.push(2, 20);                              // fills the gap -> drain 2,3,4
     ASSERT(rb.buffered() == 0, "reorder_drained");
     ASSERT(rb.out.size() == 4 && rb.out[1] == 20 && rb.out[2] == 30 && rb.out[3] == 40,
            "reorder_delivered_in_order");
@@ -2164,7 +2164,7 @@ void test_multicast_gap_recovery() {
     multicast::FeedRateMeter pm(1000);
     pm.on_message(0); pm.on_message(100); pm.on_message(200);  // 3 w oknie -> peak 3
     ASSERT(pm.peak_count() == 3, "rate_peak_3");
-    pm.on_message(1300);                                       // stare wyrzucone, count 1
+    pm.on_message(1300);                                       // old ones evicted, count 1
     ASSERT(pm.count(1300) == 1 && pm.peak_count() == 3, "rate_peak_holds");
     ASSERT(std::fabs(pm.peak_rate_per_sec() - 3e6) < 1.0, "rate_peak_rate_3M");
 
@@ -2220,7 +2220,7 @@ void test_multicast_gap_recovery() {
     ASSERT(!srd.on_seq(4999), "srd_small_reorder_not_reset");   // drop 2 < 1000
     ASSERT(srd.on_seq(10), "srd_big_drop_is_reset");            // 5001 -> 10
     ASSERT(srd.resets == 1, "srd_reset_count");
-    ASSERT(!srd.on_seq(11), "srd_normal_after_reset");          // nowa baza 10
+    ASSERT(!srd.on_seq(11), "srd_normal_after_reset");          // new base 10
 
     // #211 SnapshotRequestThrottle — min interval between requests.
     multicast::SnapshotRequestThrottle srt(1000);               // min 1000 ns
@@ -2231,7 +2231,7 @@ void test_multicast_gap_recovery() {
     ASSERT(srt.allow(2500), "srt_allowed_2500");                // 1500 od ostatniego
     ASSERT(srt.suppressed == 2, "srt_suppressed_count");
 
-    // #219 TokenBucket — burst do pojemnosci + uzupelnianie w czasie.
+    // #219 TokenBucket — burst up to capacity + refill over time.
     multicast::TokenBucket tb(5.0, 1000.0);                     // 5 tokenow, 1000/s
     for (int i = 0; i < 5; ++i) ASSERT(tb.try_consume(0, 1.0), "tb_burst_ok");  // 5 od reki
     ASSERT(!tb.try_consume(0, 1.0), "tb_empty");               // 6ty pusto
@@ -2270,7 +2270,7 @@ void test_multicast_gap_recovery() {
     ASSERT(ct.contiguous_high() == 1, "contig_first");
     ct.receive(3);                              // gap: missing 2 -> buffer 3
     ASSERT(ct.contiguous_high() == 1 && ct.buffered() == 1, "contig_gap_buffered");
-    ct.receive(2);                              // wypelnia luke -> wciaga 2 i 3
+    ct.receive(2);                              // fills the gap -> pulls in 2 and 3
     ASSERT(ct.contiguous_high() == 3 && ct.buffered() == 0, "contig_filled_pulls_ahead");
     ct.receive(1);                              // duplicate -> ignore
     ASSERT(ct.contiguous_high() == 3, "contig_duplicate_ignored");
@@ -3097,7 +3097,7 @@ void test_signal_throttle() {
     ASSERT(th.allow("AAPL", 6), "throttle_reset_symbol");   // after the reset it passes again
 }
 
-// VWAPTracker #113 — rynkowy VWAP + slippage egzekucji w bps.
+// VWAPTracker #113 — market VWAP + execution slippage in bps.
 void test_vwap_tracker() {
     SECTION("VWAP Tracker (#113)");
     auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-3; };
@@ -3333,7 +3333,7 @@ void test_router_ewma_partial() {
         ASSERT(rs.total_routed_shares() == 0, "tca_reset_zero");
     }
 
-    // --- #138 kumulatywny koszt oplat ---
+    // --- #138 cumulative fee cost ---
     {
         auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
@@ -3403,7 +3403,7 @@ void test_router_ewma_partial() {
         ASSERT(r.remove_venue("A"), "remove_A_ok");
         ASSERT(r.venue_count() == 1 && !r.venue_active("A"), "remove_A_gone");
         ASSERT(!r.remove_venue("GHOST"), "remove_unknown_false");
-        r.update_quote("B", 10.0, 11.0, 100, 100);                 // B zostalo, dziala
+        r.update_quote("B", 10.0, 11.0, 100, 100);                 // B remains, active
         ASSERT(std::strcmp(r.route_order("BUY", 10).venue, "B") == 0, "remove_B_still_routes");
     }
 
@@ -3566,7 +3566,7 @@ void test_router_ewma_partial() {
         ASSERT(r.venue_liquidity_share("GHOST", true) == 0.0, "vls_unknown_zero");
     }
 
-    // --- #208 nbbo_spread / nbbo_spread_bps (skonsolidowany rynek) ---
+    // --- #208 nbbo_spread / nbbo_spread_bps (consolidated market) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("A", 100, 0.0));
@@ -3596,7 +3596,7 @@ void test_router_ewma_partial() {
         ASSERT(cr.nbbo_crossed() && !cr.nbbo_locked(), "nbbo_crossed");
     }
 
-    // --- #240 effective_spread_bps (koszt przejscia z oplatami) ---
+    // --- #240 effective_spread_bps (cost of crossing with fees) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("A", 100, 0.01));            // taker fee 0.01
@@ -3622,7 +3622,7 @@ void test_router_ewma_partial() {
         ASSERT(r.venue_effective_price("GHOST", true) == 0.0, "vep_unknown_zero");
     }
 
-    // --- #216 venue_share_pct (koncentracja egzekucji) ---
+    // --- #216 venue_share_pct (execution concentration) ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("A", 100, 0.0));             // cheaper (fee 0) -> routing goes here
@@ -3833,7 +3833,7 @@ void test_risk_price_band() {
     rbk.check_order("AAPL", Side::BUY, 10.0, 1);              // circuit breaker w check
     ASSERT(rbk.get_kill_reason() == KillReason::CIRCUIT_BREAKER, "killreason_circuit");
 
-    // #129 runtime update limitow — zaostrz pozycje intraday.
+    // #129 runtime limit update — tighten position limits intraday.
     RiskManager rl(lim);
     ASSERT(rl.check_order("AAPL", Side::BUY, 1.0, 500).action == RiskAction::ALLOW,
            "setlim_before_ok");                       // 500 < lim (1000000)
@@ -3844,7 +3844,7 @@ void test_risk_price_band() {
     ASSERT(rl.check_order("AAPL", Side::BUY, 1.0, 500).action == RiskAction::REJECT,
            "setlim_after_rejects");                    // 500 > 100 now
 
-    // #137 zapytania o ekspozycje (|pos+pend|, total = niezmiennik O(1)).
+    // #137 exposure queries (|pos+pend|, total = O(1) invariant).
     RiskManager re(lim);
     re.on_order_sent("AAPL", Side::BUY, 100);          // pending +100
     re.on_order_sent("MSFT", Side::SELL, 50);          // pending -50
@@ -4704,7 +4704,7 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 19).type, "ERROR") == 0,
            "ouch_aiq_short_error");
 
-    // #202 System Event ('S'): zdarzenie sesji (otwarcie rynku).
+    // #202 System Event ('S'): session event (market open).
     n = OUCHMessage::encode_system_event(buf, 123456789, 'O');
     const OUCHResponse se = OUCHMessage::parse_response(buf, n);
     ASSERT(std::strcmp(se.type, "SYS_EVENT") == 0, "ouch_sysevent_parsed");

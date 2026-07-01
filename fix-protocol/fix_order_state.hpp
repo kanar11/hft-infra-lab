@@ -41,9 +41,9 @@ inline const char* ord_state_str(OrdState s) noexcept {
 class FIXOrderTracker {
     struct Record {
         OrdState state;
-        int32_t  ordered;    // pierwotna ilosc
-        int32_t  cum_qty;    // skumulowane wypelnienie (tag 14)
-        int32_t  leaves_qty; // pozostalo (tag 151)
+        int32_t  ordered;    // original quantity
+        int32_t  cum_qty;    // cumulative fill (tag 14)
+        int32_t  leaves_qty; // remaining (tag 151)
     };
     std::unordered_map<std::string, Record> orders_;
     uint64_t fills_ = 0, cancels_ = 0, rejects_ = 0;

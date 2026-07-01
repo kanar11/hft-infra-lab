@@ -24,12 +24,12 @@
 namespace ouch {
 
 enum class OrderState : uint8_t {
-    NEW       = 0,   // wyslane, czekamy na Accepted
+    NEW       = 0,   // sent, awaiting Accepted
     LIVE      = 1,   // Accepted — order active in the book
     PARTIAL   = 2,   // partially filled, remainder active
-    FILLED    = 3,   // calkowicie wypelnione
-    CANCELLED = 4,   // anulowane
-    REJECTED  = 5,   // odrzucone (Error)
+    FILLED    = 3,   // fully filled
+    CANCELLED = 4,   // cancelled
+    REJECTED  = 5,   // rejected (Error)
 };
 
 inline const char* order_state_str(OrderState s) noexcept {
@@ -104,7 +104,7 @@ public:
         } else if (std::strcmp(r.type, "CANCELLED") == 0) {
             rec->state          = OrderState::CANCELLED;
             rec->remaining      = 0;
-            rec->pending_cancel = false;   // #159: request potwierdzony
+            rec->pending_cancel = false;   // #159: request confirmed
             ++cancelled_;
         } else if (std::strcmp(r.type, "BROKEN") == 0) {
             // Broken Trade (#134): the exchange invalidates an earlier fill -> reverse
@@ -122,7 +122,7 @@ public:
         return rec->state;
     }
 
-    // --- Zapytania ---
+    // --- Queries ---
     OrderState state(const char* token) const noexcept {
         auto it = orders_.find(token);
         return (it != orders_.end()) ? it->second.state : OrderState::REJECTED;

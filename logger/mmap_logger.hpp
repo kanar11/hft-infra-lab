@@ -152,9 +152,9 @@ public:
     }
 
     // close: msync + fsync + munmap + close fd. Idempotent.
-    // msync pushuje brudne strony do kernela, fsync wymusza ich zapis na dysk
-    // (page cache → physical). Bez fsync power-loss zabija ostatnie sekundy
-    // audit trail'a — niedopuszczalne dla compliance (SEC/MiFID II).
+    // msync pushes dirty pages to the kernel, fsync forces them to disk
+    // (page cache → physical). Without fsync a power loss kills the last few
+    // seconds of the audit trail — unacceptable for compliance (SEC/MiFID II).
     void close() noexcept {
         if (!open_) return;
         flush_sync();

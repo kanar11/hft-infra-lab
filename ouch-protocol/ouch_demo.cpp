@@ -153,7 +153,7 @@ void test_roundtrip_encode_decode() {
     ASSERT(std::fabs(resp.price - 380.50) < 0.01, "test_roundtrip_price");
 }
 
-// SoupBinTCP framing — industry-standard transport TCP dla OUCH.
+// SoupBinTCP framing — industry-standard transport TCP for OUCH.
 
 void test_soupbin_roundtrip_data() {
     // Zbuduj OUCH Enter Order, opakuj w SoupBin 'U' (client→server), sparsuj.
