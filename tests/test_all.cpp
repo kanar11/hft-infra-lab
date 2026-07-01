@@ -3322,6 +3322,14 @@ void test_router_ewma_partial() {
         rsum.update_quote("C", 99.98,  100.02, 90,  150);   // ask at NBO (bid below NBB, excluded)
         // NBB 100.00 sz 200+300=500 ; NBO 100.02 sz 100+150=250 -> (500-250)/750 = 1/3
         ASSERT(closei(rsum.nbbo_imbalance(), 250.0/750.0), "router_nbbo_imb_summed");
+        // #367 venues_at_nbbo: A+B at NBB 100.00 (C's bid 99.98 excluded) -> 2;
+        // B+C at NBO 100.02 (A's ask 100.05 excluded) -> 2.
+        ASSERT(rsum.venues_at_nbbo(true) == 2, "router_vatn_bid_two");
+        ASSERT(rsum.venues_at_nbbo(false) == 2, "router_vatn_ask_two");
+        rsum.set_venue_active("B", false);   // B was at both NBB and NBO
+        // NBB now only A -> 1; NBO now only C -> 1 (fragile touch).
+        ASSERT(rsum.venues_at_nbbo(true) == 1, "router_vatn_bid_one_after_disable");
+        ASSERT(rsum.venues_at_nbbo(false) == 1, "router_vatn_ask_one_after_disable");
 
         // balanced sizes -> 0
         SmartOrderRouter rbl(RoutingStrategy::BEST_PRICE);
@@ -3332,6 +3340,8 @@ void test_router_ewma_partial() {
         // one-sided / empty -> 0
         SmartOrderRouter rem(RoutingStrategy::BEST_PRICE);
         ASSERT(rem.nbbo_imbalance() == 0.0, "router_nbbo_imb_empty_zero");
+        ASSERT(rem.venues_at_nbbo(true) == 0 && rem.venues_at_nbbo(false) == 0,
+               "router_vatn_empty_zero");
     }
 
     // --- #109 available_liquidity: sum of top-of-book across active venues ---

@@ -494,6 +494,26 @@ public:
         return c;
     }
 
+    // venues_at_nbbo: how many ACTIVE venues quote exactly AT the national best on
+    // a side (#367) — bid_side=true counts venues whose best_bid == NBB, false
+    // whose best_ask == NBO. Measures how contested the touch is: 1 venue at the
+    // NBBO means a fragile top (that venue pulling or getting hit collapses the
+    // national best), several means a robust, well-supported quote. Distinct from
+    // liquidity_venue_count (#359, venues quoting the side at ANY price) — this
+    // counts only those setting the best price. 0 when that side has no liquidity.
+    int venues_at_nbbo(bool bid_side) const noexcept {
+        const double best = bid_side ? national_best_bid() : national_best_ask();
+        if (best <= 0.0) return 0;
+        int c = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (bid_side) { if (v.bid_size > 0 && v.best_bid == best) ++c; }
+            else          { if (v.ask_size > 0 && v.best_ask == best) ++c; }
+        }
+        return c;
+    }
+
     // effective_spread_bps: the REAL cost of crossing the spread WITH FEES (#240) =
     // best all-in ask (quote+fee) - best all-in bid (quote-fee), in bps. Larger than
     // nbbo_spread_bps (#208, quote only) by the round-trip fees: it shows how much it really
