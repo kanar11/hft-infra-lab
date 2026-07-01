@@ -183,6 +183,20 @@ public:
                 mx = rec.remaining;
         return mx;
     }
+    // avg_working_shares: the MEAN remaining size of a working (LIVE/PARTIAL)
+    // order (#369) = working_shares / (# working orders). Completes the working-
+    // exposure trio with working_shares (#304, total) and largest_remaining
+    // (#312, max): the mean vs total vs max distinguishes "one big resting order"
+    // from "many small clips" even when working_shares is identical. 0 when
+    // nothing is working.
+    double avg_working_shares() const noexcept {
+        int32_t sum = 0; size_t n = 0;
+        for (const auto& [tok, rec] : orders_)
+            if (rec.state == OrderState::LIVE || rec.state == OrderState::PARTIAL) {
+                sum += rec.remaining; ++n;
+            }
+        return n > 0 ? static_cast<double>(sum) / static_cast<double>(n) : 0.0;
+    }
     // total_ordered_shares / fill_rate: cumulative shares ordered (sum of on_new)
     // and executed/ordered ratio (#250) — client-side execution quality. Low =
     // many orders went unfilled (bad limit prices, thin liquidity). 0 when nothing

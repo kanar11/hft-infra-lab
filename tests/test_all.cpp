@@ -5000,6 +5000,13 @@ void test_ouch_order_state() {
     n = OUCHMessage::encode_executed(buf, "B", 250, 150.25, 1);
     lr.on_response(OUCHMessage::parse_response(buf, n));             // B -> remaining 50
     ASSERT(lr.largest_remaining() == 200, "ouch_lr_c_now_largest");  // C 200 > A 100 > B 50
+    // #369 avg_working_shares — mean remaining over working orders.
+    // Now A LIVE 100, B PARTIAL 50, C LIVE 200 -> (100+50+200)/3 = 116.666...
+    ASSERT(lr.working_shares() == 350, "ouch_aws_working_total");
+    ASSERT(std::fabs(lr.avg_working_shares() - 350.0/3.0) < 1e-9, "ouch_aws_mean");
+    ouch::OUCHOrderTracker aws0;
+    aws0.on_new("Z", 100);   // NEW only, nothing working
+    ASSERT(aws0.avg_working_shares() == 0.0, "ouch_aws_none_working_zero");
 
     // #320 total_broken_shares / broken_share_rate
     ouch::OUCHOrderTracker bsr;
