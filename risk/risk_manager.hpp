@@ -316,6 +316,7 @@ class RiskManager {
     double max_drawdown_dollars_ = 0.0;  // worst peak-to-trough $ decline this session (#340)
     int32_t consec_losses_ = 0;   // streak of losing update_pnl (#114)
     int32_t consec_wins_   = 0;   // streak of winning update_pnl (#348)
+    int32_t max_consec_losses_ = 0;  // worst losing streak seen this session (#364)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
@@ -572,6 +573,7 @@ public:
         if (pnl_change < 0.0) {
             ++consec_losses_;
             consec_wins_ = 0;
+            if (consec_losses_ > max_consec_losses_) max_consec_losses_ = consec_losses_;  // #364
             if (limits_.max_consecutive_losses > 0
                 && consec_losses_ >= limits_.max_consecutive_losses) {
                 kill_switch_active_ = true;
@@ -717,6 +719,7 @@ public:
         max_drawdown_dollars_ = 0.0;   // #340: new session, fresh high-water mark
         consec_losses_ = 0;
         consec_wins_   = 0;   // #348
+        max_consec_losses_ = 0;   // #364
         traded_notional_ = 0.0;
         rate_ring_.reset();
         pending_.clear();
@@ -963,6 +966,14 @@ public:
     // streak, or flag it as a signal to check for a stale/broken strategy).
     // Reset by reset_daily; any loss resets it to 0.
     int32_t  get_consecutive_wins()           const noexcept { return consec_wins_; }
+    // max_consecutive_losses_seen: the WORST losing streak reached this session
+    // (#364) — the running maximum of consec_losses_ (#114), the loss-streak
+    // analog of max_drawdown_dollars (#340, the high-water mark of drawdown).
+    // consecutive_losses_remaining (#205) shows how close the breaker is RIGHT
+    // NOW; this remembers how deep the streak ever got, even after a win reset
+    // it — the number a post-session review checks ("we hit 5 in a row, one shy
+    // of the breaker"). Reset by reset_daily; 0 when there has been no loss.
+    int32_t  max_consecutive_losses_seen()    const noexcept { return max_consec_losses_; }
     // consecutive_losses_remaining: how many more losing fills IN A ROW until the
     // loss-streak breaker trips (#205, based on #114). -1 when the breaker is off,
     // 0 when it already tripped. Early warning before the desk is halted.

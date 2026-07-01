@@ -3843,6 +3843,20 @@ void test_risk_price_band() {
     r9.reset_daily();
     ASSERT(r9.get_consecutive_wins() == 0, "consec_wins_reset_daily");
 
+    // #364 max_consecutive_losses_seen — high-water mark of the losing streak.
+    RiskLimits mcl; mcl.max_consecutive_losses = 0;   // breaker off, so streaks run free
+    RiskManager r10(mcl);
+    ASSERT(r10.max_consecutive_losses_seen() == 0, "mcls_start_zero");
+    r10.update_pnl(-1.0); r10.update_pnl(-1.0);       // streak 2
+    ASSERT(r10.max_consecutive_losses_seen() == 2, "mcls_two");
+    r10.update_pnl(+5.0);                             // win resets the live streak...
+    ASSERT(r10.get_consecutive_losses() == 0, "mcls_live_reset_by_win");
+    ASSERT(r10.max_consecutive_losses_seen() == 2, "mcls_high_water_survives_win"); // ...not the peak
+    r10.update_pnl(-1.0); r10.update_pnl(-1.0); r10.update_pnl(-1.0);   // streak 3 > 2
+    ASSERT(r10.max_consecutive_losses_seen() == 3, "mcls_new_worse_streak");
+    r10.reset_daily();
+    ASSERT(r10.max_consecutive_losses_seen() == 0, "mcls_reset_daily");
+
     // #121 reason the kill switch latched.
     RiskManager rk(lim);
     ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");
