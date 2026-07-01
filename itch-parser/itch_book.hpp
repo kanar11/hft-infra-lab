@@ -655,6 +655,15 @@ public:
     uint64_t deletes()  const noexcept { return deletes_; }
     uint64_t replaces() const noexcept { return replaces_; }
     uint64_t orphans()  const noexcept { return orphans_; }   // desync signal / feed gaps
+
+    // cancel_to_add_ratio: cancels / adds (#350) — a classic market-microstructure
+    // flow-quality signal. High (>>1) means most resting interest is pulled before
+    // it trades: fleeting liquidity / quote stuffing, common ahead of a toxic
+    // print. Low (near 0) means orders mostly stick around to trade or expire
+    // rather than getting cancelled. 0 when no adds have been seen yet.
+    double cancel_to_add_ratio() const noexcept {
+        return adds_ > 0 ? static_cast<double>(cancels_) / static_cast<double>(adds_) : 0.0;
+    }
 };
 
 }  // namespace itch
