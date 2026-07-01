@@ -1886,7 +1886,7 @@ void test_itch_book() {
     dmo.on_add(1, 'B', 100.00, 100);                                 // one-sided
     ASSERT(dmo.depth_weighted_mid(1) == 0.0, "itchbook_dwm_onesided");
 
-    // #164 liquidity_within (N ticks od best).
+    // #164 liquidity_within (N ticks from best).
     itch::ITCHOrderBook lw;
     lw.on_add(1, 'S', 100.00, 100); lw.on_add(2, 'S', 100.01, 200); lw.on_add(3, 'S', 100.05, 300);
     ASSERT(lw.liquidity_within('S', 1) == 300, "itchbook_liq_within_1");  // 10000+10001
@@ -1929,6 +1929,15 @@ void test_itch_book() {
     ASSERT(pf.levels_to_fill('B', 700) == -1, "itchbook_ltf_buy_insufficient"); // > 600 available
     ASSERT(pf.levels_to_fill('S', 200) == 2,  "itchbook_ltf_sell_two_levels"); // 150+50 -> level 2
     ASSERT(pf.levels_to_fill('S', 500) == -1, "itchbook_ltf_sell_insufficient"); // > 400 available
+
+    // #366 spread_at_size — round-trip spread paid to sweep `shares` both sides.
+    // pf: asks 100.00(100),100.02(200); bids 99.99(150),99.98(250).
+    // size 100: buy@100.00, sell@99.99 -> 0.01 (equals the touch spread).
+    ASSERT(close(pf.spread_at_size(100), 0.01), "itchbook_spread_at_size_touch");
+    // size 200: buy@100.02 (100+200), sell@99.98 (150+250) -> 0.04 (widened by depth).
+    ASSERT(close(pf.spread_at_size(200), 0.04), "itchbook_spread_at_size_deep");
+    // size 700 > 600 ask depth: buy side can't fill -> 0.
+    ASSERT(pf.spread_at_size(700) == 0.0, "itchbook_spread_at_size_insufficient");
 
     ASSERT(lw.total_shares('S') == 600, "itchbook_total_shares_ask");     // 100+200+300
     ASSERT(lw.level_count('S') == 3, "itchbook_level_count_ask");

@@ -269,6 +269,19 @@ public:
         return -1;   // insufficient liquidity across the whole book
     }
 
+    // spread_at_size: the round-trip spread ($) actually paid to sweep `shares`
+    // on BOTH sides (#366) = price_to_fill('B', shares) - price_to_fill('S',
+    // shares) — the worst ask level a buy of that size reaches minus the worst
+    // bid level a sell of that size reaches. At small size (fits at the touch)
+    // this equals the quoted spread; as size grows past the top levels it WIDENS,
+    // capturing the depth cost the touch spread (#135) hides. The size-aware
+    // companion to spread(). 0 when either side can't cover `shares`.
+    double spread_at_size(int64_t shares) const noexcept {
+        const double buy  = price_to_fill('B', shares);   // worst ask reached
+        const double sell = price_to_fill('S', shares);   // worst bid reached
+        return (buy > 0.0 && sell > 0.0) ? buy - sell : 0.0;
+    }
+
     // total_shares: total resting number of shares on a given side (#174).
     // The whole size of the book on one side — a raw measure of available liquidity
     // (unlike liquidity_within, with no restriction to the touch area).
