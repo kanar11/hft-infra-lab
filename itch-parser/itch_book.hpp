@@ -241,6 +241,34 @@ public:
         return 0.0;   // insufficient liquidity
     }
 
+    // levels_to_fill: the NUMBER of price levels that must be touched to fill
+    // `shares` by walking the book (#342). Same side convention as price_to_fill/
+    // expected_fill: BUY walks asks ascending, SELL walks bids descending.
+    // Complements price_to_fill (the worst price touched) and expected_fill (the
+    // VWAP): this tells you HOW DEEP the sweep needs to go — useful for choosing
+    // between an IOC at a single level and a multi-level sweep. -1 when there is
+    // too little liquidity across the whole book to fill the requested size.
+    int32_t levels_to_fill(char side, int64_t shares) const noexcept {
+        if (shares <= 0) return 0;
+        int64_t remaining = shares;
+        int32_t levels = 0;
+        if (side == 'B') {
+            for (const auto& [px, qty] : asks_) {
+                (void)px;
+                ++levels;
+                remaining -= qty;
+                if (remaining <= 0) return levels;
+            }
+        } else {
+            for (auto it = bids_.rbegin(); it != bids_.rend(); ++it) {
+                ++levels;
+                remaining -= it->second;
+                if (remaining <= 0) return levels;
+            }
+        }
+        return -1;   // insufficient liquidity across the whole book
+    }
+
     // total_shares: total resting number of shares on a given side (#174).
     // The whole size of the book on one side — a raw measure of available liquidity
     // (unlike liquidity_within, with no restriction to the touch area).

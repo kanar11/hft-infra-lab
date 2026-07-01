@@ -1880,6 +1880,15 @@ void test_itch_book() {
     pf.on_add(4, 'B', 99.99, 150); pf.on_add(5, 'B', 99.98, 250);
     ASSERT(close(pf.price_to_fill('S', 200), 99.98), "itchbook_ptf_sell");       // 150+50 -> 99.98
 
+    // #342 levels_to_fill (how many price levels a sweep must touch).
+    // Same pf book: asks 100.00(100), 100.02(200), 100.05(300); bids 99.99(150), 99.98(250).
+    ASSERT(pf.levels_to_fill('B', 0)   == 0,  "itchbook_ltf_zero_shares");
+    ASSERT(pf.levels_to_fill('B', 100) == 1,  "itchbook_ltf_buy_top_only");   // 100 <= level 1
+    ASSERT(pf.levels_to_fill('B', 250) == 2,  "itchbook_ltf_buy_two_levels"); // 100+150 -> level 2
+    ASSERT(pf.levels_to_fill('B', 700) == -1, "itchbook_ltf_buy_insufficient"); // > 600 available
+    ASSERT(pf.levels_to_fill('S', 200) == 2,  "itchbook_ltf_sell_two_levels"); // 150+50 -> level 2
+    ASSERT(pf.levels_to_fill('S', 500) == -1, "itchbook_ltf_sell_insufficient"); // > 400 available
+
     ASSERT(lw.total_shares('S') == 600, "itchbook_total_shares_ask");     // 100+200+300
     ASSERT(lw.level_count('S') == 3, "itchbook_level_count_ask");
     ASSERT(lw.total_shares('B') == 0 && lw.level_count('B') == 0, "itchbook_empty_bid_side");
