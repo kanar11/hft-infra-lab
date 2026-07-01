@@ -306,6 +306,7 @@ public:
 
         // Single-venue strategies: BEST_PRICE (effective price) or LOWEST_LATENCY.
         Venue* best = candidates[0];
+        double best_eff;
         if (strat == RoutingStrategy::LOWEST_LATENCY) {
             // Select by selection_latency (p99 when set, otherwise mean).
             // Production SORs look at the tail of the distribution, not the average — p99
@@ -314,15 +315,18 @@ public:
                 if (candidates[i]->selection_latency_ns() < best->selection_latency_ns())
                     best = candidates[i];
             }
+            best_eff = effective_price(*best, is_buy);   // only after the final pick is known
         } else {
             // BEST_PRICE (and the fallback for SPLIT below the threshold) — effective price.
-            double best_eff = effective_price(*best, is_buy);
+            best_eff = effective_price(*best, is_buy);
             for (int i = 1; i < num_candidates; ++i) {
                 const double eff    = effective_price(*candidates[i], is_buy);
                 const bool   better = is_buy ? (eff < best_eff) : (eff > best_eff);
                 if (better) { best = candidates[i]; best_eff = eff; }
             }
         }
+        // best_eff now holds effective_price(*best, is_buy) — reused below for
+        // d.effective_price instead of recomputing it a second time.
 
         // Respect the available liquidity on the chosen venue — a large order can
         // exceed the top-of-book size. The rest is shortfall (the caller re-routes
@@ -335,7 +339,7 @@ public:
         std::strncpy(d.venue, best->name, 15);
         d.venue[15]       = '\0';
         d.price           = is_buy ? best->best_ask : best->best_bid;
-        d.effective_price = effective_price(*best, is_buy);
+        d.effective_price = best_eff;
         d.total_fee       = best->fee_per_share * filled;
         d.quantity        = filled;
         d.unfilled_qty    = quantity - filled;
