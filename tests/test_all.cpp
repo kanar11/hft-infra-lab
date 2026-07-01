@@ -4870,6 +4870,19 @@ void test_ouch_order_state() {
     rjt.on_response(OUCHMessage::parse_response(buf, n));
     // RR3 never gets a response -> stays NEW; 1 of 3 tracked orders rejected
     ASSERT(std::fabs(rjt.reject_rate() - 1.0/3.0) < 1e-9, "ouch_rjt_one_of_three");
+
+    // #353 cancel_rate — per-order (not per-share) cancellation rate.
+    ASSERT(rjt.cancel_rate() == 0.0, "ouch_rjt_cancel_rate_none_yet");
+    n = OUCHMessage::encode_cancelled(buf, "RR1", 100);   // RR1 (LIVE) fully cancelled
+    rjt.on_response(OUCHMessage::parse_response(buf, n));
+    rjt.on_new("RR4", 100);
+    n = OUCHMessage::encode_accepted(buf, "RR4", 'B', 100, "AAPL", 50.0, 79002);
+    rjt.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_cancelled(buf, "RR4", 100);
+    rjt.on_response(OUCHMessage::parse_response(buf, n));
+    // 4 tracked orders now (RR1..RR4): RR1 + RR4 cancelled -> 2/4 = 0.5
+    ASSERT(rjt.order_count() == 4, "ouch_rjt_order_count_4");
+    ASSERT(std::fabs(rjt.cancel_rate() - 0.5) < 1e-9, "ouch_rjt_cancel_rate_half");
 }
 
 // OUCH ↔ SoupBinTCP #78 — full round-trip login→order→accepted→executed.

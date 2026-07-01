@@ -252,6 +252,17 @@ public:
             ? static_cast<double>(rejected_) / static_cast<double>(order_count())
             : 0.0;
     }
+    // cancel_rate: fraction of tracked ORDERS that ended up CANCELLED (#353) =
+    // cancelled_ / order_count. Same per-order shape as reject_rate (#345), but
+    // for the other terminal non-fill outcome. Together reject_rate + cancel_rate
+    // + fill_rate (share-weighted, not order-weighted, so they don't have to sum
+    // to 1) sketch WHY orders didn't complete: rejected at entry vs pulled by the
+    // client vs simply unfilled. 0 when nothing has been tracked yet.
+    double cancel_rate() const noexcept {
+        return order_count() > 0
+            ? static_cast<double>(cancelled_) / static_cast<double>(order_count())
+            : 0.0;
+    }
     // exec_count / avg_exec_shares: number of Executed ('E') reports applied and the
     // average shares per execution (#328). Wire-level execution granularity from the
     // OUCH feed: a small average = the order is being worked in many slices (iceberg /
