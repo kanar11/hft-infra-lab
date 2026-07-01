@@ -727,6 +727,41 @@ public:
         const double diff = is_buy ? (vwap - m) : (m - vwap);
         return diff / m * 10000.0;
     }
+    // venues_to_fill: the NUMBER of distinct venues that must be swept (in
+    // price-priority order) to fill `shares` (#343). Same walk as sweep_to_fill,
+    // but counts venues touched instead of computing a VWAP — the cross-venue
+    // analog of itch's levels_to_fill (#342). A large order needing many venues
+    // telegraphs intent more than one filled at a single venue — useful for
+    // gauging market-impact/signaling risk before routing. -1 when the combined
+    // displayed liquidity across all active venues can't cover the requested size.
+    int32_t venues_to_fill(bool is_buy, int32_t shares) const noexcept {
+        if (shares <= 0) return 0;
+        bool    used[MAX_VENUES] = {};   // value-init: cppcheck-clean, no heap
+        int32_t remaining = shares;
+        int32_t venues_touched = 0;
+        for (int pass = 0; pass < venue_count_ && remaining > 0; ++pass) {
+            int    best_i  = -1;
+            double best_px = 0.0;
+            for (int i = 0; i < venue_count_; ++i) {
+                if (used[i]) continue;
+                const Venue& v = venues_[i];
+                if (!v.is_active) continue;
+                const double  px = is_buy ? v.best_ask : v.best_bid;
+                const int32_t sz = is_buy ? v.ask_size : v.bid_size;
+                if (px <= 0.0 || sz <= 0) continue;
+                const bool better = (best_i < 0) ||
+                                    (is_buy ? px < best_px : px > best_px);
+                if (better) { best_i = i; best_px = px; }
+            }
+            if (best_i < 0) break;                       // no more liquidity
+            used[best_i] = true;
+            ++venues_touched;
+            const Venue&  v  = venues_[best_i];
+            const int32_t sz = is_buy ? v.ask_size : v.bid_size;
+            remaining -= (remaining < sz ? remaining : sz);
+        }
+        return remaining <= 0 ? venues_touched : -1;
+    }
     // venue_liquidity_share: a named venue's share of the CURRENT displayed
     // liquidity on a side (#262), as a percent. Unlike venue_share_pct (#216,
     // historical routed volume) this is the live quote concentration right now —

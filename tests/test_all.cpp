@@ -3177,6 +3177,13 @@ void test_router_ewma_partial() {
         ASSERT(rs.sweep_slippage_bps(true, 0) == 0.0, "router_sweep_slip_zero_shares");
         SmartOrderRouter rse(RoutingStrategy::BEST_PRICE);
         ASSERT(rse.sweep_to_fill(true, 100, vwap) == 0 && vwap == 0.0, "router_sweep_empty_zero");
+
+        // #343 venues_to_fill: same A/B/C book (asks 100.00(100), 100.01(200), 100.02(300)).
+        ASSERT(rs.venues_to_fill(true, 0)    == 0,  "router_vtf_zero_shares");
+        ASSERT(rs.venues_to_fill(true, 100)  == 1,  "router_vtf_one_venue");
+        ASSERT(rs.venues_to_fill(true, 250)  == 2,  "router_vtf_two_venues");   // 100@A + 150@B
+        ASSERT(rs.venues_to_fill(true, 1000) == -1, "router_vtf_insufficient"); // > 600 displayed
+        ASSERT(rse.venues_to_fill(true, 100) == -1, "router_vtf_no_venues");
     }
 
     // --- #117 TCA: routed-volume per venue ---
