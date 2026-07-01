@@ -511,6 +511,22 @@ public:
         for (int i = 0; i < venue_count_; ++i) if (venues_[i].is_active) ++n;
         return n;
     }
+    // liquidity_venue_count: how many ACTIVE venues are actually QUOTING a
+    // positive size on the given side right now (#359). Differs from
+    // active_venue_count (#154, active regardless of whether they quote): the
+    // gap between the two is how many active venues are dark / not quoting that
+    // side. A breadth-of-execution measure — with only one quoting venue there
+    // is no cross-venue competition and a route can't diversify market impact.
+    int liquidity_venue_count(bool is_buy) const noexcept {
+        int n = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (is_buy) { if (v.best_ask > 0 && v.ask_size > 0) ++n; }
+            else        { if (v.best_bid > 0 && v.bid_size > 0) ++n; }
+        }
+        return n;
+    }
     // best_effective_price: the best ALL-IN price (quote ± fee) available now on a
     // given side, without routing (#154). BUY: minimum; SELL: maximum.
     // 0 when there is no liquidity. Inspection of "what would I pay" before deciding.

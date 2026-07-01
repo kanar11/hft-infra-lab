@@ -3368,16 +3368,26 @@ void test_router_ewma_partial() {
         auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("A", 100, 0.005));         // ask 11 + fee 0.005 = 11.005
-        r.add_venue(Venue("B", 100, 0.001));         // ask 11 + fee 0.001 = 11.001 (lepszy)
+        r.add_venue(Venue("B", 100, 0.001));         // ask 11 + fee 0.001 = 11.001 (better)
         r.update_quote("A", 10.0, 11.0, 100, 100);
         r.update_quote("B", 10.0, 11.0, 100, 100);
         ASSERT(r.active_venue_count() == 2, "best_eff_active_2");
         ASSERT(close(r.best_effective_price(true), 11.001), "best_eff_buy_B");   // min all-in
         // SELL: bid 10 - fee; B: 10-0.001=9.999, A: 10-0.005=9.995 -> max 9.999
         ASSERT(close(r.best_effective_price(false), 9.999), "best_eff_sell_B");
+        // #359 liquidity_venue_count: both A and B quote both sides -> 2 each.
+        ASSERT(r.liquidity_venue_count(true) == 2 && r.liquidity_venue_count(false) == 2,
+               "liqvenue_both_quoting");
         r.set_venue_active("B", false);
         ASSERT(r.active_venue_count() == 1, "best_eff_active_1_after_disable");
         ASSERT(close(r.best_effective_price(true), 11.005), "best_eff_buy_A_only");
+        // #359 only A active now -> 1 quoting venue per side.
+        ASSERT(r.liquidity_venue_count(true) == 1, "liqvenue_one_after_disable");
+        // A active but no quote on a side (fresh venue C) -> not counted.
+        r.add_venue(Venue("C", 100, 0.0));           // active but never quoted
+        ASSERT(r.liquidity_venue_count(true) == 1, "liqvenue_unquoted_not_counted");
+        SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
+        ASSERT(empt.liquidity_venue_count(true) == 0, "liqvenue_empty_zero");
     }
 
     // --- #162 reject_rate + avg_routing_latency ---
