@@ -990,6 +990,42 @@ public:
         return r;
     }
 
+    // NewOrder — the key NewOrderSingle (35=D) fields in a typed struct (#360,
+    // MILESTONE 360). The acceptor-side typed decode that closes the round-trip
+    // with build_new_order (#116) and complements validate_new_order (#116,
+    // which only returns a reason string): once a message passes validation the
+    // acceptor reads the fields here instead of digging through tags. Same shape
+    // as parse_exec_report (#241) / parse_ioi (#344) / parse_trade_capture_report
+    // (#336). valid=false when the message is not 35=D.
+    struct NewOrder {
+        char    cl_ord_id[32] = {};   // 11=ClOrdID
+        char    symbol[16]    = {};   // 55=Symbol
+        char    side          = '\0'; // 54=Side ('1'=Buy, '2'=Sell)
+        int32_t qty           = 0;    // 38=OrderQty
+        double  price         = 0.0;  // 44=Price (0 for a market order)
+        char    ord_type      = '\0'; // 40=OrdType ('1'=Market, '2'=Limit)
+        bool    valid         = false;// true when msg type == 'D'
+    };
+
+    static NewOrder parse_new_order(const FIXMessage& m) noexcept {
+        NewOrder r;
+        if (m.get_msg_type()[0] != 'D') return r;   // valid stays false
+        const char* coi = m.get_field(11);
+        const char* sym = m.get_field(55);
+        const char* sd  = m.get_field(54);
+        const char* ot  = m.get_field(40);
+        // sources are runtime pointers (no compile-time length) so strncpy bounded
+        // to size-1 over a value-initialized array stays nul-terminated.
+        if (coi) std::strncpy(r.cl_ord_id, coi, sizeof(r.cl_ord_id) - 1);
+        if (sym) std::strncpy(r.symbol,    sym, sizeof(r.symbol) - 1);
+        r.side     = (sd && *sd) ? sd[0] : '\0';
+        r.qty      = m.get_int(38);
+        r.price    = m.get_double(44);
+        r.ord_type = (ot && *ot) ? ot[0] : '\0';
+        r.valid    = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

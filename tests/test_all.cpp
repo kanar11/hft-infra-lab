@@ -4243,11 +4243,20 @@ void test_fix_session() {
         ASSERT(std::strcmp(m.get_symbol(), "AAPL") == 0, "fix_neworder_symbol");
         ASSERT(std::strcmp(m.get_side(), "BUY") == 0, "fix_neworder_side_buy");
         ASSERT(m.get_quantity() == 100, "fix_neworder_qty_100");
-        // #168 typowane akcesory
+        // #168 typed accessors
         ASSERT(m.get_int(38) == 100, "fix_get_int_qty");
         ASSERT(std::fabs(m.get_double(44) - 150.25) < 1e-6, "fix_get_double_price");
         ASSERT(m.get_int(99999) == 0, "fix_get_int_missing_zero");
-        // #177 klasyfikacja admin vs application
+        // #360 parse_new_order — typed acceptor-side decode of 35=D (MILESTONE 360).
+        const auto no = fix::FIXSession::parse_new_order(m);
+        ASSERT(no.valid && std::strcmp(no.cl_ord_id, "ORD1") == 0
+               && std::strcmp(no.symbol, "AAPL") == 0, "fix_parse_nos_id_symbol");
+        ASSERT(no.side == '1' && no.qty == 100
+               && std::fabs(no.price - 150.25) < 1e-6, "fix_parse_nos_side_qty_px");
+        ASSERT(no.ord_type == '2', "fix_parse_nos_limit_ordtype");   // build_new_order sets 40=2
+        FIXMessage not_d; not_d.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_new_order(not_d).valid, "fix_parse_nos_non_D_invalid");
+        // #177 admin vs application classification
         ASSERT(!m.is_admin(), "fix_neworder_is_application");
         ASSERT(FIXMessage::is_admin_msg_type("0"), "fix_admin_heartbeat");
         ASSERT(FIXMessage::is_admin_msg_type("A"), "fix_admin_logon");
@@ -4257,7 +4266,7 @@ void test_fix_session() {
         FIXMessage hbeat; hbeat.parse(buf);
         ASSERT(hbeat.is_admin(), "fix_heartbeat_is_admin");
 
-        // #185 OrderStatusRequest (35=H) — rekoncyliacja po reconnekcie.
+        // #185 OrderStatusRequest (35=H) — reconciliation after a reconnect.
         s.build_order_status_request(buf, sizeof(buf), "ORD1", "AAPL", Side::BUY, '|');
         FIXMessage osr; osr.parse(buf);
         ASSERT(osr.is_valid() && osr.get_msg_type()[0] == 'H', "fix_osr_H_valid");
