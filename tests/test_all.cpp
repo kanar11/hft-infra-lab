@@ -60,6 +60,7 @@
 #include "../strategy/volume_oscillator.hpp"
 #include "../strategy/pvt.hpp"
 #include "../strategy/ppo.hpp"
+#include "../strategy/force_index.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3120,6 +3121,49 @@ void test_ppo() {
     ASSERT(!up.ready() && std::fabs(up.ppo()) < 1e-9, "ppo_reset");
 }
 
+// ForceIndex #373 — Elder's Force Index (volume * dprice, EMA-smoothed).
+void test_force_index() {
+    SECTION("ForceIndex (#373)");
+    ForceIndex fresh(13);
+    ASSERT(!fresh.ready(), "fi_not_ready_before_first_print");
+    ASSERT(std::fabs(fresh.value()) < 1e-9, "fi_starts_zero");
+
+    // First print only seeds last_price_ -> nothing feeds the EMA yet.
+    fresh.on_trade(100.0, 500);
+    ASSERT(!fresh.ready(), "fi_not_ready_after_first_print");
+    ASSERT(std::fabs(fresh.raw()) < 1e-9, "fi_first_print_no_raw");
+
+    // raw = volume * dprice. period 1 -> EMA alpha 1 -> value == latest raw.
+    ForceIndex f(1);
+    f.on_trade(100.0, 500);
+    f.on_trade(102.0, 300);        // +2 * 300 = +600
+    ASSERT(f.ready(), "fi_ready_after_second_print");
+    ASSERT(std::fabs(f.raw() - 600.0) < 1e-9, "fi_raw_up");
+    ASSERT(std::fabs(f.value() - 600.0) < 1e-9, "fi_value_period1_equals_raw");
+    ASSERT(f.bullish(), "fi_bullish_on_up");
+    f.on_trade(99.0, 400);         // -3 * 400 = -1200
+    ASSERT(std::fabs(f.raw() - (-1200.0)) < 1e-9, "fi_raw_down");
+    ASSERT(!f.bullish(), "fi_not_bullish_on_down");
+
+    // Flat print (no price change) -> raw 0.
+    ForceIndex fl(1);
+    fl.on_trade(50.0, 100);
+    fl.on_trade(50.0, 900);        // dprice 0 -> raw 0
+    ASSERT(std::fabs(fl.raw()) < 1e-9, "fi_flat_zero_raw");
+
+    // Invalid prints (non-positive price / volume) are ignored.
+    ForceIndex inv(3);
+    inv.on_trade(100.0, 100);
+    inv.on_trade(0.0, 100);
+    inv.on_trade(-5.0, 100);
+    inv.on_trade(105.0, 0);
+    inv.on_trade(105.0, -50);
+    ASSERT(!inv.ready() && std::fabs(inv.value()) < 1e-9, "fi_ignores_invalid_prints");
+
+    f.reset();
+    ASSERT(!f.ready() && std::fabs(f.value()) < 1e-9 && std::fabs(f.raw()) < 1e-9, "fi_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -5417,6 +5461,7 @@ int main() {
     test_volume_oscillator();
     test_pvt();
     test_ppo();
+    test_force_index();
     test_cmo();
     test_zscore();
     test_tsi();
