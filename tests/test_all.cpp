@@ -3422,6 +3422,9 @@ void test_router_ewma_partial() {
         ASSERT(empt.fastest_venue() == nullptr, "fastest_empty_null");
         // #286 avg_venue_latency_ns: A 500, C 800 active (B disabled above) -> 650
         ASSERT(std::fabs(r.avg_venue_latency_ns() - 650.0) < 1e-9, "avglat_after_disable");
+        // #351 venue_latency_spread_ns: A 500, C 800 active -> 800 - 500 = 300
+        ASSERT(r.venue_latency_spread_ns() == 300, "latspread_after_disable");
+        ASSERT(empt.venue_latency_spread_ns() == 0, "latspread_empty_zero");
     }
 
     // --- #286 avg_venue_latency_ns ---
@@ -3430,8 +3433,12 @@ void test_router_ewma_partial() {
         r.add_venue(Venue("A", 100, 0.0));   // latency 100
         r.add_venue(Venue("B", 300, 0.0));   // latency 300
         ASSERT(std::fabs(r.avg_venue_latency_ns() - 200.0) < 1e-9, "avglat_200");
+        // #351 venue_latency_spread_ns: A 100, B 300 both active -> 300 - 100 = 200
+        ASSERT(r.venue_latency_spread_ns() == 200, "latspread_200");
         r.set_venue_active("B", false);
         ASSERT(std::fabs(r.avg_venue_latency_ns() - 100.0) < 1e-9, "avglat_one_active");
+        // only A active -> lo == hi -> spread 0
+        ASSERT(r.venue_latency_spread_ns() == 0, "latspread_one_active_zero");
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.avg_venue_latency_ns() == 0.0, "avglat_empty_zero");
     }

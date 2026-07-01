@@ -627,6 +627,23 @@ public:
         return n > 0 ? static_cast<double>(sum) / static_cast<double>(n) : 0.0;
     }
 
+    // venue_latency_spread_ns: max - min selection latency across ACTIVE venues
+    // (#351). Complements avg_venue_latency_ns (the mean): a wide spread means
+    // some venues are far slower than others even while the average looks fine
+    // — worth pinning latency-sensitive strategies away from the laggards
+    // instead of averaging across the whole fabric. 0 when fewer than one
+    // active venue (nothing to spread).
+    int64_t venue_latency_spread_ns() const noexcept {
+        int64_t lo = 0, hi = 0; bool found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            if (!venues_[i].is_active) continue;
+            const int64_t lat = venues_[i].selection_latency_ns();
+            if (!found) { lo = hi = lat; found = true; }
+            else        { if (lat < lo) lo = lat; if (lat > hi) hi = lat; }
+        }
+        return found ? (hi - lo) : 0;
+    }
+
     // available_liquidity: total displayed top-of-book size on the order's side
     // (is_buy → asks, sell → bids), only active venues with a positive quote.
     // Pre-route sizing: whether there is any liquidity to cover the order (#109).
