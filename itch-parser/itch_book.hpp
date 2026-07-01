@@ -686,6 +686,25 @@ public:
     double execute_to_add_ratio() const noexcept {
         return adds_ > 0 ? static_cast<double>(executes_) / static_cast<double>(adds_) : 0.0;
     }
+
+    // resting_order_count / avg_resting_order_size: how many INDIVIDUAL resting
+    // orders sit on a side and their mean size (#374) = total_shares(side) /
+    // count. resting_orders() gives the both-sides total and total_shares (#174)
+    // the per-side share sum; the per-side ORDER count and mean size distinguish
+    // the same depth built from many small clips (fragmented / retail flow, thin
+    // queue priority per order) vs a few large blocks (institutional resting
+    // interest). O(orders) walk — a periodic diagnostic, not a hot-path read.
+    size_t resting_order_count(char side) const noexcept {
+        size_t c = 0;
+        for (const auto& [ref, r] : orders_) if (r.side == side) ++c;
+        return c;
+    }
+    double avg_resting_order_size(char side) const noexcept {
+        int64_t shares = 0; size_t c = 0;
+        for (const auto& [ref, r] : orders_)
+            if (r.side == side) { shares += r.shares; ++c; }
+        return c > 0 ? static_cast<double>(shares) / static_cast<double>(c) : 0.0;
+    }
 };
 
 }  // namespace itch

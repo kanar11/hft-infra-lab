@@ -1953,6 +1953,21 @@ void test_itch_book() {
     ASSERT(lw.level_count('S') == 3, "itchbook_level_count_ask");
     ASSERT(lw.total_shares('B') == 0 && lw.level_count('B') == 0, "itchbook_empty_bid_side");
 
+    // #374 resting_order_count / avg_resting_order_size — per-side order granularity.
+    // lw asks: 3 orders (100, 200, 300 shares) -> count 3, mean 200.
+    ASSERT(lw.resting_order_count('S') == 3, "itchbook_roc_ask_3");
+    ASSERT(close(lw.avg_resting_order_size('S'), 200.0), "itchbook_aros_ask_200");
+    ASSERT(lw.resting_order_count('B') == 0 && lw.avg_resting_order_size('B') == 0.0,
+           "itchbook_roc_empty_bid_zero");
+    // partial execute shrinks the order but keeps it resting: 100 -> 40 on order 1.
+    lw.on_execute(1, 60);
+    ASSERT(lw.resting_order_count('S') == 3, "itchbook_roc_partial_keeps_order");
+    ASSERT(close(lw.avg_resting_order_size('S'), 540.0 / 3.0), "itchbook_aros_after_partial");
+    // full delete removes order 2 (200 shares): count 2, mean (40+300)/2 = 170.
+    lw.on_delete(2);
+    ASSERT(lw.resting_order_count('S') == 2, "itchbook_roc_after_delete");
+    ASSERT(close(lw.avg_resting_order_size('S'), 170.0), "itchbook_aros_after_delete");
+
     // #191 total_notional ($ depth).
     itch::ITCHOrderBook tn;
     tn.on_add(1, 'S', 100.00, 100);   // 10000.00
