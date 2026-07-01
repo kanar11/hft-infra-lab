@@ -2263,6 +2263,16 @@ void test_multicast_gap_recovery() {
     ct.receive(1);                              // duplicate -> ignore
     ASSERT(ct.contiguous_high() == 3, "contig_duplicate_ignored");
 
+    // #354 max_lookahead — high-water mark of how far ahead of the gap buffering reached.
+    // seq 3 arrived earlier while next_expected was 2 (after receive(1)) -> distance 1.
+    ASSERT(ct.max_lookahead() == 1, "contig_max_lookahead_1");
+    ct.receive(10);                             // next_expected is 4 -> distance 6, new high
+    ASSERT(ct.max_lookahead() == 6, "contig_max_lookahead_grows");
+    ct.receive(5);                              // distance 1 -> does not lower the high-water mark
+    ASSERT(ct.max_lookahead() == 6, "contig_max_lookahead_stays_high");
+    ct.reset();
+    ASSERT(ct.max_lookahead() == 0, "contig_max_lookahead_reset");
+
     // #257 SlidingWindowRate — count within a moving window (1000 ns).
     multicast::SlidingWindowRate sw(1000);
     sw.on_event(0); sw.on_event(500); sw.on_event(900);

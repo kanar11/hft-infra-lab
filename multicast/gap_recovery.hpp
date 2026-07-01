@@ -610,13 +610,27 @@ struct ContiguousTracker {
             ++next_expected;
             while (ahead.count(next_expected)) { ahead.erase(next_expected); ++next_expected; }
         } else {
+            const std::uint64_t dist = seq - next_expected;   // #354
+            if (dist > max_lookahead_) max_lookahead_ = dist;
             ahead.insert(seq);                    // gap below — set aside
         }
     }
     // contiguous_high: the last seq with no gap below (0 when nothing contiguous yet).
     std::uint64_t contiguous_high() const noexcept { return next_expected - 1; }
     std::size_t   buffered() const noexcept { return ahead.size(); }
-    void reset(std::uint64_t start = 1) noexcept { next_expected = start; ahead.clear(); }
+    // max_lookahead: the largest distance, in sequence numbers, between the
+    // contiguous_high watermark AT THE TIME and any out-of-order packet buffered
+    // ahead of it (#354) — a high-water mark, unlike buffered() (how many are
+    // CURRENTLY waiting). A wide sustained lookahead means the reorder buffer
+    // needs deep capacity, not just patience. 0 when nothing was ever buffered
+    // ahead of a gap.
+    std::uint64_t max_lookahead() const noexcept { return max_lookahead_; }
+    void reset(std::uint64_t start = 1) noexcept {
+        next_expected = start; ahead.clear(); max_lookahead_ = 0;
+    }
+
+private:
+    std::uint64_t max_lookahead_ = 0;
 };
 
 
