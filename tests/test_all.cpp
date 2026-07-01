@@ -59,6 +59,7 @@
 #include "../strategy/obv.hpp"
 #include "../strategy/volume_oscillator.hpp"
 #include "../strategy/pvt.hpp"
+#include "../strategy/ppo.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3045,6 +3046,51 @@ void test_pvt() {
     ASSERT(!p.ready() && std::fabs(p.value()) < 1e-9, "pvt_reset");
 }
 
+// PPO #365 — Percentage Price Oscillator (percentage-normalized MACD sibling).
+void test_ppo() {
+    SECTION("PPO (#365)");
+    PPO warm;
+    ASSERT(!warm.ready(), "ppo_not_ready_before_update");
+    warm.update(100.0);
+    ASSERT(warm.ready(), "ppo_ready_after_update");
+    // Flat input -> fast EMA == slow EMA -> PPO 0, signal 0, histogram 0.
+    PPO fl;
+    for (int i = 0; i < 40; ++i) fl.update(50.0);
+    ASSERT(std::fabs(fl.ppo()) < 1e-9, "ppo_flat_zero");
+    ASSERT(std::fabs(fl.histogram()) < 1e-9, "ppo_flat_hist_zero");
+
+    // Steady uptrend -> fast EMA leads slow -> PPO positive (line sign is robust).
+    PPO up(3, 10, 5);
+    for (int i = 1; i <= 60; ++i) up.update(100.0 + 1.5 * i);
+    ASSERT(up.ppo() > 0.0, "ppo_uptrend_positive");
+    // Steady downtrend -> fast EMA below slow -> PPO negative.
+    PPO dn(3, 10, 5);
+    for (int i = 0; i < 60; ++i) dn.update(300.0 - 1.5 * i);
+    ASSERT(dn.ppo() < 0.0, "ppo_downtrend_negative");
+
+    // bullish() = histogram (PPO - signal) sign. Test it deterministically with a
+    // flat baseline (PPO=signal=0) then a single jump: the fresh PPO spikes above
+    // its still-lagging signal (bullish on an up-jump, not on a down-jump). In a
+    // *sustained* trend PPO is a percentage that plateaus, so the histogram
+    // converges to ~0 — that's why the trend tests above only check the line sign.
+    PPO ju; for (int i = 0; i < 30; ++i) ju.update(50.0);   // flat -> PPO 0, signal 0
+    ASSERT(std::fabs(ju.histogram()) < 1e-9, "ppo_flat_before_jump");
+    ju.update(60.0);                                        // up-jump
+    ASSERT(ju.ppo() > 0.0 && ju.bullish(), "ppo_upjump_bullish");
+    PPO jd; for (int i = 0; i < 30; ++i) jd.update(50.0);
+    jd.update(40.0);                                        // down-jump
+    ASSERT(jd.ppo() < 0.0 && !jd.bullish(), "ppo_downjump_not_bullish");
+
+    // Scale invariance vs MACD: PPO is a PERCENT, so the same shape at 10x the
+    // price level gives the same PPO. (MACD would be ~10x larger.)
+    PPO lo(3, 10, 5), hi(3, 10, 5);
+    for (int i = 1; i <= 60; ++i) { lo.update(10.0 * i); hi.update(100.0 * i); }
+    ASSERT(std::fabs(lo.ppo() - hi.ppo()) < 1e-9, "ppo_scale_invariant");
+
+    up.reset();
+    ASSERT(!up.ready() && std::fabs(up.ppo()) < 1e-9, "ppo_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -5302,6 +5348,7 @@ int main() {
     test_obv();
     test_volume_oscillator();
     test_pvt();
+    test_ppo();
     test_cmo();
     test_zscore();
     test_tsi();
