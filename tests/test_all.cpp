@@ -4267,6 +4267,24 @@ void test_fix_session() {
         ASSERT(std::strcmp(msr.get_symbol(), "AAPL") == 0, "fix_massstat_symbol");
         ASSERT(!msr.is_admin(), "fix_massstat_application");
 
+        // #344 IOI (35=6) — Indication of Interest, non-binding advertised liquidity.
+        s.build_ioi(buf, sizeof(buf), "IOI1", 'N', "AAPL", Side::SELL, 500, 151.50, '|');
+        FIXMessage ioi; ioi.parse(buf);
+        ASSERT(ioi.is_valid() && ioi.get_msg_type()[0] == '6', "fix_ioi_6_valid");
+        ASSERT(std::strcmp(ioi.get_field(23), "IOI1") == 0
+               && std::strcmp(ioi.get_field(28), "N") == 0, "fix_ioi_id_transtype");
+        ASSERT(std::strcmp(ioi.get_symbol(), "AAPL") == 0 && ioi.get_int(27) == 500,
+               "fix_ioi_symbol_qty");
+        ASSERT(std::fabs(ioi.get_double(44) - 151.50) < 1e-6, "fix_ioi_price");
+        ASSERT(!ioi.is_admin(), "fix_ioi_application");   // 6 is not in the admin set
+
+        // #344 parse_ioi — typed round-trip for 35=6.
+        const auto ioid = fix::FIXSession::parse_ioi(ioi);
+        ASSERT(ioid.valid && ioid.trans_type == 'N' && ioid.side == '2', "fix_ioi_parsed_transtype_side");
+        ASSERT(ioid.qty == 500 && std::fabs(ioid.price - 151.50) < 1e-6, "fix_ioi_parsed_qty_price");
+        FIXMessage not_ioi; not_ioi.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_ioi(not_ioi).valid, "fix_ioi_non_6_invalid");
+
         s.build_cancel_replace(buf, sizeof(buf), "ORD2", "ORD1", "AAPL", Side::SELL, 80, 151.00, '|');
         FIXMessage g; g.parse(buf);
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");

@@ -690,6 +690,50 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // IOI — Indication of Interest (35=6) (#344). A sell-side desk advertises
+    // available (or sought) liquidity WITHOUT committing to trade — unlike Quote
+    // (35=S, #249) which is a firm, executable two-sided price, an IOI is
+    // non-binding and one-sided. 23=IOIID, 28=IOITransType ('N'=New, 'C'=Cancel,
+    // 'R'=Replace), 55=Symbol, 54=Side, 27=IOIQty, 44=Price. A recipient
+    // interested in the indication follows up with a NewOrderSingle (35=D).
+    int build_ioi(char* out, int cap, const char* ioi_id, char trans_type,
+                  const char* symbol, Side side, int32_t qty, double price,
+                  char delim = FIXMessage::SOH) noexcept {
+        char body[256];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=6%c49=%s%c56=%s%c34=%u%c23=%s%c28=%c%c55=%s%c54=%c%c27=%d%c44=%.2f%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            ioi_id, delim, trans_type, delim, symbol, delim, fix_side(side), delim,
+            qty, delim, price, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
+    // IOI — the key Indication of Interest (35=6) fields in a typed struct (#344).
+    struct IOI {
+        char    trans_type = '\0';   // 28
+        char    side       = '\0';   // 54 ('1'=Buy, '2'=Sell, raw FIX code)
+        int32_t qty        = 0;      // 27
+        double  price      = 0.0;    // 44
+        bool    valid      = false;  // true when the message really is 35=6
+    };
+
+    // parse_ioi: extract IOI from a parsed message (#344). valid=false when it is
+    // not 35=6. Symmetric to build_ioi — closes the round-trip, same shape as
+    // parse_exec_report (#241) and parse_trade_capture_report (#336).
+    static IOI parse_ioi(const FIXMessage& m) noexcept {
+        IOI r;
+        if (m.get_msg_type()[0] != '6') return r;   // valid stays false
+        const char* tt = m.get_field(28);
+        const char* sd = m.get_field(54);
+        r.trans_type = tt ? tt[0] : '\0';
+        r.side       = sd ? sd[0] : '\0';
+        r.qty        = m.get_int(27);
+        r.price      = m.get_double(44);
+        r.valid      = true;
+        return r;
+    }
+
     // build_execution_report (35=8) — an exchange→client report closing the FIX cycle
     // (#101): after a NewOrderSingle (D) the acceptor sends back an ExecutionReport with ExecType
     // (150) and OrdStatus (39). Here a FILL/PARTIAL variant with last/cum/leaves qty.
