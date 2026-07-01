@@ -2328,8 +2328,12 @@ void test_multicast_gap_recovery() {
     ASSERT(ps.packets == 3 && ps.total_bytes == 600, "ps_count_bytes");
     ASSERT(ps.max_bytes == 300, "ps_max");
     ASSERT(std::fabs(ps.mean_bytes() - 200.0) < 1e-9, "ps_mean");
+    // #346 min_bytes / byte_range: smallest packet + spread (300 - 100 = 200).
+    ASSERT(ps.min_bytes == 100, "ps_min");
+    ASSERT(ps.byte_range() == 200, "ps_range");
     ps.reset();
     ASSERT(ps.packets == 0 && ps.mean_bytes() == 0.0, "ps_reset");
+    ASSERT(ps.min_bytes == 0 && ps.byte_range() == 0, "ps_reset_min_range");
 
     // #142 InterArrivalMeter — min/max/avg/jitter of the gaps.
     multicast::InterArrivalMeter im;
