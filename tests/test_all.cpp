@@ -2227,10 +2227,21 @@ void test_multicast_gap_recovery() {
 
     // #195 OutOfOrderMeter — the fraction of out-of-order packets.
     multicast::OutOfOrderMeter ooo;
-    const uint64_t oseq[] = {1, 2, 4, 3, 5};             // 3 przychodzi po 4
+    const uint64_t oseq[] = {1, 2, 4, 3, 5};             // 3 arrives after 4
     for (uint64_t s : oseq) ooo.on_packet(s);
     ASSERT(ooo.total == 5 && ooo.out_of_order == 1, "ooo_counts");
     ASSERT(std::fabs(ooo.ooo_rate() - 0.2) < 1e-9, "ooo_rate");
+    // #370 max_reorder_depth: 3 after 4 -> backward jump 4-3 = 1.
+    ASSERT(ooo.max_reorder_depth() == 1, "ooo_max_depth_1");
+    // deeper reorder: highest reaches 10, then 4 arrives -> depth 6 (dominates).
+    multicast::OutOfOrderMeter ooo2;
+    const uint64_t dseq[] = {1, 10, 8, 4, 11};   // 8 after 10 (depth 2), 4 after 10 (depth 6)
+    for (uint64_t s : dseq) ooo2.on_packet(s);
+    ASSERT(ooo2.out_of_order == 2, "ooo_max_depth_counts");
+    ASSERT(ooo2.max_reorder_depth() == 6, "ooo_max_depth_6");
+    multicast::OutOfOrderMeter ooo0;
+    ooo0.on_packet(1); ooo0.on_packet(2); ooo0.on_packet(3);   // all in order
+    ASSERT(ooo0.max_reorder_depth() == 0, "ooo_max_depth_in_order_zero");
 
     // #203 SequenceResetDetector — reset vs reorder.
     multicast::SequenceResetDetector srd(1000);

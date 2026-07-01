@@ -432,18 +432,32 @@ struct OutOfOrderMeter {
     std::uint64_t highest = 0;
     std::uint64_t total = 0;
     std::uint64_t out_of_order = 0;
+    std::uint64_t max_depth = 0;   // deepest backward jump seen (#370)
     bool          init = false;
 
     void on_packet(std::uint64_t seq) noexcept {
         ++total;
         if (!init) { highest = seq; init = true; return; }
-        if (seq < highest) ++out_of_order;   // arrived after a higher number
-        else               highest = seq;
+        if (seq < highest) {
+            ++out_of_order;   // arrived after a higher number
+            const std::uint64_t depth = highest - seq;   // #370: how far behind
+            if (depth > max_depth) max_depth = depth;
+        } else {
+            highest = seq;
+        }
     }
     double ooo_rate() const noexcept {
         return total ? static_cast<double>(out_of_order) / static_cast<double>(total) : 0.0;
     }
-    void reset() noexcept { highest = total = out_of_order = 0; init = false; }
+    // max_reorder_depth: the DEEPEST backward jump (highest_seq - seq) among the
+    // out-of-order packets (#370) — how far behind the running max a late packet
+    // ever arrived. Where ooo_rate measures HOW OFTEN reordering happens, this
+    // measures HOW SEVERE it gets: a reorder buffer must hold at least this many
+    // sequence positions to repair the worst case. The backward-jump counterpart
+    // of ContiguousTracker::max_lookahead (#354, the forward gap ahead of the
+    // watermark). 0 when no packet has arrived out of order.
+    std::uint64_t max_reorder_depth() const noexcept { return max_depth; }
+    void reset() noexcept { highest = total = out_of_order = max_depth = 0; init = false; }
 };
 
 
