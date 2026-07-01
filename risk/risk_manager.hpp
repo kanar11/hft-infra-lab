@@ -315,6 +315,7 @@ class RiskManager {
     double peak_pnl_;
     double max_drawdown_dollars_ = 0.0;  // worst peak-to-trough $ decline this session (#340)
     int32_t consec_losses_ = 0;   // streak of losing update_pnl (#114)
+    int32_t consec_wins_   = 0;   // streak of winning update_pnl (#348)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
@@ -566,8 +567,11 @@ public:
         const double dd_now = peak_pnl_ - daily_pnl_;
         if (dd_now > max_drawdown_dollars_) max_drawdown_dollars_ = dd_now;
         // Loss-streak breaker (#114): N losses in a row -> kill switch.
+        // consec_wins_ (#348) is the symmetric win-streak counter: a loss resets
+        // it just as a profit resets consec_losses_.
         if (pnl_change < 0.0) {
             ++consec_losses_;
+            consec_wins_ = 0;
             if (limits_.max_consecutive_losses > 0
                 && consec_losses_ >= limits_.max_consecutive_losses) {
                 kill_switch_active_ = true;
@@ -576,6 +580,7 @@ public:
             }
         } else if (pnl_change > 0.0) {
             consec_losses_ = 0;   // a profit resets the streak
+            ++consec_wins_;
         }
     }
 
@@ -711,6 +716,7 @@ public:
         peak_pnl_  = 0.0;
         max_drawdown_dollars_ = 0.0;   // #340: new session, fresh high-water mark
         consec_losses_ = 0;
+        consec_wins_   = 0;   // #348
         traded_notional_ = 0.0;
         rate_ring_.reset();
         pending_.clear();
@@ -940,6 +946,13 @@ public:
     // reset_daily; 0 when the book has never been underwater.
     double   max_drawdown_dollars() const noexcept { return max_drawdown_dollars_; }
     int32_t  get_consecutive_losses()         const noexcept { return consec_losses_; }
+    // get_consecutive_wins: current winning streak (#348) — the symmetric
+    // counterpart to get_consecutive_losses/consec_losses_ (#114). There is no
+    // breaker on the win side (only losses trip the kill switch); this is a
+    // pure read for reporting/sizing (e.g. some desks scale UP size on a hot
+    // streak, or flag it as a signal to check for a stale/broken strategy).
+    // Reset by reset_daily; any loss resets it to 0.
+    int32_t  get_consecutive_wins()           const noexcept { return consec_wins_; }
     // consecutive_losses_remaining: how many more losing fills IN A ROW until the
     // loss-streak breaker trips (#205, based on #114). -1 when the breaker is off,
     // 0 when it already tripped. Early warning before the desk is halted.

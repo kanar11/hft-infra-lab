@@ -3692,6 +3692,18 @@ void test_risk_price_band() {
     r8.update_pnl(-10.0); r8.update_pnl(-10.0);
     ASSERT(!r8.is_kill_switch_active(), "consec_no_trip_after_reset");
 
+    // #348 get_consecutive_wins — symmetric win-streak counter (no breaker on this side).
+    RiskManager r9(cl);
+    ASSERT(r9.get_consecutive_wins() == 0, "consec_wins_start_zero");
+    r9.update_pnl(+5.0); r9.update_pnl(+5.0);
+    ASSERT(r9.get_consecutive_wins() == 2, "consec_wins_2");
+    r9.update_pnl(-10.0);                      // a loss resets the win streak
+    ASSERT(r9.get_consecutive_wins() == 0, "consec_wins_loss_resets");
+    r9.update_pnl(+5.0);
+    ASSERT(r9.get_consecutive_wins() == 1, "consec_wins_after_reset");
+    r9.reset_daily();
+    ASSERT(r9.get_consecutive_wins() == 0, "consec_wins_reset_daily");
+
     // #121 reason the kill switch latched.
     RiskManager rk(lim);
     ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");
