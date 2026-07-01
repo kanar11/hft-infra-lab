@@ -240,6 +240,18 @@ public:
             ? static_cast<double>(broken_shares_) / static_cast<double>(ordered_shares_)
             : 0.0;
     }
+    // reject_rate: fraction of tracked ORDERS that ended up REJECTED (#345) =
+    // rejected_ / order_count. Distinct from fill_rate (#250, a SHARE ratio):
+    // this is a per-order rate — e.g. many small rejected clips vs one large
+    // rejected order weigh the same here, whereas fill_rate would weigh them by
+    // size. A rising reject_rate against a flat fill_rate points at bad order
+    // parameters (stale prices, size limits) rather than thin liquidity.
+    // 0 when nothing has been tracked yet.
+    double reject_rate() const noexcept {
+        return order_count() > 0
+            ? static_cast<double>(rejected_) / static_cast<double>(order_count())
+            : 0.0;
+    }
     // exec_count / avg_exec_shares: number of Executed ('E') reports applied and the
     // average shares per execution (#328). Wire-level execution granularity from the
     // OUCH feed: a small average = the order is being worked in many slices (iceberg /

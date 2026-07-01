@@ -4772,6 +4772,19 @@ void test_ouch_order_state() {
     ASSERT(std::fabs(frag.executions_per_order() - 1.0) < 1e-9, "ouch_frag_exec_per_order");
     // ordered total is unchanged by fills -> avg_order_size stays 200
     ASSERT(std::fabs(frag.avg_order_size() - 200.0) < 1e-9, "ouch_frag_avg_order_stable");
+
+    // #345 reject_rate — per-order (not per-share) rejection rate.
+    ouch::OUCHOrderTracker rjt;
+    ASSERT(rjt.reject_rate() == 0.0, "ouch_rjt_empty");
+    rjt.on_new("RR1", 100);
+    rjt.on_new("RR2", 100);
+    rjt.on_new("RR3", 100);
+    n = OUCHMessage::encode_accepted(buf, "RR1", 'B', 100, "AAPL", 50.0, 79001);
+    rjt.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_rejected(buf, "RR2", 'X');
+    rjt.on_response(OUCHMessage::parse_response(buf, n));
+    // RR3 never gets a response -> stays NEW; 1 of 3 tracked orders rejected
+    ASSERT(std::fabs(rjt.reject_rate() - 1.0/3.0) < 1e-9, "ouch_rjt_one_of_three");
 }
 
 // OUCH ↔ SoupBinTCP #78 — full round-trip login→order→accepted→executed.
