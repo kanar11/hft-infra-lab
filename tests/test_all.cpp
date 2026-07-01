@@ -4977,6 +4977,26 @@ void test_ouch_order_state() {
     // 4 tracked orders now (RR1..RR4): RR1 + RR4 cancelled -> 2/4 = 0.5
     ASSERT(rjt.order_count() == 4, "ouch_rjt_order_count_4");
     ASSERT(std::fabs(rjt.cancel_rate() - 0.5) < 1e-9, "ouch_rjt_cancel_rate_half");
+    // #361 order_fill_rate — per-order completion (none of RR1..RR4 filled -> 0).
+    ASSERT(rjt.order_fill_rate() == 0.0, "ouch_rjt_order_fill_rate_none");
+
+    // #361 order_fill_rate (per-order) vs fill_rate (#250, per-share).
+    ouch::OUCHOrderTracker ofr;
+    ASSERT(ofr.order_fill_rate() == 0.0, "ouch_ofr_empty");
+    ofr.on_new("F1", 100);   // will fully fill
+    ofr.on_new("F2", 400);   // will half-fill (stays PARTIAL, not FILLED)
+    n = OUCHMessage::encode_accepted(buf, "F1", 'B', 100, "AAPL", 50.0, 80101);
+    ofr.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "F1", 100, 50.0, 1);   // F1 fully filled
+    ofr.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_accepted(buf, "F2", 'B', 400, "AAPL", 50.0, 80102);
+    ofr.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "F2", 200, 50.0, 2);   // F2 half filled -> PARTIAL
+    ofr.on_response(OUCHMessage::parse_response(buf, n));
+    // 1 of 2 orders reached FILLED -> order_fill_rate 0.5...
+    ASSERT(std::fabs(ofr.order_fill_rate() - 0.5) < 1e-9, "ouch_ofr_half_by_order");
+    // ...but 300 of 500 shares filled -> fill_rate 0.6 (they disagree by design).
+    ASSERT(std::fabs(ofr.fill_rate() - 0.6) < 1e-9, "ouch_ofr_vs_share_fill_rate");
 }
 
 // OUCH ↔ SoupBinTCP #78 — full round-trip login→order→accepted→executed.

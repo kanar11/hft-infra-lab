@@ -263,6 +263,18 @@ public:
             ? static_cast<double>(cancelled_) / static_cast<double>(order_count())
             : 0.0;
     }
+    // order_fill_rate: fraction of tracked ORDERS that reached FILLED = filled_ /
+    // order_count (#361). Completes the per-ORDER terminal-outcome trio with
+    // reject_rate (#345) and cancel_rate (#353) — all three weight each order
+    // equally. Distinct from fill_rate (#250), which is SHARE-weighted (filled
+    // shares / ordered shares): a book of many small fully-filled orders next to
+    // one huge half-filled one has a high order_fill_rate but a lower fill_rate.
+    // 0 when nothing has been tracked yet.
+    double order_fill_rate() const noexcept {
+        return order_count() > 0
+            ? static_cast<double>(filled_) / static_cast<double>(order_count())
+            : 0.0;
+    }
     // exec_count / avg_exec_shares: number of Executed ('E') reports applied and the
     // average shares per execution (#328). Wire-level execution granularity from the
     // OUCH feed: a small average = the order is being worked in many slices (iceberg /
