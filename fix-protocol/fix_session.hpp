@@ -1026,6 +1026,39 @@ public:
         return r;
     }
 
+    // CancelRequest — the key OrderCancelRequest (35=F) fields in a typed struct
+    // (#368). The acceptor-side decode that closes the round-trip with
+    // build_cancel_order (#116): 41=OrigClOrdID names the order to pull, 11 is the
+    // new ClOrdID of the cancel request itself. Same shape as parse_new_order
+    // (#360) — once a cancel arrives the acceptor reads the fields here instead of
+    // digging through tags. valid=false when the message is not 35=F.
+    struct CancelRequest {
+        char    cl_ord_id[32]      = {};   // 11=ClOrdID (of the cancel request)
+        char    orig_cl_ord_id[32] = {};   // 41=OrigClOrdID (the order to cancel)
+        char    symbol[16]         = {};   // 55=Symbol
+        char    side               = '\0'; // 54=Side ('1'=Buy, '2'=Sell)
+        int32_t qty                = 0;    // 38=OrderQty
+        bool    valid              = false;// true when msg type == 'F'
+    };
+
+    static CancelRequest parse_cancel_request(const FIXMessage& m) noexcept {
+        CancelRequest r;
+        if (m.get_msg_type()[0] != 'F') return r;   // valid stays false
+        const char* coi  = m.get_field(11);
+        const char* ocoi = m.get_field(41);
+        const char* sym  = m.get_field(55);
+        const char* sd   = m.get_field(54);
+        // sources are runtime pointers (no compile-time length) so strncpy bounded
+        // to size-1 over a value-initialized array stays nul-terminated.
+        if (coi)  std::strncpy(r.cl_ord_id,      coi,  sizeof(r.cl_ord_id) - 1);
+        if (ocoi) std::strncpy(r.orig_cl_ord_id, ocoi, sizeof(r.orig_cl_ord_id) - 1);
+        if (sym)  std::strncpy(r.symbol,         sym,  sizeof(r.symbol) - 1);
+        r.side  = (sd && *sd) ? sd[0] : '\0';
+        r.qty   = m.get_int(38);
+        r.valid = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

@@ -4565,6 +4565,18 @@ void test_fix_session() {
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
         ASSERT(std::strcmp(g.get_field(41), "ORD1") == 0, "fix_replace_origclordid");
 
+        // #368 parse_cancel_request — typed acceptor-side decode of 35=F.
+        s.build_cancel_order(buf, sizeof(buf), "CXL1", "ORD1", "AAPL", Side::BUY, 100, '|');
+        FIXMessage fm; fm.parse(buf);
+        ASSERT(fm.is_valid() && fm.get_msg_type()[0] == 'F', "fix_cancel_F_valid");
+        const auto cxr = fix::FIXSession::parse_cancel_request(fm);
+        ASSERT(cxr.valid && std::strcmp(cxr.cl_ord_id, "CXL1") == 0
+               && std::strcmp(cxr.orig_cl_ord_id, "ORD1") == 0, "fix_parse_cxl_ids");
+        ASSERT(std::strcmp(cxr.symbol, "AAPL") == 0 && cxr.side == '1' && cxr.qty == 100,
+               "fix_parse_cxl_symbol_side_qty");
+        FIXMessage not_f; not_f.parse("35=D|11=X|55=Y|");
+        ASSERT(!fix::FIXSession::parse_cancel_request(not_f).valid, "fix_parse_cxl_non_F_invalid");
+
         // #150 process_inbound — dispatcher Logon/SeqReset/Logout.
         fix::FIXSession ps; ps.set_comp_ids("ME", "EX");
         char pb[256];
