@@ -3844,6 +3844,19 @@ void test_risk_price_band() {
     rdd2.update_pnl(500.0);                   // daily 1200 -> new high -> dd 0
     ASSERT(std::fabs(rdd2.current_drawdown_dollars() - 0.0) < 1e-6, "dd_dollars_new_high");
 
+    // #340 max_drawdown_dollars (worst peak-to-trough $ decline this session;
+    // unlike current_drawdown_dollars it survives a full recovery).
+    RiskManager rmdd;
+    rmdd.update_pnl(1000.0);                  // peak 1000
+    rmdd.update_pnl(-300.0);                  // daily 700 -> dd $300, max_dd $300
+    ASSERT(std::fabs(rmdd.max_drawdown_dollars() - 300.0) < 1e-6, "mdd_first_300");
+    rmdd.update_pnl(500.0);                   // daily 1200 -> new high, current dd 0, max_dd still 300
+    ASSERT(std::fabs(rmdd.max_drawdown_dollars() - 300.0) < 1e-6, "mdd_survives_recovery");
+    rmdd.update_pnl(-800.0);                  // daily 400 -> dd from peak 1200 = 800 > 300
+    ASSERT(std::fabs(rmdd.max_drawdown_dollars() - 800.0) < 1e-6, "mdd_new_worse_trough");
+    rmdd.reset_daily();
+    ASSERT(std::fabs(rmdd.max_drawdown_dollars() - 0.0) < 1e-6, "mdd_reset_daily");
+
     // #205 consecutive_losses_remaining (loss-streak breaker, threshold 3).
     RiskLimits cll; cll.max_consecutive_losses = 3;
     RiskManager rcl(cll);
