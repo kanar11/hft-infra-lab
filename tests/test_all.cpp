@@ -3959,6 +3959,17 @@ void test_risk_price_band() {
     ASSERT(rsn.check_order("TSLA", Side::BUY, 50.0, 300).action == RiskAction::REJECT,
            "symnotional_over_rejects"); // 300*50 = 15000 > 10000
 
+    // #356 symbol_notional_utilization_pct — $ analog of position_utilization_pct (#237).
+    RiskManager rsu(snl);
+    rsu.update_reference_price("AAPL", 50.0);
+    rsu.on_order_sent("AAPL", Side::BUY, 100);   // 100 * 50 = 5000 notional / 10000 limit
+    ASSERT(std::fabs(rsu.symbol_notional_utilization_pct("AAPL") - 50.0) < 1e-6, "symnotutil_50pct");
+    ASSERT(rsu.symbol_notional_utilization_pct("MSFT") == 0.0, "symnotutil_no_position_zero");
+    RiskManager rsu0;   // default limits: max_symbol_notional off (0.0)
+    rsu0.update_reference_price("AAPL", 50.0);
+    rsu0.on_order_sent("AAPL", Side::BUY, 100);
+    ASSERT(rsu0.symbol_notional_utilization_pct("AAPL") == 0.0, "symnotutil_limit_off_zero");
+
     // #197 current_drawdown_pct (high-water mark).
     RiskManager rdd;                       // default limits
     rdd.update_pnl(1000.0);                 // peak 1000, daily 1000

@@ -910,6 +910,16 @@ public:
         if (rp == ref_price_.end() || rp->second <= 0.0) return 0.0;
         return std::abs(lookup(positions_, k) + lookup(pending_, k)) * rp->second;
     }
+    // symbol_notional_utilization_pct: get_position_notional / max_symbol_notional
+    // as a percent (#356) — the $ analog of position_utilization_pct (#237, which
+    // is share-count-based). A symbol can sit well under its SHARE limit while
+    // already near its $ limit if the price has run up, so the two can disagree;
+    // this tracks the check enforced in check_order (max_symbol_notional). 0 when
+    // the limit is off or there is no reference price yet.
+    double symbol_notional_utilization_pct(const char* symbol) const noexcept {
+        if (limits_.max_symbol_notional <= 0.0) return 0.0;
+        return get_position_notional(symbol) / limits_.max_symbol_notional * 100.0;
+    }
     double   get_daily_pnl()                  const noexcept { return daily_pnl_; }
     double   get_peak_pnl()                   const noexcept { return peak_pnl_; }
     // current_drawdown_pct: current % drop from the high-water mark (#197) — the same
