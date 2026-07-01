@@ -731,6 +731,22 @@ public:
             if (p.realized_pnl < 0 && -p.realized_pnl > mx) mx = -p.realized_pnl;
         return mx;
     }
+    // expectancy_per_symbol: the expected realized P&L per DECIDED symbol (#363),
+    // the frequency×magnitude composite of symbol_win_rate (#298) and
+    // avg_win_per_symbol/avg_loss_per_symbol (#347):
+    //   win_rate * avg_win - loss_rate * avg_loss
+    // which algebraically collapses to net realized P&L over the decided symbols
+    // (winners + losers, flat names excluded). A single number that captures the
+    // whole edge — a high win rate can still yield NEGATIVE expectancy if the
+    // average loss dwarfs the average win. In dollars (to_float of the fixed-point
+    // accumulators). 0 when no symbol has resolved. Same shape as the Backtester's
+    // per-trade expectancy, but per symbol.
+    double expectancy_per_symbol() const noexcept {
+        const size_t decided = winning_symbols() + losing_symbols();
+        if (decided == 0) return 0.0;
+        const double net = to_float(gross_profit()) - to_float(gross_loss());
+        return net / static_cast<double>(decided);
+    }
     // last_reject: reason for the last submit_order rejection (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
     // reject_count: how many orders were rejected for a given reason (#136, observability).

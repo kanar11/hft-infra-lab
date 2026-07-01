@@ -471,6 +471,15 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(oms.largest_win()), 200.0), "oms_largest_win_200");
         ASSERT(close(to_float(oms.largest_loss()), 100.0), "oms_largest_loss_100");
         ASSERT(empt.largest_win() == 0 && empt.largest_loss() == 0, "oms_largest_winloss_empty_zero");
+        // #363 expectancy_per_symbol — frequency×magnitude edge. AAA +200, BBB -100,
+        // DDD -50: net 50 over 3 decided symbols -> 16.666...
+        ASSERT(close(oms.expectancy_per_symbol(), 50.0 / 3.0), "oms_expectancy_16_67");
+        // cross-check the composite form: win_rate*avg_win - loss_rate*avg_loss.
+        ASSERT(close(oms.expectancy_per_symbol(),
+                     oms.symbol_win_rate() * oms.avg_win_per_symbol()
+                     - (1.0 - oms.symbol_win_rate()) * oms.avg_loss_per_symbol()),
+               "oms_expectancy_composite_matches");
+        ASSERT(empt.expectancy_per_symbol() == 0.0, "oms_expectancy_empty_zero");
         // no losing symbols + profit -> +inf (same convention as the Backtester)
         OMS pf_allwin(1000000, 1000000000.0);
         Order* pfw1 = pf_allwin.submit_order("WIN", Side::BUY, 10.0, 100);
