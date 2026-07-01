@@ -317,6 +317,8 @@ class RiskManager {
     int32_t consec_losses_ = 0;   // streak of losing update_pnl (#114)
     int32_t consec_wins_   = 0;   // streak of winning update_pnl (#348)
     int32_t max_consec_losses_ = 0;  // worst losing streak seen this session (#364)
+    uint64_t winning_updates_ = 0;   // count of profitable update_pnl calls (#372)
+    uint64_t losing_updates_  = 0;   // count of losing update_pnl calls (#372)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
@@ -573,6 +575,7 @@ public:
         if (pnl_change < 0.0) {
             ++consec_losses_;
             consec_wins_ = 0;
+            ++losing_updates_;   // #372
             if (consec_losses_ > max_consec_losses_) max_consec_losses_ = consec_losses_;  // #364
             if (limits_.max_consecutive_losses > 0
                 && consec_losses_ >= limits_.max_consecutive_losses) {
@@ -583,6 +586,7 @@ public:
         } else if (pnl_change > 0.0) {
             consec_losses_ = 0;   // a profit resets the streak
             ++consec_wins_;
+            ++winning_updates_;   // #372
         }
     }
 
@@ -720,6 +724,8 @@ public:
         consec_losses_ = 0;
         consec_wins_   = 0;   // #348
         max_consec_losses_ = 0;   // #364
+        winning_updates_ = 0;     // #372
+        losing_updates_  = 0;     // #372
         traded_notional_ = 0.0;
         rate_ring_.reset();
         pending_.clear();
@@ -974,6 +980,18 @@ public:
     // it — the number a post-session review checks ("we hit 5 in a row, one shy
     // of the breaker"). Reset by reset_daily; 0 when there has been no loss.
     int32_t  max_consecutive_losses_seen()    const noexcept { return max_consec_losses_; }
+    // pnl_win_rate: fraction of P&L updates that were profitable (#372) =
+    // winning_updates / (winning + losing), in [0, 1]. update_pnl is called once
+    // per realized fill/mark, so this is the hit rate on individual P&L events —
+    // distinct from the streak counters (#114/#348, runs) and from the OMS
+    // symbol_win_rate (#298, which is per SYMBOL). Flat (zero) updates are
+    // excluded from both sides. Reset by reset_daily; 0 before any decided update.
+    double   pnl_win_rate() const noexcept {
+        const uint64_t decided = winning_updates_ + losing_updates_;
+        return decided > 0 ? static_cast<double>(winning_updates_) / static_cast<double>(decided) : 0.0;
+    }
+    uint64_t winning_pnl_updates() const noexcept { return winning_updates_; }
+    uint64_t losing_pnl_updates()  const noexcept { return losing_updates_; }
     // consecutive_losses_remaining: how many more losing fills IN A ROW until the
     // loss-streak breaker trips (#205, based on #114). -1 when the breaker is off,
     // 0 when it already tripped. Early warning before the desk is halted.

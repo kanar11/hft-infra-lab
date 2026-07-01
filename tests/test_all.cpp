@@ -3942,6 +3942,16 @@ void test_risk_price_band() {
     r10.reset_daily();
     ASSERT(r10.max_consecutive_losses_seen() == 0, "mcls_reset_daily");
 
+    // #372 pnl_win_rate — hit rate on individual P&L updates (flat updates excluded).
+    RiskManager rwr;
+    ASSERT(rwr.pnl_win_rate() == 0.0, "pwr_empty_zero");
+    rwr.update_pnl(+5.0); rwr.update_pnl(+3.0); rwr.update_pnl(-2.0);   // 2 wins, 1 loss
+    rwr.update_pnl(0.0);                                                // flat -> excluded
+    ASSERT(rwr.winning_pnl_updates() == 2 && rwr.losing_pnl_updates() == 1, "pwr_counts");
+    ASSERT(std::fabs(rwr.pnl_win_rate() - 2.0/3.0) < 1e-9, "pwr_two_thirds");
+    rwr.reset_daily();
+    ASSERT(rwr.pnl_win_rate() == 0.0 && rwr.winning_pnl_updates() == 0, "pwr_reset_daily");
+
     // #121 reason the kill switch latched.
     RiskManager rk(lim);
     ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");
