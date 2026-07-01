@@ -861,6 +861,7 @@ struct InterArrivalStats {
     int64_t  total_gap = 0;
     int64_t  min_gap = 0;
     int64_t  max_gap = 0;
+    int64_t  last_gap_ = 0;      // most recent inter-arrival gap (#362)
 
     void on_message(int64_t ts) noexcept {
         if (last_ts >= 0) {
@@ -869,6 +870,7 @@ struct InterArrivalStats {
                 if (count == 0 || gap < min_gap) min_gap = gap;
                 if (gap > max_gap) max_gap = gap;
                 total_gap += gap;
+                last_gap_ = gap;
                 ++count;
             }
         }
@@ -878,7 +880,15 @@ struct InterArrivalStats {
         return count > 0 ? static_cast<double>(total_gap) / static_cast<double>(count) : 0.0;
     }
     int64_t jitter() const noexcept { return count > 0 ? max_gap - min_gap : 0; }
-    void reset() noexcept { last_ts = -1; count = 0; total_gap = 0; min_gap = 0; max_gap = 0; }
+    // last_gap: the MOST RECENT inter-arrival gap (#362) — the instantaneous
+    // cadence, vs min/mean/max which summarize the whole session. Comparing
+    // last_gap against mean_gap is a live burst/stall detector: last_gap >>
+    // mean_gap right now signals the feed just went quiet (possible stall)
+    // even though the aggregate looks healthy. 0 before the second message.
+    int64_t last_gap() const noexcept { return last_gap_; }
+    void reset() noexcept {
+        last_ts = -1; count = 0; total_gap = 0; min_gap = 0; max_gap = 0; last_gap_ = 0;
+    }
 };
 
 

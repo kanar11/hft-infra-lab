@@ -2362,6 +2362,14 @@ void test_multicast_gap_recovery() {
     ASSERT(ias.count == 3 && ias.min_gap == 10 && ias.max_gap == 140, "ias_min_max");
     ASSERT(std::fabs(ias.mean_gap() - (200.0 / 3.0)) < 1e-9, "ias_mean");  // (50+10+140)/3
     ASSERT(ias.jitter() == 130, "ias_jitter");                            // 140 - 10
+    // #362 last_gap — the most recent gap (the 140 above), a live cadence probe.
+    ASSERT(ias.last_gap() == 140, "ias_last_gap");
+    ias.on_message(1205);                                                 // gap 5
+    ASSERT(ias.last_gap() == 5, "ias_last_gap_updates");
+    multicast::InterArrivalStats ias0;
+    ASSERT(ias0.last_gap() == 0, "ias_last_gap_before_second_msg");
+    ias0.on_message(500);
+    ASSERT(ias0.last_gap() == 0, "ias_last_gap_after_first_msg");
 
     // #313 PacketStats — wire-level packet/byte accounting.
     multicast::PacketStats ps;
