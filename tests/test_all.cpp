@@ -57,6 +57,7 @@
 #include "../strategy/fisher.hpp"
 #include "../strategy/coppock.hpp"
 #include "../strategy/obv.hpp"
+#include "../strategy/volume_oscillator.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2923,6 +2924,40 @@ void test_obv() {
     ASSERT(!o.ready() && std::fabs(o.obv()) < 1e-9, "obv_reset");
 }
 
+// VolumeOscillator #349 — trend of trading ACTIVITY (fast/slow EMA of volume).
+void test_volume_oscillator() {
+    SECTION("VolumeOscillator (#349)");
+    VolumeOscillator empty;
+    ASSERT(!empty.ready(), "volosc_not_ready_before_first_print");
+    ASSERT(std::fabs(empty.value()) < 1e-9, "volosc_starts_zero");
+
+    // Non-positive volume is ignored (no print).
+    VolumeOscillator ig;
+    ig.on_trade(100.0, 0);
+    ig.on_trade(100.0, -50);
+    ASSERT(!ig.ready(), "volosc_ignores_nonpositive_volume");
+
+    // fast=5 (alpha 1/3), slow=20 (alpha 2/21). First print seeds both -> flat.
+    VolumeOscillator vo(5, 20);
+    vo.on_trade(0.0, 1000);
+    ASSERT(vo.ready(), "volosc_ready_after_first_print");
+    ASSERT(std::fabs(vo.value()) < 1e-9, "volosc_first_print_flat");
+    // Volume jumps to 4000: fast=2000 exactly, slow=27000/21 -> value = 500/9 (%).
+    vo.on_trade(0.0, 4000);
+    ASSERT(std::fabs(vo.value() - 500.0 / 9.0) < 1e-9, "volosc_spike_up_value");
+    ASSERT(vo.rising(), "volosc_spike_up_rising");
+
+    // Fresh oscillator, volume drops sharply: fast=700, slow=19200/21 -> value = -23.4375%.
+    VolumeOscillator dn(5, 20);
+    dn.on_trade(0.0, 1000);
+    dn.on_trade(0.0, 100);
+    ASSERT(std::fabs(dn.value() - (-23.4375)) < 1e-9, "volosc_drop_value");
+    ASSERT(!dn.rising(), "volosc_drop_not_rising");
+
+    dn.reset();
+    ASSERT(!dn.ready() && std::fabs(dn.value()) < 1e-9, "volosc_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -5085,6 +5120,7 @@ int main() {
     test_aroon();
     test_coppock();
     test_obv();
+    test_volume_oscillator();
     test_cmo();
     test_zscore();
     test_tsi();
