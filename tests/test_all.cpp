@@ -382,7 +382,7 @@ void test_oms_short_and_replace() {
         ASSERT(oms.order_count() >= 1 && oms.open_position_count() == 1, "rsc_state_kept");
     }
 
-    {   // #212 submit_reject_rate (maly max_order_value -> czesc odrzucona).
+    {   // #212 submit_reject_rate (small max_order_value -> some rejected).
         OMS oms(100000, 500.0);                                 // max_order_value 500
         OMSReject why = OMSReject::NONE;
         oms.submit_order("AAA", Side::BUY, 10.0, 10, &why);     // value 100 <= 500 ok
@@ -578,7 +578,7 @@ void test_oms_short_and_replace() {
         ASSERT(oms.count_by_status(OrderStatus::PARTIAL) == 1, "cbs_partial_1");
     }
 
-    {   // #120 agregaty P&L portfela (realized/net po wszystkich pozycjach).
+    {   // #120 portfolio P&L aggregates (realized/net over all positions).
         OMS oms(100000, 100000000.0, /*commission_per_share=*/0.01);
         // AAPL: buy 100@50, sell 100@52 -> realized +200, fees 2
         oms.fill_order(oms.submit_order("AAPL", Side::BUY,  50.00, 100)->order_id, 100, 50.00);
@@ -2903,10 +2903,10 @@ void test_trailing_stop() {
     ASSERT(ss.update(95.0), "ts_short_stopped");         // 95 >= 95 -> exit
 }
 
-// POV #99 — Percentage-of-Volume execution algo (slicing adaptacyjny do wolumenu).
+// POV #99 — Percentage-of-Volume execution algo (slicing adaptive to volume).
 void test_pov_algo() {
     SECTION("POV Execution Algo (#99)");
-    POVExecutor pov(1000, 0.10);                       // rodzic 1000, 10% wolumenu
+    POVExecutor pov(1000, 0.10);                       // parent 1000, 10% of volume
     ASSERT(pov.on_market_volume(2000) == 200, "pov_slice_10pct_200");
     ASSERT(pov.remaining() == 800, "pov_remaining_800");
     ASSERT(pov.on_market_volume(10000) == 800, "pov_capped_to_remaining");  // 1000→800
@@ -3711,7 +3711,7 @@ void test_risk_price_band() {
     ASSERT(!rw.is_near_position_limit("AAPL", 80.0), "warn_below_80pct");   // 700 < 800
     ASSERT(rw.is_near_position_limit("AAPL", 60.0), "warn_above_60pct");    // 700 >= 600
 
-    // #181 wykorzystanie budzetu ekspozycji portfela (limit 1000).
+    // #181 portfolio exposure budget utilization (limit 1000).
     RiskLimits el; el.max_portfolio_exposure = 1000;
     RiskManager reu(el);
     reu.on_order_sent("AAA", Side::BUY, 300);                               // |300| = 30%
@@ -3887,7 +3887,7 @@ void test_risk_price_band() {
     rtd.add_traded_notional(50000.0);
     ASSERT(std::fabs(rtd.daily_turnover_pct() - 0.0) < 1e-6, "turnover_disabled");
 
-    // #229 check_reject_rate (maly max_order_value -> czesc check'ow odrzucona).
+    // #229 check_reject_rate (small max_order_value -> some checks rejected).
     RiskLimits crl;
     crl.max_order_value        = 500;
     crl.max_position_per_symbol = 100000000;
@@ -4452,7 +4452,7 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::parse_response(buf, 14).type, "ERROR") == 0,
            "ouch_cxlpend_short_error");
 
-    // #194 AIQ Canceled ('D'): self-match prevention zdejmuje czesc zlecenia.
+    // #194 AIQ Canceled ('D'): self-match prevention removes part of the order.
     n = OUCHMessage::encode_aiq_canceled(buf, "TOK7", 40, 'Q');
     const OUCHResponse aq = OUCHMessage::parse_response(buf, n);
     ASSERT(std::strcmp(aq.type, "AIQ_CXL") == 0, "ouch_aiq_parsed");
@@ -4501,7 +4501,7 @@ void test_ouch_order_state() {
     ASSERT(ro.valid && ro.type == 'U' && std::strcmp(ro.token, "TOK1") == 0
            && std::strcmp(ro.new_token, "TOK2") == 0 && ro.shares == 80, "ouch_parse_replace");
 
-    // #226 Modify Order ('M') — redukcja wolumenu (decrease-only).
+    // #226 Modify Order ('M') — volume reduction (decrease-only).
     n = OUCHMessage::modify_order(buf, "TOK1", 50);
     const OUCHOrder mo = OUCHMessage::parse_order(buf, n);
     ASSERT(mo.valid && mo.type == 'M' && std::strcmp(mo.token, "TOK1") == 0
@@ -4522,7 +4522,7 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
                        "invalid side") == 0, "ouch_validate_bad_side");
 
-    // #242 agregaty wolumenu trackera (swiezy tracker).
+    // #242 tracker volume aggregates (fresh tracker).
     ouch::OUCHOrderTracker tt;
     tt.on_new("TOKA", 100);
     tt.on_new("TOKB", 200);                                 // remaining 300 lacznie

@@ -60,7 +60,7 @@ void test_basic_add_and_match() {
     ASSERT(b.best_ask_ticks() == 10100,           "basic_best_ask");
     ASSERT(b.stats().total_fills == 0,            "basic_no_cross_no_fill");
 
-    // Aggressive buy w book → execute against ask
+    // Aggressive buy in the book → execute against ask
     auto id3 = b.submit(Side::BUY, 10100, 100);
     (void)id3;
     ASSERT(b.stats().total_fills >= 1,            "basic_cross_makes_fill");
@@ -85,7 +85,7 @@ void test_cancel() {
 void test_modify_priority_preserve_down_only() {
     Book b;
     auto id1 = b.submit(Side::BUY, 10000, 100);
-    auto id2 = b.submit(Side::BUY, 10000, 200);  // ten join'uje po id1 (FIFO)
+    auto id2 = b.submit(Side::BUY, 10000, 200);  // this one joins after id1 (FIFO)
     ASSERT(b.queue_position(id1) == 0,        "modify_id1_at_head");
     ASSERT(b.queue_position(id2) == 1,        "modify_id2_after_id1");
 
@@ -1011,7 +1011,7 @@ void test_age_stats_record_on_fill() {
 void test_modify_qty_down_preserves_priority() {
     Book b;
     auto id1 = b.submit(Side::BUY, 10000, 100);
-    b.submit(Side::BUY, 10000, 50);   // za nami w FIFO
+    b.submit(Side::BUY, 10000, 50);   // behind us in FIFO
     (void)b.modify(id1, 10000, 60);   // qty DOWN at same price
     ASSERT(b.stats().priority_preserved_mods == 1, "mod_prio_preserved_1");
     ASSERT(b.stats().priority_lost_mods == 0,       "mod_prio_lost_0");
@@ -1879,7 +1879,7 @@ void test_cluster_volume_weighted_spread() {
     m->submit(Side::BUY,  10000, 50);
     m->submit(Side::SELL, 10010, 50);
     m->submit(Side::SELL, 10000, 50);    // crosses → vol=50
-    // Spread po fillach: AAPL=2, MSFT=10. Volumes: 100, 50.
+    // Spread after fills: AAPL=2, MSFT=10. Volumes: 100, 50.
     // Weighted avg = (2*100 + 10*50) / 150 = (200+500)/150 = 700/150 ≈ 4.67
     const double w = cluster.volume_weighted_avg_spread_ticks();
     ASSERT(w >= 0.0 && w <= 100.0,                   "cluster_vw_spread_bounded");
@@ -2483,7 +2483,7 @@ void test_hidden_no_drift_after_partial_cancel() {
     Book b;
     auto id = b.submit(Side::BUY, 10000, 100);   // maker
     b.submit(Side::SELL, 10000, 30);              // partial fill 30
-    b.cancel(id);                                  // cancel resztki 70
+    b.cancel(id);                                  // cancel the remaining 70
     // Old T-D formula in unlink drifted total_hidden to -30 → ratio 1.0
     ASSERT(b.hidden_liquidity_ratio() == 0.0, "hidden_no_drift_0");
     ASSERT(b.audit_book_integrity() == 0,      "hidden_drift_audit_0");
@@ -3327,7 +3327,7 @@ void test_rate_limit_stop_trigger_bypasses() {
 }
 
 // ──────────────────────────────────────────────
-// Wash-trade surveillance w aukcji (#59)
+// Wash-trade surveillance in the auction (#59)
 // ──────────────────────────────────────────────
 
 void test_auction_wash_trade_flagged() {
@@ -4077,7 +4077,7 @@ void benchmark(int iterations) {
             b.sample_mid_to_ring();
         }
     }
-    std::printf("  Analytics snapshot (po 200-trade burst):\n");
+    std::printf("  Analytics snapshot (after 200-trade burst):\n");
     std::printf("    vpin_bps:           %u\n",   b.vpin_bps());
     std::printf("    flow_imbalance_bps: %d\n",   b.flow_imbalance_bps());
     std::printf("    kyle_lambda:        %.4f\n", b.kyle_lambda());

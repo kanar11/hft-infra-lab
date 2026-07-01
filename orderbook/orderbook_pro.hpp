@@ -82,7 +82,7 @@ class FullOrderBook {
     static_assert(MAX_ORDERS > 0, "MAX_ORDERS must be positive");
 
     // Storage
-    Order        pool_[MAX_ORDERS];         // pool aktywnych + free slots
+    Order        pool_[MAX_ORDERS];         // pool of active + free slots
     Order*       free_list_head_ = nullptr; // LIFO free-list (cache-friendly)
     PriceLevel   levels_[LEVELS];           // one slot per tick
     std::unordered_map<std::uint64_t, Order*> id_index_;  // O(1) cancel/modify
@@ -877,12 +877,12 @@ public:
     // Returns the order_id of the accepted order (>0) or 0 when rejected.
     // out_reason (if != nullptr) receives the RejectReason for diagnostics.
     //
-    // Logika:
-    //   1. Walidacja: range, qty, duplicate id, range.
+    // Logic:
+    //   1. Validation: range, qty, duplicate id, range.
     //   2. STP check (if policy != NONE) — but STP is more complete in the match.
     //   3. POST_ONLY: if it crosses → REJECT.
     //   4. FOK: if not achievable → REJECT.
-    //   5. Alokuj Order z pool.
+    //   5. Allocate an Order from the pool.
     //   6. If the type is STOP, do NOT match — place it in the trigger wait-queue.
     //   7. Match against the opposite side up to the limit price.
     //   8. If IOC and remainder — cancel the rest. If FOK and not all → revert.
@@ -1155,7 +1155,7 @@ public:
         const std::int32_t  filled  = o->filled_qty;
         // OCO survives cancel-replace (order_id does not change — venue
         // convention). Stash + unlink BEFORE cancel_internal, so it does not cancel
-        // partnera; restore po udanym resubmicie.
+        // the partner; restore it after a successful resubmit.
         const std::uint64_t oco_partner = oco_partner_of(order_id);
         if (oco_partner != 0) (void)unlink_oco(order_id);
         // The bracket spec also survives cancel-replace; the qty spec follows the new
@@ -1293,7 +1293,7 @@ public:
         return n;
     }
 
-    // VWAP z trade tape (volume weighted average price) — w tickach.
+    // VWAP from the trade tape (volume weighted average price) — in ticks.
     std::int32_t tape_vwap_ticks() const noexcept {
         const std::size_t n = tape_size();
         if (n == 0) return -1;
@@ -1753,7 +1753,7 @@ public:
         return o->id;
     }
 
-    // Mid-peg: pinned do mid + offset (zamiast best bid/ask). Marker w
+    // Mid-peg: pinned to mid + offset (instead of best bid/ask). Marker in
     // stop_trigger_ticks == 1 (a primary peg has 0 there; a STOP is not in
     // peg_orders_, so no collision). The offset should keep the price
     // inside the spread — the peg does not match at entry (like a primary peg).
@@ -2082,8 +2082,8 @@ public:
     struct AuctionResult {
         std::int32_t  clearing_price_ticks;
         std::int32_t  matched_qty;
-        std::int32_t  surplus_bid_qty;     // unmatched bid po cleared price
-        std::int32_t  surplus_ask_qty;     // unmatched ask po cleared price
+        std::int32_t  surplus_bid_qty;     // unmatched bid qty beyond the cleared price
+        std::int32_t  surplus_ask_qty;     // unmatched ask qty beyond the cleared price
         bool          executed;
     };
 
@@ -2298,7 +2298,7 @@ public:
         return auction_extensions_;
     }
 
-    // GTX (TimeInForce::GTX) — resztki skasowane po crossie aukcyjnym.
+    // GTX (TimeInForce::GTX) — remainder cancelled after the auction cross.
     // Use case: liquidity offered only for the opening/reopen cross.
     std::uint64_t gtx_cancelled_after_cross() const noexcept {
         return gtx_cancelled_after_cross_;
@@ -2554,9 +2554,9 @@ public:
     //
     // With SSR active, a short sale may be executed only ABOVE the current
     // best bid (a price ≤ bid would be an aggressive short hitting the bid —
-    // forbidden). Rule 201 activates after a 10% drop from the reference (close
-    // poprzedniego dnia) — arm_ssr_circuit_breaker armuje auto-trigger
-    // sprawdzany per trade w record_trade.
+    // forbidden). Rule 201 activates after a 10% drop from the reference (prior
+    // day's close) — arm_ssr_circuit_breaker arms the auto-trigger, which is
+    // checked per trade in record_trade.
     void set_ssr_active(bool on) noexcept { ssr_active_ = on; }
     bool ssr_active() const noexcept { return ssr_active_; }
     void arm_ssr_circuit_breaker(std::int32_t reference_price_ticks,
@@ -2725,7 +2725,7 @@ private:
     bool                      halt_reopen_pending_  = false;
     std::uint64_t             halt_auction_reopens_ = 0;
 
-    // Audit log — opt-in chronological record wszystkich book mutations.
+    // Audit log — opt-in chronological record of all book mutations.
     // Used for replay, forensics, compliance review (SEC 17a-4).
 public:
     struct AuditRecord {
@@ -3384,7 +3384,7 @@ private:
     // Session phase (lifecycle opt-in; default CONTINUOUS = backward compat)
     SessionPhase session_phase_ = SessionPhase::CONTINUOUS;
 
-    // GTX — resztki skasowane po crossie
+    // GTX — remainder cancelled after the cross
     std::uint64_t gtx_cancelled_after_cross_ = 0;
 
     // Wash-trade surveillance in the auction (the same client on both sides of the cross)
@@ -3403,7 +3403,7 @@ private:
     bool          in_internal_submit_    = false;   // bypass for the engine's resubmits
     std::uint64_t rate_limited_rejects_  = 0;
 
-    // Market Maker Protection — auto-mass-cancel quotes po N fillach makera
+    // Market Maker Protection — auto-mass-cancel quotes after N maker fills
     // within a window T (a classic of options markets: protection against a sweep of stale quotes)
     struct MmpConfig {
         std::uint64_t window_ns;
@@ -3968,7 +3968,7 @@ public:
     // Depth concentration index
     // ====================================================================
     //
-    // depth_concentration_bps(side, top_n): qty w top_n najlepszych levels
+    // depth_concentration_bps(side, top_n): qty in the top_n best levels
     // as a % of the total qty on that side (bps). High = liquidity close to
     // the best price (tight book); low = depth spread out (thicker tail).
     std::int32_t depth_concentration_bps(Side side, std::int32_t top_n) const noexcept {
@@ -4050,7 +4050,7 @@ public:
     // ====================================================================
     //
     // sample_mid_to_ring() — the strategy calls it periodically. Mid-momentum =
-    // (latest - oldest) per sample interval; signal trendu w short horizon.
+    // (latest - oldest) per sample interval; a trend signal over a short horizon.
     void sample_mid_to_ring() noexcept {
         if (!has_bid() || !has_ask()) return;
         const std::int32_t m = (best_bid_ticks_ + best_ask_ticks_) / 2;
@@ -4463,7 +4463,7 @@ public:
     // Cumulative resting volume per side
     // ====================================================================
     //
-    // Σ qty po wszystkich BUY / SELL levels. O(LEVELS) — okresowy odczyt.
+    // Σ qty over all BUY / SELL levels. O(LEVELS) — a periodic read.
     std::int64_t cumulative_resting_volume(Side side) const noexcept {
         std::int64_t total = 0;
         if (side == Side::BUY) {
@@ -4628,8 +4628,8 @@ public:
     // Maker survival ratio (across polls)
     // ====================================================================
     //
-    // sample_maker_survival(): snapshot wszystkich aktywnych order_id; w
-    // on the next poll counts how many from the previous snapshot are still alive.
+    // sample_maker_survival(): snapshot of all active order_ids; on
+    // the next poll counts how many from the previous snapshot are still alive.
     // mean_survival_ratio = total_survivors / total_orders_prev_sampled.
     void sample_maker_survival() {
         ++maker_survival_total_polls_;
@@ -4858,7 +4858,7 @@ public:
     }
 
     // ====================================================================
-    // Book integrity audit (struktura intrusive list + agregaty)
+    // Book integrity audit (intrusive-list structure + aggregates)
     // ====================================================================
     //
     // Defensive self-check of invariants:
@@ -5079,7 +5079,7 @@ private:
 public:
 
     // ====================================================================
-    // for_each_order — read-only iterator po wszystkich aktywnych orderach
+    // for_each_order — read-only iterator over all active orders
     // ====================================================================
     //
     // Calls Visitor(const Order&) for each active order (across all
@@ -5309,12 +5309,12 @@ public:
     }
 
     // ====================================================================
-    // Order age stats — kanibalizm flow / queue residency
+    // Order age stats — flow toxicity / queue residency
     // ====================================================================
     //
-    // Tracked w match_at_level po fill + w cancel_internal.
+    // Tracked in match_at_level on fill and in cancel_internal.
     // For each completed lifecycle (fill or cancel), record age_ns
-    // = now - submit_ts_ns_. Wykorzystywane do detection toxic queue
+    // = now - submit_ts_ns_. Used to detect toxic queue flow
     // (when orders are filled quickly = aggressive flow; long-waiting =
     // resting MM).
     std::uint64_t total_completed_lifecycles() const noexcept {
@@ -5333,9 +5333,9 @@ public:
     //
     // Quoted spread — sample periodically by calling sample_quoted_spread() from
     // the marketdata loop. Mean quoted spread = Σ obs / N.
-    // Effective spread — accumulowany per fill w match_against():
+    // Effective spread — accumulated per fill in match_against():
     //   eff_spread = 2 × |fill_px - mid_pre_match|
-    // Relacja eff/quoted < 1 → price improvement; > 1 → adverse selection.
+    // Ratio eff/quoted < 1 → price improvement; > 1 → adverse selection.
     void sample_quoted_spread() noexcept {
         if (!has_bid() || !has_ask()) return;
         stats_.total_quoted_spread_ticks_obs +=
@@ -5424,8 +5424,8 @@ public:
         return best_ask_ticks_ - best_bid_ticks_;
     }
 
-    // half_spread_bps — relative spread w bps (mid_price reference).
-    // Standardowa miara liquidity cost. < 5 bps = tight, > 50 bps = wide.
+    // half_spread_bps — relative spread in bps (mid_price reference).
+    // A standard liquidity-cost measure. < 5 bps = tight, > 50 bps = wide.
     std::int32_t half_spread_bps() const noexcept {
         if (!has_bid() || !has_ask()) return -1;
         const std::int64_t mid    = (best_bid_ticks_ + best_ask_ticks_) / 2;
