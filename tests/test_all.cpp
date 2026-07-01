@@ -58,6 +58,7 @@
 #include "../strategy/coppock.hpp"
 #include "../strategy/obv.hpp"
 #include "../strategy/volume_oscillator.hpp"
+#include "../strategy/pvt.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2979,6 +2980,48 @@ void test_volume_oscillator() {
     ASSERT(!dn.ready() && std::fabs(dn.value()) < 1e-9, "volosc_reset");
 }
 
+// PVT #357 — Price Volume Trend (volume weighted by % price-change magnitude).
+void test_pvt() {
+    SECTION("PVT (#357)");
+    PVT p;
+    ASSERT(!p.ready(), "pvt_not_ready_before_first_print");
+    ASSERT(std::fabs(p.value()) < 1e-9, "pvt_starts_zero");
+
+    // First print only seeds last_price_ -> no prior price, pvt_ stays 0.
+    p.on_trade(100.0, 1000);
+    ASSERT(p.ready(), "pvt_ready_after_first_print");
+    ASSERT(std::fabs(p.value()) < 1e-9, "pvt_first_print_no_move");
+
+    // +10% move on 1000 volume -> pvt += 1000 * 0.10 = 100.
+    p.on_trade(110.0, 1000);
+    ASSERT(std::fabs(p.value() - 100.0) < 1e-9, "pvt_up_move");
+    // -10% move (110 -> 99) on 500 volume -> pvt += 500 * (-0.1) = -50 -> 50.
+    p.on_trade(99.0, 500);
+    ASSERT(std::fabs(p.value() - 50.0) < 1e-9, "pvt_down_move");
+
+    // Flat print (0% change) leaves pvt_ unchanged.
+    p.on_trade(99.0, 2000);
+    ASSERT(std::fabs(p.value() - 50.0) < 1e-9, "pvt_flat_unchanged");
+
+    // Same direction, twice the volume moves pvt_ proportionally more.
+    PVT big, small;
+    big.on_trade(100.0, 1); big.on_trade(110.0, 2000);
+    small.on_trade(100.0, 1); small.on_trade(110.0, 1000);
+    ASSERT(std::fabs(big.value() - 2.0 * small.value()) < 1e-9, "pvt_scales_with_volume");
+
+    // Invalid prints (non-positive price / non-positive volume) are ignored.
+    PVT inv;
+    inv.on_trade(100.0, 100);
+    inv.on_trade(0.0, 100);
+    inv.on_trade(-5.0, 100);
+    inv.on_trade(105.0, 0);
+    inv.on_trade(105.0, -50);
+    ASSERT(std::fabs(inv.value()) < 1e-9, "pvt_ignores_invalid_prints");
+
+    p.reset();
+    ASSERT(!p.ready() && std::fabs(p.value()) < 1e-9, "pvt_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -5182,6 +5225,7 @@ int main() {
     test_coppock();
     test_obv();
     test_volume_oscillator();
+    test_pvt();
     test_cmo();
     test_zscore();
     test_tsi();
