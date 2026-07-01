@@ -698,6 +698,21 @@ public:
         if (gl > 0) return static_cast<double>(gp) / static_cast<double>(gl);
         return gp > 0 ? std::numeric_limits<double>::infinity() : 0.0;
     }
+    // avg_win_per_symbol / avg_loss_per_symbol: mean realized P&L magnitude
+    // across winning / losing symbols (#347) = gross_profit / winning_symbols
+    // and gross_loss / losing_symbols. Where gross_profit/gross_loss (#339)
+    // show the total dollars won/lost, these show the dollars won/lost PER
+    // NAME — e.g. a high win rate (#298) built on many small avg_win symbols
+    // next to one huge avg_loss can still net negative. 0 when there are no
+    // winning / losing symbols respectively.
+    double avg_win_per_symbol() const noexcept {
+        const size_t w = winning_symbols();
+        return w > 0 ? to_float(gross_profit()) / static_cast<double>(w) : 0.0;
+    }
+    double avg_loss_per_symbol() const noexcept {
+        const size_t l = losing_symbols();
+        return l > 0 ? to_float(gross_loss()) / static_cast<double>(l) : 0.0;
+    }
     // last_reject: reason for the last submit_order rejection (#88).
     OMSReject last_reject() const noexcept { return last_reject_; }
     // reject_count: how many orders were rejected for a given reason (#136, observability).

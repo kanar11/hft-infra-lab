@@ -452,6 +452,18 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(oms.gross_loss()),   100.0), "oms_gross_loss_100");    // BBB
         ASSERT(close(oms.profit_factor(), 2.0), "oms_profit_factor_2");              // 200/100
         ASSERT(empt.profit_factor() == 0.0, "oms_pf_empty_zero");
+        // #347 avg_win_per_symbol / avg_loss_per_symbol — dollars won/lost PER NAME.
+        ASSERT(close(oms.avg_win_per_symbol(), 200.0), "oms_avgwin_200");    // 200/1 winner (AAA)
+        ASSERT(close(oms.avg_loss_per_symbol(), 100.0), "oms_avgloss_100"); // 100/1 loser (BBB)
+        // D: long 100@10, closed @9.5 -> -50. Now 2 losers (BBB -100, DDD -50), gross_loss 150.
+        Order* d1 = oms.submit_order("DDD", Side::BUY, 10.0, 100); oms.fill_order(d1->order_id, 100, 10.0);
+        Order* d2 = oms.submit_order("DDD", Side::SELL, 9.5, 100); oms.fill_order(d2->order_id, 100, 9.5);
+        ASSERT(oms.losing_symbols() == 2 && close(to_float(oms.gross_loss()), 150.0),
+               "oms_avgloss_ddd_added");
+        ASSERT(close(oms.avg_loss_per_symbol(), 75.0), "oms_avgloss_75");   // 150/2
+        ASSERT(close(oms.avg_win_per_symbol(), 200.0), "oms_avgwin_unchanged"); // still 200/1
+        ASSERT(empt.avg_win_per_symbol() == 0.0 && empt.avg_loss_per_symbol() == 0.0,
+               "oms_avgwinloss_empty_zero");
         // no losing symbols + profit -> +inf (same convention as the Backtester)
         OMS pf_allwin(1000000, 1000000000.0);
         Order* pfw1 = pf_allwin.submit_order("WIN", Side::BUY, 10.0, 100);
