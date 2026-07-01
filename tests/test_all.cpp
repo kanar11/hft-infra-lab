@@ -56,6 +56,7 @@
 #include "../strategy/rolling_stddev.hpp"
 #include "../strategy/fisher.hpp"
 #include "../strategy/coppock.hpp"
+#include "../strategy/obv.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -2862,6 +2863,41 @@ void test_coppock() {
     ASSERT(!up.ready() && up.value() == 0.0, "coppock_reset");
 }
 
+// OBV #341 — On-Balance Volume (cumulative volume-flow indicator).
+void test_obv() {
+    SECTION("OBV (#341)");
+    OBV fresh;
+    ASSERT(!fresh.ready(), "obv_not_ready_before_first_print");
+    ASSERT(std::fabs(fresh.obv() - 0.0) < 1e-9, "obv_starts_zero");
+
+    // First print only seeds last_price_ — no prior price to compare, obv_ stays 0.
+    fresh.on_trade(100.0, 500);
+    ASSERT(fresh.ready(), "obv_ready_after_first_print");
+    ASSERT(std::fabs(fresh.obv() - 0.0) < 1e-9, "obv_first_print_no_move");
+
+    // Up-tick adds volume; down-tick subtracts; flat leaves it unchanged.
+    OBV o;
+    o.on_trade(100.0, 500);
+    o.on_trade(101.0, 300);   // up -> +300
+    ASSERT(std::fabs(o.obv() - 300.0) < 1e-9, "obv_uptick_adds");
+    o.on_trade(101.0, 200);   // flat -> unchanged
+    ASSERT(std::fabs(o.obv() - 300.0) < 1e-9, "obv_flat_unchanged");
+    o.on_trade(99.0, 400);    // down -> -400
+    ASSERT(std::fabs(o.obv() - (-100.0)) < 1e-9, "obv_downtick_subtracts");
+
+    // Invalid prints (non-positive price / non-positive volume) are ignored.
+    OBV inv;
+    inv.on_trade(100.0, 100);
+    inv.on_trade(0.0, 100);
+    inv.on_trade(-5.0, 100);
+    inv.on_trade(105.0, 0);
+    inv.on_trade(105.0, -50);
+    ASSERT(std::fabs(inv.obv() - 0.0) < 1e-9, "obv_ignores_invalid_prints");
+
+    o.reset();
+    ASSERT(!o.ready() && std::fabs(o.obv()) < 1e-9, "obv_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -4973,6 +5009,7 @@ int main() {
     test_roc();
     test_aroon();
     test_coppock();
+    test_obv();
     test_cmo();
     test_zscore();
     test_tsi();
