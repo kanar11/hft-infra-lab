@@ -658,11 +658,29 @@ public:
         return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
     }
 
+    // TradingSessionStatusRequest (35=g) (#352): a client asks the exchange for the
+    // current phase of a trading session — 335=TradSesReqID, 336=TradingSessionID,
+    // 263=SubscriptionRequestType (0=Snapshot, 1=Snapshot+Updates, 2=Unsubscribe).
+    // The request side of the flow completed by TradingSessionStatus (35=h, #303):
+    // g asks, h answers (and, with sub_type=1, keeps pushing updates on every
+    // phase change) — the session-status analog of QuoteRequest(R)->Quote(S).
+    int build_trading_session_status_request(char* out, int cap, const char* req_id,
+                                              const char* session_id, char sub_type,
+                                              char delim = FIXMessage::SOH) noexcept {
+        char body[200];
+        const int n = std::snprintf(body, sizeof(body),
+            "35=g%c49=%s%c56=%s%c34=%u%c335=%s%c336=%s%c263=%c%c",
+            delim, sender_comp_, delim, target_comp_, delim, next_outbound_seq(), delim,
+            req_id, delim, session_id, delim, sub_type, delim);
+        if (n < 0 || n >= (int)sizeof(body)) return 0;
+        return FIXMessage::build_message(out, cap, body, "FIX.4.2", delim);
+    }
+
     // TradingSessionStatus (35=h): the exchange broadcasts the trading session phase
     // (#303) — 336=TradingSessionID, 340=TradSesStatus (1=Halted, 2=Open, 3=Closed,
     // 4=PreOpen, 5=PreClose). Lets a trading app gate order flow on the venue's state
-    // (e.g. stop quoting during a halt). Counterpart to TradingSessionStatusRequest
-    // (35=g) the client would send to ask for it.
+    // (e.g. stop quoting during a halt). Answers TradingSessionStatusRequest (35=g,
+    // #352).
     int build_trading_session_status(char* out, int cap, const char* session_id,
                                      int status, char delim = FIXMessage::SOH) noexcept {
         char body[160];

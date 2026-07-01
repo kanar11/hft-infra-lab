@@ -4326,7 +4326,16 @@ void test_fix_session() {
                "fix_bizrej_reason_text");
         ASSERT(!bmr.is_admin(), "fix_bizrej_application");  // business reject is application
 
-        // #303 TradingSessionStatus (35=h) — venue session phase.
+        // #352 TradingSessionStatusRequest (35=g) — client asks for the session phase.
+        s.build_trading_session_status_request(buf, sizeof(buf), "TSR1", "REG", '1', '|');
+        FIXMessage tsr; tsr.parse(buf);
+        ASSERT(tsr.is_valid() && tsr.get_msg_type()[0] == 'g', "fix_tsr_g_valid");
+        ASSERT(std::strcmp(tsr.get_field(335), "TSR1") == 0
+               && std::strcmp(tsr.get_field(336), "REG") == 0, "fix_tsr_id_session");
+        ASSERT(std::strcmp(tsr.get_field(263), "1") == 0, "fix_tsr_subtype");
+        ASSERT(!tsr.is_admin(), "fix_tsr_application");
+
+        // #303 TradingSessionStatus (35=h) — venue session phase (answers 35=g above).
         s.build_trading_session_status(buf, sizeof(buf), "REG", 2, '|');  // 2 = Open
         FIXMessage tss; tss.parse(buf);
         ASSERT(tss.is_valid() && tss.get_msg_type()[0] == 'h', "fix_tss_h_valid");
