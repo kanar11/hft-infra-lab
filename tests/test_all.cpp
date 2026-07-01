@@ -1792,6 +1792,12 @@ void test_itch_book() {
     itch::ITCHOrderBook fresh_ctr;
     ASSERT(fresh_ctr.cancel_to_add_ratio() == 0.0, "itchbook_cancel_add_ratio_no_adds");
 
+    // #358 execute_to_add_ratio: 4 adds, 2 executes (on_execute(1,60) + orphan
+    // on_execute(999,10) above, which counts regardless) -> 0.5.
+    ASSERT(book.executes() == 2, "itchbook_executes_counted");
+    ASSERT(close(book.execute_to_add_ratio(), 0.5), "itchbook_execute_add_ratio");
+    ASSERT(fresh_ctr.execute_to_add_ratio() == 0.0, "itchbook_execute_add_ratio_no_adds");
+
     // #87 mikrostruktura: mid + top-of-book imbalance.
     itch::ITCHOrderBook mb;
     mb.on_add(10, 'B', 100.00, 300);              // best bid 300

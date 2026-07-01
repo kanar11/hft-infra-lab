@@ -664,6 +664,15 @@ public:
     double cancel_to_add_ratio() const noexcept {
         return adds_ > 0 ? static_cast<double>(cancels_) / static_cast<double>(adds_) : 0.0;
     }
+    // execute_to_add_ratio: executes / adds (#358) — the companion signal to
+    // cancel_to_add_ratio (#350). Where that shows how much added liquidity gets
+    // PULLED, this shows how much TRADES. Not literally "1 - cancel_to_add_ratio":
+    // adds/cancels/executes are independent event streams (one add can generate
+    // several partial-fill executes, or none if fully cancelled), so the two
+    // ratios can both be high or both be low. 0 when no adds have been seen yet.
+    double execute_to_add_ratio() const noexcept {
+        return adds_ > 0 ? static_cast<double>(executes_) / static_cast<double>(adds_) : 0.0;
+    }
 };
 
 }  // namespace itch
