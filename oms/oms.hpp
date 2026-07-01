@@ -779,6 +779,17 @@ public:
     uint64_t total_cancels()  const noexcept { return total_cancels_; }
     uint64_t total_replaces() const noexcept { return total_replaces_; }
     uint64_t total_ordered_shares() const noexcept { return total_ordered_shares_; }
+    // avg_submitted_size: mean order size in SHARES across all submits (#371) =
+    // total_ordered_shares / total_submitted. The entry-side companion to
+    // avg_fill_size (#274, shares per FILL): comparing them shows how the venue
+    // slices orders — avg_submitted_size >> avg_fill_size means each order is
+    // broken into many small fills. In shares (unlike avg_submitted_notional
+    // #322, which is $). 0 when nothing has been submitted.
+    double avg_submitted_size() const noexcept {
+        return total_submitted_ > 0
+            ? static_cast<double>(total_ordered_shares_) / static_cast<double>(total_submitted_)
+            : 0.0;
+    }
     // cancel_rate: fraction of submitted orders that were cancelled (#258) =
     // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high
     // ratio means most orders never rest long (exchange msg-rate fees, surveillance

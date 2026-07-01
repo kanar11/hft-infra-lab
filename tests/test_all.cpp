@@ -562,6 +562,15 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.avg_fill_size(), 50.0), "avgfill_50");     // 100 / 2
     }
 
+    {   // #371 avg_submitted_size (shares per submit) — entry-side vs avg_fill_size.
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.avg_submitted_size() == 0.0, "avgsub_empty_zero");
+        oms.submit_order("AAA", Side::BUY, 10.0, 300);
+        oms.submit_order("BBB", Side::BUY, 10.0, 100);             // 2 submits, 400 shares
+        ASSERT(oms.total_submitted() == 2 && oms.total_ordered_shares() == 400, "avgsub_accum");
+        ASSERT(close(oms.avg_submitted_size(), 200.0), "avgsub_200");   // 400 / 2
+    }
+
     {   // #166 runtime commission change.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
