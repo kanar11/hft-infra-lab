@@ -790,6 +790,38 @@ public:
             ? static_cast<double>(total_ordered_shares_) / static_cast<double>(total_submitted_)
             : 0.0;
     }
+    // avg_time_to_fill_ns: mean submit→completion latency over fully FILLED
+    // orders (#380) = mean(filled_ns - sent_ns). filled_ns records the LAST
+    // fill, so this measures time to COMPLETE an order, not to its first
+    // slice. The speed axis of execution TCA next to the size axis of
+    // avg_fill_size (#274): same sizes but growing time-to-fill points at
+    // passive pricing or thinning venues. Working/partial orders are skipped
+    // (no completion yet). 0 when nothing has completed.
+    int64_t avg_time_to_fill_ns() const noexcept {
+        int64_t sum = 0, n = 0;
+        for (const auto& kv : orders_) {
+            const Order& o = kv.second;
+            if (o.status == OrderStatus::FILLED && o.filled_ns > o.sent_ns) {
+                sum += o.filled_ns - o.sent_ns;
+                ++n;
+            }
+        }
+        return n > 0 ? sum / n : 0;
+    }
+    // max_time_to_fill_ns: the SLOWEST submit→completion latency (#380) — the
+    // tail companion to avg_time_to_fill_ns' mean (one stuck order hides in a
+    // healthy average). 0 when nothing has completed.
+    int64_t max_time_to_fill_ns() const noexcept {
+        int64_t mx = 0;
+        for (const auto& kv : orders_) {
+            const Order& o = kv.second;
+            if (o.status == OrderStatus::FILLED && o.filled_ns > o.sent_ns) {
+                const int64_t d = o.filled_ns - o.sent_ns;
+                if (d > mx) mx = d;
+            }
+        }
+        return mx;
+    }
     // cancel_rate: fraction of submitted orders that were cancelled (#258) =
     // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high
     // ratio means most orders never rest long (exchange msg-rate fees, surveillance

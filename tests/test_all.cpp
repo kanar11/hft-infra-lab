@@ -575,6 +575,29 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.avg_submitted_size(), 200.0), "avgsub_200");   // 400 / 2
     }
 
+    {   // #380 avg/max_time_to_fill_ns — submit→completion latency TCA.
+        // Timestamps come from a real monotonic clock, so assert invariants
+        // (zero/positive/ordering), never exact values.
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.avg_time_to_fill_ns() == 0 && oms.max_time_to_fill_ns() == 0,
+               "ttf_empty_zero");
+        Order* ta = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(ta->order_id, 60, 10.0);            // PARTIAL — not complete yet
+        ASSERT(oms.avg_time_to_fill_ns() == 0, "ttf_partial_not_counted");
+        oms.fill_order(ta->order_id, 40, 10.0);            // FILLED — now measured
+        ASSERT(oms.avg_time_to_fill_ns() > 0, "ttf_filled_positive");
+        ASSERT(oms.max_time_to_fill_ns() >= oms.avg_time_to_fill_ns(), "ttf_max_ge_avg");
+        Order* tb = oms.submit_order("BBB", Side::SELL, 20.0, 50);
+        oms.fill_order(tb->order_id, 50, 20.0);            // second completed order
+        ASSERT(oms.avg_time_to_fill_ns() > 0 && oms.max_time_to_fill_ns() >= oms.avg_time_to_fill_ns(),
+               "ttf_two_orders_invariant");
+        // Cancelled working orders never enter the fill-latency stats.
+        Order* tc = oms.submit_order("CCC", Side::BUY, 5.0, 10);
+        const int64_t ttf_before = oms.avg_time_to_fill_ns();
+        oms.cancel_order(tc->order_id);
+        ASSERT(oms.avg_time_to_fill_ns() == ttf_before, "ttf_cancel_not_counted");
+    }
+
     {   // #166 runtime commission change.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
