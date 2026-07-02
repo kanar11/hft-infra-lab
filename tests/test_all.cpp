@@ -5314,6 +5314,60 @@ void test_ouch_order_state() {
         ASSERT(clt.active_count() == 0, "ouch_clc_filled_not_active");
     }
 
+    // #386 non-reject report routing: REPLACED migrates the record to the new
+    // token, RESTATED adopts the exchange-stated quantity, AIQ_CXL decrements
+    // — none of them may fall into the REJECTED else branch.
+    {
+        ouch::OUCHOrderTracker rmt;
+        uint8_t rmb[64];
+        // REPLACED after a partial fill: fills stay with the chain,
+        // remaining becomes the replacement size, state lands PARTIAL.
+        rmt.on_new("OLD1", 100);
+        int rmn = OUCHMessage::encode_accepted(rmb, "OLD1", 'B', 100, "AAPL", 50.0, 111);
+        rmt.on_response(OUCHMessage::parse_response(rmb, rmn));
+        rmn = OUCHMessage::encode_executed(rmb, "OLD1", 30, 50.0, 8001);
+        rmt.on_response(OUCHMessage::parse_response(rmb, rmn));
+        rmn = OUCHMessage::encode_replaced(rmb, "NEW1", "OLD1", 120, 50.5, 222);
+        ASSERT(rmt.on_response(OUCHMessage::parse_response(rmb, rmn)) == ouch::OrderState::PARTIAL,
+               "ouch_rpl_partial_after_migration");
+        ASSERT(rmt.state("OLD1") == ouch::OrderState::REJECTED, "ouch_rpl_old_token_gone");
+        ASSERT(rmt.remaining("NEW1") == 120 && rmt.filled("NEW1") == 30, "ouch_rpl_chain_accounting");
+        ASSERT(rmt.replaces() == 1 && rmt.rejects() == 0, "ouch_rpl_own_counter");
+        // Replacing an unfilled order lands LIVE.
+        rmt.on_new("OLD2", 50);
+        rmn = OUCHMessage::encode_accepted(rmb, "OLD2", 'S', 50, "MSFT", 20.0, 333);
+        rmt.on_response(OUCHMessage::parse_response(rmb, rmn));
+        rmn = OUCHMessage::encode_replaced(rmb, "NEW2", "OLD2", 75, 21.0, 444);
+        ASSERT(rmt.on_response(OUCHMessage::parse_response(rmb, rmn)) == ouch::OrderState::LIVE,
+               "ouch_rpl_unfilled_live");
+        // Unknown PREVIOUS token stays the desync path (REJECTED + counter).
+        rmn = OUCHMessage::encode_replaced(rmb, "NEWX", "GHOST9", 10, 1.0, 555);
+        ASSERT(rmt.on_response(OUCHMessage::parse_response(rmb, rmn)) == ouch::OrderState::REJECTED,
+               "ouch_rpl_unknown_prev_rejected");
+        ASSERT(rmt.rejects() == 1, "ouch_rpl_desync_counted");
+
+        // RESTATED: adopt the new quantity, order keeps working.
+        ouch::OUCHOrderTracker rst;
+        uint8_t rsb[64];
+        rst.on_new("RS1", 200);
+        int rqn = OUCHMessage::encode_accepted(rsb, "RS1", 'B', 200, "AAPL", 10.0, 666);
+        rst.on_response(OUCHMessage::parse_response(rsb, rqn));
+        rqn = OUCHMessage::encode_restated(rsb, "RS1", 150, 10.05, 'P');
+        ASSERT(rst.on_response(OUCHMessage::parse_response(rsb, rqn)) == ouch::OrderState::LIVE,
+               "ouch_restated_keeps_live");
+        ASSERT(rst.remaining("RS1") == 150 && rst.rejects() == 0, "ouch_restated_new_qty");
+
+        // AIQ_CXL: a partial decrement lives on; a decrement to zero cancels.
+        rqn = OUCHMessage::encode_aiq_canceled(rsb, "RS1", 50, 'Q');
+        ASSERT(rst.on_response(OUCHMessage::parse_response(rsb, rqn)) == ouch::OrderState::LIVE,
+               "ouch_aiq_partial_keeps_live");
+        ASSERT(rst.remaining("RS1") == 100, "ouch_aiq_decrement_applied");
+        rqn = OUCHMessage::encode_aiq_canceled(rsb, "RS1", 100, 'Q');
+        ASSERT(rst.on_response(OUCHMessage::parse_response(rsb, rqn)) == ouch::OrderState::CANCELLED,
+               "ouch_aiq_to_zero_cancels");
+        ASSERT(rst.cancels() == 1 && rst.rejects() == 0, "ouch_aiq_zero_counts_cancel");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100

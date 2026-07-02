@@ -60,6 +60,7 @@ class OUCHOrderTracker {
     uint64_t exec_count_     = 0;   // number of Executed ('E') reports applied (#328)
     int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
     uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
+    uint64_t replaced_       = 0;   // Order Replaced ('U') migrations applied (#386)
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -88,6 +89,23 @@ public:
     // on_response: apply an exchange report. Returns the new state (or REJECTED when
     // the report concerns an unknown token — desync).
     OrderState on_response(const OUCHResponse& r) noexcept {
+        // Order Replaced ('U') is keyed by the PREVIOUS token, not r.token —
+        // the generic lookup below would treat the (still unknown) new token
+        // as a desync. Migrate the record to the replacement token (#386):
+        // fills stay with the chain, remaining becomes the replacement size,
+        // priority-sensitive flags reset (a replace re-queues the order).
+        if (std::strcmp(r.type, "REPLACED") == 0) {
+            auto pit = orders_.find(r.prev_token);
+            if (pit == orders_.end()) { ++rejected_; return OrderState::REJECTED; }
+            Record moved = pit->second;
+            orders_.erase(pit);
+            moved.remaining      = r.shares;
+            moved.order_ref      = r.order_ref;
+            moved.pending_cancel = false;
+            moved.state = (moved.filled > 0) ? OrderState::PARTIAL : OrderState::LIVE;
+            ++replaced_;
+            return (orders_[r.token] = moved).state;
+        }
         Record* rec = find(r.token);
         if (!rec) { ++rejected_; return OrderState::REJECTED; }
 
@@ -132,6 +150,22 @@ public:
             // order as REJECTED.
             rec->pending_cancel = false;
             ++cancel_rejects_;
+        } else if (std::strcmp(r.type, "RESTATED") == 0) {
+            // Restated (#386): the exchange changed the order WITHOUT a client
+            // request (compliance reprice, display reduction). r.shares IS the
+            // new open quantity — adopt it, the order keeps working.
+            rec->remaining = r.shares;
+        } else if (std::strcmp(r.type, "AIQ_CXL") == 0) {
+            // AIQ Canceled (#386): self-match prevention removed PART of the
+            // order (r.shares = the decrement). Not an error: reduce the open
+            // quantity; only a decrement to zero cancels the order.
+            const int32_t dec = (r.shares < rec->remaining) ? r.shares : rec->remaining;
+            rec->remaining -= dec;
+            if (rec->remaining == 0) {
+                rec->state          = OrderState::CANCELLED;
+                rec->pending_cancel = false;
+                ++cancelled_;
+            }
         } else {  // ERROR / UNKNOWN
             rec->state = OrderState::REJECTED;
             ++rejected_;
@@ -261,6 +295,8 @@ public:
     // cancel_rejects: how many Cancel Reject ('I') reports were applied (#378).
     // Distinct from rejects(): the ORDER survives a cancel reject.
     uint64_t cancel_rejects() const noexcept { return cancel_rejects_; }
+    // replaces: how many Order Replaced ('U') token migrations were applied (#386).
+    uint64_t replaces() const noexcept { return replaced_; }
     // total_broken_shares: cumulative shares returned to "open" by Broken Trade
     // messages (#320). The exchange rescinds a prior fill — shares move back from
     // filled to remaining. Watching this versus total_filled_shares reveals how much
