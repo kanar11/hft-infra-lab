@@ -599,6 +599,33 @@ void test_oms_short_and_replace() {
         ASSERT(oms.avg_time_to_fill_ns() == ttf_before, "ttf_cancel_not_counted");
     }
 
+    {   // #388 oldest_working_order_age_ns / oldest_working_order_id —
+        // stale-order detection. sent_ns is forced to synthetic values via
+        // the public Order fields so the assertions are exact.
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.oldest_working_order_age_ns(123456) == 0
+               && oms.oldest_working_order_id() == 0, "owo_empty_zero");
+        Order* owa = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        Order* owb = oms.submit_order("BBB", Side::SELL, 20.0, 50);
+        owa->sent_ns = 1000;
+        owb->sent_ns = 2000;
+        ASSERT(oms.oldest_working_order_id() == owa->order_id, "owo_oldest_is_a");
+        ASSERT(oms.oldest_working_order_age_ns(5000) == 4000, "owo_age_exact");
+        // A partial fill keeps the order WORKING — still the oldest.
+        oms.fill_order(owa->order_id, 40, 10.0);
+        ASSERT(oms.oldest_working_order_id() == owa->order_id, "owo_partial_still_working");
+        // Completing A moves the oldest to B.
+        oms.fill_order(owa->order_id, 60, 10.0);
+        ASSERT(oms.oldest_working_order_id() == owb->order_id, "owo_moves_to_b");
+        ASSERT(oms.oldest_working_order_age_ns(5000) == 3000, "owo_age_b");
+        // now at/before the sent timestamp -> clamped to 0.
+        ASSERT(oms.oldest_working_order_age_ns(2000) == 0, "owo_now_before_sent_zero");
+        // Cancelling the last working order empties the watch.
+        oms.cancel_order(owb->order_id);
+        ASSERT(oms.oldest_working_order_age_ns(9999999) == 0
+               && oms.oldest_working_order_id() == 0, "owo_cancel_empties");
+    }
+
     {   // #166 runtime commission change.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

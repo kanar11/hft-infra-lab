@@ -618,6 +618,35 @@ public:
                 || o.status == OrderStatus::REJECTED) ++n;
         return n;
     }
+    // oldest_working_order_age_ns: age of the LONGEST-RESTING working order
+    // (SENT/PARTIAL, #290's split) against a caller-supplied clock (#388) =
+    // now_ns - min(sent_ns). The stale-order detector: a resting order nobody
+    // remembers is unpriced risk — avg_time_to_fill_ns (#380) only sees
+    // orders AFTER completion, this watches them WHILE they rest. Pass
+    // mono_ns() in production; tests pass a synthetic now for determinism.
+    // 0 when nothing is working or now precedes the oldest sent timestamp.
+    int64_t oldest_working_order_age_ns(int64_t now_ns) const noexcept {
+        int64_t oldest_sent = 0;
+        bool    found = false;
+        for (const auto& [id, o] : orders_) {
+            if (o.status != OrderStatus::SENT && o.status != OrderStatus::PARTIAL) continue;
+            if (!found || o.sent_ns < oldest_sent) { oldest_sent = o.sent_ns; found = true; }
+        }
+        return (found && now_ns > oldest_sent) ? now_ns - oldest_sent : 0;
+    }
+    // oldest_working_order_id: the ID of that longest-resting working order
+    // (#388) — the actionable half: WHICH order to chase, reprice or pull.
+    // 0 when nothing is working.
+    uint64_t oldest_working_order_id() const noexcept {
+        int64_t  oldest_sent = 0;
+        uint64_t oid   = 0;
+        bool     found = false;
+        for (const auto& [id, o] : orders_) {
+            if (o.status != OrderStatus::SENT && o.status != OrderStatus::PARTIAL) continue;
+            if (!found || o.sent_ns < oldest_sent) { oldest_sent = o.sent_ns; oid = id; found = true; }
+        }
+        return oid;
+    }
     // total_fees: cumulative commissions for the whole OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
     // avg_commission_per_share: average commission ($) per EXECUTED share (#236) =
