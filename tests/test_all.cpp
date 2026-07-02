@@ -5253,6 +5253,41 @@ void test_fix_order_state() {
                         "AAPL", Side::BUY, 10, 1.0, 10, 0, '|');
     FIXMessage m3; m3.parse(buf);
     ASSERT(tr.on_exec_report(m3) == fix::OrdState::UNKNOWN, "fixstate_unknown_clordid");
+
+    // #393 cancel lifecycle: pending flag + OrderCancelReject application
+    // (the tracker half of parse_cancel_reject #385, mirroring OUCH #378).
+    tr.on_new("ORD5", 80);
+    tr.on_cancel_sent("ORD5");
+    ASSERT(tr.is_pending_cancel("ORD5"), "fixstate_pending_cancel_armed");
+    // The cancel is refused (too late): the 35=9 names the order via tag 41.
+    s.build_cancel_reject(buf, sizeof(buf), "CXL5", "ORD5", "EXG5", '0', '1', 0,
+                          "Too late to cancel", '|');
+    FIXMessage m9; m9.parse(buf);
+    ASSERT(tr.on_cancel_reject(m9) == fix::OrdState::NEW, "fixstate_cxlrej_keeps_state");
+    ASSERT(!tr.is_pending_cancel("ORD5"), "fixstate_cxlrej_disarms");
+    ASSERT(tr.cancel_rejects() == 1 && tr.rejects() == 0, "fixstate_cxlrej_own_counter");
+    // The order still works: it fills after the failed cancel.
+    s.build_exec_report(buf, sizeof(buf), "ORD5", "EXG", "E5", '2', '2',
+                        "AAPL", Side::BUY, 80, 150.0, 80, 0, '|');
+    FIXMessage m5f; m5f.parse(buf);
+    ASSERT(tr.on_exec_report(m5f) == fix::OrdState::FILLED, "fixstate_fill_after_cxlrej");
+    // A confirmed cancel (35=8 with OrdStatus=4) clears the pending flag.
+    tr.on_new("ORD6", 50);
+    tr.on_cancel_sent("ORD6");
+    ASSERT(tr.is_pending_cancel("ORD6"), "fixstate_ord6_armed");
+    s.build_exec_report(buf, sizeof(buf), "ORD6", "EXG", "E6", '4', '4',
+                        "AAPL", Side::SELL, 0, 150.0, 0, 0, '|');
+    FIXMessage m6; m6.parse(buf);
+    ASSERT(tr.on_exec_report(m6) == fix::OrdState::CANCELED, "fixstate_cancel_confirmed");
+    ASSERT(!tr.is_pending_cancel("ORD6"), "fixstate_confirm_clears_flag");
+    // Desync: a 35=9 whose tag 41 names an unregistered order.
+    s.build_cancel_reject(buf, sizeof(buf), "CXLX", "GHOST7", "EXGX", '0', '1', 1,
+                          "Unknown order", '|');
+    FIXMessage m9x; m9x.parse(buf);
+    ASSERT(tr.on_cancel_reject(m9x) == fix::OrdState::UNKNOWN, "fixstate_cxlrej_unknown_desync");
+    // on_cancel_sent on a terminal order does not arm the flag.
+    tr.on_cancel_sent("ORD6");   // already CANCELED
+    ASSERT(!tr.is_pending_cancel("ORD6"), "fixstate_terminal_not_armed");
 }
 
 // OUCH order state #89 — a client-side state machine (token → live/partial/filled).
