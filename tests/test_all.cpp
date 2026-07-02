@@ -3664,8 +3664,32 @@ void test_router_ewma_partial() {
         ASSERT(rs.venue_routed_shares("Y") == 60, "tca_split_Y_60");
         // #130 agregat + reset
         ASSERT(rs.total_routed_shares() == 120, "tca_total_120");
+
+        // #384 routing_concentration — HHI over routed volume.
+        // r sent all 150 shares to A -> fully concentrated, HHI 1.0.
+        ASSERT(std::fabs(r.routing_concentration() - 1.0) < 1e-9, "rhhi_single_venue_one");
+        // rs split 60/60 across X and Y -> even two-venue flow, HHI 0.5.
+        ASSERT(std::fabs(rs.routing_concentration() - 0.5) < 1e-9, "rhhi_even_split_half");
+        // Uneven flow: 90/120 and 30/120 -> 0.75^2 + 0.25^2 = 0.625.
+        SmartOrderRouter rhu(RoutingStrategy::BEST_PRICE);
+        rhu.add_venue(Venue("P", 100, 0.0));
+        rhu.add_venue(Venue("Q", 100, 0.001));         // worse fee -> loses ties
+        rhu.update_quote("P", 10.0, 11.0, 1000, 90);   // only 90 displayed
+        rhu.update_quote("Q", 10.0, 11.0, 1000, 1000);
+        rhu.route_order("BUY", 90);                    // all to P (better all-in)
+        rhu.update_quote("P", 10.0, 12.0, 1000, 1000); // P now worse-priced
+        rhu.route_order("BUY", 30);                    // all to Q
+        ASSERT(rhu.venue_routed_shares("P") == 90 && rhu.venue_routed_shares("Q") == 30,
+               "rhhi_uneven_setup");
+        ASSERT(std::fabs(rhu.routing_concentration() - 0.625) < 1e-9, "rhhi_uneven_0625");
+        // Nothing routed yet -> 0.
+        SmartOrderRouter rhe(RoutingStrategy::BEST_PRICE);
+        rhe.add_venue(Venue("Z", 100, 0.0));
+        ASSERT(rhe.routing_concentration() == 0.0, "rhhi_nothing_routed_zero");
+
         rs.reset_routing_stats();
         ASSERT(rs.total_routed_shares() == 0, "tca_reset_zero");
+        ASSERT(rs.routing_concentration() == 0.0, "rhhi_reset_zero");
     }
 
     // --- #138 cumulative fee cost ---

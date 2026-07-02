@@ -883,6 +883,24 @@ public:
         return static_cast<double>(venue_routed_shares(venue_name))
              / static_cast<double>(total) * 100.0;
     }
+    // routing_concentration: Herfindahl index of routed volume across venues
+    // (#384) = Σ (venue_routed_shares / total)², in (0, 1]. 1.0 = every share
+    // went to ONE venue (single point of failure, weak best-ex evidence);
+    // 1/N = perfectly even across N venues. The single-number concentration
+    // summary that venue_share_pct (#216) only gives one venue at a time —
+    // same HHI construction as risk's exposure_concentration (#331), applied
+    // to order flow instead of positions. 0.0 before anything is routed.
+    double routing_concentration() const noexcept {
+        const int64_t total = total_routed_shares();
+        if (total <= 0) return 0.0;
+        double hhi = 0.0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const double share = static_cast<double>(venues_[i].routed_shares)
+                               / static_cast<double>(total);
+            hhi += share * share;
+        }
+        return hhi;
+    }
     // reset_routing_stats: zero the per-venue TCA counters (new session/window).
     void reset_routing_stats() noexcept {
         for (int i = 0; i < venue_count_; ++i) {
