@@ -4337,6 +4337,31 @@ void test_risk_price_band() {
     rconc.on_order_sent("AAPL", Side::BUY, 300);
     ASSERT(std::fabs(rconc.exposure_concentration() - 1.0) < 1e-9, "exp_concentration_single_name");
 
+    // #389 key_to_sym + largest_exposure_symbol — the actionable WHICH.
+    {
+        char les[9];
+        // key_to_sym is the exact inverse of sym_to_key (lossless packing).
+        key_to_sym(sym_to_key("AAPL"), les);
+        ASSERT(std::strcmp(les, "AAPL") == 0, "k2s_roundtrip_short");
+        key_to_sym(sym_to_key("ABCDEFGH"), les);         // full 8 chars
+        ASSERT(std::strcmp(les, "ABCDEFGH") == 0, "k2s_roundtrip_full8");
+        key_to_sym(0, les);
+        ASSERT(les[0] == '\0', "k2s_zero_key_empty");
+        // re: AAPL |pos+pend| 100 vs MSFT 50 -> AAPL, value equals #331.
+        ASSERT(re.largest_exposure_symbol(les) == re.largest_symbol_exposure()
+               && std::strcmp(les, "AAPL") == 0, "les_names_aapl");
+        // Flat book: 0 and an empty name.
+        RiskManager rlesf(lim);
+        les[0] = 'X';
+        ASSERT(rlesf.largest_exposure_symbol(les) == 0 && les[0] == '\0', "les_flat_empty");
+        // A pending-only symbol (no position entry) can win the walk.
+        RiskManager rlesp(lim);
+        rlesp.update_position("MSFT", Side::BUY, 40);    // position-backed 40
+        rlesp.on_order_sent("TSLA", Side::SELL, 90);     // pending-only 90
+        ASSERT(rlesp.largest_exposure_symbol(les) == 90 && std::strcmp(les, "TSLA") == 0,
+               "les_pending_only_wins");
+    }
+
     // #144 daily turnover limit.
     RiskLimits tl;
     tl.max_daily_traded_notional = 1000.0;

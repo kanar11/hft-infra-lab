@@ -816,6 +816,28 @@ public:
         }
         return m;
     }
+    // largest_exposure_symbol: the TICKER carrying that biggest |position +
+    // pending| (#389) — the actionable WHICH to largest_symbol_exposure's
+    // (#331) how-much, unpacked from the uint64_t key via key_to_sym (the
+    // packing is lossless, so the name comes back exactly). Writes the
+    // symbol into out (>= 9 bytes, always nul-terminated) and returns its
+    // exposure in shares. Flat book: returns 0 and out[0] == '\0'. Same
+    // two-pass walk as #331, so the returned value always equals it.
+    int64_t largest_exposure_symbol(char* out) const noexcept {
+        int64_t  m = 0;
+        uint64_t mkey = 0;
+        for (const auto& [key, v] : positions_) {
+            const int64_t e = std::abs(static_cast<int64_t>(v) + lookup(pending_, key));
+            if (e > m) { m = e; mkey = key; }
+        }
+        for (const auto& [key, v] : pending_) {
+            if (positions_.find(key) != positions_.end()) continue;   // already counted above
+            const int64_t e = std::abs(static_cast<int64_t>(v));
+            if (e > m) { m = e; mkey = key; }
+        }
+        if (m > 0) key_to_sym(mkey, out); else out[0] = '\0';
+        return m;
+    }
     // exposure_concentration: largest_symbol_exposure / get_total_exposure (#331), in
     // [0, 1]. 1.0 = the whole book is one instrument (max concentration risk), near 0 =
     // exposure spread across many names (diversified). The answer to "how many eggs in

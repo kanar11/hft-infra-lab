@@ -21,3 +21,17 @@ inline uint64_t sym_to_key(const char* sym) noexcept {
         key |= (static_cast<uint64_t>(static_cast<unsigned char>(sym[i])) << (i * 8));
     return key;
 }
+
+// key_to_sym: the exact inverse of sym_to_key (#389) — unpack the uint64_t
+// key back into the ticker. The packing is lossless (one byte per char,
+// little-endian, no hashing), so diagnostics keyed by uint64_t can report
+// the human-readable symbol. out must hold >= 9 bytes; always nul-terminated.
+inline void key_to_sym(uint64_t key, char* out) noexcept {
+    std::size_t n = 0;
+    for (; n < 8; ++n) {
+        const char c = static_cast<char>((key >> (n * 8)) & 0xFFu);
+        if (c == '\0') break;
+        out[n] = c;
+    }
+    out[n] = '\0';
+}
