@@ -575,6 +575,31 @@ public:
         return is_buy ? (best <= limit_price) : (best >= limit_price);
     }
 
+    // liquidity_at_limit: how many shares a limit order could take RIGHT NOW
+    // (#376) — the sum of top-of-book size over active venues whose all-in
+    // price (quote ± fee, the same convention as is_marketable #184)
+    // satisfies the limit. BUY: all-in ask <= limit; SELL: all-in bid >=
+    // limit. Quantifies is_marketable's yes/no into an immediate-fill cap:
+    // marketable ⇔ liquidity_at_limit > 0, and anything beyond the returned
+    // size must rest or walk to prices worse than the limit. Distinct from
+    // available_liquidity (#109), which sums the same sizes but ignores
+    // price entirely.
+    int32_t liquidity_at_limit(bool is_buy, double limit_price) const noexcept {
+        int32_t total = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            if (!has_liq) continue;
+            const double eff = effective_price(v, is_buy);
+            if (is_buy ? (eff <= limit_price) : (eff >= limit_price)) {
+                total += is_buy ? v.ask_size : v.bid_size;
+            }
+        }
+        return total;
+    }
+
     // venue_effective_price: the all-in price (quote +/- fee) for a SPECIFIC venue by
     // name (#248). Inspection / pricing of a directed order to a
     // specified exchange, independent of best-price. 0 when unknown, inactive or

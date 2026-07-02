@@ -3426,6 +3426,48 @@ void test_router_ewma_partial() {
                "router_vatn_empty_zero");
     }
 
+    // --- #376 liquidity_at_limit: marketable size at a limit price ---
+    {
+        SmartOrderRouter rlal(RoutingStrategy::BEST_PRICE);
+        rlal.add_venue(Venue("A", 100, 0.0));
+        rlal.add_venue(Venue("B", 100, 0.0));
+        rlal.add_venue(Venue("C", 100, 0.0));
+        rlal.update_quote("A", 99.98, 100.02, 200, 150);
+        rlal.update_quote("B", 99.99, 100.04, 300, 250);
+        rlal.update_quote("C", 100.00, 100.06, 100, 120);
+        // BUY limit 100.04: asks 100.02 (150) + 100.04 (250) qualify, 100.06 out.
+        ASSERT(rlal.liquidity_at_limit(true, 100.04) == 400, "router_lal_buy_two_venues");
+        // BUY limit exactly at the best ask (zero fee -> all-in == quote): only A.
+        ASSERT(rlal.liquidity_at_limit(true, 100.02) == 150, "router_lal_buy_exact_touch");
+        // Non-marketable limit -> 0 shares; agrees with is_marketable (#184).
+        ASSERT(rlal.liquidity_at_limit(true, 100.01) == 0, "router_lal_buy_none");
+        ASSERT(!rlal.is_marketable(true, 100.01), "router_lal_agrees_marketable_no");
+        ASSERT(rlal.is_marketable(true, 100.02), "router_lal_agrees_marketable_yes");
+        // SELL limit 99.99: bids 100.00 (100) + 99.99 (300) qualify, 99.98 out.
+        ASSERT(rlal.liquidity_at_limit(false, 99.99) == 400, "router_lal_sell_two_venues");
+        // Limit crossing the whole book -> equals available_liquidity (#109).
+        ASSERT(rlal.liquidity_at_limit(true, 101.00) == rlal.available_liquidity(true),
+               "router_lal_cross_equals_available");
+        // Inactive venue excluded from the sum.
+        rlal.set_venue_active("B", false);
+        ASSERT(rlal.liquidity_at_limit(true, 100.04) == 150, "router_lal_excludes_inactive");
+
+        // Taker fee shifts the all-in price: ask 100.00 + 0.03/share fee is
+        // 100.03 all-in -> out at a 100.02 limit, in at a 100.10 limit.
+        SmartOrderRouter rlf(RoutingStrategy::BEST_PRICE);
+        rlf.add_venue(Venue("F", 100, 0.03));
+        rlf.update_quote("F", 99.90, 100.00, 200, 150);
+        ASSERT(rlf.liquidity_at_limit(true, 100.02) == 0, "router_lal_fee_pushes_out");
+        ASSERT(rlf.liquidity_at_limit(true, 100.10) == 150, "router_lal_fee_still_in");
+        // SELL side: bid 99.90 - 0.03 = 99.87 all-in -> out at 99.89, in at 99.80.
+        ASSERT(rlf.liquidity_at_limit(false, 99.89) == 0, "router_lal_fee_sell_out");
+        ASSERT(rlf.liquidity_at_limit(false, 99.80) == 200, "router_lal_fee_sell_in");
+
+        // Empty router -> 0.
+        SmartOrderRouter remlal(RoutingStrategy::BEST_PRICE);
+        ASSERT(remlal.liquidity_at_limit(true, 100.0) == 0, "router_lal_empty_zero");
+    }
+
     // --- #109 available_liquidity: sum of top-of-book across active venues ---
     {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
