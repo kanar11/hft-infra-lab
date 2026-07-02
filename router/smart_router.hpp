@@ -88,6 +88,7 @@ struct Venue {
     uint32_t consecutive_failures;  // health (#86): streak of rejects/timeouts
     int64_t  routed_shares;         // TCA (#117): total routed volume
     uint64_t routes_count;          // how many times an order landed on this venue
+    int64_t  last_quote_ns = 0;     // when the quote was last refreshed (#392; 0 = never)
 
     Venue() noexcept
         : latency_ns(0), latency_p99_ns(0), fee_per_share(0),
@@ -263,17 +264,55 @@ public:
     }
 
     // update_quote: update a venue's top-of-book (on every market data tick).
+    // quote_ts_ns (#392): when this refresh happened — 0 (the default, and
+    // all pre-#392 call sites) stamps the real clock; tests pass synthetic
+    // times so the staleness reads below stay deterministic.
     void update_quote(const char* venue_name, double bid, double ask,
-                      int32_t bid_size, int32_t ask_size) noexcept {
+                      int32_t bid_size, int32_t ask_size,
+                      int64_t quote_ts_ns = 0) noexcept {
         for (int i = 0; i < venue_count_; ++i) {
             if (std::strcmp(venues_[i].name, venue_name) == 0) {
                 venues_[i].best_bid = bid;
                 venues_[i].best_ask = ask;
                 venues_[i].bid_size = bid_size;
                 venues_[i].ask_size = ask_size;
+                venues_[i].last_quote_ns = (quote_ts_ns != 0) ? quote_ts_ns : now_ns();
                 return;
             }
         }
+    }
+
+    // venue_quote_age_ns: ns since the venue's quote was refreshed, against
+    // a caller-supplied clock (#392; same injection pattern as OMS #388).
+    // -1 when the venue is unknown or has NEVER quoted — 0 would look
+    // freshly quoted. Clamped at 0 when now precedes the stamp.
+    int64_t venue_quote_age_ns(const char* venue_name, int64_t at_ns) const noexcept {
+        for (int i = 0; i < venue_count_; ++i) {
+            if (std::strcmp(venues_[i].name, venue_name) != 0) continue;
+            if (venues_[i].last_quote_ns == 0) return -1;
+            const int64_t age = at_ns - venues_[i].last_quote_ns;
+            return age > 0 ? age : 0;
+        }
+        return -1;
+    }
+
+    // stalest_quote_age_ns: the WORST quote age among ACTIVE venues that
+    // have quoted at least once (#392) — the freshness of the weakest input
+    // feeding every NBBO view (nbbo_mid/microprice/imbalance/...). An NBBO
+    // leg resting on a quote nobody refreshed is toxic: it looks like
+    // liquidity but the market has moved on. Venues that never quoted are
+    // excluded (they feed the NBBO nothing). -1 when no active venue has
+    // quoted yet.
+    int64_t stalest_quote_age_ns(int64_t at_ns) const noexcept {
+        int64_t worst = -1;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active || v.last_quote_ns == 0) continue;
+            const int64_t age = at_ns - v.last_quote_ns;
+            const int64_t clamped = age > 0 ? age : 0;
+            if (clamped > worst) worst = clamped;
+        }
+        return worst;
     }
 
     // route_order: choose a venue for the order. side[0]=='B' → buy.

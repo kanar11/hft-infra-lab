@@ -3821,6 +3821,32 @@ void test_router_ewma_partial() {
         ASSERT(rs.routing_concentration() == 0.0, "rhhi_reset_zero");
     }
 
+    // --- #392 quote staleness: clock-injected freshness of the NBBO inputs ---
+    {
+        SmartOrderRouter rqs(RoutingStrategy::BEST_PRICE);
+        rqs.add_venue(Venue("A", 100, 0.0));
+        rqs.add_venue(Venue("B", 100, 0.0));
+        rqs.add_venue(Venue("C", 100, 0.0));                  // never quotes
+        ASSERT(rqs.venue_quote_age_ns("A", 999) == -1, "rqs_never_quoted_minus1");
+        ASSERT(rqs.stalest_quote_age_ns(999) == -1, "rqs_no_quotes_minus1");
+        rqs.update_quote("A", 10.0, 10.02, 100, 100, 1000);   // synthetic stamps
+        rqs.update_quote("B", 10.0, 10.02, 100, 100, 5000);
+        ASSERT(rqs.venue_quote_age_ns("A", 6000) == 5000, "rqs_age_a_exact");
+        ASSERT(rqs.venue_quote_age_ns("B", 6000) == 1000, "rqs_age_b_exact");
+        ASSERT(rqs.venue_quote_age_ns("GHOST", 6000) == -1, "rqs_unknown_minus1");
+        ASSERT(rqs.venue_quote_age_ns("C", 6000) == -1, "rqs_c_never_minus1");
+        // Stalest = A's 5000; the never-quoted C is excluded, not infinite.
+        ASSERT(rqs.stalest_quote_age_ns(6000) == 5000, "rqs_stalest_is_a");
+        // Refreshing A hands the worst age to B.
+        rqs.update_quote("A", 10.0, 10.02, 100, 100, 5500);
+        ASSERT(rqs.stalest_quote_age_ns(6000) == 1000, "rqs_refresh_moves_worst");
+        // Disabling B removes it from the watch (A's 500 remains).
+        rqs.set_venue_active("B", false);
+        ASSERT(rqs.stalest_quote_age_ns(6000) == 500, "rqs_inactive_excluded");
+        // A read clocked before the stamp clamps to 0.
+        ASSERT(rqs.venue_quote_age_ns("A", 5000) == 0, "rqs_clamp_zero");
+    }
+
     // --- #138 cumulative fee cost ---
     {
         auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };
