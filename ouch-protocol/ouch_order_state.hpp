@@ -234,6 +234,29 @@ public:
                 mx = rec.remaining;
         return mx;
     }
+    // largest_remaining_token: the TOKEN carrying largest_remaining's biggest
+    // working exposure (#394) — the actionable WHICH: that is the order to
+    // chase, reprice or pull first. Same LIVE/PARTIAL walk as #312, so the
+    // returned value always equals it. Writes the token into out (>= 15
+    // bytes, always nul-terminated) and returns the remaining shares;
+    // 0 and out[0] == '\0' when nothing is working.
+    int32_t largest_remaining_token(char* out) const noexcept {
+        int32_t mx = 0;
+        const std::string* who = nullptr;
+        for (const auto& [tok, rec] : orders_)
+            if ((rec.state == OrderState::LIVE || rec.state == OrderState::PARTIAL)
+                && rec.remaining > mx) {
+                mx  = rec.remaining;
+                who = &tok;
+            }
+        if (who != nullptr) {
+            std::strncpy(out, who->c_str(), 14);
+            out[14] = '\0';
+        } else {
+            out[0] = '\0';
+        }
+        return mx;
+    }
     // avg_working_shares: the MEAN remaining size of a working (LIVE/PARTIAL)
     // order (#369) = working_shares / (# working orders). Completes the working-
     // exposure trio with working_shares (#304, total) and largest_remaining

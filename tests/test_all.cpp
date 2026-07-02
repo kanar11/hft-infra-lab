@@ -5583,6 +5583,37 @@ void test_ouch_order_state() {
         ASSERT(rst.cancels() == 1 && rst.rejects() == 0, "ouch_aiq_zero_counts_cancel");
     }
 
+    // #394 largest_remaining_token — the actionable WHICH for largest_remaining (#312).
+    {
+        ouch::OUCHOrderTracker lrt;
+        uint8_t lrb[64];
+        char lrtok[15];
+        lrtok[0] = 'X';
+        ASSERT(lrt.largest_remaining_token(lrtok) == 0 && lrtok[0] == '\0', "ouch_lrt_empty");
+        lrt.on_new("AAA", 100);
+        // NEW (sent, not yet acked) is not working -> still nothing to name.
+        ASSERT(lrt.largest_remaining_token(lrtok) == 0, "ouch_lrt_new_not_working");
+        int lrn = OUCHMessage::encode_accepted(lrb, "AAA", 'B', 100, "AAPL", 10.0, 1);
+        lrt.on_response(OUCHMessage::parse_response(lrb, lrn));
+        lrt.on_new("BBB", 400);
+        lrn = OUCHMessage::encode_accepted(lrb, "BBB", 'B', 400, "AAPL", 10.0, 2);
+        lrt.on_response(OUCHMessage::parse_response(lrb, lrn));
+        ASSERT(lrt.largest_remaining_token(lrtok) == 400
+               && std::strcmp(lrtok, "BBB") == 0, "ouch_lrt_names_largest");
+        ASSERT(lrt.largest_remaining_token(lrtok) == lrt.largest_remaining(),
+               "ouch_lrt_value_matches_312");
+        // A partial fill shrinks BBB (400 -> 50) below AAA -> the crown moves.
+        lrn = OUCHMessage::encode_executed(lrb, "BBB", 350, 10.0, 900);
+        lrt.on_response(OUCHMessage::parse_response(lrb, lrn));
+        ASSERT(lrt.largest_remaining_token(lrtok) == 100
+               && std::strcmp(lrtok, "AAA") == 0, "ouch_lrt_crown_moves");
+        // Cancelling the winner hands it to the runner-up.
+        lrn = OUCHMessage::encode_cancelled(lrb, "AAA", 100, 'U');
+        lrt.on_response(OUCHMessage::parse_response(lrb, lrn));
+        ASSERT(lrt.largest_remaining_token(lrtok) == 50
+               && std::strcmp(lrtok, "BBB") == 0, "ouch_lrt_after_cancel");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100
