@@ -86,7 +86,9 @@ static std::vector<Op> make_ops_uniform(int n) {
     for (int i = 0; i < n; ++i) {
         const std::int32_t price = 10000 + static_cast<std::int32_t>(rng.next() % 200);
         const std::int32_t qty   = 1 + static_cast<std::int32_t>(rng.next() % 100);
-        const bool is_buy        = (rng.next() & 1u) != 0;
+        // Take the side from a high bit: the LCG's bit 0 has period 2, so a
+        // fixed number of draws per iteration makes (rng.next() & 1u) constant.
+        const bool is_buy        = ((rng.next() >> 16) & 1u) != 0;
         ops.push_back({price, qty, is_buy});
     }
     return ops;
@@ -115,7 +117,9 @@ static std::vector<Op> make_ops_realistic(int n) {
         if (price < 10000) price = 10000;
         if (price > 10199) price = 10199;
         const std::int32_t qty   = 1 + static_cast<std::int32_t>(rng.next() % 100);
-        const bool is_buy        = (rng.next() & 1u) != 0;
+        // High-bit side draw — see make_ops_uniform. With 4 draws per iteration
+        // bit 0's parity never changes, so every order landed on one side.
+        const bool is_buy        = ((rng.next() >> 16) & 1u) != 0;
         ops.push_back({price, qty, is_buy});
     }
     return ops;
