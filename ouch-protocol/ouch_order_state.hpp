@@ -59,6 +59,7 @@ class OUCHOrderTracker {
     int64_t  broken_shares_  = 0;   // total shares unwound by Broken Trade messages (#320)
     uint64_t exec_count_     = 0;   // number of Executed ('E') reports applied (#328)
     int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
+    uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -115,6 +116,22 @@ public:
             rec->state = (rec->filled > 0) ? OrderState::PARTIAL : OrderState::LIVE;
             ++broken_;
             broken_shares_ += back;   // #320: accumulate unwound volume
+        } else if (std::strcmp(r.type, "CXL_PEND") == 0) {
+            // Cancel Pending (#378): the exchange ACKNOWLEDGED the cancel and
+            // queued it (e.g. a cross is in progress) — the order is still
+            // working, so only (re)arm the pending flag; nothing is cancelled
+            // yet. Also covers the case where the ack arrives without a local
+            // on_cancel_sent (e.g. a cancel issued from another session).
+            rec->pending_cancel = true;
+        } else if (std::strcmp(r.type, "CXL_REJECT") == 0) {
+            // Cancel Reject (#378): the cancel ATTEMPT failed (too late /
+            // already executing) — the ORDER itself is untouched and keeps
+            // working, so disarm the pending flag and leave the state and the
+            // rejected counter alone. Before #378 both cancel-lifecycle
+            // reports fell into the final else and wrongly killed a live
+            // order as REJECTED.
+            rec->pending_cancel = false;
+            ++cancel_rejects_;
         } else {  // ERROR / UNKNOWN
             rec->state = OrderState::REJECTED;
             ++rejected_;
@@ -241,6 +258,9 @@ public:
     uint64_t cancels()     const noexcept { return cancelled_; }
     uint64_t rejects()     const noexcept { return rejected_; }
     uint64_t brokens()     const noexcept { return broken_; }
+    // cancel_rejects: how many Cancel Reject ('I') reports were applied (#378).
+    // Distinct from rejects(): the ORDER survives a cancel reject.
+    uint64_t cancel_rejects() const noexcept { return cancel_rejects_; }
     // total_broken_shares: cumulative shares returned to "open" by Broken Trade
     // messages (#320). The exchange rescinds a prior fill — shares move back from
     // filled to remaining. Watching this versus total_filled_shares reveals how much

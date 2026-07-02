@@ -5093,6 +5093,34 @@ void test_ouch_order_state() {
     cpt.on_response(OUCHMessage::parse_response(buf, n));      // C confirms -> flag cleared
     ASSERT(cpt.cancel_pending_count() == 0, "ouch_cxlpend_cleared");
 
+    // #378 cancel-lifecycle responses: CXL_PEND ('P') arms the pending flag,
+    // CXL_REJECT ('I') disarms it — neither may kill the live order as
+    // REJECTED (the pre-#378 else-branch behaviour).
+    {
+        ouch::OUCHOrderTracker clt;
+        uint8_t clbuf[64];
+        clt.on_new("CL1", 100);
+        int cln = OUCHMessage::encode_accepted(clbuf, "CL1", 'B', 100, "AAPL", 100.0, 555);
+        clt.on_response(OUCHMessage::parse_response(clbuf, cln));
+        // Exchange-acked pending cancel arms the flag even without on_cancel_sent.
+        cln = OUCHMessage::encode_cancel_pending(clbuf, "CL1");
+        ASSERT(clt.on_response(OUCHMessage::parse_response(clbuf, cln)) == ouch::OrderState::LIVE,
+               "ouch_clc_pend_keeps_live");
+        ASSERT(clt.is_pending_cancel("CL1"), "ouch_clc_pend_arms_flag");
+        ASSERT(clt.rejects() == 0, "ouch_clc_pend_not_counted_rejected");
+        // Cancel Reject: the CANCEL died, the ORDER did not.
+        cln = OUCHMessage::encode_cancel_reject(clbuf, "CL1", 'T');   // 'T' = too late
+        ASSERT(clt.on_response(OUCHMessage::parse_response(clbuf, cln)) == ouch::OrderState::LIVE,
+               "ouch_clc_rej_keeps_live");
+        ASSERT(!clt.is_pending_cancel("CL1"), "ouch_clc_rej_disarms_flag");
+        ASSERT(clt.rejects() == 0 && clt.cancel_rejects() == 1, "ouch_clc_rej_own_counter");
+        // The order stays workable: it can still fill after the failed cancel.
+        cln = OUCHMessage::encode_executed(clbuf, "CL1", 100, 100.0, 9001);
+        ASSERT(clt.on_response(OUCHMessage::parse_response(clbuf, cln)) == ouch::OrderState::FILLED,
+               "ouch_clc_fill_after_cxl_reject");
+        ASSERT(clt.active_count() == 0, "ouch_clc_filled_not_active");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100
