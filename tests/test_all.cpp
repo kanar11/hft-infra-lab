@@ -64,6 +64,7 @@
 #include "../strategy/pvt.hpp"
 #include "../strategy/ppo.hpp"
 #include "../strategy/force_index.hpp"
+#include "../strategy/mfi.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3227,6 +3228,61 @@ void test_force_index() {
     ASSERT(!f.ready() && std::fabs(f.value()) < 1e-9 && std::fabs(f.raw()) < 1e-9, "fi_reset");
 }
 
+// MFI #382 — Money Flow Index, volume-weighted RSI in [0,100].
+void test_mfi() {
+    SECTION("MFI (#382)");
+    MFI neutral(14);
+    ASSERT(std::fabs(neutral.value() - 50.0) < 1e-9, "mfi_neutral_50_before_data");
+    neutral.on_trade(100.0, 500);                 // seeds the baseline only
+    ASSERT(std::fabs(neutral.value() - 50.0) < 1e-9, "mfi_first_print_still_50");
+    ASSERT(!neutral.ready(), "mfi_not_ready_after_seed");
+
+    // All upticks -> 100; all downticks -> 0.
+    MFI up(4);
+    up.on_trade(10.0, 100);
+    up.on_trade(11.0, 100); up.on_trade(12.0, 100);
+    ASSERT(std::fabs(up.value() - 100.0) < 1e-9, "mfi_all_upticks_100");
+    MFI dn(4);
+    dn.on_trade(10.0, 100);
+    dn.on_trade(9.0, 100); dn.on_trade(8.0, 100);
+    ASSERT(std::fabs(dn.value() - 0.0) < 1e-9, "mfi_all_downticks_0");
+
+    // Mixed flows: +11*300 = 3300 up, 10*100 = 1000 down -> 100*3300/4300.
+    MFI mx(14);
+    mx.on_trade(10.0, 500);
+    mx.on_trade(11.0, 300);                       // uptick, flow +3300
+    mx.on_trade(10.0, 100);                       // downtick, flow -1000
+    ASSERT(std::fabs(mx.value() - 100.0 * 3300.0 / 4300.0) < 1e-9, "mfi_mixed_dollar_weighted");
+
+    // Volume weighting: the SAME price path with the volumes swapped gives a
+    // different MFI (RSI would see both identically).
+    MFI vw(14);
+    vw.on_trade(10.0, 500);
+    vw.on_trade(11.0, 100);                       // small uptick volume
+    vw.on_trade(10.0, 300);                       // big downtick volume
+    ASSERT(vw.value() < 50.0 && mx.value() > 50.0, "mfi_volume_direction_matters");
+
+    // Flat print: dropped entirely — value unchanged, no window slot consumed.
+    const double mx_before = mx.value();
+    mx.on_trade(10.0, 999999);
+    ASSERT(std::fabs(mx.value() - mx_before) < 1e-9, "mfi_flat_print_dropped");
+
+    // Rolling window: period 2, a third decided tick evicts the oldest flow.
+    MFI rw(2);
+    rw.on_trade(10.0, 100);
+    rw.on_trade(11.0, 100);                       // +1100
+    rw.on_trade(12.0, 100);                       // +1200
+    ASSERT(rw.ready(), "mfi_ready_at_full_window");
+    rw.on_trade(11.0, 100);                       // -1100 evicts the +1100
+    ASSERT(std::fabs(rw.value() - 100.0 * 1200.0 / 2300.0) < 1e-9, "mfi_window_evicts_oldest");
+
+    // Invalid prints ignored; reset returns to the neutral state.
+    rw.on_trade(0.0, 100); rw.on_trade(-1.0, 100); rw.on_trade(11.0, 0);
+    ASSERT(std::fabs(rw.value() - 100.0 * 1200.0 / 2300.0) < 1e-9, "mfi_ignores_invalid");
+    rw.reset();
+    ASSERT(!rw.ready() && std::fabs(rw.value() - 50.0) < 1e-9, "mfi_reset_neutral");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -5739,6 +5795,7 @@ int main() {
     test_pvt();
     test_ppo();
     test_force_index();
+    test_mfi();
     test_cmo();
     test_zscore();
     test_tsi();
