@@ -627,6 +627,30 @@ void test_oms_short_and_replace() {
                && oms.oldest_working_order_id() == 0, "owo_cancel_empties");
     }
 
+    {   // #396 price improvement vs limit — the price-quality TCA axis.
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.total_price_improvement() == 0.0
+               && oms.avg_price_improvement_per_share() == 0.0, "pimp_empty_zero");
+        Order* pia = oms.submit_order("AAA", Side::BUY, 10.00, 100);
+        oms.fill_order(pia->order_id, 100, 9.98);           // 0.02 better x 100 = +2.00
+        ASSERT(close(oms.total_price_improvement(), 2.0), "pimp_buy_below_limit");
+        Order* pib = oms.submit_order("BBB", Side::SELL, 20.00, 50);
+        oms.fill_order(pib->order_id, 50, 20.10);           // 0.10 better x 50 = +5.00
+        ASSERT(close(oms.total_price_improvement(), 7.0), "pimp_sell_above_limit");
+        // A fill exactly at the limit contributes nothing.
+        Order* pic = oms.submit_order("CCC", Side::BUY, 5.00, 40);
+        oms.fill_order(pic->order_id, 40, 5.00);
+        ASSERT(close(oms.total_price_improvement(), 7.0), "pimp_at_limit_zero");
+        // Filled PAST the limit drags the total negative (SELL below limit).
+        Order* pid_ = oms.submit_order("DDD", Side::SELL, 30.00, 100);
+        oms.fill_order(pid_->order_id, 100, 29.90);         // -0.10 x 100 = -10.00
+        ASSERT(close(oms.total_price_improvement(), -3.0), "pimp_slippage_negative");
+        // Per executed share: -3.00 / (100+50+40+100) shares.
+        ASSERT(close(oms.avg_price_improvement_per_share(), -3.0 / 290.0), "pimp_avg_per_share");
+        oms.reset_session_counters();
+        ASSERT(oms.total_price_improvement() == 0.0, "pimp_session_reset");
+    }
+
     {   // #166 runtime commission change.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");

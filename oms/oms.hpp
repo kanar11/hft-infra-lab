@@ -207,6 +207,7 @@ class OMS {
     uint64_t  total_filled_shares_  = 0;  // sum of executed shares (#228)
     double    total_traded_notional_    = 0.0; // cumulative $ value of all fills (#266)
     double    total_submitted_notional_ = 0.0; // cumulative $ value of all submitted orders (#322)
+    int64_t   price_improvement_fp_     = 0;   // signed fill-vs-limit improvement, fixed-point (#396)
 
 public:
     // commission_per_share: e.g. 0.0035 = $0.0035/share (typical taker fee).
@@ -314,6 +315,14 @@ public:
         ++total_fills_;   // #151
         total_filled_shares_ += fill_qty;   // #228
         total_traded_notional_ += static_cast<double>(fill_qty) * fill_price_f;  // #266
+        // #396: signed price improvement vs the order's limit. BUY filling
+        // BELOW the limit and SELL filling ABOVE it are positive; a fill at
+        // the limit contributes 0; negative = worse than the limit
+        // (slippage on marketable orders / venue misbehaviour).
+        price_improvement_fp_ += ((order.side == Side::BUY)
+                                      ? order.price - fill_price
+                                      : fill_price - order.price)
+                                 * static_cast<int64_t>(fill_qty);
         order.status      = (order.filled_qty >= order.quantity)
                             ? OrderStatus::FILLED
                             : OrderStatus::PARTIAL;
@@ -851,6 +860,24 @@ public:
         }
         return mx;
     }
+    // total_price_improvement: cumulative signed fill-vs-limit improvement in
+    // $ (#396). BUY filling below its limit and SELL filling above accrue
+    // positive; a fill AT the limit contributes 0; negative = filled past
+    // the limit (slippage/venue misbehaviour). The PRICE-quality axis of
+    // execution TCA next to speed (#380) and size (#274/#371).
+    double total_price_improvement() const noexcept {
+        return to_float(price_improvement_fp_);
+    }
+    // avg_price_improvement_per_share: improvement per EXECUTED share (#396)
+    // = total improvement / total_filled_shares — comparable across sessions
+    // and directly against avg_commission_per_share (#236): improvement
+    // below the fee means the better prices do not pay for the executions.
+    // 0 when nothing has filled. (Fixed-point: to_float BEFORE dividing.)
+    double avg_price_improvement_per_share() const noexcept {
+        return total_filled_shares_ > 0
+            ? to_float(price_improvement_fp_) / static_cast<double>(total_filled_shares_)
+            : 0.0;
+    }
     // cancel_rate: fraction of submitted orders that were cancelled (#258) =
     // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high
     // ratio means most orders never rest long (exchange msg-rate fees, surveillance
@@ -918,6 +945,7 @@ public:
         total_filled_shares_  = 0;
         total_traded_notional_    = 0.0;   // #266
         total_submitted_notional_ = 0.0;   // #322
+        price_improvement_fp_     = 0;     // #396
         for (auto& c : reject_counts_) c = 0;
     }
 
