@@ -275,6 +275,40 @@ struct ABLineArbitrator {
 
     bool   has_gaps()      const noexcept { return rec.has_gaps(); }
     size_t missing_count() const noexcept { return rec.missing_count(); }
+
+    // a_win_rate (#387): fraction of races line A delivered first, in [0,1].
+    // A healthy dual-line setup sits near 0.5 (the lines race evenly); a rate
+    // pinned near 1.0 or 0.0 means the losing line is consistently slower
+    // (degraded path, switch/queue trouble) and the feed is one failure away
+    // from running unprotected. 0.5 (neutral) before any race.
+    double a_win_rate() const noexcept {
+        const uint64_t total = a_first + b_first;
+        return total > 0
+            ? static_cast<double>(a_first) / static_cast<double>(total) : 0.5;
+    }
+
+    // lagging_line (#387): 'A' or 'B' when that line wins at most `threshold`
+    // of the races (default 0.1), '-' when both are healthy or no traffic
+    // yet. The actionable alarm on top of a_win_rate's raw number.
+    char lagging_line(double threshold = 0.1) const noexcept {
+        const uint64_t total = a_first + b_first;
+        if (total == 0) return '-';
+        const double a = static_cast<double>(a_first) / static_cast<double>(total);
+        if (a <= threshold)       return 'A';
+        if (1.0 - a <= threshold) return 'B';
+        return '-';
+    }
+
+    // dup_rate (#387): dropped duplicates / all packets seen. Nearly every
+    // packet of a healthy dual-line feed arrives twice, so this sits near
+    // 0.5; well below 0.5 means the other line is NOT delivering at all
+    // (dead line = zero redundancy). The inverse alarm to lagging_line,
+    // which only sees a line while it still wins some races.
+    double dup_rate() const noexcept {
+        const uint64_t seen = a_first + b_first + dups;
+        return seen > 0 ? static_cast<double>(dups) / static_cast<double>(seen) : 0.0;
+    }
+
     void   reset()         noexcept { *this = ABLineArbitrator{}; }
 };
 

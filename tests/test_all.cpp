@@ -2536,6 +2536,37 @@ void test_multicast_gap_recovery() {
     ASSERT(!arb.on_packet(4, false), "ab_b4_dup");
     ASSERT(arb.a_first == 3 && arb.b_first == 1, "ab_first_counts");
 
+    // #387 A/B line health: win rate, lagging-line alarm, duplicate rate.
+    multicast::ABLineArbitrator abh;
+    ASSERT(std::fabs(abh.a_win_rate() - 0.5) < 1e-9 && abh.lagging_line() == '-'
+           && abh.dup_rate() == 0.0, "ab_health_neutral_start");
+    // A consistently first, B delivering the duplicate: A wins every race,
+    // B lags but is ALIVE (dup_rate ~0.5 proves it still delivers).
+    for (int abi = 1; abi <= 10; ++abi) {
+        abh.on_packet(abi, true);
+        abh.on_packet(abi, false);
+    }
+    ASSERT(std::fabs(abh.a_win_rate() - 1.0) < 1e-9, "ab_health_a_wins_all");
+    ASSERT(abh.lagging_line() == 'B', "ab_health_b_lagging");
+    ASSERT(std::fabs(abh.dup_rate() - 0.5) < 1e-9, "ab_health_b_alive_dups_half");
+    // Balanced racing: wins split evenly -> no alarm.
+    multicast::ABLineArbitrator abb;
+    for (int abj = 1; abj <= 10; ++abj) {
+        const bool a_now = (abj % 2) == 0;
+        abb.on_packet(abj, a_now);
+        abb.on_packet(abj, !a_now);
+    }
+    ASSERT(std::fabs(abb.a_win_rate() - 0.5) < 1e-9 && abb.lagging_line() == '-',
+           "ab_health_balanced_no_alarm");
+    // DEAD line B: A wins everything AND no duplicate ever arrives.
+    multicast::ABLineArbitrator abd;
+    for (int abk = 1; abk <= 10; ++abk) abd.on_packet(abk, true);
+    ASSERT(abd.lagging_line() == 'B' && abd.dup_rate() == 0.0, "ab_health_dead_line_no_dups");
+    // Threshold: 3 wins of 10 (rate 0.3) lags under 0.35 but not under 0.1.
+    multicast::ABLineArbitrator abt;
+    for (int abm = 1; abm <= 10; ++abm) abt.on_packet(abm, abm <= 3);
+    ASSERT(abt.lagging_line(0.35) == 'A' && abt.lagging_line(0.1) == '-', "ab_health_threshold");
+
     // #98 staleness: no packet > timeout = dead feed.
     multicast::FeedStalenessMonitor sm;
     ASSERT(!sm.check(1000, 500), "stale_not_started");   // no first packet
