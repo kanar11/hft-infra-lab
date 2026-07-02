@@ -2175,6 +2175,27 @@ void test_itch_book() {
     iadup.clear();
     ASSERT(iadup.audit_book() == 0, "itchbook_audit_ok_after_clear");
 
+    // #391 largest_resting_order — the block/"wall" detector per side.
+    itch::ITCHOrderBook ilro;
+    double ilro_px = -1.0;
+    ASSERT(ilro.largest_resting_order('B') == 0, "itchbook_lro_empty_zero");
+    ASSERT(ilro.largest_resting_order('B', &ilro_px) == 0 && ilro_px == -1.0,
+           "itchbook_lro_empty_price_untouched");
+    ilro.on_add(1, 'B', 100.00, 300);
+    ilro.on_add(2, 'B', 99.95, 5000);     // the bid wall
+    ilro.on_add(3, 'B', 99.90, 200);
+    ilro.on_add(4, 'S', 100.10, 800);     // ask side has its own max
+    ASSERT(ilro.largest_resting_order('B', &ilro_px) == 5000, "itchbook_lro_bid_wall");
+    ASSERT(std::fabs(ilro_px - 99.95) < 1e-9, "itchbook_lro_bid_wall_price");
+    ASSERT(ilro.largest_resting_order('S') == 800, "itchbook_lro_ask_side_separate");
+    // A partial execute shrinks the wall below the runner-up -> new winner.
+    ilro.on_execute(2, 4800);             // wall 5000 -> 200
+    ASSERT(ilro.largest_resting_order('B', &ilro_px) == 300, "itchbook_lro_new_winner");
+    ASSERT(std::fabs(ilro_px - 100.00) < 1e-9, "itchbook_lro_new_winner_price");
+    // Deleting the winner hands the crown to the next largest.
+    ilro.on_delete(1);
+    ASSERT(ilro.largest_resting_order('B') == 200, "itchbook_lro_after_delete");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

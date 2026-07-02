@@ -669,6 +669,26 @@ public:
     uint64_t replaces() const noexcept { return replaces_; }
     uint64_t orphans()  const noexcept { return orphans_; }   // desync signal / feed gaps
 
+    // largest_resting_order (#391): the single biggest order resting on a
+    // side — the "wall". One institutional-size clip is a very different
+    // book than many retail-size clips at the same total depth: it signals
+    // committed interest and defines the level to lean on (or not to cross).
+    // Returns its share count and writes the price it rests at into
+    // out_price (left untouched when the side is empty). The MAX companion
+    // to avg_resting_order_size (#374, the mean) — their ratio is block
+    // dominance. 0 when the side has no resting orders.
+    uint32_t largest_resting_order(char side, double* out_price = nullptr) const noexcept {
+        uint32_t mx = 0;
+        int64_t  px = 0;
+        for (const auto& kv : orders_) {
+            const Resting& r = kv.second;
+            if (r.side != side) continue;
+            if (r.shares > mx) { mx = r.shares; px = r.price_ticks; }
+        }
+        if (mx > 0 && out_price != nullptr) *out_price = static_cast<double>(px) / 100.0;
+        return mx;
+    }
+
     // audit_book (#383): cross-checks the two parallel structures the feed
     // handler maintains — the per-order map (orders_) and the per-level
     // aggregates (bids_/asks_). Every event updates both in lockstep, so any
