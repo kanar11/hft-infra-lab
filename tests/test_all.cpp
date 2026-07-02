@@ -4431,6 +4431,34 @@ void test_risk_price_band() {
     ASSERT(rpw.avg_pnl_win() == 0.0 && rpw.avg_pnl_loss() == 0.0
            && rpw.pnl_payoff_ratio() == 0.0, "ppr_reset_daily");
 
+    // #397 underwater_updates / max_underwater_updates — drawdown DURATION,
+    // the time axis to max_drawdown_dollars' (#340) depth.
+    RiskManager ruw;
+    ASSERT(ruw.underwater_updates() == 0 && ruw.max_underwater_updates() == 0,
+           "uw_fresh_zero");
+    ruw.update_pnl(+10.0);                       // new peak -> at the surface
+    ASSERT(ruw.underwater_updates() == 0, "uw_at_peak_zero");
+    ruw.update_pnl(-2.0);
+    ruw.update_pnl(-1.0);
+    ruw.update_pnl(0.0);                         // FLAT extends the spell
+    ASSERT(ruw.underwater_updates() == 3, "uw_flat_extends_spell");
+    ruw.update_pnl(+20.0);                       // 7 -> 27: new high ends it
+    ASSERT(ruw.underwater_updates() == 0 && ruw.max_underwater_updates() == 3,
+           "uw_new_peak_ends_spell");
+    // A WIN that does not reach the old peak still counts as underwater.
+    ruw.update_pnl(-5.0);
+    ruw.update_pnl(+4.0);                        // 26 < peak 27 -> still under
+    ASSERT(ruw.underwater_updates() == 2, "uw_partial_recovery_still_under");
+    ruw.update_pnl(+2.0);                        // 28 > 27 -> surfaced
+    ASSERT(ruw.underwater_updates() == 0, "uw_surfaced");
+    // A longer dive raises the session high-water mark.
+    ruw.update_pnl(-1.0); ruw.update_pnl(-1.0);
+    ruw.update_pnl(-1.0); ruw.update_pnl(-1.0);
+    ASSERT(ruw.max_underwater_updates() == 4, "uw_max_grows");
+    ruw.reset_daily();
+    ASSERT(ruw.underwater_updates() == 0 && ruw.max_underwater_updates() == 0,
+           "uw_reset_daily");
+
     // #121 reason the kill switch latched.
     RiskManager rk(lim);
     ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");

@@ -321,6 +321,8 @@ class RiskManager {
     uint64_t losing_updates_  = 0;   // count of losing update_pnl calls (#372)
     double win_pnl_sum_  = 0.0;      // sum of profitable update_pnl deltas (#381)
     double loss_pnl_sum_ = 0.0;      // sum of losing update_pnl magnitudes (#381)
+    int32_t underwater_updates_     = 0;  // consecutive updates below the P&L peak (#397)
+    int32_t max_underwater_updates_ = 0;  // longest such spell this session (#397)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
@@ -571,6 +573,17 @@ public:
         // Track the worst peak-to-trough decline ever seen this session (#340).
         const double dd_now = peak_pnl_ - daily_pnl_;
         if (dd_now > max_drawdown_dollars_) max_drawdown_dollars_ = dd_now;
+        // Drawdown DURATION (#397): consecutive updates spent below the peak
+        // — the time axis to #340's depth. FLAT updates extend the spell
+        // (time passes underwater even when nothing changes), unlike the
+        // win/loss counters (#372/#381), which exclude them.
+        if (daily_pnl_ < peak_pnl_) {
+            ++underwater_updates_;
+            if (underwater_updates_ > max_underwater_updates_)
+                max_underwater_updates_ = underwater_updates_;
+        } else {
+            underwater_updates_ = 0;   // at/above the peak — the spell ends
+        }
         // Loss-streak breaker (#114): N losses in a row -> kill switch.
         // consec_wins_ (#348) is the symmetric win-streak counter: a loss resets
         // it just as a profit resets consec_losses_.
@@ -732,6 +745,8 @@ public:
         losing_updates_  = 0;     // #372
         win_pnl_sum_  = 0.0;      // #381
         loss_pnl_sum_ = 0.0;      // #381
+        underwater_updates_     = 0;  // #397
+        max_underwater_updates_ = 0;  // #397
         traded_notional_ = 0.0;
         rate_ring_.reset();
         pending_.clear();
@@ -1043,6 +1058,15 @@ public:
         const double al = avg_pnl_loss();
         return (aw > 0.0 && al > 0.0) ? aw / al : 0.0;
     }
+    // underwater_updates: consecutive update_pnl calls spent below the P&L
+    // high-water mark (#397) — the LIVE duration of the current drawdown,
+    // the time axis to max_drawdown_dollars' (#340) depth. A shallow but
+    // long-lived drawdown reads healthy on the depth metric while the desk
+    // has not made a new high in hours. 0 when at/above the peak.
+    int32_t underwater_updates() const noexcept { return underwater_updates_; }
+    // max_underwater_updates: the LONGEST underwater spell this session
+    // (#397) — high-water mark of the counter above; reset by reset_daily.
+    int32_t max_underwater_updates() const noexcept { return max_underwater_updates_; }
     // consecutive_losses_remaining: how many more losing fills IN A ROW until the
     // loss-streak breaker trips (#205, based on #114). -1 when the breaker is off,
     // 0 when it already tripped. Early warning before the desk is halted.
