@@ -2119,6 +2119,34 @@ void test_itch_book() {
     cr.on_add(1, 'B', 100.05, 100); cr.on_add(2, 'S', 100.00, 100);   // crossed
     ASSERT(cr.is_crossed() && !cr.is_locked(), "itchbook_crossed");
 
+    // #383 audit_book — cross-check of the per-order map vs level aggregates.
+    itch::ITCHOrderBook iaud;
+    ASSERT(iaud.audit_book() == 0, "itchbook_audit_empty_ok");
+    iaud.on_add(1, 'B', 100.00, 100);
+    iaud.on_add(2, 'B', 100.00, 50);      // same level, second order
+    iaud.on_add(3, 'B', 99.98, 200);
+    iaud.on_add(4, 'S', 100.05, 120);
+    ASSERT(iaud.audit_book() == 0, "itchbook_audit_after_adds_ok");
+    iaud.on_execute(1, 40);               // partial: order 1 -> 60, level -> 110
+    iaud.on_cancel(3, 50);                // partial cancel: 200 -> 150
+    iaud.on_replace(4, 5, 100.07, 80);    // reprice the ask
+    iaud.on_delete(2);                    // remove the co-resting order
+    ASSERT(iaud.audit_book() == 0, "itchbook_audit_full_lifecycle_ok");
+
+    // A corrupted feed REUSING a live ref: on_add overwrites orders_[ref] but
+    // double-counts the level aggregate — exactly what the audit must catch.
+    itch::ITCHOrderBook iadup;
+    iadup.on_add(42, 'B', 10.00, 100);
+    iadup.on_add(42, 'B', 10.01, 50);     // duplicate ref, bid side
+    ASSERT(iadup.audit_book() == 3, "itchbook_audit_catches_bid_dup_ref");
+    itch::ITCHOrderBook iasd;
+    iasd.on_add(7, 'S', 20.00, 100);
+    iasd.on_add(7, 'S', 20.10, 10);       // duplicate ref, ask side
+    ASSERT(iasd.audit_book() == 4, "itchbook_audit_catches_ask_dup_ref");
+    // clear() wipes both structures together -> consistent again.
+    iadup.clear();
+    ASSERT(iadup.audit_book() == 0, "itchbook_audit_ok_after_clear");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

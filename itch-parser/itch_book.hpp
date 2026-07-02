@@ -669,6 +669,32 @@ public:
     uint64_t replaces() const noexcept { return replaces_; }
     uint64_t orphans()  const noexcept { return orphans_; }   // desync signal / feed gaps
 
+    // audit_book (#383): cross-checks the two parallel structures the feed
+    // handler maintains — the per-order map (orders_) and the per-level
+    // aggregates (bids_/asks_). Every event updates both in lockstep, so any
+    // divergence means a handler bug or a corrupted feed (e.g. an ADD reusing
+    // a LIVE order_ref silently overwrites the order while double-counting
+    // its level). Returns 0 when consistent, else the first failed invariant:
+    //   1/2 = a non-positive bid/ask level survived (should have been erased)
+    //   3/4 = bid/ask levels do not equal the sum of resting orders
+    //   5   = a zero-share resting order survived
+    // O(n log n) and allocates — a diagnostic for gap-recovery/reconnect
+    // validation, not a hot-path call. Same role as FullOrderBook's
+    // audit_book_integrity (which caught 5 real accounting bugs).
+    int audit_book() const {
+        for (const auto& kv : bids_) if (kv.second <= 0) return 1;
+        for (const auto& kv : asks_) if (kv.second <= 0) return 2;
+        std::map<int64_t, int64_t> b, a;
+        for (const auto& kv : orders_) {
+            const Resting& r = kv.second;
+            if (r.shares == 0) return 5;
+            (r.side == 'B' ? b : a)[r.price_ticks] += static_cast<int64_t>(r.shares);
+        }
+        if (b != bids_) return 3;
+        if (a != asks_) return 4;
+        return 0;
+    }
+
     // cancel_to_add_ratio: cancels / adds (#350) — a classic market-microstructure
     // flow-quality signal. High (>>1) means most resting interest is pulled before
     // it trades: fleeting liquidity / quote stuffing, common ahead of a toxic
