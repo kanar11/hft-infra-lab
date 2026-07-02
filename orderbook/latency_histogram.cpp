@@ -86,14 +86,16 @@ int main(int argc, char** argv) {
     std::vector<std::uint64_t> latencies;
     latencies.reserve(N);
 
-    // Warmup (cache priming, no measurement)
-    // Warmup (flooding the cache, no measurements)
-    for (int i = 0; i < 1000 && i < N; i++) book.add_order(orders[i]);
+    // Warmup (cache priming, no measurement). The warmed-up prefix is
+    // excluded from the measured loop below so no order is added twice.
+    const int WARMUP = std::min(1000, N);
+    for (int i = 0; i < WARMUP; i++) book.add_order(orders[i]);
 
+    const int measured = N - WARMUP;
     auto t_wall_start = std::chrono::high_resolution_clock::now();
-    for (const auto& o : orders) {
+    for (int i = WARMUP; i < N; i++) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        book.add_order(o);
+        book.add_order(orders[i]);
         auto t1 = std::chrono::high_resolution_clock::now();
         latencies.push_back(
             std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
@@ -103,18 +105,24 @@ int main(int argc, char** argv) {
     double wall_ms = std::chrono::duration_cast<std::chrono::microseconds>(
         t_wall_end - t_wall_start).count() / 1000.0;
 
-    std::uint64_t max_lat = *std::max_element(latencies.begin(), latencies.end());
+    std::uint64_t max_lat = latencies.empty()
+        ? 0 : *std::max_element(latencies.begin(), latencies.end());
     double p50   = percentile(latencies, 0.50);
     double p95   = percentile(latencies, 0.95);
     double p99   = percentile(latencies, 0.99);
     double p999  = percentile(latencies, 0.999);
 
+    // NOTE: throughput here includes two clock reads per order (~tens of ns),
+    // so it understates the book itself — benchmark_orderbook measures the
+    // un-instrumented throughput.
     std::cout << "=== Order Book Latency Histogram ===\n"
-              << "Orders processed : " << N << "\n"
+              << "Orders measured  : " << measured
+              << " (after " << WARMUP << " warmup)\n"
               << "Wall time        : " << std::fixed << std::setprecision(2)
               << wall_ms << " ms\n"
-              << "Throughput       : " << static_cast<std::uint64_t>(N / (wall_ms / 1000.0))
-              << " orders/sec\n"
+              << "Throughput       : " << (wall_ms > 0.0
+                     ? static_cast<std::uint64_t>(measured / (wall_ms / 1000.0)) : 0)
+              << " orders/sec (instrumented)\n"
               << "Trades           : " << book.get_trades() << "\n"
               << "Final depth      : " << book.depth() << "\n"
               << "\nPer-order latency (ns):\n"
