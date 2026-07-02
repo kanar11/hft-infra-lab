@@ -343,6 +343,33 @@ struct MultiChannelRecovery {
         return n;
     }
     std::size_t channel_count() const noexcept { return channels.size(); }
+
+    // channels_with_gaps (#395): how many channels currently have holes —
+    // the BREADTH of the outage. One gapped channel = an isolated loss on
+    // that stream; many at once = a shared upstream problem (NIC/kernel
+    // buffer, switch) that per-channel retransmits will not fix.
+    std::size_t channels_with_gaps() const {
+        std::size_t n = 0;
+        for (const auto& kv : channels) if (kv.second.has_gaps()) ++n;
+        return n;
+    }
+
+    // worst_channel (#395): the channel with the MOST outstanding missing
+    // sequences — the one to gap-fill or snapshot-resync FIRST. The
+    // actionable WHICH behind total_missing's aggregate. Returns false and
+    // leaves the out params untouched when no channel has gaps.
+    bool worst_channel(std::uint32_t& out_channel, std::size_t& out_missing) const {
+        std::size_t   worst = 0;
+        std::uint32_t who   = 0;
+        for (const auto& kv : channels) {
+            const std::size_t m = kv.second.missing_count();
+            if (m > worst) { worst = m; who = kv.first; }
+        }
+        if (worst == 0) return false;
+        out_channel = who;
+        out_missing = worst;
+        return true;
+    }
 };
 
 

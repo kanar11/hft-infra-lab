@@ -2323,6 +2323,28 @@ void test_multicast_gap_recovery() {
     ASSERT(mc.on_retransmit(1, 2), "mcr_recover_ch1");
     ASSERT(!mc.any_gaps() && mc.total_recovered() == 1, "mcr_all_recovered");
 
+    // #395 worst_channel / channels_with_gaps — triage across channels.
+    multicast::MultiChannelRecovery mcw;
+    std::uint32_t mcw_ch = 777;
+    std::size_t   mcw_miss = 777;
+    ASSERT(!mcw.worst_channel(mcw_ch, mcw_miss) && mcw_ch == 777 && mcw_miss == 777,
+           "mcr_worst_none_untouched");
+    ASSERT(mcw.channels_with_gaps() == 0, "mcr_breadth_zero");
+    mcw.observe(10, 1); mcw.observe(10, 4);      // ch 10: missing 2,3 (2 holes)
+    mcw.observe(20, 1); mcw.observe(20, 7);      // ch 20: missing 2..6 (5 holes)
+    mcw.observe(30, 1); mcw.observe(30, 2);      // ch 30: clean
+    ASSERT(mcw.channels_with_gaps() == 2, "mcr_breadth_two_of_three");
+    ASSERT(mcw.worst_channel(mcw_ch, mcw_miss) && mcw_ch == 20 && mcw_miss == 5,
+           "mcr_worst_is_ch20");
+    // Healing ch 20 fully hands the worst spot to ch 10.
+    for (std::uint64_t mcs = 2; mcs <= 6; ++mcs) mcw.on_retransmit(20, mcs);
+    ASSERT(mcw.channels_with_gaps() == 1, "mcr_breadth_after_heal");
+    ASSERT(mcw.worst_channel(mcw_ch, mcw_miss) && mcw_ch == 10 && mcw_miss == 2,
+           "mcr_worst_moves_to_ch10");
+    mcw.on_retransmit(10, 2); mcw.on_retransmit(10, 3);
+    ASSERT(!mcw.worst_channel(mcw_ch, mcw_miss) && mcw.channels_with_gaps() == 0,
+           "mcr_worst_all_healed");
+
     // #132 FeedRateMeter — sliding-window rate.
     multicast::FeedRateMeter fr(1000);                    // 1000 ns window
     fr.on_message(100); fr.on_message(200); fr.on_message(300);
