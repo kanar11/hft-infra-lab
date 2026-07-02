@@ -65,6 +65,7 @@
 #include "../strategy/ppo.hpp"
 #include "../strategy/force_index.hpp"
 #include "../strategy/mfi.hpp"
+#include "../strategy/vwma.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3369,6 +3370,55 @@ void test_mfi() {
     ASSERT(!rw.ready() && std::fabs(rw.value() - 50.0) < 1e-9, "mfi_reset_neutral");
 }
 
+// VWMA #390 — Volume-Weighted Moving Average (MILESTONE 390).
+void test_vwma() {
+    SECTION("VWMA (#390)");
+    VWMA vempty(20);
+    ASSERT(vempty.value() == 0.0 && !vempty.ready(), "vwma_empty_zero");
+
+    // Constant volume -> degenerates to the plain rolling mean.
+    VWMA veq(4);
+    veq.on_trade(10.0, 100); veq.on_trade(20.0, 100);
+    veq.on_trade(30.0, 100); veq.on_trade(40.0, 100);
+    ASSERT(veq.ready(), "vwma_ready_at_full_window");
+    ASSERT(std::fabs(veq.value() - 25.0) < 1e-9, "vwma_const_volume_is_mean");
+
+    // Volume tilt: the same two prices, weight on the 10 -> below the mean.
+    VWMA vtl(4);
+    vtl.on_trade(10.0, 300);
+    vtl.on_trade(20.0, 100);
+    // (10*300 + 20*100) / 400 = 5000/400 = 12.5 (mean would be 15)
+    ASSERT(std::fabs(vtl.value() - 12.5) < 1e-9, "vwma_tilts_to_volume");
+
+    // Same prices, volumes swapped -> mirrored tilt above the mean.
+    VWMA vts(4);
+    vts.on_trade(10.0, 100);
+    vts.on_trade(20.0, 300);
+    ASSERT(std::fabs(vts.value() - 17.5) < 1e-9, "vwma_mirror_tilt");
+
+    // Rolling window: the fifth print evicts the oldest.
+    VWMA vrw(4);
+    vrw.on_trade(10.0, 100); vrw.on_trade(20.0, 100);
+    vrw.on_trade(30.0, 100); vrw.on_trade(40.0, 100);
+    vrw.on_trade(50.0, 100);                       // evicts the 10
+    // (20+30+40+50)/4 = 35
+    ASSERT(std::fabs(vrw.value() - 35.0) < 1e-9, "vwma_window_evicts_oldest");
+
+    // Invalid prints are ignored and do not consume a slot.
+    const double vrw_before = vrw.value();
+    vrw.on_trade(0.0, 100); vrw.on_trade(-5.0, 100); vrw.on_trade(60.0, 0); vrw.on_trade(60.0, -10);
+    ASSERT(std::fabs(vrw.value() - vrw_before) < 1e-9, "vwma_ignores_invalid");
+
+    // Period 1 -> tracks the latest print exactly.
+    VWMA vp1(1);
+    vp1.on_trade(11.0, 500);
+    vp1.on_trade(13.0, 1);
+    ASSERT(std::fabs(vp1.value() - 13.0) < 1e-9, "vwma_period1_latest");
+
+    vrw.reset();
+    ASSERT(vrw.value() == 0.0 && !vrw.ready(), "vwma_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -6004,6 +6054,7 @@ int main() {
     test_ppo();
     test_force_index();
     test_mfi();
+    test_vwma();
     test_cmo();
     test_zscore();
     test_tsi();
