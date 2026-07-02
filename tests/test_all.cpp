@@ -4101,6 +4101,27 @@ void test_risk_price_band() {
     rwr.reset_daily();
     ASSERT(rwr.pnl_win_rate() == 0.0 && rwr.winning_pnl_updates() == 0, "pwr_reset_daily");
 
+    // #381 avg_pnl_win / avg_pnl_loss / pnl_payoff_ratio — magnitude axis of #372.
+    RiskManager rpw;
+    ASSERT(rpw.avg_pnl_win() == 0.0 && rpw.avg_pnl_loss() == 0.0
+           && rpw.pnl_payoff_ratio() == 0.0, "ppr_empty_zero");
+    rpw.update_pnl(+10.0);
+    ASSERT(std::fabs(rpw.avg_pnl_win() - 10.0) < 1e-9, "ppr_first_win");
+    ASSERT(rpw.pnl_payoff_ratio() == 0.0, "ppr_no_loss_yet_zero");   // no ratio without a loss
+    rpw.update_pnl(+30.0);                       // wins: 10, 30 -> avg 20
+    rpw.update_pnl(-5.0);                        // losses: 5    -> avg 5 (positive magnitude)
+    rpw.update_pnl(0.0);                         // flat -> excluded from both sides
+    ASSERT(std::fabs(rpw.avg_pnl_win() - 20.0) < 1e-9, "ppr_avg_win_20");
+    ASSERT(std::fabs(rpw.avg_pnl_loss() - 5.0) < 1e-9, "ppr_avg_loss_5_positive");
+    ASSERT(std::fabs(rpw.pnl_payoff_ratio() - 4.0) < 1e-9, "ppr_payoff_4");
+    // Expectancy cross-check: rate*avg_win - (1-rate)*avg_loss = 2/3*20 - 1/3*5 = 11.6667
+    ASSERT(std::fabs(rpw.pnl_win_rate() * rpw.avg_pnl_win()
+                     - (1.0 - rpw.pnl_win_rate()) * rpw.avg_pnl_loss()
+                     - 35.0 / 3.0) < 1e-9, "ppr_expectancy_closed_form");
+    rpw.reset_daily();
+    ASSERT(rpw.avg_pnl_win() == 0.0 && rpw.avg_pnl_loss() == 0.0
+           && rpw.pnl_payoff_ratio() == 0.0, "ppr_reset_daily");
+
     // #121 reason the kill switch latched.
     RiskManager rk(lim);
     ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");

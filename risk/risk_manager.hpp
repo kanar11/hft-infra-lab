@@ -319,6 +319,8 @@ class RiskManager {
     int32_t max_consec_losses_ = 0;  // worst losing streak seen this session (#364)
     uint64_t winning_updates_ = 0;   // count of profitable update_pnl calls (#372)
     uint64_t losing_updates_  = 0;   // count of losing update_pnl calls (#372)
+    double win_pnl_sum_  = 0.0;      // sum of profitable update_pnl deltas (#381)
+    double loss_pnl_sum_ = 0.0;      // sum of losing update_pnl magnitudes (#381)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
@@ -576,6 +578,7 @@ public:
             ++consec_losses_;
             consec_wins_ = 0;
             ++losing_updates_;   // #372
+            loss_pnl_sum_ -= pnl_change;   // #381: accumulate the magnitude
             if (consec_losses_ > max_consec_losses_) max_consec_losses_ = consec_losses_;  // #364
             if (limits_.max_consecutive_losses > 0
                 && consec_losses_ >= limits_.max_consecutive_losses) {
@@ -587,6 +590,7 @@ public:
             consec_losses_ = 0;   // a profit resets the streak
             ++consec_wins_;
             ++winning_updates_;   // #372
+            win_pnl_sum_ += pnl_change;   // #381
         }
     }
 
@@ -726,6 +730,8 @@ public:
         max_consec_losses_ = 0;   // #364
         winning_updates_ = 0;     // #372
         losing_updates_  = 0;     // #372
+        win_pnl_sum_  = 0.0;      // #381
+        loss_pnl_sum_ = 0.0;      // #381
         traded_notional_ = 0.0;
         rate_ring_.reset();
         pending_.clear();
@@ -992,6 +998,29 @@ public:
     }
     uint64_t winning_pnl_updates() const noexcept { return winning_updates_; }
     uint64_t losing_pnl_updates()  const noexcept { return losing_updates_; }
+    // avg_pnl_win: mean size of a profitable update_pnl event (#381) =
+    // win_pnl_sum / winning_updates. The MAGNITUDE axis that pnl_win_rate
+    // (#372, frequency) lacks — a high hit rate with tiny wins can still lose
+    // money overall. 0 before any winning update; reset by reset_daily.
+    double avg_pnl_win() const noexcept {
+        return winning_updates_ > 0
+            ? win_pnl_sum_ / static_cast<double>(winning_updates_) : 0.0;
+    }
+    // avg_pnl_loss: mean MAGNITUDE of a losing update_pnl event (#381),
+    // returned as a POSITIVE number. 0 before any losing update.
+    double avg_pnl_loss() const noexcept {
+        return losing_updates_ > 0
+            ? loss_pnl_sum_ / static_cast<double>(losing_updates_) : 0.0;
+    }
+    // pnl_payoff_ratio: avg win / avg loss (#381). > 1 means the average
+    // winner outweighs the average loser; combined with pnl_win_rate it gives
+    // the live expectancy of the update stream (rate*avg_win -
+    // (1-rate)*avg_loss). 0 until BOTH a win and a loss exist (no ratio yet).
+    double pnl_payoff_ratio() const noexcept {
+        const double aw = avg_pnl_win();
+        const double al = avg_pnl_loss();
+        return (aw > 0.0 && al > 0.0) ? aw / al : 0.0;
+    }
     // consecutive_losses_remaining: how many more losing fills IN A ROW until the
     // loss-streak breaker trips (#205, based on #114). -1 when the breaker is off,
     // 0 when it already tripped. Early warning before the desk is halted.
