@@ -4699,6 +4699,18 @@ void test_fix_session() {
         ASSERT(g.is_valid() && g.get_msg_type()[0] == 'G', "fix_replace_G_valid");
         ASSERT(std::strcmp(g.get_field(41), "ORD1") == 0, "fix_replace_origclordid");
 
+        // #377 parse_replace_request — typed acceptor-side decode of 35=G;
+        // completes the typed D (#360) / F (#368) / G order-entry triple.
+        const auto grq = fix::FIXSession::parse_replace_request(g);
+        ASSERT(grq.valid && std::strcmp(grq.cl_ord_id, "ORD2") == 0
+               && std::strcmp(grq.orig_cl_ord_id, "ORD1") == 0, "fix_parse_rpl_ids");
+        ASSERT(std::strcmp(grq.symbol, "AAPL") == 0 && grq.side == '2', "fix_parse_rpl_symbol_side");
+        // 38/44 carry the NEW quantity/price of the amended order.
+        ASSERT(grq.qty == 80 && std::fabs(grq.price - 151.00) < 1e-6, "fix_parse_rpl_new_qty_price");
+        ASSERT(grq.ord_type == '2', "fix_parse_rpl_ordtype_limit");
+        FIXMessage not_g; not_g.parse("35=F|11=X|41=Y|");
+        ASSERT(!fix::FIXSession::parse_replace_request(not_g).valid, "fix_parse_rpl_non_G_invalid");
+
         // #368 parse_cancel_request — typed acceptor-side decode of 35=F.
         s.build_cancel_order(buf, sizeof(buf), "CXL1", "ORD1", "AAPL", Side::BUY, 100, '|');
         FIXMessage fm; fm.parse(buf);

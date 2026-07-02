@@ -1059,6 +1059,45 @@ public:
         return r;
     }
 
+    // ReplaceRequest — the key OrderCancelReplaceRequest (35=G) fields in a
+    // typed struct (#377). The acceptor-side decode that closes the round-trip
+    // with build_cancel_replace (#90) and completes the typed-parse family for
+    // the order-entry triple: D (#360) / F (#368) / G. 41=OrigClOrdID names the
+    // working order being amended, 11 is the new ClOrdID the amended order will
+    // carry, 38/44 are the NEW quantity/price. Same shape as parse_new_order /
+    // parse_cancel_request. valid=false when the message is not 35=G.
+    struct ReplaceRequest {
+        char    cl_ord_id[32]      = {};   // 11=ClOrdID (of the amended order)
+        char    orig_cl_ord_id[32] = {};   // 41=OrigClOrdID (the order to amend)
+        char    symbol[16]         = {};   // 55=Symbol
+        char    side               = '\0'; // 54=Side ('1'=Buy, '2'=Sell)
+        int32_t qty                = 0;    // 38=OrderQty (NEW quantity)
+        double  price              = 0.0;  // 44=Price (NEW price)
+        char    ord_type           = '\0'; // 40=OrdType ('1'=Market, '2'=Limit)
+        bool    valid              = false;// true when msg type == 'G'
+    };
+
+    static ReplaceRequest parse_replace_request(const FIXMessage& m) noexcept {
+        ReplaceRequest r;
+        if (m.get_msg_type()[0] != 'G') return r;   // valid stays false
+        const char* coi  = m.get_field(11);
+        const char* ocoi = m.get_field(41);
+        const char* sym  = m.get_field(55);
+        const char* sd   = m.get_field(54);
+        const char* ot   = m.get_field(40);
+        // sources are runtime pointers (no compile-time length) so strncpy bounded
+        // to size-1 over a value-initialized array stays nul-terminated.
+        if (coi)  std::strncpy(r.cl_ord_id,      coi,  sizeof(r.cl_ord_id) - 1);
+        if (ocoi) std::strncpy(r.orig_cl_ord_id, ocoi, sizeof(r.orig_cl_ord_id) - 1);
+        if (sym)  std::strncpy(r.symbol,         sym,  sizeof(r.symbol) - 1);
+        r.side     = (sd && *sd) ? sd[0] : '\0';
+        r.qty      = m.get_int(38);
+        r.price    = m.get_double(44);
+        r.ord_type = (ot && *ot) ? ot[0] : '\0';
+        r.valid    = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 
