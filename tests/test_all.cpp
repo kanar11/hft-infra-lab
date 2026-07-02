@@ -2168,6 +2168,28 @@ void test_multicast_gap_recovery() {
     gror.on_retransmit(6); gror.on_retransmit(8); gror.on_retransmit(9);
     ASSERT(!gror.has_gaps() && gror.largest_outstanding_run() == 0, "gaprec_runs_cleared");
 
+    // #379 oldest_missing / head_of_line_lag — depth of the oldest stall.
+    multicast::GapRecovery ghl;
+    ASSERT(ghl.oldest_missing() == 0 && ghl.head_of_line_lag() == 0, "gaprec_hol_empty");
+    ghl.observe(1);
+    ghl.observe(5);      // miss 2,3,4; expected=6 -> oldest hole 2, lag 6-2=4
+    ASSERT(ghl.oldest_missing() == 2, "gaprec_hol_oldest_2");
+    ASSERT(ghl.head_of_line_lag() == 4, "gaprec_hol_lag_4");
+    ghl.observe(10);     // miss 6..9 too; the OLDEST hole (2) still rules the lag
+    ASSERT(ghl.oldest_missing() == 2 && ghl.head_of_line_lag() == 9, "gaprec_hol_live_edge_grows");
+    ghl.on_retransmit(2);   // head hole filled -> next oldest is 3
+    ASSERT(ghl.oldest_missing() == 3 && ghl.head_of_line_lag() == 8, "gaprec_hol_advances");
+    ghl.on_retransmit(3); ghl.on_retransmit(4);
+    ASSERT(ghl.oldest_missing() == 6 && ghl.head_of_line_lag() == 5, "gaprec_hol_skips_to_next_range");
+    ghl.on_retransmit(6); ghl.on_retransmit(7); ghl.on_retransmit(8); ghl.on_retransmit(9);
+    ASSERT(ghl.head_of_line_lag() == 0, "gaprec_hol_contiguous_zero");
+    // snapshot_resync abandons the holes -> lag back to 0.
+    multicast::GapRecovery ghs;
+    ghs.observe(1); ghs.observe(50);
+    ASSERT(ghs.head_of_line_lag() == 49, "gaprec_hol_deep_stall");
+    ghs.snapshot_resync(60);
+    ASSERT(ghs.oldest_missing() == 0 && ghs.head_of_line_lag() == 0, "gaprec_hol_snapshot_clears");
+
     // #110 ReorderBuffer — always delivers in order, holds "future" ones.
     multicast::ReorderBuffer<int> rb;
     rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2

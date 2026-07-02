@@ -191,6 +191,23 @@ struct GapRecovery {
         return best;
     }
 
+    // oldest_missing (#379): the LOWEST sequence still awaiting retransmission
+    // (0 when there are no gaps). This is the head-of-line blocker: an
+    // in-order consumer can release nothing at or above this hole.
+    std::uint64_t oldest_missing() const noexcept {
+        return missing.empty() ? 0 : *missing.begin();
+    }
+
+    // head_of_line_lag (#379): how far the in-order delivery point sits behind
+    // the live edge because of the OLDEST outstanding hole: expected -
+    // oldest_missing, 0 when fully contiguous. Depth companion to
+    // outstanding_range_count (#338), which counts holes but not how stale
+    // they are: a large lag with one range = one long-stalled retransmit
+    // request; a small lag = only fresh gaps.
+    std::uint64_t head_of_line_lag() const noexcept {
+        return missing.empty() ? 0 : expected - *missing.begin();
+    }
+
     // missing_ranges (#149): gaps grouped into CONTIGUOUS intervals [begin,end].
     // next_request gives only min..max (may include already-received); this gives
     // exact ranges for a gap-fill request (more efficient retransmission).
