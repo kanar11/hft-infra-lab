@@ -17,11 +17,14 @@
 #include <limits>
 #include <vector>
 #include <algorithm>
+#include <map>
+#include <functional>
 
 // All module headers
 #include "../itch-parser/itch_parser.hpp"
 #include "../itch-parser/itch_book.hpp"
 #include "../multicast/gap_recovery.hpp"
+#include "../orderbook/orderbook_flat.hpp"
 #include "../oms/oms.hpp"
 #include "../risk/risk_manager.hpp"
 #include "../router/smart_router.hpp"
@@ -5434,6 +5437,116 @@ void test_negative_cases() {
 
 
 // =====================================================
+// FlatOrderBook (occupancy-bitmap cursors) Tests
+// =====================================================
+
+void test_flat_orderbook() {
+    SECTION("FlatOrderBook bitmap");
+
+    using FB = orderbook::FlatOrderBook<16384>;
+
+    // Basic add / best-cursor tracking / cross
+    FB fob;
+    ASSERT(fob.empty(), "flatob_starts_empty");
+    fob.add_buy(10050, 10);
+    fob.add_buy(10030, 5);
+    fob.add_sell(10080, 12);
+    ASSERT(fob.best_bid() == 10050, "flatob_best_bid_tracked");
+    ASSERT(fob.best_ask() == 10080, "flatob_best_ask_tracked");
+    ASSERT(fob.trades() == 0, "flatob_no_cross_yet");
+    fob.add_buy(10080, 15);  // crosses the 12-lot ask, 3 rest as bid
+    ASSERT(fob.trades() == 1, "flatob_cross_trades_once");
+    ASSERT(fob.bid_qty_at(10080) == 3, "flatob_taker_remainder_rests");
+    ASSERT(fob.best_ask() == FB::NO_ASK, "flatob_ask_side_empty_after_fill");
+    ASSERT(fob.best_bid() == 10080, "flatob_best_bid_is_remainder");
+
+    // Sparse book: emptying the best must jump far down in one scan
+    FB fsp;
+    fsp.add_buy(40, 5);       // deep bid, bitmap word 0
+    fsp.add_buy(10000, 7);    // best bid, bitmap word 156
+    fsp.add_sell(10000, 7);   // exact fill of the best level
+    ASSERT(fsp.trades() == 1, "flatob_sparse_fill_trades");
+    ASSERT(fsp.best_bid() == 40, "flatob_best_jumps_down_155_words");
+    fsp.add_sell(40, 5);
+    ASSERT(fsp.best_bid() == FB::NO_BID, "flatob_bid_side_fully_empty");
+    ASSERT(fsp.trades() == 2, "flatob_deep_bid_filled_too");
+
+    // 64-bit word boundary: levels 63 (word 0, bit 63) and 64 (word 1, bit 0)
+    FB fwb;
+    fwb.add_sell(64, 4);
+    fwb.add_sell(63, 4);
+    ASSERT(fwb.best_ask() == 63, "flatob_word_boundary_best_ask");
+    fwb.add_buy(63, 4);  // fills level 63 exactly
+    ASSERT(fwb.best_ask() == 64, "flatob_advance_crosses_word_boundary");
+
+    // Extreme levels: 0 and LEVELS-1
+    FB fex;
+    fex.add_buy(0, 1);
+    fex.add_sell(16383, 1);
+    ASSERT(fex.best_bid() == 0 && fex.best_ask() == 16383, "flatob_extreme_levels_rest");
+    fex.add_sell(0, 1);  // fills the level-0 bid
+    ASSERT(fex.trades() == 1 && fex.best_bid() == FB::NO_BID, "flatob_level0_fill_empties_bids");
+
+    // Cancel/modify path rescans via the bitmap
+    FB fcx;
+    fcx.submit_with_id(1, 8000, 10, /*is_buy=*/true);
+    fcx.submit_with_id(2, 100, 10, /*is_buy=*/true);
+    fcx.submit_with_id(3, 9000, 10, /*is_buy=*/false);
+    ASSERT(fcx.best_bid() == 8000, "flatob_id_tracked_best_bid");
+    ASSERT(fcx.cancel(1), "flatob_cancel_best_bid_ok");
+    ASSERT(fcx.best_bid() == 100, "flatob_cancel_rescans_to_deep_bid");
+    ASSERT(fcx.modify(3, 8500, 10), "flatob_modify_ask_ok");
+    ASSERT(fcx.best_ask() == 8500, "flatob_modified_ask_repriced");
+    fcx.submit_with_id(4, 8000, 6, /*is_buy=*/true);  // re-occupy an emptied level
+    ASSERT(fcx.best_bid() == 8000, "flatob_readd_on_emptied_level");
+
+    // Randomized equivalence vs a std::map reference book on one stream.
+    // Any divergence in trades/best/level quantities is a matching bug.
+    {
+        std::map<int, int, std::greater<int>> refb;
+        std::map<int, int> refa;
+        unsigned long long reft = 0;
+        static FB feq;  // 132 KB of arrays — keep off the stack
+        unsigned int lcg = 0xC0FFEEu;
+        auto nxt = [&lcg]() { lcg = lcg * 1664525u + 1013904223u; return lcg; };
+        for (int i = 0; i < 20000; ++i) {
+            const int px = 9000 + static_cast<int>(nxt() % 401u);
+            const int q  = 1 + static_cast<int>(nxt() % 50u);
+            // Side from a HIGH bit: an LCG's bit 0 alternates with period 2,
+            // which with an even number of draws per loop pins the side.
+            const bool buy = ((nxt() >> 16) & 1u) != 0;
+            if (buy) { feq.add_buy(px, q); refb[px] += q; }
+            else     { feq.add_sell(px, q); refa[px] += q; }
+            while (!refb.empty() && !refa.empty()) {
+                auto bb = refb.begin();
+                auto ba = refa.begin();
+                if (bb->first < ba->first) break;
+                const int fill = std::min(bb->second, ba->second);
+                ++reft;
+                bb->second -= fill;
+                ba->second -= fill;
+                if (bb->second == 0) refb.erase(bb);
+                if (ba->second == 0) refa.erase(ba);
+            }
+        }
+        ASSERT(feq.trades() == reft, "flatob_trades_match_map_ref_20k_ops");
+        const int refbb = refb.empty() ? static_cast<int>(FB::NO_BID) : refb.begin()->first;
+        const int refba = refa.empty() ? static_cast<int>(FB::NO_ASK) : refa.begin()->first;
+        ASSERT(feq.best_bid() == refbb, "flatob_best_bid_matches_map_ref");
+        ASSERT(feq.best_ask() == refba, "flatob_best_ask_matches_map_ref");
+        bool level_qty_ok = true;
+        for (int p = 9000; p <= 9400; ++p) {
+            const auto itb = refb.find(p);
+            if (feq.bid_qty_at(p) != (itb == refb.end() ? 0 : itb->second)) { level_qty_ok = false; break; }
+            const auto ita = refa.find(p);
+            if (feq.ask_qty_at(p) != (ita == refa.end() ? 0 : ita->second)) { level_qty_ok = false; break; }
+        }
+        ASSERT(level_qty_ok, "flatob_level_qty_matches_map_ref_full_band");
+    }
+}
+
+
+// =====================================================
 // Main
 // =====================================================
 
@@ -5442,6 +5555,7 @@ int main() {
 
     test_itch_parser();
     test_itch_book();
+    test_flat_orderbook();
     test_multicast_gap_recovery();
     test_oms();
     test_oms_short_and_replace();

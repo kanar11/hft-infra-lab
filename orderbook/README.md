@@ -7,7 +7,7 @@ speed, and feature richness):
 |---------|------|-------------|
 | **v1 basic**       | `orderbook.cpp`         | minimal didactic — `std::map<Price, Qty>` per side |
 | **v2 + ID**        | `orderbook.cpp` (extended) | adds cancel/modify with `unordered_map<id, Order>` |
-| **FlatOrderBook**  | `orderbook_flat.hpp`    | O(1) add/cancel/modify, zero heap alloc, price-indexed array |
+| **FlatOrderBook**  | `orderbook_flat.hpp`    | O(1) add/cancel/modify, zero heap alloc, price-indexed array + occupancy bitmap (64-level/word cursor scans) |
 | **FullOrderBook**  | `orderbook_pro.hpp`     | **production-grade L3**: FIFO per level, 10 order types + OCO/bracket/trailing, auction, snapshot recovery, compliance + analytics |
 
 ## Performance (Red Hat EL10, VirtualBox 2-core VM)
@@ -179,8 +179,13 @@ make build
 # FullOrderBook — 300+ tests + percentile benchmark
 ./orderbook/orderbook_pro_demo 100000
 
-# Throughput + latency histogram (v2)
-./orderbook/benchmark_orderbook
+# Throughput benchmark: std::map baseline vs FlatOrderBook, multi-trial
+./orderbook/benchmark_orderbook                  # report only (CI-safe)
+./orderbook/benchmark_orderbook 1000000 7 17.8   # gate: exit 1 unless the
+                                                 # SLOWEST of 7 trials beats
+                                                 # 17.8M orders/sec
+
+# Latency histogram (v2)
 ./orderbook/latency_histogram 1000000
 ```
 
@@ -194,5 +199,5 @@ make build
 | `orderbook_pro.hpp` | **FullOrderBook** — header-only L3 production-grade matching engine (includes `_types`) |
 | `orderbook_pro_cluster.hpp` | `BookCluster<N>` — multi-symbol container + cross-symbol arb + snapshot (includes `orderbook_pro.hpp`) |
 | `orderbook_pro_demo.cpp` | FullOrderBook — 370+ tests (order types, STP, OCO/bracket/trailing, auction, snapshot, integrity audit, analytics) + percentile benchmark |
-| `benchmark_orderbook.cpp` | Throughput benchmark across order counts |
+| `benchmark_orderbook.cpp` | Multi-trial throughput benchmark (std::map vs FlatOrderBook) + optional min-trial threshold gate |
 | `latency_histogram.cpp` | Per-order latency percentiles (HFT-relevant) |
