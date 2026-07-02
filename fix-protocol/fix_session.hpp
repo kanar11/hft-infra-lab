@@ -1098,6 +1098,48 @@ public:
         return r;
     }
 
+    // CancelReject — the key OrderCancelReject (35=9) fields in a typed struct
+    // (#385). The CLIENT-side decode that closes the round-trip with
+    // build_cancel_reject (#143): the exchange refused a Cancel (F) or a
+    // Replace (G) request — the ORDER it targeted is still working (the same
+    // lesson as the OUCH tracker's cancel-lifecycle #378: a dead cancel is
+    // not a dead order). 434 says which request type died, 39 carries the
+    // order's CURRENT status, 102 the reason code (0=too late, 1=unknown
+    // order, ...; -1 when the tag is absent, since 0 is a real reason).
+    // valid=false when the message is not 35=9.
+    struct CancelReject {
+        char cl_ord_id[32]      = {};   // 11=ClOrdID (of the refused request)
+        char orig_cl_ord_id[32] = {};   // 41=OrigClOrdID (the working order)
+        char order_id[32]       = {};   // 37=OrderID (exchange-assigned)
+        char ord_status         = '\0'; // 39=OrdStatus (order's current state)
+        char response_to        = '\0'; // 434=CxlRejResponseTo ('1'=Cancel, '2'=Replace)
+        int  reason             = -1;   // 102=CxlRejReason (-1 = absent)
+        char text[64]           = {};   // 58=Text (free-form explanation)
+        bool valid              = false;// true when msg type == '9'
+    };
+
+    static CancelReject parse_cancel_reject(const FIXMessage& m) noexcept {
+        CancelReject r;
+        if (m.get_msg_type()[0] != '9') return r;   // valid stays false
+        const char* coi  = m.get_field(11);
+        const char* ocoi = m.get_field(41);
+        const char* oid  = m.get_field(37);
+        const char* os   = m.get_field(39);
+        const char* rt   = m.get_field(434);
+        const char* txt  = m.get_field(58);
+        // sources are runtime pointers (no compile-time length) so strncpy bounded
+        // to size-1 over a value-initialized array stays nul-terminated.
+        if (coi)  std::strncpy(r.cl_ord_id,      coi,  sizeof(r.cl_ord_id) - 1);
+        if (ocoi) std::strncpy(r.orig_cl_ord_id, ocoi, sizeof(r.orig_cl_ord_id) - 1);
+        if (oid)  std::strncpy(r.order_id,       oid,  sizeof(r.order_id) - 1);
+        if (txt)  std::strncpy(r.text,           txt,  sizeof(r.text) - 1);
+        r.ord_status  = (os && *os) ? os[0] : '\0';
+        r.response_to = (rt && *rt) ? rt[0] : '\0';
+        r.reason      = m.get_field(102) ? m.get_int(102) : -1;
+        r.valid       = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

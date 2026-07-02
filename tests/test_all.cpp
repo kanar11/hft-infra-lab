@@ -4973,6 +4973,25 @@ void test_fix_session() {
         ASSERT(std::atoi(cr.get_field(102)) == 0, "fix_cxlreject_reason_too_late");
         ASSERT(std::strcmp(cr.get_field(41), "ORD1") == 0, "fix_cxlreject_origclordid");
 
+        // #385 parse_cancel_reject — typed CLIENT-side decode of 35=9; closes
+        // the round-trip with build_cancel_reject (#143). FIX counterpart of
+        // the OUCH tracker's cancel-lifecycle handling (#378).
+        const auto crj = fix::FIXSession::parse_cancel_reject(cr);
+        ASSERT(crj.valid && std::strcmp(crj.cl_ord_id, "CXL1") == 0
+               && std::strcmp(crj.orig_cl_ord_id, "ORD1") == 0
+               && std::strcmp(crj.order_id, "EXG1") == 0, "fix_parse_cxlrej_ids");
+        ASSERT(crj.ord_status == '2' && crj.response_to == '2', "fix_parse_cxlrej_status_respto");
+        // Reason 0 (= too late) is PRESENT here, so it must decode as 0, not
+        // the -1 absent sentinel.
+        ASSERT(crj.reason == 0, "fix_parse_cxlrej_reason_zero_present");
+        ASSERT(std::strcmp(crj.text, "Too late to cancel") == 0, "fix_parse_cxlrej_text");
+        // A 35=9 without tag 102 -> reason falls back to the -1 sentinel.
+        FIXMessage nine_bare; nine_bare.parse("35=9|11=CXL2|41=ORD2|");
+        const auto crjb = fix::FIXSession::parse_cancel_reject(nine_bare);
+        ASSERT(crjb.valid && crjb.reason == -1, "fix_parse_cxlrej_absent_reason_minus1");
+        FIXMessage not_nine; not_nine.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_cancel_reject(not_nine).valid, "fix_parse_cxlrej_non9_invalid");
+
         // #319 QuoteStatusReport (35=AI) — venue ack/reject of a Quote.
         // Full RFQ lifecycle: 35=R (request) -> 35=S (quote) -> 35=AI (status) -> 35=Z (cancel).
         s.build_quote_status_report(buf, sizeof(buf), "Q1", "AAPL", 0, nullptr, '|'); // Accepted
