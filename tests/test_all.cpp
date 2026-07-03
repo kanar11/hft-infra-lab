@@ -5979,6 +5979,23 @@ void test_ouch_order_state() {
     ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
                        "invalid side") == 0, "ouch_validate_bad_side");
 
+    // #418 protocol-conformance caps: 1,000,000 shares / $199,999.99.
+    n = OUCHMessage::enter_order(buf, "TOK1", 'B', 1000000, "AAPL", 150.25);  // at the cap
+    ASSERT(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)) == nullptr,
+           "ouch_cap_shares_at_max_ok");
+    n = OUCHMessage::enter_order(buf, "TOK1", 'B', 1000001, "AAPL", 150.25);  // fat finger
+    ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
+                       "shares exceed maximum") == 0, "ouch_cap_shares_over");
+    n = OUCHMessage::enter_order(buf, "TOK1", 'B', 100, "AAPL", 250000.0);    // beyond the field cap
+    ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
+                       "price exceeds maximum") == 0, "ouch_cap_price_over");
+    n = OUCHMessage::replace_order(buf, "TOK1", "TOK2", 2000000, 150.25);     // replace upsized too far
+    ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
+                       "shares exceed maximum") == 0, "ouch_cap_replace_shares");
+    n = OUCHMessage::modify_order(buf, "TOK1", 5000000);                      // modify is capped too
+    ASSERT(std::strcmp(OUCHMessage::validate_order(OUCHMessage::parse_order(buf, n)),
+                       "shares exceed maximum") == 0, "ouch_cap_modify_shares");
+
     // #242 tracker volume aggregates (fresh tracker).
     ouch::OUCHOrderTracker tt;
     tt.on_new("TOKA", 100);

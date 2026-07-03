@@ -575,6 +575,14 @@ public:
         return o;
     }
 
+    // Protocol-conformance caps (#418): NASDAQ rejects orders above
+    // 1,000,000 shares, and the OUCH price field is capped at $199,999.99
+    // (values past it are reserved/market sentinels). The gateway must
+    // reject these BEFORE matching — a fat-finger 10M-share order that
+    // parses cleanly is still not a valid order.
+    static constexpr int32_t MAX_ORDER_SHARES = 1000000;
+    static constexpr double  MAX_ORDER_PRICE  = 199999.99;
+
     // validate_order: exchange-side validation of a CLIENT order (#169). Returns
     // nullptr when OK, or a rejection reason. Pairs with parse_order — the gateway
     // checks before passing to matching.
@@ -584,14 +592,19 @@ public:
         if (o.type == 'O') {
             if (o.side != 'B' && o.side != 'S') return "invalid side";
             if (o.shares <= 0)   return "non-positive shares";
+            if (o.shares > MAX_ORDER_SHARES) return "shares exceed maximum";   // #418
             if (o.price  <= 0.0) return "non-positive price";
+            if (o.price  > MAX_ORDER_PRICE) return "price exceeds maximum";    // #418
             if (o.stock[0] == '\0') return "empty symbol";
         } else if (o.type == 'U') {
             if (o.new_token[0] == '\0') return "empty replacement token";
             if (o.shares <= 0)   return "non-positive shares";
+            if (o.shares > MAX_ORDER_SHARES) return "shares exceed maximum";   // #418
             if (o.price  <= 0.0) return "non-positive price";
+            if (o.price  > MAX_ORDER_PRICE) return "price exceeds maximum";    // #418
         } else if (o.type == 'M') {                  // #226 Modify (decrease-only)
             if (o.shares <= 0)   return "non-positive shares";
+            if (o.shares > MAX_ORDER_SHARES) return "shares exceed maximum";   // #418
         } else if (o.type == 'X') {
             if (o.shares < 0)    return "negative shares";
         }
