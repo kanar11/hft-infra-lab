@@ -324,6 +324,7 @@ class RiskManager {
     int32_t underwater_updates_     = 0;  // consecutive updates below the P&L peak (#397)
     int32_t max_underwater_updates_ = 0;  // longest such spell this session (#397)
     int32_t max_consec_wins_        = 0;  // best winning streak seen this session (#405)
+    uint64_t kill_activations_      = 0;  // fresh false->true kill-switch latches (#421)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
@@ -596,9 +597,7 @@ public:
             if (consec_losses_ > max_consec_losses_) max_consec_losses_ = consec_losses_;  // #364
             if (limits_.max_consecutive_losses > 0
                 && consec_losses_ >= limits_.max_consecutive_losses) {
-                kill_switch_active_ = true;
-                kill_reason_        = KillReason::CONSECUTIVE_LOSSES;
-                persist_state();
+                latch_kill_switch(KillReason::CONSECUTIVE_LOSSES);
             }
         } else if (pnl_change > 0.0) {
             consec_losses_ = 0;   // a profit resets the streak
@@ -673,8 +672,18 @@ public:
     // File format (text for audit): "active=1\nlast_pnl=-12345.67\n"
     // After a manual deactivate you additionally need to call clear_persisted_state().
     void activate_kill_switch() noexcept {
+        latch_kill_switch(KillReason::MANUAL);
+    }
+    // latch_kill_switch: the single chokepoint for FRESH activations (#421)
+    // — counts only false->true transitions (repeated latch conditions,
+    // e.g. every further loss past the streak limit, re-assert the switch
+    // but do not re-count), sets the reason and persists. The persisted-
+    // state RESTORE path does not come through here: restoring yesterday's
+    // trip is not a new activation.
+    void latch_kill_switch(KillReason r) noexcept {
+        if (!kill_switch_active_) ++kill_activations_;
         kill_switch_active_ = true;
-        kill_reason_        = KillReason::MANUAL;
+        kill_reason_        = r;
         persist_state();
     }
     void deactivate_kill_switch() noexcept {
@@ -750,6 +759,7 @@ public:
         underwater_updates_     = 0;  // #397
         max_underwater_updates_ = 0;  // #397
         max_consec_wins_        = 0;  // #405
+        kill_activations_       = 0;  // #421
         traded_notional_ = 0.0;
         rate_ring_.reset();
         pending_.clear();
@@ -1052,6 +1062,14 @@ public:
     // is also the classic signature of a stale feed marking every trade
     // profitable — worth checking, not celebrating. Reset by reset_daily.
     int32_t  max_consecutive_wins_seen()      const noexcept { return max_consec_wins_; }
+    // kill_switch_activations: how many times the switch FRESHLY latched
+    // this session (#421) — false->true transitions only, across every
+    // trigger (manual, circuit breaker, drawdown, loss streak). is_kill_
+    // switch_active() says whether the desk is halted NOW; a review wants
+    // to know it halted three times TODAY even if each halt was cleared.
+    // Restoring a persisted trip at startup does not count. Reset by
+    // reset_daily.
+    uint64_t kill_switch_activations() const noexcept { return kill_activations_; }
     // pnl_win_rate: fraction of P&L updates that were profitable (#372) =
     // winning_updates / (winning + losing), in [0, 1]. update_pnl is called once
     // per realized fill/mark, so this is the hit rate on individual P&L events —
@@ -1201,18 +1219,14 @@ private:
     const char* check_pnl_breakers() noexcept {
         // 5. Circuit breaker — daily loss exceeded
         if (daily_pnl_ < -static_cast<double>(limits_.max_daily_loss)) {
-            kill_switch_active_ = true;
-            kill_reason_        = KillReason::CIRCUIT_BREAKER;
-            persist_state();   // a process restart cannot bypass the trip
+            latch_kill_switch(KillReason::CIRCUIT_BREAKER);   // restart cannot bypass the trip
             return "Circuit breaker: daily loss limit";
         }
         // 6. Drawdown — % drop from peak_pnl_ exceeded the threshold
         if (peak_pnl_ > 0.0) {
             const double drawdown_pct = (peak_pnl_ - daily_pnl_) / peak_pnl_ * 100.0;
             if (drawdown_pct > limits_.max_drawdown_pct) {
-                kill_switch_active_ = true;
-                kill_reason_        = KillReason::DRAWDOWN;
-                persist_state();
+                latch_kill_switch(KillReason::DRAWDOWN);
                 return "Drawdown limit exceeded";
             }
         }

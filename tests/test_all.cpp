@@ -4869,6 +4869,35 @@ void test_risk_price_band() {
     rmw.reset_daily();
     ASSERT(rmw.max_consecutive_wins_seen() == 0, "mcw_reset_daily");
 
+    // #421 kill_switch_activations — fresh latches only, across triggers.
+    RiskLimits kal;
+    kal.max_position_per_symbol = 100000;
+    kal.max_portfolio_exposure  = 100000000;
+    kal.max_order_value         = 100000000;
+    kal.max_orders_per_second   = 1000000;
+    kal.max_price_band_pct      = 0.0;
+    kal.max_consecutive_losses  = 2;
+    RiskManager rka(kal);
+    ASSERT(rka.kill_switch_activations() == 0, "ksa_fresh_zero");
+    rka.activate_kill_switch();
+    ASSERT(rka.kill_switch_activations() == 1, "ksa_manual_counts");
+    rka.activate_kill_switch();                  // already on — re-assert only
+    ASSERT(rka.kill_switch_activations() == 1, "ksa_reassert_not_counted");
+    rka.deactivate_kill_switch();
+    rka.activate_kill_switch();                  // a second real halt
+    ASSERT(rka.kill_switch_activations() == 2, "ksa_second_halt_counts");
+    rka.deactivate_kill_switch();
+    // A breaker latch (loss streak of 2) is a fresh activation; the third
+    // loss re-asserts the already-tripped switch without re-counting.
+    rka.update_pnl(-1.0);
+    rka.update_pnl(-1.0);
+    ASSERT(rka.is_kill_switch_active() && rka.kill_switch_activations() == 3,
+           "ksa_streak_latch_counts");
+    rka.update_pnl(-1.0);
+    ASSERT(rka.kill_switch_activations() == 3, "ksa_tripped_reassert_ignored");
+    rka.reset_daily();
+    ASSERT(rka.kill_switch_activations() == 0, "ksa_reset_daily");
+
     // #121 reason the kill switch latched.
     RiskManager rk(lim);
     ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");
