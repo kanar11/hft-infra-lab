@@ -5249,6 +5249,36 @@ void test_risk_price_band() {
     RiskManager rwb0(wbl0);
     ASSERT(!rwb0.would_breach_exposure("AAPL", Side::BUY, 99999999), "wbe_disabled_never");
 
+    // #429 rate_limit_headroom — the pre-trade probe for check #7.
+    // now=0 keeps every real (large, positive) mono timestamp in the window,
+    // so the counts below are deterministic.
+    RiskLimits rlh;
+    rlh.max_position_per_symbol = 100000;
+    rlh.max_portfolio_exposure  = 100000000;
+    rlh.max_order_value         = 100000000;
+    rlh.max_orders_per_second   = 5;
+    rlh.max_price_band_pct      = 0.0;
+    RiskManager rrl(rlh);
+    ASSERT(rrl.rate_limit_headroom(0) == 5, "rlh_fresh_full");
+    rrl.check_order("AAPL", Side::BUY, 10.0, 1);
+    rrl.check_order("AAPL", Side::BUY, 10.0, 1);
+    ASSERT(rrl.rate_limit_headroom(0) == 3, "rlh_two_used");
+    // Probing does not consume a slot: ask twice, still 3.
+    ASSERT(rrl.rate_limit_headroom(0) == 3, "rlh_probe_free");
+    rrl.check_order("AAPL", Side::BUY, 10.0, 1);
+    rrl.check_order("AAPL", Side::BUY, 10.0, 1);
+    rrl.check_order("AAPL", Side::BUY, 10.0, 1);
+    ASSERT(rrl.rate_limit_headroom(0) == 0, "rlh_window_exhausted");
+    // The 6th order in the window is what check #7 rejects.
+    ASSERT(rrl.check_order("AAPL", Side::BUY, 10.0, 1).action == RiskAction::REJECT,
+           "rlh_sixth_rejected");
+    ASSERT(rrl.rate_limit_headroom(0) == 0, "rlh_floored_at_zero");
+    // Disabled limit -> -1 sentinel.
+    RiskLimits rlh0 = rlh;
+    rlh0.max_orders_per_second = 0;
+    RiskManager rrl0(rlh0);
+    ASSERT(rrl0.rate_limit_headroom(0) == -1, "rlh_disabled_minus1");
+
     // #189 per-symbol position value limit ($10k; shares generous).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;

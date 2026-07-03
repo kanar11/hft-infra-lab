@@ -950,6 +950,23 @@ public:
         return -projected > short_cap;
     }
 
+    // rate_limit_headroom: how many MORE orders fit in the current
+    // one-second window (#429) — the pre-trade probe for check #7. A burst
+    // scheduler paces submissions with this instead of eating rejects.
+    // check_rate_limit consumes a slot when it allows; this only evicts
+    // expired timestamps (exactly what the next check would do with the
+    // same clock) and reports limit - count, floored at 0. Pass the same
+    // clock as production (mono_ns()) — a fabricated future `now` would
+    // evict entries that have not really expired. -1 when the limit is
+    // disabled (<= 0). No stats, no latency accounting.
+    int32_t rate_limit_headroom(int64_t now_ns) noexcept {
+        if (limits_.max_orders_per_second <= 0) return -1;
+        rate_ring_.evict(now_ns - 1'000'000'000);
+        const int32_t room = limits_.max_orders_per_second
+                           - static_cast<int32_t>(rate_ring_.count());
+        return room > 0 ? room : 0;
+    }
+
     // would_breach_exposure: pre-trade predicate — would this order breach
     // the PORTFOLIO exposure limit (#413)? The portfolio-level companion to
     // would_breach_position (#291, per-symbol caps): mirrors check_order's
