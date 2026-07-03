@@ -53,6 +53,8 @@ class ITCHOrderBook {
     int64_t exec_notional_ticks_ = 0;  // tape: Σ shares × resting price_ticks (#407)
     int64_t exec_against_bid_    = 0;  // tape: shares hit on resting BIDS = seller-initiated (#415)
     int64_t exec_against_ask_    = 0;  // tape: shares lifted from ASKS = buyer-initiated (#415)
+    int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
+    uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -117,6 +119,12 @@ public:
         auto it = orders_.find(orig_ref);
         if (it == orders_.end()) { ++orphans_; ++replaces_; return; }
         const char side = it->second.side;   // replace keeps the side
+        // #431: reprice distance — how far the order chased. Captured here
+        // because only this moment has BOTH prices side by side.
+        const int64_t old_px = it->second.price_ticks;
+        const int64_t new_px = to_ticks(new_price);
+        reprice_ticks_sum_ += (new_px > old_px) ? new_px - old_px : old_px - new_px;
+        ++repriced_;
         reduce_(orig_ref, it->second.shares);
         on_add(new_ref, side, new_price, new_shares);
         --adds_;                              // on_add counted an add; a replace is not an add
@@ -186,6 +194,7 @@ public:
         adds_ = executes_ = cancels_ = deletes_ = replaces_ = orphans_ = 0;
         exec_shares_sum_ = exec_notional_ticks_ = 0;   // #407
         exec_against_bid_ = exec_against_ask_ = 0;     // #415
+        reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
     }
     // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
@@ -730,6 +739,18 @@ public:
         return total > 0
             ? static_cast<double>(exec_against_ask_ - exec_against_bid_)
                   / static_cast<double>(total)
+            : 0.0;
+    }
+
+    // avg_reprice_ticks (#431): the mean |price move| of an applied replace,
+    // in ticks — quote-chasing intensity. replaces() says HOW OFTEN quotes
+    // move, this says HOW FAR: near-zero means size-only amendments and
+    // gentle repricing, a rising average means the crowd is chasing a
+    // running market (or repricing away from it in fear). Orphaned replaces
+    // carry no old price and are excluded. 0 before any applied replace.
+    double avg_reprice_ticks() const noexcept {
+        return repriced_ > 0
+            ? static_cast<double>(reprice_ticks_sum_) / static_cast<double>(repriced_)
             : 0.0;
     }
 

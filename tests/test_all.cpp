@@ -2327,6 +2327,24 @@ void test_itch_book() {
     ASSERT(ilvl.largest_level('B', &ilvl_px) == 400
            && std::fabs(ilvl_px - 10.00) < 1e-9, "itchbook_lvl_crown_moves");
 
+    // #431 avg_reprice_ticks — quote-chasing intensity (how FAR, not how often).
+    itch::ITCHOrderBook irpc;
+    ASSERT(irpc.avg_reprice_ticks() == 0.0, "itchbook_rpc_empty_zero");
+    irpc.on_add(1, 'B', 10.00, 100);
+    irpc.on_replace(1, 2, 10.05, 100);            // +5 ticks chase
+    ASSERT(std::fabs(irpc.avg_reprice_ticks() - 5.0) < 1e-9, "itchbook_rpc_five_ticks");
+    // A size-only amendment (same price) dilutes the average toward zero.
+    irpc.on_replace(2, 3, 10.05, 50);
+    ASSERT(std::fabs(irpc.avg_reprice_ticks() - 2.5) < 1e-9, "itchbook_rpc_size_only_dilutes");
+    // Direction does not matter — a retreat is the same distance.
+    irpc.on_replace(3, 4, 10.02, 50);             // -3 ticks
+    ASSERT(std::fabs(irpc.avg_reprice_ticks() - 8.0 / 3.0) < 1e-9, "itchbook_rpc_retreat_counts");
+    // An orphaned replace has no old price — excluded from the average.
+    irpc.on_replace(999, 5, 20.00, 10);
+    ASSERT(std::fabs(irpc.avg_reprice_ticks() - 8.0 / 3.0) < 1e-9, "itchbook_rpc_orphan_excluded");
+    irpc.clear();
+    ASSERT(irpc.avg_reprice_ticks() == 0.0, "itchbook_rpc_clear");
+
     // #399 orphan_rate / ref_event_count — feed-health ratio behind orphans().
     itch::ITCHOrderBook iorf;
     ASSERT(iorf.orphan_rate() == 0.0 && iorf.ref_event_count() == 0, "itchbook_orate_empty");
