@@ -2221,6 +2221,26 @@ void test_itch_book() {
     ilro.on_delete(1);
     ASSERT(ilro.largest_resting_order('B') == 200, "itchbook_lro_after_delete");
 
+    // #399 orphan_rate / ref_event_count — feed-health ratio behind orphans().
+    itch::ITCHOrderBook iorf;
+    ASSERT(iorf.orphan_rate() == 0.0 && iorf.ref_event_count() == 0, "itchbook_orate_empty");
+    iorf.on_add(1, 'B', 10.00, 100);
+    iorf.on_execute(1, 40);
+    iorf.on_cancel(1, 10);
+    ASSERT(iorf.ref_event_count() == 2 && iorf.orphan_rate() == 0.0, "itchbook_orate_clean");
+    // Each orphaned event kind raises the numerator AND the denominator.
+    iorf.on_execute(999, 10);                       // unknown ref
+    ASSERT(std::fabs(iorf.orphan_rate() - 1.0/3.0) < 1e-9, "itchbook_orate_one_third");
+    iorf.on_delete(998);                            // unknown ref
+    iorf.on_replace(997, 996, 11.0, 50);            // unknown ref
+    ASSERT(iorf.orphans() == 3 && iorf.ref_event_count() == 5, "itchbook_orate_counts");
+    ASSERT(std::fabs(iorf.orphan_rate() - 3.0/5.0) < 1e-9, "itchbook_orate_three_fifths");
+    // Adds never orphan (new ref) and do not enter the denominator.
+    iorf.on_add(2, 'S', 12.00, 100);
+    ASSERT(iorf.ref_event_count() == 5, "itchbook_orate_adds_excluded");
+    iorf.clear();
+    ASSERT(iorf.orphan_rate() == 0.0 && iorf.ref_event_count() == 0, "itchbook_orate_clear");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

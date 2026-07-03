@@ -669,6 +669,28 @@ public:
     uint64_t replaces() const noexcept { return replaces_; }
     uint64_t orphans()  const noexcept { return orphans_; }   // desync signal / feed gaps
 
+    // ref_event_count (#399): how many ref-based events (execute/cancel/
+    // delete/replace) the book has processed — including the ones that
+    // orphaned. Adds are keyed by a NEW ref, so they cannot orphan and are
+    // excluded. The denominator for orphan_rate below.
+    uint64_t ref_event_count() const noexcept {
+        return executes_ + cancels_ + deletes_ + replaces_;
+    }
+
+    // orphan_rate (#399): the fraction of ref-based events that referenced
+    // an UNKNOWN order = orphans / ref_event_count, in [0,1]. The feed-
+    // health ratio behind the raw orphans() counter: a non-zero rate means
+    // the book missed adds (multicast gap, late join) and its picture is
+    // incomplete — pair it with audit_book (#383), which catches the
+    // opposite failure (events that silently CORRUPTED a known order).
+    // 0 before any ref-based event.
+    double orphan_rate() const noexcept {
+        const uint64_t total = ref_event_count();
+        return total > 0
+            ? static_cast<double>(orphans_) / static_cast<double>(total)
+            : 0.0;
+    }
+
     // largest_resting_order (#391): the single biggest order resting on a
     // side — the "wall". One institutional-size clip is a very different
     // book than many retail-size clips at the same total depth: it signals
