@@ -4094,6 +4094,24 @@ void test_router_ewma_partial() {
                "rsl_fee_gates_all_in");
         ASSERT(rslf.sweep_to_fill_at_limit(true, 100, 10.05, rsl_vwap) == 100
                && closr(rsl_vwap, 10.03), "rsl_fee_priced_all_in");
+
+        // #408 venues_to_fill_at_limit — the venue-count face of #400.
+        // rsl asks within a 10.04 limit: A 150 + B 250 (C's 10.06 gated out).
+        ASSERT(rsl.venues_to_fill_at_limit(true, 150, 10.04) == 1, "rvtl_touch_absorbs");
+        ASSERT(rsl.venues_to_fill_at_limit(true, 151, 10.04) == 2, "rvtl_spills_to_second");
+        ASSERT(rsl.venues_to_fill_at_limit(true, 400, 10.04) == 2, "rvtl_exact_capacity");
+        // 401 shares cannot fill within the limit (C is gated) -> -1.
+        ASSERT(rsl.venues_to_fill_at_limit(true, 401, 10.04) == -1, "rvtl_insufficient_minus1");
+        // Lifting the limit admits C: the same 401 now needs 3 venues.
+        ASSERT(rsl.venues_to_fill_at_limit(true, 401, 10.06) == 3, "rvtl_lifted_limit_three");
+        // Consistency with #400: fillable shares -> a venue count, not -1.
+        ASSERT(rsl.sweep_to_fill_at_limit(true, 400, 10.04, rsl_vwap) == 400
+               && rsl.venues_to_fill_at_limit(true, 400, 10.04) > 0, "rvtl_consistent_with_400");
+        // SELL mirror within a 9.99 limit: B 100 + A 300 (C's 9.98 gated out).
+        ASSERT(rsl.venues_to_fill_at_limit(false, 100, 9.99) == 1, "rvtl_sell_touch");
+        ASSERT(rsl.venues_to_fill_at_limit(false, 400, 9.99) == 2, "rvtl_sell_two");
+        ASSERT(rsl.venues_to_fill_at_limit(false, 401, 9.99) == -1, "rvtl_sell_insufficient");
+        ASSERT(rsl.venues_to_fill_at_limit(true, 0, 10.04) == 0, "rvtl_zero_shares");
     }
 
     // --- #138 cumulative fee cost ---
