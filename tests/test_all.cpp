@@ -3949,6 +3949,47 @@ void test_router_ewma_partial() {
         ASSERT(rqs.venue_quote_age_ns("A", 5000) == 0, "rqs_clamp_zero");
     }
 
+    // --- #400 sweep_to_fill_at_limit — the marketable-limit sweep planner ---
+    {
+        auto closr = [](double a, double b) { const double d = a - b; return (d < 0 ? -d : d) < 1e-9; };
+        SmartOrderRouter rsl(RoutingStrategy::BEST_PRICE);
+        rsl.add_venue(Venue("A", 100, 0.0));
+        rsl.add_venue(Venue("B", 100, 0.0));
+        rsl.add_venue(Venue("C", 100, 0.0));
+        rsl.update_quote("A", 9.99, 10.02, 300, 150);
+        rsl.update_quote("B", 10.00, 10.04, 100, 250);
+        rsl.update_quote("C", 9.98, 10.06, 200, 120);
+        double rsl_vwap = -1.0;
+        // BUY limit 10.04: A (150 @ 10.02) + B (250 @ 10.04); C excluded.
+        ASSERT(rsl.sweep_to_fill_at_limit(true, 1000, 10.04, rsl_vwap) == 400,
+               "rsl_buy_limit_caps_fill");
+        ASSERT(closr(rsl_vwap, (10.02 * 150 + 10.04 * 250) / 400.0), "rsl_buy_vwap_blended");
+        // Given enough shares the fill equals liquidity_at_limit (#376).
+        ASSERT(rsl.sweep_to_fill_at_limit(true, 1000000, 10.04, rsl_vwap)
+               == rsl.liquidity_at_limit(true, 10.04), "rsl_matches_liquidity_at_limit");
+        // The share cap binds before the limit does: 150 @ A + 50 @ B.
+        ASSERT(rsl.sweep_to_fill_at_limit(true, 200, 10.04, rsl_vwap) == 200,
+               "rsl_share_cap_binds");
+        ASSERT(closr(rsl_vwap, (10.02 * 150 + 10.04 * 50) / 200.0), "rsl_share_cap_vwap");
+        // A limit below the best ask fills nothing and zeroes the VWAP.
+        ASSERT(rsl.sweep_to_fill_at_limit(true, 100, 10.01, rsl_vwap) == 0 && rsl_vwap == 0.0,
+               "rsl_unmarketable_zero");
+        // SELL limit 9.99: B (100 @ 10.00) + A (300 @ 9.99); C's 9.98 excluded.
+        ASSERT(rsl.sweep_to_fill_at_limit(false, 1000, 9.99, rsl_vwap) == 400,
+               "rsl_sell_limit_caps_fill");
+        ASSERT(closr(rsl_vwap, (10.00 * 100 + 9.99 * 300) / 400.0), "rsl_sell_vwap_blended");
+        // Fees gate on the ALL-IN price and price the VWAP: ask 10.00 with a
+        // 0.03 taker fee is 10.03 all-in -> out at 10.02, in at 10.05 where
+        // the blended cost is the all-in 10.03, not the raw 10.00.
+        SmartOrderRouter rslf(RoutingStrategy::BEST_PRICE);
+        rslf.add_venue(Venue("F", 100, 0.03));
+        rslf.update_quote("F", 9.90, 10.00, 200, 150);
+        ASSERT(rslf.sweep_to_fill_at_limit(true, 100, 10.02, rsl_vwap) == 0,
+               "rsl_fee_gates_all_in");
+        ASSERT(rslf.sweep_to_fill_at_limit(true, 100, 10.05, rsl_vwap) == 100
+               && closr(rsl_vwap, 10.03), "rsl_fee_priced_all_in");
+    }
+
     // --- #138 cumulative fee cost ---
     {
         auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };

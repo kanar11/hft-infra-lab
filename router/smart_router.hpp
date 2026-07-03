@@ -844,6 +844,53 @@ public:
         const double diff = is_buy ? (vwap - m) : (m - vwap);
         return diff / m * 10000.0;
     }
+    // sweep_to_fill_at_limit (#400, MILESTONE 400): the marketable-limit
+    // sweep planner — how many of `shares` fill RIGHT NOW without paying
+    // worse than `limit_price`, and at what blended cost. Walks venues in
+    // price priority like sweep_to_fill (#335) but admits only venues whose
+    // ALL-IN price (quote ± fee — the is_marketable #184 /
+    // liquidity_at_limit #376 convention) satisfies the limit, and both the
+    // gate and out_vwap use that all-in price: a limit is a cap on what you
+    // are willing to PAY, fees included (sweep_to_fill's raw-quote VWAP
+    // matches the NBBO convention instead). Returns the fillable shares and
+    // writes the all-in VWAP into out_vwap (0 on no fill). Given enough
+    // shares the fill equals liquidity_at_limit(is_buy, limit_price); the
+    // remainder past the return value must rest at the limit.
+    int32_t sweep_to_fill_at_limit(bool is_buy, int32_t shares, double limit_price,
+                                   double& out_vwap) const noexcept {
+        out_vwap = 0.0;
+        if (shares <= 0) return 0;
+        bool    used[MAX_VENUES] = {};   // value-init: cppcheck-clean, no heap
+        int32_t remaining = shares, filled = 0;
+        double  notional = 0.0;
+        for (int pass = 0; pass < venue_count_ && remaining > 0; ++pass) {
+            int    best_i   = -1;
+            double best_eff = 0.0;
+            for (int i = 0; i < venue_count_; ++i) {
+                if (used[i]) continue;
+                const Venue& v = venues_[i];
+                if (!v.is_active) continue;
+                const double  px = is_buy ? v.best_ask : v.best_bid;
+                const int32_t sz = is_buy ? v.ask_size : v.bid_size;
+                if (px <= 0.0 || sz <= 0) continue;
+                const double eff = effective_price(v, is_buy);
+                if (is_buy ? (eff > limit_price) : (eff < limit_price)) continue;  // past the limit
+                const bool better = (best_i < 0) ||
+                                    (is_buy ? eff < best_eff : eff > best_eff);
+                if (better) { best_i = i; best_eff = eff; }
+            }
+            if (best_i < 0) break;                       // nothing left within the limit
+            used[best_i] = true;
+            const Venue&  v    = venues_[best_i];
+            const int32_t sz   = is_buy ? v.ask_size : v.bid_size;
+            const int32_t take = remaining < sz ? remaining : sz;
+            notional  += best_eff * take;
+            filled    += take;
+            remaining -= take;
+        }
+        if (filled > 0) out_vwap = notional / static_cast<double>(filled);
+        return filled;
+    }
     // venues_to_fill: the NUMBER of distinct venues that must be swept (in
     // price-priority order) to fill `shares` (#343). Same walk as sweep_to_fill,
     // but counts venues touched instead of computing a VWAP — the cross-venue
