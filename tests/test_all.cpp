@@ -6432,6 +6432,28 @@ void test_ouch_order_state() {
                "ouch_fv_cancel_prices_nothing");
     }
 
+    // #426 desyncs — unknown-token responses split out of rejects().
+    {
+        ouch::OUCHOrderTracker dst;
+        uint8_t dsb[64];
+        ASSERT(dst.desyncs() == 0, "ouch_dsy_fresh_zero");
+        // A REAL order rejection: rejects() moves, desyncs() does not.
+        dst.on_new("D1", 100);
+        int dsn = OUCHMessage::encode_rejected(dsb, "D1", 'X');
+        dst.on_response(OUCHMessage::parse_response(dsb, dsn));
+        ASSERT(dst.rejects() == 1 && dst.desyncs() == 0, "ouch_dsy_real_reject_not_desync");
+        // An ack for a token never registered: both move — and the
+        // difference rejects() - desyncs() stays the true rejection count.
+        dsn = OUCHMessage::encode_accepted(dsb, "GHOST1", 'B', 10, "X", 1.0, 9);
+        dst.on_response(OUCHMessage::parse_response(dsb, dsn));
+        ASSERT(dst.rejects() == 2 && dst.desyncs() == 1, "ouch_dsy_unknown_token_counts");
+        ASSERT(dst.rejects() - dst.desyncs() == 1, "ouch_dsy_difference_is_true_rejects");
+        // A REPLACED naming an unknown PREVIOUS token is a desync too.
+        dsn = OUCHMessage::encode_replaced(dsb, "NEWD", "GHOST2", 10, 1.0, 10);
+        dst.on_response(OUCHMessage::parse_response(dsb, dsn));
+        ASSERT(dst.desyncs() == 2, "ouch_dsy_replaced_unknown_prev");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100

@@ -62,6 +62,7 @@ class OUCHOrderTracker {
     int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
     uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
     uint64_t replaced_       = 0;   // Order Replaced ('U') migrations applied (#386)
+    uint64_t desyncs_        = 0;   // responses naming an UNKNOWN token (#426)
     double   session_fill_notional_ = 0.0;  // Σ exec shares × price across all orders (#410)
 
     Record* find(const char* token) noexcept {
@@ -98,7 +99,7 @@ public:
         // priority-sensitive flags reset (a replace re-queues the order).
         if (std::strcmp(r.type, "REPLACED") == 0) {
             auto pit = orders_.find(r.prev_token);
-            if (pit == orders_.end()) { ++rejected_; return OrderState::REJECTED; }
+            if (pit == orders_.end()) { ++rejected_; ++desyncs_; return OrderState::REJECTED; }
             Record moved = pit->second;
             orders_.erase(pit);
             moved.remaining      = r.shares;
@@ -109,7 +110,7 @@ public:
             return (orders_[r.token] = moved).state;
         }
         Record* rec = find(r.token);
-        if (!rec) { ++rejected_; return OrderState::REJECTED; }
+        if (!rec) { ++rejected_; ++desyncs_; return OrderState::REJECTED; }
 
         if (std::strcmp(r.type, "ACCEPTED") == 0) {
             rec->state     = OrderState::LIVE;
@@ -380,6 +381,15 @@ public:
     uint64_t cancel_rejects() const noexcept { return cancel_rejects_; }
     // replaces: how many Order Replaced ('U') token migrations were applied (#386).
     uint64_t replaces() const noexcept { return replaced_; }
+    // desyncs: responses that named a token the tracker never registered
+    // (#426) — including a REPLACED whose PREVIOUS token is unknown. These
+    // have always been folded into rejects(), which conflates two very
+    // different alarms: the exchange refusing an ORDER (a business event)
+    // vs the tracker having LOST STATE (missed messages, a session restart
+    // without replay — an ops event). rejects() keeps its historical
+    // meaning; desyncs() splits the ops share out: rejects() - desyncs()
+    // = true order rejections.
+    uint64_t desyncs() const noexcept { return desyncs_; }
     // total_broken_shares: cumulative shares returned to "open" by Broken Trade
     // messages (#320). The exchange rescinds a prior fill — shares move back from
     // filled to remaining. Watching this versus total_filled_shares reveals how much
