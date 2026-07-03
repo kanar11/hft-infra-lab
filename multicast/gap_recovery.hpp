@@ -1089,11 +1089,15 @@ struct ReorderBuffer {
     std::map<std::uint64_t, T> pending;   // seq > expected, waiting
     std::vector<T>       out;             // delivered in order
     std::uint64_t        duplicates = 0;
+    std::size_t          max_buffered = 0;   // deepest pending ever held (#411)
 
     void push(std::uint64_t seq, const T& val) {
         if (!initialized) { expected = seq; initialized = true; }
         if (seq < expected) { ++duplicates; return; }    // already delivered
         pending[seq] = val;
+        // #411: record the high-water mark BEFORE the drain — the moment the
+        // buffer is deepest is right after an out-of-order insert.
+        if (pending.size() > max_buffered) max_buffered = pending.size();
         // Drain all contiguous from expected.
         auto it = pending.find(expected);
         while (it != pending.end()) {
@@ -1106,6 +1110,14 @@ struct ReorderBuffer {
 
     bool   has_gap()       const noexcept { return !pending.empty(); }
     size_t buffered()      const noexcept { return pending.size(); }
+    // max_buffered_depth (#411): the deepest the pending map ever got — the
+    // number every PAYLOAD held while waiting on a gap. buffered() is the
+    // depth right now (usually 0 after a drain); this remembers the worst
+    // burst, which is the number that sizes the buffer memory and bounds
+    // the drain latency spike when the missing packet finally lands. The
+    // payload-map counterpart of ContiguousTracker::max_lookahead (#354,
+    // sequence distance, no payloads).
+    std::size_t max_buffered_depth() const noexcept { return max_buffered; }
     void   clear_out()     noexcept { out.clear(); }
     void   reset()         { *this = ReorderBuffer{}; }
 };

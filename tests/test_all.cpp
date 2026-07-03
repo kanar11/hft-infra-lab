@@ -2392,6 +2392,24 @@ void test_multicast_gap_recovery() {
     ASSERT(rb.out.size() == 1 && rb.buffered() == 2, "reorder_holds_future");
     rb.push(2, 20);                              // fills the gap -> drain 2,3,4
     ASSERT(rb.buffered() == 0, "reorder_drained");
+
+    // #411 max_buffered_depth — the burst high-water mark for buffer sizing.
+    // rb held {3,4} plus the gap-filling 2 in transit -> deepest was 3.
+    ASSERT(rb.max_buffered_depth() == 3, "reorder_hwm_burst_3");
+    // A purely in-order stream only ever uses the one transit slot.
+    multicast::ReorderBuffer<int> rbh;
+    rbh.push(1, 10); rbh.push(2, 20); rbh.push(3, 30);
+    ASSERT(rbh.buffered() == 0 && rbh.max_buffered_depth() == 1, "reorder_hwm_inorder_1");
+    // A deeper burst raises it; draining does not lower it.
+    rbh.push(9, 90); rbh.push(8, 80); rbh.push(7, 70); rbh.push(6, 60);
+    ASSERT(rbh.max_buffered_depth() == 4, "reorder_hwm_deep_burst");
+    rbh.push(4, 40); rbh.push(5, 50);            // drains everything
+    ASSERT(rbh.buffered() == 0 && rbh.max_buffered_depth() == 5, "reorder_hwm_retained");
+    // Duplicates never enter the map and cannot move the mark.
+    rbh.push(2, 20);
+    ASSERT(rbh.duplicates == 1 && rbh.max_buffered_depth() == 5, "reorder_hwm_dup_ignored");
+    rbh.reset();
+    ASSERT(rbh.max_buffered_depth() == 0, "reorder_hwm_reset");
     ASSERT(rb.out.size() == 4 && rb.out[1] == 20 && rb.out[2] == 30 && rb.out[3] == 40,
            "reorder_delivered_in_order");
     rb.push(2, 99);                              // < expected -> duplicate
