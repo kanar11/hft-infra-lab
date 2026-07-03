@@ -49,6 +49,8 @@ class ITCHOrderBook {
     // Feed-handler statistics / diagnostics.
     uint64_t adds_ = 0, executes_ = 0, cancels_ = 0, deletes_ = 0, replaces_ = 0;
     uint64_t orphans_ = 0;   // event for an unknown ref (gap in the feed / desync)
+    int64_t exec_shares_sum_     = 0;  // tape: total executed shares (#407)
+    int64_t exec_notional_ticks_ = 0;  // tape: Σ shares × resting price_ticks (#407)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -83,7 +85,21 @@ public:
         side_book(side)[px] += static_cast<int64_t>(shares);
         ++adds_;
     }
-    void on_execute(int64_t ref, uint32_t exec_shares) noexcept { reduce_(ref, exec_shares); ++executes_; }
+    void on_execute(int64_t ref, uint32_t exec_shares) noexcept {
+        // Tape accounting (#407): an ITCH execution happens at the RESTING
+        // order's price, which only orders_ knows — record it before
+        // reduce_ (mirroring its clamp so an over-execute counts only the
+        // truly resting part; an unknown ref leaves the tape untouched).
+        auto it = orders_.find(ref);
+        if (it != orders_.end()) {
+            const uint32_t dec = (exec_shares < it->second.shares)
+                                     ? exec_shares : it->second.shares;
+            exec_shares_sum_     += dec;
+            exec_notional_ticks_ += static_cast<int64_t>(dec) * it->second.price_ticks;
+        }
+        reduce_(ref, exec_shares);
+        ++executes_;
+    }
     void on_cancel(int64_t ref, uint32_t cancelled_shares) noexcept { reduce_(ref, cancelled_shares); ++cancels_; }
     void on_delete(int64_t ref) noexcept {
         auto it = orders_.find(ref);
@@ -162,6 +178,7 @@ public:
     void clear() noexcept {
         orders_.clear(); bids_.clear(); asks_.clear();
         adds_ = executes_ = cancels_ = deletes_ = replaces_ = orphans_ = 0;
+        exec_shares_sum_ = exec_notional_ticks_ = 0;   // #407
     }
     // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
@@ -668,6 +685,24 @@ public:
     uint64_t deletes()  const noexcept { return deletes_; }
     uint64_t replaces() const noexcept { return replaces_; }
     uint64_t orphans()  const noexcept { return orphans_; }   // desync signal / feed gaps
+
+    // executed_shares (#407): total shares that actually TRADED against
+    // resting orders — the tape volume, as opposed to executes() which
+    // counts execution EVENTS. Cancels/deletes remove liquidity without
+    // trading and never touch this.
+    int64_t executed_shares() const noexcept { return exec_shares_sum_; }
+
+    // executed_vwap (#407): the session tape VWAP in $, computed at the
+    // RESTING orders' prices (ITCH executions print at the maker's price).
+    // The realized benchmark to compare fills against — vwap_depth (#155)
+    // prices the BOOK as it stands, this prices what actually TRADED.
+    // 0 before any execution.
+    double executed_vwap() const noexcept {
+        return exec_shares_sum_ > 0
+            ? (static_cast<double>(exec_notional_ticks_)
+               / static_cast<double>(exec_shares_sum_)) / 100.0
+            : 0.0;
+    }
 
     // ref_event_count (#399): how many ref-based events (execute/cancel/
     // delete/replace) the book has processed — including the ones that

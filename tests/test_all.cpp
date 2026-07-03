@@ -2264,6 +2264,30 @@ void test_itch_book() {
     iorf.clear();
     ASSERT(iorf.orphan_rate() == 0.0 && iorf.ref_event_count() == 0, "itchbook_orate_clear");
 
+    // #407 executed_shares / executed_vwap — the tape from the L3 feed.
+    itch::ITCHOrderBook itap;
+    ASSERT(itap.executed_shares() == 0 && itap.executed_vwap() == 0.0, "itchbook_tape_empty");
+    itap.on_add(1, 'B', 10.00, 100);
+    itap.on_add(2, 'B', 10.10, 50);
+    itap.on_execute(1, 40);                        // 40 @ 10.00
+    itap.on_execute(2, 50);                        // 50 @ 10.10 (fully)
+    ASSERT(itap.executed_shares() == 90, "itchbook_tape_shares");
+    // VWAP = (40*10.00 + 50*10.10) / 90 = 905/90.
+    ASSERT(std::fabs(itap.executed_vwap() - 905.0 / 90.0) < 1e-9, "itchbook_tape_vwap");
+    // Cancels/deletes remove liquidity without trading — tape untouched.
+    itap.on_cancel(1, 30);
+    itap.on_add(3, 'S', 11.00, 200);
+    itap.on_delete(3);
+    ASSERT(itap.executed_shares() == 90, "itchbook_tape_ignores_cancel_delete");
+    // Over-execute counts only the truly resting part (order 1 has 30 left).
+    itap.on_execute(1, 999);
+    ASSERT(itap.executed_shares() == 120, "itchbook_tape_overexec_clamped");
+    // An orphan execute (unknown ref) leaves the tape untouched.
+    itap.on_execute(777, 50);
+    ASSERT(itap.executed_shares() == 120, "itchbook_tape_orphan_ignored");
+    itap.clear();
+    ASSERT(itap.executed_shares() == 0 && itap.executed_vwap() == 0.0, "itchbook_tape_clear");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }
