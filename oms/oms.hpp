@@ -500,6 +500,28 @@ public:
         return sum;
     }
 
+    // open_order_notional_symbol: the per-NAME slice of open_order_notional
+    // (#404) — capital tied up in working orders on ONE ticker. The $ view
+    // of per-symbol working exposure: Position.pending_qty gives the signed
+    // SHARES, this prices the unfilled remainders at their limit prices
+    // (same convention as #180, and the per-symbol slices sum to it). Pairs
+    // with risk's max_symbol_notional-style per-name limits: how much of
+    // the name's budget is already committed to the book. 0 for an unknown
+    // symbol or one with nothing working.
+    double open_order_notional_symbol(const char* symbol) const noexcept {
+        const uint64_t key = sym_to_key(symbol);
+        double sum = 0.0;
+        for (const auto& [id, o] : orders_) {
+            if ((o.status == OrderStatus::SENT || o.status == OrderStatus::PARTIAL)
+                && sym_to_key(o.symbol) == key) {
+                const uint32_t remaining = (o.filled_qty < o.quantity)
+                    ? (o.quantity - o.filled_qty) : 0;
+                sum += to_float(o.price) * static_cast<double>(remaining);
+            }
+        }
+        return sum;
+    }
+
     // open_position_count: number of symbols with a NON-ZERO net position (#196).
     // Unlike position_count() (= number of map entries, including ones closed to
     // 0): this is the true breadth of the portfolio — how many instruments we hold.

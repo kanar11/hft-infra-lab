@@ -652,6 +652,28 @@ void test_oms_short_and_replace() {
         ASSERT(oms.total_price_improvement() == 0.0, "pimp_session_reset");
     }
 
+    {   // #404 open_order_notional_symbol — per-name slice of #180.
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.open_order_notional_symbol("AAA") == 0.0, "oons_empty_zero");
+        Order* na = oms.submit_order("AAA", Side::BUY, 10.0, 100);   // $1000 working
+        oms.submit_order("AAA", Side::SELL, 12.0, 50);               // $600 working
+        oms.submit_order("BBB", Side::BUY, 20.0, 200);               // $4000 working
+        ASSERT(close(oms.open_order_notional_symbol("AAA"), 1600.0), "oons_aaa_sum");
+        ASSERT(close(oms.open_order_notional_symbol("BBB"), 4000.0), "oons_bbb");
+        // The per-symbol slices sum to the global #180 view.
+        ASSERT(close(oms.open_order_notional_symbol("AAA")
+                     + oms.open_order_notional_symbol("BBB"),
+                     oms.open_order_notional()), "oons_slices_sum_to_global");
+        // A partial fill counts only the unfilled remainder.
+        oms.fill_order(na->order_id, 40, 10.0);                      // 60 left -> $600
+        ASSERT(close(oms.open_order_notional_symbol("AAA"), 1200.0), "oons_partial_remainder");
+        // Terminal orders drop out; other names untouched.
+        oms.cancel_all_symbol("AAA");
+        ASSERT(oms.open_order_notional_symbol("AAA") == 0.0, "oons_cancel_zeroes");
+        ASSERT(close(oms.open_order_notional_symbol("BBB"), 4000.0), "oons_bbb_untouched");
+        ASSERT(oms.open_order_notional_symbol("GHOST") == 0.0, "oons_unknown_zero");
+    }
+
     {   // #166 runtime commission change.
         OMS oms(100000, 1000000000.0, /*commission_per_share=*/0.005);
         ASSERT(close(oms.commission_per_share(), 0.005), "comm_initial");
