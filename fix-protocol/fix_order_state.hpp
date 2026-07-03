@@ -156,6 +156,28 @@ public:
         return (it != orders_.end()) ? it->second.leaves_qty : 0;
     }
     size_t   order_count() const noexcept { return orders_.size(); }
+    // working_orders: orders still live on the exchange (NEW/PARTIAL) (#409)
+    // — the FIX-side parity of the OUCH tracker's active_count (#272).
+    // order_count() includes terminal records; this is what the desk still
+    // has exposure to.
+    size_t working_orders() const noexcept {
+        size_t n = 0;
+        for (const auto& kv : orders_)
+            if (kv.second.state == OrdState::NEW || kv.second.state == OrdState::PARTIAL) ++n;
+        return n;
+    }
+    // working_qty: open shares truly resting on the exchange right now (#409)
+    // = sum of leaves_qty over NEW/PARTIAL orders — the FIX-side parity of
+    // the OUCH tracker's working_shares (#304). Terminal orders may retain
+    // a non-zero leaves_qty snapshot (e.g. the canceled remainder); they are
+    // excluded here.
+    int32_t working_qty() const noexcept {
+        int32_t s = 0;
+        for (const auto& kv : orders_)
+            if (kv.second.state == OrdState::NEW || kv.second.state == OrdState::PARTIAL)
+                s += kv.second.leaves_qty;
+        return s;
+    }
     uint64_t fills()       const noexcept { return fills_; }
     uint64_t cancels()     const noexcept { return cancels_; }
     uint64_t rejects()     const noexcept { return rejects_; }

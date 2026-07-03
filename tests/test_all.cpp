@@ -5627,6 +5627,33 @@ void test_fix_order_state() {
                         "AAPL", Side::BUY, 170, 150.0, 200, 0, '|');
     FIXMessage m8f; m8f.parse(buf);
     ASSERT(tr.on_exec_report(m8f) == fix::OrdState::FILLED, "fixstate_rpl_fill_under_new_id");
+
+    // #409 working_orders / working_qty — FIX parity of OUCH #272/#304.
+    fix::FIXOrderTracker wtr;
+    ASSERT(wtr.working_orders() == 0 && wtr.working_qty() == 0, "fixstate_wq_empty");
+    wtr.on_new("W1", 100);                        // NEW, leaves 100
+    wtr.on_new("W2", 50);                         // NEW, leaves 50
+    ASSERT(wtr.working_orders() == 2 && wtr.working_qty() == 150, "fixstate_wq_two_new");
+    // A partial fill keeps the order working with reduced leaves.
+    s.build_exec_report(buf, sizeof(buf), "W1", "EXG", "EW1", '1', '1',
+                        "AAPL", Side::BUY, 40, 150.0, 40, 60, '|');
+    FIXMessage mw1; mw1.parse(buf);
+    wtr.on_exec_report(mw1);
+    ASSERT(wtr.working_orders() == 2 && wtr.working_qty() == 110, "fixstate_wq_partial");
+    // A cancel is terminal — its remainder leaves the working aggregate
+    // even though the record keeps its last leaves_qty snapshot.
+    s.build_exec_report(buf, sizeof(buf), "W2", "EXG", "EW2", '4', '4',
+                        "AAPL", Side::SELL, 0, 150.0, 0, 50, '|');
+    FIXMessage mw2; mw2.parse(buf);
+    wtr.on_exec_report(mw2);
+    ASSERT(wtr.working_orders() == 1 && wtr.working_qty() == 60, "fixstate_wq_cancel_excluded");
+    ASSERT(wtr.order_count() == 2, "fixstate_wq_order_count_keeps_terminal");
+    // Filling the last one empties the working view.
+    s.build_exec_report(buf, sizeof(buf), "W1", "EXG", "EW3", '2', '2',
+                        "AAPL", Side::BUY, 60, 150.0, 100, 0, '|');
+    FIXMessage mw3; mw3.parse(buf);
+    wtr.on_exec_report(mw3);
+    ASSERT(wtr.working_orders() == 0 && wtr.working_qty() == 0, "fixstate_wq_all_done");
 }
 
 // OUCH order state #89 — a client-side state machine (token → live/partial/filled).
