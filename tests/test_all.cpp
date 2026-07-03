@@ -5993,6 +5993,31 @@ void test_fix_order_state() {
     FIXMessage mw3; mw3.parse(buf);
     wtr.on_exec_report(mw3);
     ASSERT(wtr.working_orders() == 0 && wtr.working_qty() == 0, "fixstate_wq_all_done");
+
+    // #425 pending_cancel_qty / pending_cancel_fraction — condemned exposure
+    // on the FIX side (parity of OUCH #402).
+    fix::FIXOrderTracker ptr_;
+    ASSERT(ptr_.pending_cancel_qty() == 0 && ptr_.pending_cancel_fraction() == 0.0,
+           "fixstate_pcq_empty");
+    ptr_.on_new("PC1", 100);
+    ptr_.on_new("PC2", 300);
+    ptr_.on_cancel_sent("PC2");
+    ASSERT(ptr_.pending_cancel_qty() == 300, "fixstate_pcq_armed");
+    // 300 condemned of 400 working -> 0.75 of the book is an illusion.
+    ASSERT(std::fabs(ptr_.pending_cancel_fraction() - 0.75) < 1e-9, "fixstate_pcq_fraction");
+    // A fill racing the cancel shrinks the condemned leaves too.
+    s.build_exec_report(buf, sizeof(buf), "PC2", "EXG", "EP1", '1', '1',
+                        "AAPL", Side::BUY, 100, 150.0, 100, 200, '|');
+    FIXMessage mp1; mp1.parse(buf);
+    ptr_.on_exec_report(mp1);
+    ASSERT(ptr_.pending_cancel_qty() == 200, "fixstate_pcq_fill_shrinks");
+    // A cancel reject disarms — the shares stop being condemned.
+    s.build_cancel_reject(buf, sizeof(buf), "CXLP", "PC2", "EXGP", '1', '1', 0,
+                          "Too late", '|');
+    FIXMessage mp2; mp2.parse(buf);
+    ptr_.on_cancel_reject(mp2);
+    ASSERT(ptr_.pending_cancel_qty() == 0 && ptr_.pending_cancel_fraction() == 0.0,
+           "fixstate_pcq_reject_disarms");
 }
 
 // OUCH order state #89 — a client-side state machine (token → live/partial/filled).

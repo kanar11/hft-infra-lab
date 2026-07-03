@@ -178,6 +178,28 @@ public:
                 s += kv.second.leaves_qty;
         return s;
     }
+    // pending_cancel_qty: open shares sitting under an in-flight
+    // OrderCancelRequest (#425) — the exposure the desk EXPECTS to free
+    // once the exchange acks; the FIX parity of the OUCH tracker's
+    // pending_cancel_shares (#402). Sums leaves_qty over pending-cancel
+    // records (working by construction: on_cancel_sent arms only
+    // NEW/PARTIAL, terminal transitions clear the flag).
+    int32_t pending_cancel_qty() const noexcept {
+        int32_t s = 0;
+        for (const auto& kv : orders_)
+            if (kv.second.pending_cancel) s += kv.second.leaves_qty;
+        return s;
+    }
+    // pending_cancel_fraction: what part of the live book is already
+    // condemned (#425) = pending_cancel_qty / working_qty, in [0,1].
+    // Near 1.0 the resting book is an illusion — nearly everything on the
+    // exchange is a cancel waiting to be acked. 0 when nothing is working.
+    double pending_cancel_fraction() const noexcept {
+        const int32_t w = working_qty();
+        return w > 0
+            ? static_cast<double>(pending_cancel_qty()) / static_cast<double>(w)
+            : 0.0;
+    }
     uint64_t fills()       const noexcept { return fills_; }
     uint64_t cancels()     const noexcept { return cancels_; }
     uint64_t rejects()     const noexcept { return rejects_; }
