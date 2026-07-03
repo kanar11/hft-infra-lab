@@ -49,6 +49,7 @@ class FIXOrderTracker {
     std::unordered_map<std::string, Record> orders_;
     uint64_t fills_ = 0, cancels_ = 0, rejects_ = 0;
     uint64_t cancel_rejects_ = 0;   // OrderCancelReject (35=9) applied (#393)
+    uint64_t replaces_       = 0;   // OrdStatus=5 ClOrdID migrations applied (#401)
 
     static OrdState map_status(char s) noexcept {
         switch (s) {
@@ -71,6 +72,28 @@ public:
     OrdState on_exec_report(const FIXMessage& m) {
         const char* id = m.get_field(11);            // ClOrdID
         if (!id) return OrdState::UNKNOWN;
+        // OrdStatus=5 (Replaced, #401): the report carries the NEW ClOrdID in
+        // tag 11 — which the tracker has never registered — and names the
+        // working order via tag 41. The generic lookup below would call it a
+        // desync and leave a stale record under the old id. Migrate instead
+        // (the FIX mirror of the OUCH tracker's token migration #386): fills
+        // stay with the chain, 14/151 refresh the quantities, the pending-
+        // cancel flag resets (a replace re-queues the order).
+        const char* st39 = m.get_field(39);
+        if (st39 && st39[0] == '5') {
+            const char* orig = m.get_field(41);
+            if (!orig) return OrdState::UNKNOWN;
+            auto pit = orders_.find(orig);
+            if (pit == orders_.end()) return OrdState::UNKNOWN;
+            Record moved = pit->second;
+            orders_.erase(pit);
+            if (const char* cum = m.get_field(14))  moved.cum_qty    = std::atoi(cum);
+            if (const char* lv  = m.get_field(151)) moved.leaves_qty = std::atoi(lv);
+            moved.pending_cancel = false;
+            moved.state = (moved.cum_qty > 0) ? OrdState::PARTIAL : OrdState::NEW;
+            ++replaces_;
+            return (orders_[id] = moved).state;
+        }
         const auto it = orders_.find(id);
         if (it == orders_.end()) return OrdState::UNKNOWN;
         Record& r = it->second;
@@ -139,6 +162,8 @@ public:
     // cancel_rejects: refused cancel attempts (#393) — distinct from
     // rejects(), which counts orders the exchange rejected outright.
     uint64_t cancel_rejects() const noexcept { return cancel_rejects_; }
+    // replaces: OrdStatus=5 ClOrdID migrations applied (#401).
+    uint64_t replaces() const noexcept { return replaces_; }
 };
 
 }  // namespace fix

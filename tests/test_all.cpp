@@ -5459,6 +5459,33 @@ void test_fix_order_state() {
     // on_cancel_sent on a terminal order does not arm the flag.
     tr.on_cancel_sent("ORD6");   // already CANCELED
     ASSERT(!tr.is_pending_cancel("ORD6"), "fixstate_terminal_not_armed");
+
+    // #401 OrdStatus=5 (Replaced): ClOrdID migration — the FIX mirror of the
+    // OUCH tracker's token migration (#386). Raw messages: build_exec_report
+    // does not emit tag 41.
+    tr.on_new("ORD7", 100);
+    s.build_exec_report(buf, sizeof(buf), "ORD7", "EXG", "E7", '1', '1',
+                        "AAPL", Side::BUY, 30, 150.0, 30, 70, '|');
+    FIXMessage m7p; m7p.parse(buf);
+    tr.on_exec_report(m7p);                       // PARTIAL: 30 done, 70 leave
+    tr.on_cancel_sent("ORD7");                    // an in-flight request to reset
+    FIXMessage m7r; m7r.parse("35=8|11=ORD8|41=ORD7|39=5|14=30|151=170|");
+    ASSERT(tr.on_exec_report(m7r) == fix::OrdState::PARTIAL, "fixstate_rpl_partial_migrated");
+    ASSERT(tr.state("ORD7") == fix::OrdState::UNKNOWN, "fixstate_rpl_old_id_gone");
+    ASSERT(tr.cum_qty("ORD8") == 30 && tr.leaves_qty("ORD8") == 170, "fixstate_rpl_chain_qty");
+    ASSERT(!tr.is_pending_cancel("ORD8"), "fixstate_rpl_flag_reset");
+    ASSERT(tr.replaces() == 1, "fixstate_rpl_counter");
+    // An unfilled replace lands NEW; an unknown tag 41 stays a desync.
+    tr.on_new("ORD9", 40);
+    FIXMessage m9r; m9r.parse("35=8|11=ORDA|41=ORD9|39=5|151=60|");
+    ASSERT(tr.on_exec_report(m9r) == fix::OrdState::NEW, "fixstate_rpl_unfilled_new");
+    FIXMessage mgr; mgr.parse("35=8|11=ORDB|41=GHOST8|39=5|151=10|");
+    ASSERT(tr.on_exec_report(mgr) == fix::OrdState::UNKNOWN, "fixstate_rpl_unknown_prev");
+    // The migrated order keeps working: fill it to done under the NEW id.
+    s.build_exec_report(buf, sizeof(buf), "ORD8", "EXG", "E8", '2', '2',
+                        "AAPL", Side::BUY, 170, 150.0, 200, 0, '|');
+    FIXMessage m8f; m8f.parse(buf);
+    ASSERT(tr.on_exec_report(m8f) == fix::OrdState::FILLED, "fixstate_rpl_fill_under_new_id");
 }
 
 // OUCH order state #89 — a client-side state machine (token → live/partial/filled).
