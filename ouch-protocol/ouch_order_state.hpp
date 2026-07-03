@@ -52,6 +52,7 @@ class OUCHOrderTracker {
         int32_t    filled;       // how many filled
         int64_t    order_ref;    // from Accepted (0 until known)
         bool       pending_cancel; // Cancel sent, awaiting confirmation (#159)
+        double     fill_notional = 0.0; // Σ exec shares × price, $ (#410)
     };
     std::unordered_map<std::string, Record> orders_;
     uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
@@ -61,6 +62,7 @@ class OUCHOrderTracker {
     int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
     uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
     uint64_t replaced_       = 0;   // Order Replaced ('U') migrations applied (#386)
+    double   session_fill_notional_ = 0.0;  // Σ exec shares × price across all orders (#410)
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -117,7 +119,13 @@ public:
             const int32_t exec = (r.shares < rec->remaining) ? r.shares : rec->remaining;
             rec->filled    += exec;
             rec->remaining -= exec;
-            if (exec > 0) { exec_shares_ += exec; ++exec_count_; }   // #328 per-execution
+            if (exec > 0) {
+                exec_shares_ += exec; ++exec_count_;   // #328 per-execution
+                // #410: price the fill — Executed carries the exec price.
+                const double notional = r.price * static_cast<double>(exec);
+                rec->fill_notional     += notional;
+                session_fill_notional_ += notional;
+            }
             if (rec->remaining <= 0) { rec->state = OrderState::FILLED; ++filled_; }
             else                       rec->state = OrderState::PARTIAL;
         } else if (std::strcmp(r.type, "CANCELLED") == 0) {
@@ -129,6 +137,14 @@ public:
             // Broken Trade (#134): the exchange invalidates an earlier fill -> reverse
             // the accounting (shares return to "open"). State from FILLED -> LIVE/PARTIAL.
             const int32_t back = (r.shares < rec->filled) ? r.shares : rec->filled;
+            // #410: the 'B' report carries NO price, so unwind the notional
+            // at the order's AVERAGE fill price (the standard treatment).
+            // Session_fill_notional_ stays: the global VWAP is the GROSS
+            // as-executed tape; only the per-order average is bust-adjusted.
+            if (back > 0 && rec->filled > 0) {
+                rec->fill_notional -= rec->fill_notional
+                                    * (static_cast<double>(back) / static_cast<double>(rec->filled));
+            }
             rec->filled    -= back;
             rec->remaining += back;
             rec->state = (rec->filled > 0) ? OrderState::PARTIAL : OrderState::LIVE;
@@ -195,6 +211,27 @@ public:
         if (it == orders_.end()) return 0.0;
         const int32_t total = it->second.filled + it->second.remaining;
         return total > 0 ? static_cast<double>(it->second.filled) / static_cast<double>(total) : 0.0;
+    }
+    // avg_fill_price (#410): the order's volume-weighted average execution
+    // price = fill_notional / filled. Bust-ADJUSTED: a Broken Trade carries
+    // no price, so it unwinds the notional at the order's average (the
+    // standard treatment) and the average survives unchanged. Travels with
+    // the chain across a Replaced migration (#386). 0 for an unknown token
+    // or nothing filled.
+    double avg_fill_price(const char* token) const noexcept {
+        const auto it = orders_.find(token);
+        if (it == orders_.end() || it->second.filled <= 0) return 0.0;
+        return it->second.fill_notional / static_cast<double>(it->second.filled);
+    }
+    // fill_vwap (#410): the session's GROSS as-executed VWAP across all
+    // orders = Σ notional / exec_shares (#328). Busts do NOT adjust it —
+    // this is the tape as it printed. The client-side counterpart of itch's
+    // executed_vwap (#407) and OMS's blended avg_trade_price (#306).
+    // 0 before any execution.
+    double fill_vwap() const noexcept {
+        return exec_shares_ > 0
+            ? session_fill_notional_ / static_cast<double>(exec_shares_)
+            : 0.0;
     }
     size_t   order_count() const noexcept { return orders_.size(); }
     // total_filled_shares / total_remaining_shares: volume aggregates over ALL

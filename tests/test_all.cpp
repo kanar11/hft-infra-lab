@@ -6010,6 +6010,47 @@ void test_ouch_order_state() {
                "ouch_pcs_ack_frees");
     }
 
+    // #410 avg_fill_price / fill_vwap — pricing the executions (MILESTONE 410).
+    {
+        ouch::OUCHOrderTracker fvt;
+        uint8_t fvb[64];
+        ASSERT(fvt.avg_fill_price("NONE") == 0.0 && fvt.fill_vwap() == 0.0, "ouch_fv_empty");
+        fvt.on_new("F1", 100);
+        int fvn = OUCHMessage::encode_accepted(fvb, "F1", 'B', 100, "AAPL", 10.0, 1);
+        fvt.on_response(OUCHMessage::parse_response(fvb, fvn));
+        fvn = OUCHMessage::encode_executed(fvb, "F1", 40, 10.00, 901);
+        fvt.on_response(OUCHMessage::parse_response(fvb, fvn));
+        fvn = OUCHMessage::encode_executed(fvb, "F1", 60, 20.00, 902);
+        fvt.on_response(OUCHMessage::parse_response(fvb, fvn));
+        // (40*10 + 60*20) / 100 = 16.00 — per order AND session-wide so far.
+        ASSERT(std::fabs(fvt.avg_fill_price("F1") - 16.0) < 1e-9, "ouch_fv_order_avg_16");
+        ASSERT(std::fabs(fvt.fill_vwap() - 16.0) < 1e-9, "ouch_fv_session_16");
+        // A bust unwinds shares at the AVERAGE (no price on 'B'): the
+        // per-order average survives; the gross session tape does not move.
+        fvn = OUCHMessage::encode_broken_trade(fvb, "F1", 50, 902, 'E');
+        fvt.on_response(OUCHMessage::parse_response(fvb, fvn));
+        ASSERT(fvt.filled("F1") == 50, "ouch_fv_bust_shares");
+        ASSERT(std::fabs(fvt.avg_fill_price("F1") - 16.0) < 1e-9, "ouch_fv_bust_avg_survives");
+        ASSERT(std::fabs(fvt.fill_vwap() - 16.0) < 1e-9, "ouch_fv_session_gross");
+        // A second order at a different price moves the session VWAP:
+        // gross tape = (1600 + 100*40) / (200 as-executed shares) = 28.
+        fvt.on_new("F2", 100);
+        fvn = OUCHMessage::encode_accepted(fvb, "F2", 'S', 100, "MSFT", 40.0, 2);
+        fvt.on_response(OUCHMessage::parse_response(fvb, fvn));
+        fvn = OUCHMessage::encode_executed(fvb, "F2", 100, 40.00, 903);
+        fvt.on_response(OUCHMessage::parse_response(fvb, fvn));
+        ASSERT(std::fabs(fvt.avg_fill_price("F2") - 40.0) < 1e-9, "ouch_fv_second_order_avg");
+        ASSERT(std::fabs(fvt.fill_vwap() - 28.0) < 1e-9, "ouch_fv_session_blended_28");
+        // Cancels never price anything.
+        fvt.on_new("F3", 10);
+        fvn = OUCHMessage::encode_accepted(fvb, "F3", 'B', 10, "AAPL", 5.0, 3);
+        fvt.on_response(OUCHMessage::parse_response(fvb, fvn));
+        fvn = OUCHMessage::encode_cancelled(fvb, "F3", 10, 'U');
+        fvt.on_response(OUCHMessage::parse_response(fvb, fvn));
+        ASSERT(fvt.avg_fill_price("F3") == 0.0 && std::fabs(fvt.fill_vwap() - 28.0) < 1e-9,
+               "ouch_fv_cancel_prices_nothing");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100
