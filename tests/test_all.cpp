@@ -69,6 +69,7 @@
 #include "../strategy/nvi_pvi.hpp"
 #include "../strategy/close_atr.hpp"
 #include "../strategy/keltner.hpp"
+#include "../strategy/zlema.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3790,6 +3791,51 @@ void test_keltner() {
     ASSERT(!kc.ready() && kc.mid() == 0.0, "kelt_reset");
 }
 
+// ZLEMA #422 — Zero-Lag EMA (input de-lagged by 2p - p[t-lag]).
+void test_zlema() {
+    SECTION("ZLEMA (#422)");
+    ZLEMA zfresh(20);
+    ASSERT(!zfresh.ready() && zfresh.value() == 0.0 && zfresh.lag() == 9, "zlema_fresh");
+
+    // Constant tape: the de-lagged input equals the price -> ZLEMA == price.
+    ZLEMA zc(5);
+    for (int zi = 0; zi < 10; ++zi) zc.update(42.0);
+    ASSERT(zc.ready() && std::fabs(zc.value() - 42.0) < 1e-9, "zlema_constant_tape");
+
+    // Algebraic identity: period 3 (alpha 0.5, lag 1) tracks ANY path
+    // exactly — 0.5*(2p - prev) + 0.5*prev == p by induction.
+    ZLEMA z3(3);
+    z3.update(10.0);
+    // Lag 1: a single print both seeds the EMA and fills the buffer.
+    ASSERT(z3.ready() && std::fabs(z3.value() - 10.0) < 1e-9, "zlema_seeded_at_first");
+    z3.update(20.0);
+    ASSERT(z3.ready() && std::fabs(z3.value() - 20.0) < 1e-9, "zlema3_tracks_up");
+    z3.update(30.0);
+    ASSERT(std::fabs(z3.value() - 30.0) < 1e-9, "zlema3_tracks_ramp");
+    z3.update(17.0);                                    // sharp reversal
+    ASSERT(std::fabs(z3.value() - 17.0) < 1e-9, "zlema3_tracks_reversal");
+
+    // On a steady ramp ZLEMA hugs the price where the plain EMA trails.
+    ZLEMA zl(9);
+    EMA   zre = EMA::from_period(9);
+    double zpx = 100.0;
+    for (int zj = 0; zj < 40; ++zj) {
+        zpx += 1.0;
+        zl.update(zpx);
+        zre.update(zpx);
+    }
+    ASSERT(std::fabs(zl.value() - zpx) < std::fabs(zre.value() - zpx),
+           "zlema_less_lag_than_ema");
+    ASSERT(zre.value() < zpx, "zlema_ema_reference_trails");
+
+    // Invalid prices are ignored; reset returns to the fresh state.
+    const double zl_before = zl.value();
+    zl.update(0.0); zl.update(-5.0);
+    ASSERT(std::fabs(zl.value() - zl_before) < 1e-9, "zlema_ignores_invalid");
+    zl.reset();
+    ASSERT(!zl.ready() && zl.value() == 0.0, "zlema_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -6867,6 +6913,7 @@ int main() {
     test_nvi_pvi();
     test_close_atr();
     test_keltner();
+    test_zlema();
     test_cmo();
     test_zscore();
     test_tsi();
