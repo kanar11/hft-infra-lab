@@ -67,6 +67,7 @@
 #include "../strategy/mfi.hpp"
 #include "../strategy/vwma.hpp"
 #include "../strategy/nvi_pvi.hpp"
+#include "../strategy/close_atr.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3582,6 +3583,47 @@ void test_nvi_pvi() {
     ASSERT(vgi.nvi() == 1000.0 && vgi.pvi() == 1000.0 && !vgi.ready(), "nvipvi_reset");
 }
 
+// CloseATR #406 — close-to-close ATR (Wilder), volatility in price units.
+void test_close_atr() {
+    SECTION("CloseATR (#406)");
+    CloseATR fresh(14);
+    ASSERT(fresh.value() == 0.0 && !fresh.ready(), "catr_empty_zero");
+    fresh.update(100.0);                          // seeds only — no range yet
+    ASSERT(fresh.value() == 0.0 && !fresh.ready(), "catr_seed_no_range");
+
+    // Warmup is the exact mean of the first N ranges: |+2|, |-4|, |+6| -> 4.
+    CloseATR cwu(3);
+    cwu.update(100.0);
+    cwu.update(102.0); cwu.update(98.0); cwu.update(104.0);
+    ASSERT(cwu.ready(), "catr_ready_after_period_ranges");
+    ASSERT(std::fabs(cwu.value() - 4.0) < 1e-9, "catr_warmup_exact_mean");
+
+    // After warmup, Wilder smoothing: ATR = (4*2 + 1)/3 = 3.
+    cwu.update(105.0);                            // TR = 1
+    ASSERT(std::fabs(cwu.value() - 3.0) < 1e-9, "catr_wilder_step");
+
+    // A constant price stream decays the ATR toward zero (TR = 0 forever).
+    CloseATR cdec(2);
+    cdec.update(50.0); cdec.update(54.0); cdec.update(50.0);   // mean(4,4) = 4
+    ASSERT(std::fabs(cdec.value() - 4.0) < 1e-9, "catr_two_ranges");
+    cdec.update(50.0); cdec.update(50.0);         // TR 0 twice: 4 -> 2 -> 1
+    ASSERT(std::fabs(cdec.value() - 1.0) < 1e-9, "catr_decays_on_quiet");
+
+    // Direction does not matter — only the magnitude of the move.
+    CloseATR cup(2), cdn(2);
+    cup.update(10.0); cup.update(12.0); cup.update(14.0);
+    cdn.update(10.0); cdn.update(8.0);  cdn.update(6.0);
+    ASSERT(std::fabs(cup.value() - cdn.value()) < 1e-9, "catr_direction_agnostic");
+
+    // Invalid prices are ignored and do not disturb the baseline.
+    const double cup_before = cup.value();
+    cup.update(0.0); cup.update(-3.0);
+    ASSERT(std::fabs(cup.value() - cup_before) < 1e-9, "catr_ignores_invalid");
+
+    cup.reset();
+    ASSERT(cup.value() == 0.0 && !cup.ready(), "catr_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -6454,6 +6496,7 @@ int main() {
     test_mfi();
     test_vwma();
     test_nvi_pvi();
+    test_close_atr();
     test_cmo();
     test_zscore();
     test_tsi();
