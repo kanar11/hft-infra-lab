@@ -775,6 +775,24 @@ public:
         return mx;
     }
 
+    // largest_level (#423): the price level carrying the most AGGREGATE
+    // shares on a side — the crowd's wall, as opposed to
+    // largest_resting_order (#391), the single biggest clip: a level can be
+    // the thickest in the book through a hundred small orders that no
+    // per-order view flags. Returns the aggregate shares and writes the
+    // level's price into out_price (untouched when the side is empty).
+    // Comparing the two walls tells WHO built the level: #391 close to
+    // #423 = one institution, far below = retail accumulation.
+    int64_t largest_level(char side, double* out_price = nullptr) const noexcept {
+        const auto& book = (side == 'B') ? bids_ : asks_;
+        int64_t mx = 0, px = 0;
+        for (const auto& kv : book) {
+            if (kv.second > mx) { mx = kv.second; px = kv.first; }
+        }
+        if (mx > 0 && out_price != nullptr) *out_price = static_cast<double>(px) / 100.0;
+        return mx;
+    }
+
     // audit_book (#383): cross-checks the two parallel structures the feed
     // handler maintains — the per-order map (orders_) and the per-level
     // aggregates (bids_/asks_). Every event updates both in lockstep, so any

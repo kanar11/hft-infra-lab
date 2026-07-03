@@ -2294,6 +2294,30 @@ void test_itch_book() {
     ilro.on_delete(1);
     ASSERT(ilro.largest_resting_order('B') == 200, "itchbook_lro_after_delete");
 
+    // #423 largest_level — the aggregate wall vs #391's single-order wall.
+    itch::ITCHOrderBook ilvl;
+    double ilvl_px = -1.0;
+    ASSERT(ilvl.largest_level('B') == 0, "itchbook_lvl_empty_zero");
+    ASSERT(ilvl.largest_level('B', &ilvl_px) == 0 && ilvl_px == -1.0,
+           "itchbook_lvl_empty_price_untouched");
+    // Retail accumulation: 3 small clips stack a level past one big order.
+    ilvl.on_add(1, 'B', 10.00, 400);              // single institutional clip
+    ilvl.on_add(2, 'B', 9.95, 200);
+    ilvl.on_add(3, 'B', 9.95, 200);
+    ilvl.on_add(4, 'B', 9.95, 200);               // 9.95 aggregates to 600
+    ASSERT(ilvl.largest_level('B', &ilvl_px) == 600, "itchbook_lvl_aggregate_wins");
+    ASSERT(std::fabs(ilvl_px - 9.95) < 1e-9, "itchbook_lvl_price");
+    // ...while the single-order wall (#391) still points at the 400 clip.
+    ASSERT(ilvl.largest_resting_order('B', &ilvl_px) == 400
+           && std::fabs(ilvl_px - 10.00) < 1e-9, "itchbook_lvl_vs_lro_divergence");
+    // Sides are independent.
+    ilvl.on_add(5, 'S', 10.10, 900);
+    ASSERT(ilvl.largest_level('S') == 900, "itchbook_lvl_ask_side");
+    // Chipping away at the wall hands the crown back to the 10.00 level.
+    ilvl.on_execute(2, 200); ilvl.on_delete(3);   // 9.95: 600 -> 200
+    ASSERT(ilvl.largest_level('B', &ilvl_px) == 400
+           && std::fabs(ilvl_px - 10.00) < 1e-9, "itchbook_lvl_crown_moves");
+
     // #399 orphan_rate / ref_event_count — feed-health ratio behind orphans().
     itch::ITCHOrderBook iorf;
     ASSERT(iorf.orphan_rate() == 0.0 && iorf.ref_event_count() == 0, "itchbook_orate_empty");
