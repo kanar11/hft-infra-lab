@@ -629,6 +629,28 @@ void test_oms_short_and_replace() {
                && oms.oldest_working_order_id() == 0, "owo_cancel_empties");
     }
 
+    {   // #412 avg_working_order_age_ns — whole-book staleness vs #388's worst.
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.avg_working_order_age_ns(5000) == 0, "awa_empty_zero");
+        Order* awa = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        Order* awb = oms.submit_order("BBB", Side::SELL, 20.0, 50);
+        Order* awc = oms.submit_order("CCC", Side::BUY, 5.0, 10);
+        awa->sent_ns = 1000;
+        awb->sent_ns = 3000;
+        awc->sent_ns = 5000;
+        // Ages at now=6000: 5000/3000/1000 -> mean 3000; oldest (#388) is 5000.
+        ASSERT(oms.avg_working_order_age_ns(6000) == 3000, "awa_mean_exact");
+        ASSERT(oms.oldest_working_order_age_ns(6000) == 5000, "awa_oldest_differs");
+        // One forgotten order vs a stale book: completing the fresh two
+        // leaves only the old one -> mean jumps to the oldest.
+        oms.fill_order(awb->order_id, 50, 20.0);
+        oms.cancel_order(awc->order_id);
+        ASSERT(oms.avg_working_order_age_ns(6000) == 5000, "awa_only_forgotten_left");
+        // A stamp in the future clamps that order's age to 0 in the mean.
+        awa->sent_ns = 7000;
+        ASSERT(oms.avg_working_order_age_ns(6000) == 0, "awa_future_stamp_clamped");
+    }
+
     {   // #396 price improvement vs limit — the price-quality TCA axis.
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.total_price_improvement() == 0.0

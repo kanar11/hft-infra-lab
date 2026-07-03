@@ -678,6 +678,22 @@ public:
         }
         return oid;
     }
+    // avg_working_order_age_ns: MEAN age of the working book (#412) against
+    // a caller-supplied clock — the whole-book staleness companion to
+    // oldest_working_order_age_ns' (#388) single worst order. A high mean
+    // says the entire book is stale (quotes not being refreshed), while a
+    // high oldest with a low mean is one forgotten order. Same clock
+    // injection and SENT/PARTIAL filter as #388; ages clamp at 0 when now
+    // precedes a stamp. 0 when nothing is working.
+    int64_t avg_working_order_age_ns(int64_t now_ns) const noexcept {
+        int64_t sum = 0, n = 0;
+        for (const auto& [id, o] : orders_) {
+            if (o.status != OrderStatus::SENT && o.status != OrderStatus::PARTIAL) continue;
+            if (now_ns > o.sent_ns) sum += now_ns - o.sent_ns;
+            ++n;
+        }
+        return n > 0 ? sum / n : 0;
+    }
     // total_fees: cumulative commissions for the whole OMS (fixed-point ×PRICE_SCALE).
     int64_t total_fees() const noexcept { return total_fees_; }
     // avg_commission_per_share: average commission ($) per EXECUTED share (#236) =
