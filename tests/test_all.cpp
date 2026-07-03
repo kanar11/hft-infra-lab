@@ -70,6 +70,7 @@
 #include "../strategy/close_atr.hpp"
 #include "../strategy/keltner.hpp"
 #include "../strategy/zlema.hpp"
+#include "../strategy/chandelier.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3885,6 +3886,50 @@ void test_zlema() {
     ASSERT(!zl.ready() && zl.value() == 0.0, "zlema_reset");
 }
 
+// Chandelier #430 — ATR-anchored trailing stop levels (MILESTONE 430).
+void test_chandelier() {
+    SECTION("Chandelier (#430)");
+    Chandelier chf(22, 14);
+    ASSERT(!chf.ready() && chf.highest() == 0.0 && chf.lowest() == 0.0, "chand_empty");
+
+    // period 3, atr_period 2; prices 100, 104, 96: extremes 104/96,
+    // TRs 4 and 8 -> ATR (warmup mean) = 6, both legs ready.
+    Chandelier ch(3, 2);
+    ch.update(100.0);
+    ASSERT(!ch.ready(), "chand_not_ready_early");
+    ch.update(104.0); ch.update(96.0);
+    ASSERT(ch.ready(), "chand_ready_both_legs");
+    ASSERT(std::fabs(ch.highest() - 104.0) < 1e-9 && std::fabs(ch.lowest() - 96.0) < 1e-9,
+           "chand_extremes");
+    ASSERT(std::fabs(ch.atr() - 6.0) < 1e-9, "chand_atr_6");
+    ASSERT(std::fabs(ch.long_stop(1.0) - 98.0) < 1e-9, "chand_long_stop_1x");
+    ASSERT(std::fabs(ch.short_stop(1.0) - 102.0) < 1e-9, "chand_short_stop_1x");
+    // The multiplier scales the hang distance symmetrically.
+    ASSERT(std::fabs(ch.long_stop(2.0) - 92.0) < 1e-9
+           && std::fabs(ch.short_stop(2.0) - 108.0) < 1e-9, "chand_mult_scales");
+
+    // A new high evicts the oldest print and RATCHETS the long stop up:
+    // 110 replaces 100 -> highest 110, TR 14 -> Wilder ATR 6+(14-6)/2 = 10.
+    ch.update(110.0);
+    ASSERT(std::fabs(ch.highest() - 110.0) < 1e-9, "chand_ratchet_high");
+    ASSERT(std::fabs(ch.atr() - 10.0) < 1e-9, "chand_wilder_step");
+    ASSERT(std::fabs(ch.long_stop(1.0) - 100.0) < 1e-9, "chand_long_stop_ratchets");
+
+    // A quiet tape tightens the stop toward the extreme (ATR decays).
+    Chandelier chq(3, 2);
+    chq.update(50.0); chq.update(54.0); chq.update(54.0);
+    const double chq_wide = chq.long_stop(1.0);
+    chq.update(54.0); chq.update(54.0);
+    ASSERT(chq.long_stop(1.0) > chq_wide, "chand_quiet_tightens");
+
+    // Invalid prices ignored; reset returns to the fresh state.
+    const double ch_ls = ch.long_stop(1.0);
+    ch.update(0.0); ch.update(-1.0);
+    ASSERT(std::fabs(ch.long_stop(1.0) - ch_ls) < 1e-9, "chand_ignores_invalid");
+    ch.reset();
+    ASSERT(!ch.ready() && ch.highest() == 0.0, "chand_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -7067,6 +7112,7 @@ int main() {
     test_close_atr();
     test_keltner();
     test_zlema();
+    test_chandelier();
     test_cmo();
     test_zscore();
     test_tsi();
