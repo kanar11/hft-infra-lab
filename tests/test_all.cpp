@@ -2311,6 +2311,29 @@ void test_itch_book() {
     itap.clear();
     ASSERT(itap.executed_shares() == 0 && itap.executed_vwap() == 0.0, "itchbook_tape_clear");
 
+    // #415 executed_against_bid/ask + tape_imbalance — exact aggressor flow.
+    itch::ITCHOrderBook iagr;
+    ASSERT(iagr.tape_imbalance() == 0.0, "itchbook_agr_empty_zero");
+    iagr.on_add(1, 'B', 10.00, 500);              // resting bid
+    iagr.on_add(2, 'S', 10.05, 500);              // resting ask
+    iagr.on_execute(2, 300);                      // ask lifted = buyer-initiated
+    ASSERT(iagr.executed_against_ask() == 300 && iagr.executed_against_bid() == 0,
+           "itchbook_agr_lift_counts_ask");
+    ASSERT(std::fabs(iagr.tape_imbalance() - 1.0) < 1e-9, "itchbook_agr_pure_buying");
+    iagr.on_execute(1, 100);                      // bid hit = seller-initiated
+    // (300 - 100) / 400 = +0.5 — net buying pressure.
+    ASSERT(std::fabs(iagr.tape_imbalance() - 0.5) < 1e-9, "itchbook_agr_net_half");
+    // The split always sums to the #407 tape total.
+    ASSERT(iagr.executed_against_bid() + iagr.executed_against_ask()
+           == iagr.executed_shares(), "itchbook_agr_sums_to_tape");
+    iagr.on_execute(1, 200);                      // heavy selling flips the sign
+    ASSERT(iagr.tape_imbalance() == 0.0, "itchbook_agr_balanced_at_300_300");
+    iagr.on_execute(1, 100);                      // 300 lifted vs 400 hit
+    ASSERT(iagr.tape_imbalance() < 0.0, "itchbook_agr_net_selling_negative");
+    iagr.clear();
+    ASSERT(iagr.executed_against_bid() == 0 && iagr.tape_imbalance() == 0.0,
+           "itchbook_agr_clear");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

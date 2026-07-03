@@ -51,6 +51,8 @@ class ITCHOrderBook {
     uint64_t orphans_ = 0;   // event for an unknown ref (gap in the feed / desync)
     int64_t exec_shares_sum_     = 0;  // tape: total executed shares (#407)
     int64_t exec_notional_ticks_ = 0;  // tape: Σ shares × resting price_ticks (#407)
+    int64_t exec_against_bid_    = 0;  // tape: shares hit on resting BIDS = seller-initiated (#415)
+    int64_t exec_against_ask_    = 0;  // tape: shares lifted from ASKS = buyer-initiated (#415)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -96,6 +98,10 @@ public:
                                      ? exec_shares : it->second.shares;
             exec_shares_sum_     += dec;
             exec_notional_ticks_ += static_cast<int64_t>(dec) * it->second.price_ticks;
+            // #415: the resting side names the aggressor exactly — a hit
+            // resting BID was sold into, a lifted ASK was bought from.
+            if (it->second.side == 'B') exec_against_bid_ += dec;
+            else                        exec_against_ask_ += dec;
         }
         reduce_(ref, exec_shares);
         ++executes_;
@@ -179,6 +185,7 @@ public:
         orders_.clear(); bids_.clear(); asks_.clear();
         adds_ = executes_ = cancels_ = deletes_ = replaces_ = orphans_ = 0;
         exec_shares_sum_ = exec_notional_ticks_ = 0;   // #407
+        exec_against_bid_ = exec_against_ask_ = 0;     // #415
     }
     // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
@@ -701,6 +708,28 @@ public:
         return exec_shares_sum_ > 0
             ? (static_cast<double>(exec_notional_ticks_)
                / static_cast<double>(exec_shares_sum_)) / 100.0
+            : 0.0;
+    }
+
+    // executed_against_bid / executed_against_ask (#415): the tape volume
+    // split by the RESTING side — an exact aggressor classification, free
+    // with L3 data (a hit bid was SOLD into, a lifted ask was BOUGHT from),
+    // where trade-only feeds must infer it (Lee-Ready). The two sum to
+    // executed_shares (#407).
+    int64_t executed_against_bid() const noexcept { return exec_against_bid_; }
+    int64_t executed_against_ask() const noexcept { return exec_against_ask_; }
+
+    // tape_imbalance (#415): net aggressor pressure in [-1,1] =
+    // (bought - sold) / total executed. +1 = every share was buyer-
+    // initiated (asks lifted), -1 = pure selling into bids, 0 = balanced
+    // two-way tape. The EXECUTED-flow counterpart of the RESTING-depth
+    // imbalance (#148) — depth shows intent, the tape shows commitment.
+    // 0 before any execution.
+    double tape_imbalance() const noexcept {
+        const int64_t total = exec_against_bid_ + exec_against_ask_;
+        return total > 0
+            ? static_cast<double>(exec_against_ask_ - exec_against_bid_)
+                  / static_cast<double>(total)
             : 0.0;
     }
 
