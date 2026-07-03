@@ -478,6 +478,30 @@ public:
         const double b = national_best_bid(), a = national_best_ask();
         return (b > 0.0 && a > 0.0) ? (b + a) / 2.0 : 0.0;
     }
+    // fresh_nbbo_mid: the NBBO mid computed ONLY from venues whose quote is
+    // at most max_age_ns old at at_ns (#424) — the staleness gate (#392)
+    // applied to the NBBO itself. nbbo_mid() happily averages a bid nobody
+    // has refreshed in seconds with a live ask, and that blended number is
+    // where mispricing starts; here a stale venue's BOTH sides drop out
+    // entirely. Returns 0 when no fresh two-sided market remains — which is
+    // itself the signal: the consolidated picture is not tradeable. Same
+    // clock injection as the rest of the #392 family.
+    double fresh_nbbo_mid(int64_t max_age_ns, int64_t at_ns) const noexcept {
+        double bb = 0.0, ba = 0.0;
+        bool   has_bid = false, has_ask = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active || v.last_quote_ns == 0) continue;
+            if (at_ns - v.last_quote_ns > max_age_ns) continue;   // stale venue: gone
+            if (v.best_bid > 0.0 && v.bid_size > 0 && (!has_bid || v.best_bid > bb)) {
+                bb = v.best_bid; has_bid = true;
+            }
+            if (v.best_ask > 0.0 && v.ask_size > 0 && (!has_ask || v.best_ask < ba)) {
+                ba = v.best_ask; has_ask = true;
+            }
+        }
+        return (has_bid && has_ask) ? (bb + ba) / 2.0 : 0.0;
+    }
     // nbbo_microprice: size-weighted consolidated mid across venues (#318). The plain
     // nbbo_mid (#402) ignores depth; the microprice weights the National Best Bid by
     // the size resting at the National Best Ask and vice-versa (the standard

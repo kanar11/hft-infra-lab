@@ -4297,6 +4297,33 @@ void test_router_ewma_partial() {
         ASSERT(rvh.least_healthy_venue(rvh_streak) == nullptr, "rvh_disabled_excluded");
     }
 
+    // --- #424 fresh_nbbo_mid — the staleness-gated NBBO ---
+    {
+        auto closf = [](double a, double b) { const double d = a - b; return (d < 0 ? -d : d) < 1e-9; };
+        SmartOrderRouter rfm(RoutingStrategy::BEST_PRICE);
+        rfm.add_venue(Venue("A", 100, 0.0));
+        rfm.add_venue(Venue("B", 100, 0.0));
+        rfm.add_venue(Venue("C", 100, 0.0));                   // never quotes
+        ASSERT(rfm.fresh_nbbo_mid(1000, 5000) == 0.0, "rfm_no_quotes_zero");
+        rfm.update_quote("A", 10.00, 10.06, 100, 100, 4000);   // best bid, fresh
+        rfm.update_quote("B", 9.98, 10.02, 100, 100, 4500);    // best ask, fresher
+        // Everything fresh at t=5000 with a 2000ns budget -> equals nbbo_mid.
+        ASSERT(closf(rfm.fresh_nbbo_mid(2000, 5000), rfm.nbbo_mid()), "rfm_all_fresh_matches");
+        ASSERT(closf(rfm.fresh_nbbo_mid(2000, 5000), (10.00 + 10.02) / 2.0), "rfm_mid_value");
+        // A tighter budget (A's age 1000 > 600, B's 500 <= 600) drops venue
+        // A ENTIRELY: the fresh NBB falls back to B's 9.98.
+        ASSERT(closf(rfm.fresh_nbbo_mid(600, 5000), (9.98 + 10.02) / 2.0), "rfm_stale_bid_dropped");
+        // The raw nbbo_mid keeps blending the stale bid — the divergence IS
+        // the mispricing this guards against.
+        ASSERT(rfm.nbbo_mid() > rfm.fresh_nbbo_mid(600, 5000), "rfm_raw_blends_stale");
+        // No fresh two-sided market -> 0 (not tradeable).
+        ASSERT(rfm.fresh_nbbo_mid(100, 99999) == 0.0, "rfm_all_stale_zero");
+        // An inactive venue is out regardless of freshness.
+        rfm.set_venue_active("B", false);
+        ASSERT(closf(rfm.fresh_nbbo_mid(2000, 5000), (10.00 + 10.06) / 2.0),
+               "rfm_inactive_excluded");
+    }
+
     // --- #400 sweep_to_fill_at_limit — the marketable-limit sweep planner ---
     {
         auto closr = [](double a, double b) { const double d = a - b; return (d < 0 ? -d : d) < 1e-9; };
