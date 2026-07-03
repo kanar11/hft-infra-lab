@@ -831,6 +831,32 @@ struct RetransmitTracker {
         return retries;
     }
     std::size_t outstanding() const noexcept { return pending.size(); }
+
+    // escalation_rate (#419): the fraction of RESOLVED gap-fill requests
+    // that exhausted their retries and escalated to a snapshot =
+    // escalated / (fulfilled + escalated), in [0,1]. The health of the
+    // recovery path itself: near 0 the retransmit server answers, a rising
+    // rate means it is degraded or dead and every gap is taking the
+    // expensive snapshot road instead. 0 before anything resolves.
+    double escalation_rate() const noexcept {
+        const std::uint64_t resolved = fulfilled + escalated;
+        return resolved > 0
+            ? static_cast<double>(escalated) / static_cast<double>(resolved)
+            : 0.0;
+    }
+
+    // max_attempts_in_flight (#419): the highest attempt count among the
+    // PENDING requests — how close the worst outstanding gap-fill is to
+    // escalating (== max_attempts means one more timeout ends it). The
+    // live early warning to escalation_rate's after-the-fact ratio.
+    // 0 when nothing is pending.
+    int max_attempts_in_flight() const noexcept {
+        int mx = 0;
+        for (const auto& kv : pending)
+            if (kv.second.attempts > mx) mx = kv.second.attempts;
+        return mx;
+    }
+
     void reset() noexcept { pending.clear(); fulfilled = 0; escalated = 0; }
 };
 

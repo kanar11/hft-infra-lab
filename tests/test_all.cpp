@@ -2688,6 +2688,26 @@ void test_multicast_gap_recovery() {
     rt2.on_received(7);                                   // retransmit arrived
     ASSERT(rt2.fulfilled == 1 && rt2.outstanding() == 0, "rtx_fulfilled");
 
+    // #419 escalation_rate / max_attempts_in_flight — recovery-path health.
+    multicast::RetransmitTracker rth(1000, 3);
+    ASSERT(rth.escalation_rate() == 0.0 && rth.max_attempts_in_flight() == 0,
+           "rtx_health_fresh");
+    rth.request(1, 0);
+    rth.request(2, 0);
+    ASSERT(rth.max_attempts_in_flight() == 1, "rtx_health_first_attempts");
+    rth.on_received(1);                                   // one resolves cleanly
+    ASSERT(rth.escalation_rate() == 0.0, "rtx_health_fulfilled_keeps_zero");
+    rth.poll(1000);                                       // seq 2 -> attempt 2
+    rth.poll(2000);                                       // seq 2 -> attempt 3 (== max)
+    ASSERT(rth.max_attempts_in_flight() == 3, "rtx_health_worst_at_the_edge");
+    rth.poll(3000);                                       // exhausted -> escalates
+    ASSERT(rth.outstanding() == 0 && rth.max_attempts_in_flight() == 0,
+           "rtx_health_escalated_leaves_flight");
+    // Resolved: 1 fulfilled + 1 escalated -> the snapshot road took half.
+    ASSERT(std::fabs(rth.escalation_rate() - 0.5) < 1e-9, "rtx_health_rate_half");
+    rth.reset();
+    ASSERT(rth.escalation_rate() == 0.0, "rtx_health_reset");
+
     // #273 DualFeedReconciler — A/B first-seen dedup + line-win stats.
     multicast::DualFeedReconciler dfr;
     ASSERT(dfr.on_packet(1, 0), "dfr_A_first");           // A delivers seq 1 first
