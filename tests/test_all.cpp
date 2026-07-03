@@ -2682,6 +2682,23 @@ void test_multicast_gap_recovery() {
     cb.drain();
     ASSERT(cb.pending() == 0, "conflate_drain");
 
+    // #427 received / conflation_ratio — how summarized the consumer's view is.
+    // cb saw 4 updates, 2 of which were overwrites -> ratio 0.5.
+    ASSERT(cb.received == 4, "conflate_received_counts");
+    ASSERT(std::fabs(cb.conflation_ratio() - 0.5) < 1e-9, "conflate_ratio_half");
+    // drain() clears the STATE, not the session counters.
+    ASSERT(cb.conflated == 2 && std::fabs(cb.conflation_ratio() - 0.5) < 1e-9,
+           "conflate_drain_keeps_counters");
+    // A fresh buffer with distinct keys only: the consumer sees every tick.
+    multicast::ConflationBuffer cbr;
+    ASSERT(cbr.conflation_ratio() == 0.0, "conflate_ratio_empty_zero");
+    cbr.update(1, 1.0); cbr.update(2, 2.0); cbr.update(3, 3.0);
+    ASSERT(cbr.conflation_ratio() == 0.0 && cbr.received == 3, "conflate_ratio_no_overwrites");
+    // A hot key drives the ratio up: 1 insert + 3 overwrites of 4 -> 0.75.
+    multicast::ConflationBuffer cbh;
+    cbh.update(7, 1.0); cbh.update(7, 2.0); cbh.update(7, 3.0); cbh.update(7, 4.0);
+    ASSERT(std::fabs(cbh.conflation_ratio() - 0.75) < 1e-9, "conflate_ratio_hot_key");
+
     // #235 LatencyTracker — EWMA + peak latency.
     multicast::LatencyTracker lt(0.5);
     lt.sample(100);                  // ewma 100, max 100

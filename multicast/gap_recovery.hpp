@@ -661,8 +661,10 @@ struct TokenBucket {
 struct ConflationBuffer {
     std::map<std::uint64_t, double> latest;   // key -> latest value
     std::uint64_t conflated = 0;
+    std::uint64_t received  = 0;              // every update offered (#427)
 
     void update(std::uint64_t key, double value) {
+        ++received;
         auto [it, inserted] = latest.try_emplace(key, value);
         if (!inserted) { it->second = value; ++conflated; }   // overwrite = conflation
     }
@@ -674,6 +676,19 @@ struct ConflationBuffer {
     }
     std::size_t pending() const noexcept { return latest.size(); }
     void drain() noexcept { latest.clear(); }   // the consumer took the latest state
+
+    // conflation_ratio (#427): overwritten updates / all updates offered,
+    // in [0,1) — how much of the feed the conflation absorbed before the
+    // consumer drained. Near 0 the consumer sees (almost) every tick;
+    // rising, it is reading an ever more SUMMARIZED market — each drained
+    // value hides more intermediate prints. The keep-up gauge for a
+    // conflated consumer, complementing BackpressureMonitor (#179), which
+    // watches an UNCONFLATED queue's depth instead. 0 before any update.
+    double conflation_ratio() const noexcept {
+        return received > 0
+            ? static_cast<double>(conflated) / static_cast<double>(received)
+            : 0.0;
+    }
 };
 
 
