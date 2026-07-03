@@ -1140,6 +1140,35 @@ public:
         return r;
     }
 
+    // StatusRequest — the key OrderStatusRequest (35=H) fields in a typed
+    // struct (#417). The acceptor-side decode that closes the round-trip
+    // with build_order_status_request (#185): after a reconnect / sequence
+    // gap the client asks for a working order's current state, and the
+    // exchange answers with an ExecutionReport (35=8) carrying the current
+    // OrdStatus — the reconciliation flow. Same shape as the rest of the
+    // typed-parse family. valid=false when the message is not 35=H.
+    struct StatusRequest {
+        char cl_ord_id[32] = {};   // 11=ClOrdID (the order being asked about)
+        char symbol[16]    = {};   // 55=Symbol
+        char side          = '\0'; // 54=Side ('1'=Buy, '2'=Sell)
+        bool valid         = false;// true when msg type == 'H'
+    };
+
+    static StatusRequest parse_order_status_request(const FIXMessage& m) noexcept {
+        StatusRequest r;
+        if (m.get_msg_type()[0] != 'H') return r;   // valid stays false
+        const char* coi = m.get_field(11);
+        const char* sym = m.get_field(55);
+        const char* sd  = m.get_field(54);
+        // sources are runtime pointers (no compile-time length) so strncpy bounded
+        // to size-1 over a value-initialized array stays nul-terminated.
+        if (coi) std::strncpy(r.cl_ord_id, coi, sizeof(r.cl_ord_id) - 1);
+        if (sym) std::strncpy(r.symbol,    sym, sizeof(r.symbol) - 1);
+        r.side  = (sd && *sd) ? sd[0] : '\0';
+        r.valid = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

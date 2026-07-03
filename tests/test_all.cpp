@@ -5323,6 +5323,21 @@ void test_fix_session() {
         ASSERT(std::strcmp(osr.get_side(), "BUY") == 0, "fix_osr_side");
         ASSERT(!osr.is_admin(), "fix_osr_is_application");
 
+        // #417 parse_order_status_request — typed acceptor-side decode of
+        // 35=H; closes the reconciliation round-trip with #185.
+        const auto osrq = fix::FIXSession::parse_order_status_request(osr);
+        ASSERT(osrq.valid && std::strcmp(osrq.cl_ord_id, "ORD1") == 0, "fix_parse_osr_id");
+        ASSERT(std::strcmp(osrq.symbol, "AAPL") == 0 && osrq.side == '1',
+               "fix_parse_osr_symbol_side");
+        // A bare 35=H without tag 54 decodes with an empty side, still valid.
+        FIXMessage osrb; osrb.parse("35=H|11=ORD2|55=MSFT|");
+        const auto osrq2 = fix::FIXSession::parse_order_status_request(osrb);
+        ASSERT(osrq2.valid && osrq2.side == '\0'
+               && std::strcmp(osrq2.symbol, "MSFT") == 0, "fix_parse_osr_missing_side");
+        FIXMessage not_h; not_h.parse("35=D|11=X|55=Y|");
+        ASSERT(!fix::FIXSession::parse_order_status_request(not_h).valid,
+               "fix_parse_osr_non_H_invalid");
+
         // #193 OrderMassCancelRequest (35=q) — panic button.
         s.build_mass_cancel(buf, sizeof(buf), "MC1", '1', "AAPL", '|');   // po symbolu
         FIXMessage mc1; mc1.parse(buf);
