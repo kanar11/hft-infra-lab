@@ -675,8 +675,16 @@ void test_oms_short_and_replace() {
         Order* rtf = oms.submit_order("BBB", Side::BUY, 20.0, 50);
         oms.fill_order(rtf->order_id, 50, 19.5);
         ASSERT(oms.round_trips() == 3, "rtp_short_close_counts");
+
+        // #428 avg_pnl_per_round_trip — per-trade expectancy of the book.
+        // Realized: AAA long 100@10 sold 100@10.5 = +50; BBB long 100@20
+        // closed @20 = 0; short 50@20 covered @19.5 = +25. Total +75 / 3.
+        ASSERT(close(oms.avg_pnl_per_round_trip(), 25.0), "artp_75_over_3");
+
         oms.reset_session_counters();
         ASSERT(oms.round_trips() == 0, "rtp_session_reset");
+        // Denominator gone -> back to 0 (positions keep their realized P&L).
+        ASSERT(oms.avg_pnl_per_round_trip() == 0.0, "artp_reset_denominator");
     }
 
     {   // #396 price improvement vs limit — the price-quality TCA axis.

@@ -932,6 +932,20 @@ public:
     // P&L per completed trade, the number a session review actually wants.
     // Reset by reset_session_counters.
     uint64_t round_trips() const noexcept { return round_trips_; }
+    // avg_pnl_per_round_trip: realized P&L per completed flat-to-flat cycle
+    // (#428) — the number #420 promised, delivered: total_realized_pnl /
+    // round_trips, in dollars. Per-TRADE expectancy of the whole book,
+    // where expectancy_per_symbol (#363) is per NAME: ten scratches and one
+    // winner average very differently from eleven small winners even at the
+    // same total. Fixed-point accumulator: to_float BEFORE dividing (#347
+    // lesson). 0 before the first completed cycle. NOTE: realized P&L on a
+    // cycle still OPEN (a flip's carried leg) is included in the numerator
+    // — over a flat-ending session the two agree exactly.
+    double avg_pnl_per_round_trip() const noexcept {
+        return round_trips_ > 0
+            ? to_float(total_realized_pnl()) / static_cast<double>(round_trips_)
+            : 0.0;
+    }
     // cancel_rate: fraction of submitted orders that were cancelled (#258) =
     // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high
     // ratio means most orders never rest long (exchange msg-rate fees, surveillance
