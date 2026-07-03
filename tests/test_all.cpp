@@ -4151,6 +4151,36 @@ void test_router_ewma_partial() {
         ASSERT(rqs.venue_quote_age_ns("A", 5000) == 0, "rqs_clamp_zero");
     }
 
+    // --- #416 venue_failure_streak / least_healthy_venue ---
+    {
+        SmartOrderRouter rvh(RoutingStrategy::BEST_PRICE);
+        rvh.set_failure_threshold(3);
+        rvh.add_venue(Venue("A", 100, 0.0));
+        rvh.add_venue(Venue("B", 100, 0.0));
+        int32_t rvh_streak = -99;
+        ASSERT(rvh.venue_failure_streak("A") == 0, "rvh_fresh_zero");
+        ASSERT(rvh.venue_failure_streak("GHOST") == -1, "rvh_unknown_minus1");
+        ASSERT(rvh.least_healthy_venue(rvh_streak) == nullptr && rvh_streak == -99,
+               "rvh_all_healthy_null");
+        rvh.record_reject("B");
+        rvh.record_reject("B");                    // streak 2 of 3 — still active
+        ASSERT(rvh.venue_failure_streak("B") == 2 && rvh.venue_active("B"),
+               "rvh_streak_visible_before_trip");
+        const char* rvh_who = rvh.least_healthy_venue(rvh_streak);
+        ASSERT(rvh_who != nullptr && std::strcmp(rvh_who, "B") == 0 && rvh_streak == 2,
+               "rvh_names_b");
+        // A success wipes the streak — the alarm clears.
+        rvh.record_success("B");
+        ASSERT(rvh.venue_failure_streak("B") == 0
+               && rvh.least_healthy_venue(rvh_streak) == nullptr, "rvh_success_clears");
+        // The third reject trips the breaker: the venue leaves the ACTIVE
+        // pool and with it the least-healthy watch (it is already gone).
+        rvh.record_reject("A"); rvh.record_reject("A"); rvh.record_reject("A");
+        ASSERT(!rvh.venue_active("A"), "rvh_third_reject_disables");
+        ASSERT(rvh.venue_failure_streak("A") == 3, "rvh_streak_readable_after_trip");
+        ASSERT(rvh.least_healthy_venue(rvh_streak) == nullptr, "rvh_disabled_excluded");
+    }
+
     // --- #400 sweep_to_fill_at_limit — the marketable-limit sweep planner ---
     {
         auto closr = [](double a, double b) { const double d = a - b; return (d < 0 ? -d : d) < 1e-9; };

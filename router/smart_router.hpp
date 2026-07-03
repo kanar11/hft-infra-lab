@@ -263,6 +263,38 @@ public:
         return 0.0;
     }
 
+    // venue_failure_streak: the venue's CURRENT consecutive-failure count
+    // (#416) — the number record_reject grows and record_success zeroes,
+    // and the distance to the auto-disable threshold (#86). Before #416 the
+    // streak was invisible from outside: a venue either looked fine or was
+    // suddenly gone. -1 for an unknown venue.
+    int32_t venue_failure_streak(const char* venue_name) const noexcept {
+        for (int i = 0; i < venue_count_; ++i)
+            if (std::strcmp(venues_[i].name, venue_name) == 0)
+                return static_cast<int32_t>(venues_[i].consecutive_failures);
+        return -1;
+    }
+
+    // least_healthy_venue: the ACTIVE venue closest to tripping the
+    // auto-disable (#416) — the actionable WHICH of venue health: reroute
+    // its flow or investigate BEFORE the breaker fires and the venue
+    // vanishes from the candidate pool. Writes its streak into out_streak.
+    // nullptr (out untouched) when no active venue has a failure streak.
+    const char* least_healthy_venue(int32_t& out_streak) const noexcept {
+        const char* who   = nullptr;
+        uint32_t    worst = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (v.consecutive_failures > worst) {
+                worst = v.consecutive_failures;
+                who   = v.name;
+            }
+        }
+        if (who != nullptr) out_streak = static_cast<int32_t>(worst);
+        return who;
+    }
+
     // update_quote: update a venue's top-of-book (on every market data tick).
     // quote_ts_ns (#392): when this refresh happened — 0 (the default, and
     // all pre-#392 call sites) stamps the real clock; tests pass synthetic
