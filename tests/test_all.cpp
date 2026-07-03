@@ -4940,6 +4940,32 @@ void test_risk_price_band() {
     ASSERT(!rpe.would_breach_position("MSFT", Side::BUY, 1000), "breach_fresh_at_cap"); // exactly cap
     ASSERT(rpe.would_breach_position("MSFT", Side::BUY, 1001), "breach_fresh_over");
 
+    // #413 would_breach_exposure — the PORTFOLIO-level what-if (#291's twin).
+    RiskLimits wbl;
+    wbl.max_position_per_symbol = 100000;
+    wbl.max_portfolio_exposure  = 1000;
+    wbl.max_order_value         = 100000000;
+    wbl.max_orders_per_second   = 1000000;
+    wbl.max_price_band_pct      = 0.0;
+    RiskManager rwb(wbl);
+    rwb.on_order_sent("AAPL", Side::BUY, 600);            // gross 600
+    rwb.on_order_sent("MSFT", Side::SELL, 300);           // gross 900
+    ASSERT(!rwb.would_breach_exposure("TSLA", Side::BUY, 100), "wbe_at_cap_ok");   // 1000
+    ASSERT(rwb.would_breach_exposure("TSLA", Side::BUY, 101), "wbe_over_cap");     // 1001
+    // Reducing an existing name FREES exposure — never a breach.
+    ASSERT(!rwb.would_breach_exposure("AAPL", Side::SELL, 400), "wbe_reduction_ok"); // gross 500
+    // Flipping through zero can still breach: 600 -> -1101 => gross 1401.
+    ASSERT(rwb.would_breach_exposure("AAPL", Side::SELL, 1701), "wbe_flip_breaches");
+    // Probing is side-effect-free — the real check counters stay untouched.
+    const uint64_t wbe_checks = rwb.get_total_checks();
+    (void)rwb.would_breach_exposure("TSLA", Side::BUY, 50);
+    ASSERT(rwb.get_total_checks() == wbe_checks, "wbe_no_side_effects");
+    // A disabled cap (<= 0) never breaches.
+    RiskLimits wbl0 = wbl;
+    wbl0.max_portfolio_exposure = 0;
+    RiskManager rwb0(wbl0);
+    ASSERT(!rwb0.would_breach_exposure("AAPL", Side::BUY, 99999999), "wbe_disabled_never");
+
     // #189 per-symbol position value limit ($10k; shares generous).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;

@@ -940,6 +940,24 @@ public:
         return -projected > short_cap;
     }
 
+    // would_breach_exposure: pre-trade predicate — would this order breach
+    // the PORTFOLIO exposure limit (#413)? The portfolio-level companion to
+    // would_breach_position (#291, per-symbol caps): mirrors check_order's
+    // O(1) invariant math exactly (total_abs_exposure_ - old symbol
+    // contribution + projected contribution vs max_portfolio_exposure) but
+    // is const and side-effect-free — no stats, no latency accounting, so a
+    // sizing loop can probe it freely without polluting the check counters.
+    // false when the cap is disabled (<= 0).
+    bool would_breach_exposure(const char* symbol, Side side, int32_t qty) const noexcept {
+        if (limits_.max_portfolio_exposure <= 0) return false;
+        const uint64_t k = sym_to_key(symbol);
+        const int32_t cur = lookup(positions_, k) + lookup(pending_, k);
+        const int32_t old_contrib = std::abs(cur);
+        const int32_t new_contrib = std::abs(cur + signed_qty(side, qty));
+        return total_abs_exposure_ - old_contrib + new_contrib
+             > limits_.max_portfolio_exposure;
+    }
+
     int32_t headroom_shares(const char* symbol, Side side) const noexcept {
         const uint64_t k = sym_to_key(symbol);
         int32_t cap = limits_.max_position_per_symbol;
