@@ -421,20 +421,40 @@ struct DedupWindow {
     bool          init = false;
     std::set<std::uint64_t> seen;
     std::uint64_t duplicates = 0;
+    std::uint64_t accepted   = 0;   // packets passed through (#403)
 
     explicit DedupWindow(std::uint64_t window_ = 1024) noexcept
         : window(window_ ? window_ : 1) {}
 
     bool accept(std::uint64_t seq) {
-        if (!init) { init = true; high = seq; seen.insert(seq); return true; }
+        if (!init) { init = true; high = seq; seen.insert(seq); ++accepted; return true; }
         if (seq + window <= high) { ++duplicates; return false; }   // outside the window -> treat as a dup
         if (seen.count(seq))      { ++duplicates; return false; }
         seen.insert(seq);
         if (seq > high) high = seq;
         // Prune: forget numbers that fell out of the window (bounds memory).
         while (!seen.empty() && *seen.begin() + window <= high) seen.erase(seen.begin());
+        ++accepted;
         return true;
     }
+
+    // total_seen (#403): everything ever offered = passed + rejected.
+    std::uint64_t total_seen() const noexcept { return accepted + duplicates; }
+
+    // dup_rate (#403): rejected / offered, in [0,1] — the hygiene ratio
+    // behind the raw duplicates counter. On a single clean line this sits
+    // near 0; a step up means an upstream component started replaying
+    // (a misconfigured retransmitter, two lines bridged onto one group —
+    // the same pathology GapRecovery::duplicate_rate #321 flags AFTER
+    // sequencing, caught here at the dedup stage instead). 0 before any
+    // packet.
+    double dup_rate() const noexcept {
+        const std::uint64_t total = total_seen();
+        return total > 0
+            ? static_cast<double>(duplicates) / static_cast<double>(total)
+            : 0.0;
+    }
+
     void reset() noexcept { *this = DedupWindow{window}; }
 };
 

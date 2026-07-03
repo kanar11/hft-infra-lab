@@ -2425,6 +2425,24 @@ void test_multicast_gap_recovery() {
     ASSERT(!dw.accept(5), "dedup_5_dup");
     ASSERT(dw.duplicates == 2, "dedup_count");
 
+    // #403 accepted / total_seen / dup_rate — the hygiene ratio at the
+    // dedup stage (GapRecovery::duplicate_rate #321 flags the same
+    // pathology after sequencing).
+    ASSERT(dw.accepted == 3 && dw.total_seen() == 5, "dedup_totals");
+    ASSERT(std::fabs(dw.dup_rate() - 2.0 / 5.0) < 1e-9, "dedup_rate_two_fifths");
+    multicast::DedupWindow ddr(100);
+    ASSERT(ddr.dup_rate() == 0.0 && ddr.total_seen() == 0, "dedup_rate_empty_zero");
+    ddr.accept(1); ddr.accept(2); ddr.accept(3);    // clean single line
+    ASSERT(ddr.dup_rate() == 0.0 && ddr.accepted == 3, "dedup_rate_clean_line_zero");
+    // A bridged second line replays everything -> the rate steps toward 0.5.
+    ddr.accept(1); ddr.accept(2); ddr.accept(3);
+    ASSERT(std::fabs(ddr.dup_rate() - 0.5) < 1e-9, "dedup_rate_bridged_half");
+    // A stale packet far below the window counts as rejected too.
+    ddr.accept(200);                                 // advances high
+    ASSERT(!ddr.accept(50) && ddr.duplicates == 4, "dedup_stale_counts_rejected");
+    ddr.reset();
+    ASSERT(ddr.total_seen() == 0 && ddr.dup_rate() == 0.0, "dedup_rate_reset");
+
     // #179 BackpressureMonitor — zaleglosc konsumenta wzgledem feedu.
     multicast::BackpressureMonitor bp;
     bp.on_enqueue(); bp.on_enqueue(); bp.on_enqueue();   // depth 3
