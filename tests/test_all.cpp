@@ -5812,6 +5812,36 @@ void test_ouch_order_state() {
                && std::strcmp(lrtok, "BBB") == 0, "ouch_lrt_after_cancel");
     }
 
+    // #402 pending_cancel_shares / pending_cancel_fraction — condemned exposure.
+    {
+        ouch::OUCHOrderTracker pcs;
+        uint8_t pcb[64];
+        ASSERT(pcs.pending_cancel_shares() == 0 && pcs.pending_cancel_fraction() == 0.0,
+               "ouch_pcs_empty");
+        pcs.on_new("P1", 100);
+        int pcn = OUCHMessage::encode_accepted(pcb, "P1", 'B', 100, "AAPL", 10.0, 1);
+        pcs.on_response(OUCHMessage::parse_response(pcb, pcn));
+        pcs.on_new("P2", 300);
+        pcn = OUCHMessage::encode_accepted(pcb, "P2", 'B', 300, "AAPL", 10.0, 2);
+        pcs.on_response(OUCHMessage::parse_response(pcb, pcn));
+        ASSERT(pcs.pending_cancel_shares() == 0, "ouch_pcs_none_armed");
+        pcs.on_cancel_sent("P2");
+        ASSERT(pcs.pending_cancel_shares() == 300, "ouch_pcs_armed_shares");
+        // 300 condemned of 400 working -> 0.75 of the book is an illusion.
+        ASSERT(std::fabs(pcs.pending_cancel_fraction() - 0.75) < 1e-9, "ouch_pcs_fraction_3_4");
+        // A fill racing the cancel shrinks the condemned shares too.
+        pcn = OUCHMessage::encode_executed(pcb, "P2", 100, 10.0, 900);
+        pcs.on_response(OUCHMessage::parse_response(pcb, pcn));
+        ASSERT(pcs.pending_cancel_shares() == 200, "ouch_pcs_fill_shrinks");
+        ASSERT(std::fabs(pcs.pending_cancel_fraction() - 200.0 / 300.0) < 1e-9,
+               "ouch_pcs_fraction_2_3");
+        // The Cancelled ack frees the exposure.
+        pcn = OUCHMessage::encode_cancelled(pcb, "P2", 200, 'U');
+        pcs.on_response(OUCHMessage::parse_response(pcb, pcn));
+        ASSERT(pcs.pending_cancel_shares() == 0 && pcs.pending_cancel_fraction() == 0.0,
+               "ouch_pcs_ack_frees");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100

@@ -296,6 +296,29 @@ public:
         for (const auto& [tok, rec] : orders_) if (rec.pending_cancel) ++c;
         return c;
     }
+    // pending_cancel_shares: OPEN shares sitting under an in-flight cancel
+    // (#402) — the exposure the desk EXPECTS to free once the exchange acks.
+    // The shares axis to cancel_pending_count's (#280) order count: ten
+    // 100-lot pending cancels and one 1000-lot read identically on the
+    // count but very differently here. Sums `remaining` over pending-cancel
+    // records (LIVE/PARTIAL by construction — on_cancel_sent only arms
+    // working orders, and every terminal transition clears the flag).
+    int32_t pending_cancel_shares() const noexcept {
+        int32_t s = 0;
+        for (const auto& [tok, rec] : orders_)
+            if (rec.pending_cancel) s += rec.remaining;
+        return s;
+    }
+    // pending_cancel_fraction: what part of the live book is already
+    // condemned (#402) = pending_cancel_shares / working_shares, in [0,1].
+    // Near 1.0 the resting book is an illusion — nearly everything on the
+    // exchange is a cancel waiting to be acked. 0 when nothing is working.
+    double pending_cancel_fraction() const noexcept {
+        const int32_t w = working_shares();
+        return w > 0
+            ? static_cast<double>(pending_cancel_shares()) / static_cast<double>(w)
+            : 0.0;
+    }
     // status_count: how many tracked orders are CURRENTLY in a given state (#296).
     // A point-in-time snapshot (vs the cumulative live_/filled_/... event counters,
     // which only ever go up). Mirrors the OMS count_by_status (#290 family) — e.g.
