@@ -323,6 +323,7 @@ class RiskManager {
     double loss_pnl_sum_ = 0.0;      // sum of losing update_pnl magnitudes (#381)
     int32_t underwater_updates_     = 0;  // consecutive updates below the P&L peak (#397)
     int32_t max_underwater_updates_ = 0;  // longest such spell this session (#397)
+    int32_t max_consec_wins_        = 0;  // best winning streak seen this session (#405)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
@@ -604,6 +605,7 @@ public:
             ++consec_wins_;
             ++winning_updates_;   // #372
             win_pnl_sum_ += pnl_change;   // #381
+            if (consec_wins_ > max_consec_wins_) max_consec_wins_ = consec_wins_;  // #405
         }
     }
 
@@ -747,6 +749,7 @@ public:
         loss_pnl_sum_ = 0.0;      // #381
         underwater_updates_     = 0;  // #397
         max_underwater_updates_ = 0;  // #397
+        max_consec_wins_        = 0;  // #405
         traded_notional_ = 0.0;
         rate_ring_.reset();
         pending_.clear();
@@ -1023,6 +1026,14 @@ public:
     // it — the number a post-session review checks ("we hit 5 in a row, one shy
     // of the breaker"). Reset by reset_daily; 0 when there has been no loss.
     int32_t  max_consecutive_losses_seen()    const noexcept { return max_consec_losses_; }
+    // max_consecutive_wins_seen: the BEST winning streak reached this session
+    // (#405) — the running maximum of consec_wins_ (#348), completing the
+    // streak family symmetrically with max_consecutive_losses_seen (#364).
+    // A post-session review compares the two: a best-streak far above the
+    // worst says the edge clusters; a hot streak far above HISTORY's normal
+    // is also the classic signature of a stale feed marking every trade
+    // profitable — worth checking, not celebrating. Reset by reset_daily.
+    int32_t  max_consecutive_wins_seen()      const noexcept { return max_consec_wins_; }
     // pnl_win_rate: fraction of P&L updates that were profitable (#372) =
     // winning_updates / (winning + losing), in [0, 1]. update_pnl is called once
     // per realized fill/mark, so this is the hit rate on individual P&L events —

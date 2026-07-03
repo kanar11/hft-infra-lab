@@ -4596,6 +4596,23 @@ void test_risk_price_band() {
     ASSERT(ruw.underwater_updates() == 0 && ruw.max_underwater_updates() == 0,
            "uw_reset_daily");
 
+    // #405 max_consecutive_wins_seen — the win-side high-water mark (#364's twin).
+    RiskManager rmw;
+    ASSERT(rmw.max_consecutive_wins_seen() == 0, "mcw_fresh_zero");
+    rmw.update_pnl(+1.0); rmw.update_pnl(+1.0); rmw.update_pnl(+1.0);   // streak 3
+    ASSERT(rmw.get_consecutive_wins() == 3 && rmw.max_consecutive_wins_seen() == 3,
+           "mcw_streak_tracked");
+    rmw.update_pnl(-1.0);                        // a loss resets the LIVE streak...
+    ASSERT(rmw.get_consecutive_wins() == 0 && rmw.max_consecutive_wins_seen() == 3,
+           "mcw_survives_loss_reset");
+    rmw.update_pnl(+1.0); rmw.update_pnl(+1.0);  // a shorter streak does not lower it
+    ASSERT(rmw.max_consecutive_wins_seen() == 3, "mcw_shorter_streak_ignored");
+    rmw.update_pnl(0.0);                         // flat breaks neither counter (#372 semantics)
+    rmw.update_pnl(+1.0); rmw.update_pnl(+1.0);  // ...streak continues to 4
+    ASSERT(rmw.max_consecutive_wins_seen() == 4, "mcw_longer_streak_raises");
+    rmw.reset_daily();
+    ASSERT(rmw.max_consecutive_wins_seen() == 0, "mcw_reset_daily");
+
     // #121 reason the kill switch latched.
     RiskManager rk(lim);
     ASSERT(rk.get_kill_reason() == KillReason::NONE, "killreason_none");
