@@ -208,6 +208,7 @@ class OMS {
     double    total_traded_notional_    = 0.0; // cumulative $ value of all fills (#266)
     double    total_submitted_notional_ = 0.0; // cumulative $ value of all submitted orders (#322)
     int64_t   price_improvement_fp_     = 0;   // signed fill-vs-limit improvement, fixed-point (#396)
+    uint64_t  round_trips_              = 0;   // positions closed to (or through) flat (#420)
 
 public:
     // commission_per_share: e.g. 0.0035 = $0.0035/share (typical taker fee).
@@ -343,7 +344,15 @@ public:
         // preserved.
         const int32_t signed_fill = signed_qty(order.side, fill_qty);
         pos.pending_qty -= signed_fill;
+        const int32_t net_before = pos.net_qty;   // #420: flat-crossing detection
         apply_fill_to_position(pos, signed_fill, static_cast<int64_t>(fill_qty), fill_price);
+        // #420: a non-flat position LANDING on flat or FLIPPING through it
+        // completes a round trip — the flat-to-flat cycle whose count is the
+        // denominator for per-trade session analytics. Opening from flat and
+        // partial reductions do not count.
+        if (net_before != 0
+            && (pos.net_qty == 0 || (net_before > 0) != (pos.net_qty > 0)))
+            ++round_trips_;
 
         // Commission: charged on every executed share (taker fee). It reduces
         // net P&L, not gross — realized_pnl stays "clean" for attribution.
@@ -916,6 +925,13 @@ public:
             ? to_float(price_improvement_fp_) / static_cast<double>(total_filled_shares_)
             : 0.0;
     }
+    // round_trips: completed flat-to-flat position cycles (#420, MILESTONE
+    // 420) — a non-flat position landing on flat, or flipping through it,
+    // closes one. The per-TRADE denominator the per-fill and per-order
+    // counters cannot provide: realized P&L / round_trips is the average
+    // P&L per completed trade, the number a session review actually wants.
+    // Reset by reset_session_counters.
+    uint64_t round_trips() const noexcept { return round_trips_; }
     // cancel_rate: fraction of submitted orders that were cancelled (#258) =
     // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high
     // ratio means most orders never rest long (exchange msg-rate fees, surveillance
@@ -984,6 +1000,7 @@ public:
         total_traded_notional_    = 0.0;   // #266
         total_submitted_notional_ = 0.0;   // #322
         price_improvement_fp_     = 0;     // #396
+        round_trips_              = 0;     // #420
         for (auto& c : reject_counts_) c = 0;
     }
 

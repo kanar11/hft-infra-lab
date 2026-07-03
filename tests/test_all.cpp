@@ -652,6 +652,32 @@ void test_oms_short_and_replace() {
         ASSERT(oms.avg_working_order_age_ns(6000) == 0, "awa_future_stamp_clamped");
     }
 
+    {   // #420 round_trips — flat-to-flat position cycles (MILESTONE 420).
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.round_trips() == 0, "rtp_empty_zero");
+        Order* rta = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(rta->order_id, 100, 10.0);            // open from flat
+        ASSERT(oms.round_trips() == 0, "rtp_open_not_a_trip");
+        Order* rtb = oms.submit_order("AAA", Side::SELL, 10.0, 60);
+        oms.fill_order(rtb->order_id, 60, 10.5);             // partial reduction
+        ASSERT(oms.round_trips() == 0, "rtp_partial_close_no_trip");
+        Order* rtc = oms.submit_order("AAA", Side::SELL, 10.0, 40);
+        oms.fill_order(rtc->order_id, 40, 10.5);             // lands on flat
+        ASSERT(oms.round_trips() == 1, "rtp_flat_completes");
+        // A flip through zero closes the cycle too (long -> short, one fill).
+        Order* rtd = oms.submit_order("BBB", Side::BUY, 20.0, 100);
+        oms.fill_order(rtd->order_id, 100, 20.0);
+        Order* rte = oms.submit_order("BBB", Side::SELL, 20.0, 150);
+        oms.fill_order(rte->order_id, 150, 20.0);            // net -50: flipped
+        ASSERT(oms.round_trips() == 2, "rtp_flip_counts");
+        // Closing the short leg is the next completed cycle.
+        Order* rtf = oms.submit_order("BBB", Side::BUY, 20.0, 50);
+        oms.fill_order(rtf->order_id, 50, 19.5);
+        ASSERT(oms.round_trips() == 3, "rtp_short_close_counts");
+        oms.reset_session_counters();
+        ASSERT(oms.round_trips() == 0, "rtp_session_reset");
+    }
+
     {   // #396 price improvement vs limit — the price-quality TCA axis.
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.total_price_improvement() == 0.0
