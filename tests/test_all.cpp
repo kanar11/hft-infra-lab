@@ -68,6 +68,7 @@
 #include "../strategy/vwma.hpp"
 #include "../strategy/nvi_pvi.hpp"
 #include "../strategy/close_atr.hpp"
+#include "../strategy/keltner.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3688,6 +3689,38 @@ void test_close_atr() {
     ASSERT(cup.value() == 0.0 && !cup.ready(), "catr_reset");
 }
 
+// Keltner #414 — EMA midline + CloseATR bands (the ATR-based envelope).
+void test_keltner() {
+    SECTION("Keltner (#414)");
+    Keltner kfresh(20, 14);
+    ASSERT(!kfresh.ready() && kfresh.mid() == 0.0, "kelt_empty");
+
+    // ema_period 1 -> the midline IS the latest price; atr_period 2.
+    Keltner kc(1, 2);
+    kc.update(100.0);                             // seeds both legs
+    ASSERT(!kc.ready(), "kelt_seed_not_ready");
+    kc.update(102.0); kc.update(98.0);            // ranges 2, 4 -> ATR 3
+    ASSERT(kc.ready(), "kelt_ready_after_atr_period");
+    ASSERT(std::fabs(kc.mid() - 98.0) < 1e-9, "kelt_mid_tracks_price");
+    ASSERT(std::fabs(kc.atr() - 3.0) < 1e-9, "kelt_atr_mean_of_ranges");
+    // Bands at mult 2: 98 +/- 6.
+    ASSERT(std::fabs(kc.upper(2.0) - 104.0) < 1e-9, "kelt_upper");
+    ASSERT(std::fabs(kc.lower(2.0) - 92.0) < 1e-9, "kelt_lower");
+    // Band coordinates: mid -> 0.5, upper -> 1.0, beyond -> > 1.
+    ASSERT(std::fabs(kc.percent_b(98.0, 2.0) - 0.5) < 1e-9, "kelt_pctb_mid");
+    ASSERT(std::fabs(kc.percent_b(104.0, 2.0) - 1.0) < 1e-9, "kelt_pctb_upper");
+    ASSERT(kc.percent_b(106.0, 2.0) > 1.0, "kelt_pctb_breakout");
+    // A tighter multiplier narrows the envelope symmetrically.
+    ASSERT(std::fabs(kc.upper(1.0) - 101.0) < 1e-9
+           && std::fabs(kc.lower(1.0) - 95.0) < 1e-9, "kelt_mult_scales");
+    // No width yet (flat tape, ATR 0) -> percent_b stays neutral.
+    Keltner kflat(1, 2);
+    kflat.update(50.0); kflat.update(50.0); kflat.update(50.0);
+    ASSERT(std::fabs(kflat.percent_b(50.0, 2.0) - 0.5) < 1e-9, "kelt_flat_neutral");
+    kc.reset();
+    ASSERT(!kc.ready() && kc.mid() == 0.0, "kelt_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -6673,6 +6706,7 @@ int main() {
     test_vwma();
     test_nvi_pvi();
     test_close_atr();
+    test_keltner();
     test_cmo();
     test_zscore();
     test_tsi();
