@@ -66,6 +66,7 @@
 #include "../strategy/force_index.hpp"
 #include "../strategy/mfi.hpp"
 #include "../strategy/vwma.hpp"
+#include "../strategy/nvi_pvi.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3486,6 +3487,41 @@ void test_vwma() {
     ASSERT(vrw.value() == 0.0 && !vrw.ready(), "vwma_reset");
 }
 
+// NVI/PVI #398 — volume-gated cumulative indices (crowd vs smart money).
+void test_nvi_pvi() {
+    SECTION("NVI/PVI (#398)");
+    VolumeIndices vgi;
+    ASSERT(vgi.nvi() == 1000.0 && vgi.pvi() == 1000.0 && !vgi.ready(), "nvipvi_base_1000");
+    vgi.on_trade(100.0, 500);                    // seeds only
+    ASSERT(vgi.nvi() == 1000.0 && vgi.pvi() == 1000.0 && vgi.ready(), "nvipvi_seed_no_move");
+
+    // Uptick on RISING volume -> PVI moves by the % change, NVI frozen.
+    vgi.on_trade(102.0, 800);                    // +2% on rising volume
+    ASSERT(std::fabs(vgi.pvi() - 1020.0) < 1e-9, "nvipvi_pvi_rising_volume");
+    ASSERT(vgi.nvi() == 1000.0, "nvipvi_nvi_frozen_on_rising");
+
+    // Downtick on FALLING volume -> NVI moves, PVI frozen.
+    vgi.on_trade(100.98, 300);                   // -1% on falling volume
+    ASSERT(std::fabs(vgi.nvi() - 990.0) < 1e-9, "nvipvi_nvi_falling_volume");
+    ASSERT(std::fabs(vgi.pvi() - 1020.0) < 1e-9, "nvipvi_pvi_frozen_on_falling");
+
+    // Unchanged volume -> neither index moves, but the price baseline does.
+    vgi.on_trade(105.0, 300);                    // volume equal to previous
+    ASSERT(std::fabs(vgi.nvi() - 990.0) < 1e-9
+           && std::fabs(vgi.pvi() - 1020.0) < 1e-9, "nvipvi_equal_volume_frozen");
+    // ...so the next % change is measured from 105, not 100.98.
+    vgi.on_trade(107.1, 400);                    // +2% on rising volume
+    ASSERT(std::fabs(vgi.pvi() - 1040.4) < 1e-9, "nvipvi_baseline_advanced");
+
+    // Invalid prints are ignored and do not disturb the baselines.
+    vgi.on_trade(0.0, 100); vgi.on_trade(-2.0, 100); vgi.on_trade(110.0, 0);
+    ASSERT(std::fabs(vgi.pvi() - 1040.4) < 1e-9
+           && std::fabs(vgi.nvi() - 990.0) < 1e-9, "nvipvi_ignores_invalid");
+
+    vgi.reset();
+    ASSERT(vgi.nvi() == 1000.0 && vgi.pvi() == 1000.0 && !vgi.ready(), "nvipvi_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -6242,6 +6278,7 @@ int main() {
     test_force_index();
     test_mfi();
     test_vwma();
+    test_nvi_pvi();
     test_cmo();
     test_zscore();
     test_tsi();
