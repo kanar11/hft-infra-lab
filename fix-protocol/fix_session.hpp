@@ -1231,6 +1231,38 @@ public:
         return r;
     }
 
+    // Quote — the key Quote (35=S) fields in a typed struct (#473). The
+    // CLIENT-side decode of a market maker's two-sided quote, closing the
+    // round-trip with build_quote (#249): 117=QuoteID, 132/133=BidPx/OfferPx,
+    // 134/135=BidSize/OfferSize. In a quote-driven market the taker reads
+    // the streamed bid/ask/sizes here instead of walking a resting book.
+    // Same shape as parse_exec_report (#241) / the rest of the typed family.
+    // valid=false when the message is not 35=S.
+    struct Quote {
+        char    quote_id[32] = {};   // 117=QuoteID
+        char    symbol[16]   = {};   // 55=Symbol
+        double  bid_px       = 0.0;  // 132=BidPx
+        double  offer_px     = 0.0;  // 133=OfferPx
+        int32_t bid_size     = 0;    // 134=BidSize
+        int32_t offer_size   = 0;    // 135=OfferSize
+        bool    valid        = false;// true when msg type == 'S'
+    };
+
+    static Quote parse_quote(const FIXMessage& m) noexcept {
+        Quote r;
+        if (m.get_msg_type()[0] != 'S') return r;   // valid stays false
+        const char* qid = m.get_field(117);
+        const char* sym = m.get_field(55);
+        if (qid) std::strncpy(r.quote_id, qid, sizeof(r.quote_id) - 1);
+        if (sym) std::strncpy(r.symbol,   sym, sizeof(r.symbol) - 1);
+        r.bid_px     = m.get_double(132);
+        r.offer_px   = m.get_double(133);
+        r.bid_size   = m.get_int(134);
+        r.offer_size = m.get_int(135);
+        r.valid      = true;
+        return r;
+    }
+
     // MDReject — the key MarketDataRequestReject (35=Y) fields in a typed
     // struct (#465). The CLIENT-side decode of the venue's refusal of a
     // MarketDataRequest, closing the V->Y handshake symmetrically with

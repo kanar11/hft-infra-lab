@@ -6461,6 +6461,19 @@ void test_fix_session() {
                && std::fabs(qm.get_double(133) - 100.02) < 1e-6, "fix_quote_prices");
         ASSERT(qm.get_int(134) == 500 && qm.get_int(135) == 300, "fix_quote_sizes");
 
+        // #473 parse_quote — typed CLIENT-side decode of 35=S; closes the
+        // round-trip with build_quote (#249).
+        const auto qd = fix::FIXSession::parse_quote(qm);
+        ASSERT(qd.valid && std::strcmp(qd.quote_id, "Q1") == 0
+               && std::strcmp(qd.symbol, "AAPL") == 0, "fix_parse_quote_id_symbol");
+        ASSERT(std::fabs(qd.bid_px - 99.98) < 1e-6 && std::fabs(qd.offer_px - 100.02) < 1e-6,
+               "fix_parse_quote_prices");
+        ASSERT(qd.bid_size == 500 && qd.offer_size == 300, "fix_parse_quote_sizes");
+        // The decoded quote is a usable market: offer above bid.
+        ASSERT(qd.offer_px > qd.bid_px, "fix_parse_quote_two_sided");
+        FIXMessage not_s; not_s.parse("35=8|117=X|");
+        ASSERT(!fix::FIXSession::parse_quote(not_s).valid, "fix_parse_quote_non_S_invalid");
+
         // #256 QuoteRequest (35=R) — RFQ request side.
         s.build_quote_request(buf, sizeof(buf), "QR1", "AAPL", '|');
         FIXMessage qrq; qrq.parse(buf);
