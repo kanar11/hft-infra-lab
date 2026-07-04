@@ -751,19 +751,32 @@ struct LatencyTracker {
     double        alpha;
     double        ewma = 0.0;
     std::int64_t  max_ns = 0;
+    std::int64_t  min_ns_val = 0;   // best case seen; valid once count > 0 (#483)
     std::uint64_t count = 0;
 
     explicit LatencyTracker(double alpha_ = 0.1) noexcept : alpha(alpha_) {}
 
     void sample(std::int64_t latency_ns) noexcept {
-        if (count == 0) ewma = static_cast<double>(latency_ns);
+        if (count == 0) { ewma = static_cast<double>(latency_ns); min_ns_val = latency_ns; }
         else            ewma = alpha * static_cast<double>(latency_ns) + (1.0 - alpha) * ewma;
         if (latency_ns > max_ns) max_ns = latency_ns;
+        if (latency_ns < min_ns_val) min_ns_val = latency_ns;   // #483
         ++count;
     }
     double       avg_ns()  const noexcept { return ewma; }     // smoothed mean
     std::int64_t peak_ns() const noexcept { return max_ns; }   // the worst case
-    void reset() noexcept { ewma = 0.0; max_ns = 0; count = 0; }
+    // min_ns (#483): the FASTEST handling seen — the floor set by the
+    // parse+book-update fast path with warm caches. peak_ns is what breaks
+    // the SLA; a min far below the EWMA mean means the average is dragged by
+    // occasional slow paths (cache misses, GC-like stalls), where a min
+    // close to the mean means the cost is uniform. 0 before any sample.
+    std::int64_t min_ns()  const noexcept { return count ? min_ns_val : 0; }
+    // jitter_ns (#483): peak - min, the full spread of handling cost. Tight
+    // = predictable per-packet work; wide = the tail the reorder/latency
+    // budget must absorb. Completes the min/mean/max envelope the way
+    // InterArrivalStats (#305) has it for arrival cadence.
+    std::int64_t jitter_ns() const noexcept { return count ? max_ns - min_ns_val : 0; }
+    void reset() noexcept { ewma = 0.0; max_ns = 0; min_ns_val = 0; count = 0; }
 };
 
 

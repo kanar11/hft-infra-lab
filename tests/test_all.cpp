@@ -3019,6 +3019,18 @@ void test_multicast_gap_recovery() {
     lt.sample(50);                   // ewma 0.5*50+0.5*150 = 100, max 200 (peak remains)
     ASSERT(std::fabs(lt.avg_ns() - 100.0) < 1e-9 && lt.peak_ns() == 200, "lat_peak_retained");
     ASSERT(lt.count == 3, "lat_count");
+    // #483 min_ns / jitter_ns — the floor and the full spread.
+    // samples 100/200/50 -> min 50, max 200, jitter 150.
+    ASSERT(lt.min_ns() == 50, "lat_min_50");
+    ASSERT(lt.jitter_ns() == 150, "lat_jitter_150");
+    // A fresh tracker: 0/0 until a sample; the first sample floors and caps
+    // at that value (jitter 0).
+    multicast::LatencyTracker lt0(0.5);
+    ASSERT(lt0.min_ns() == 0 && lt0.jitter_ns() == 0, "lat_fresh_zero");
+    lt0.sample(75);
+    ASSERT(lt0.min_ns() == 75 && lt0.peak_ns() == 75 && lt0.jitter_ns() == 0, "lat_single_sample");
+    lt.reset();
+    ASSERT(lt.min_ns() == 0 && lt.jitter_ns() == 0 && lt.peak_ns() == 0, "lat_reset");
 
     // #243 ContiguousTracker — cumulative-ack watermark.
     multicast::ContiguousTracker ct;            // next_expected 1
