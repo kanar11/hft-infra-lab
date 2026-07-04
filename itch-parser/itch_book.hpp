@@ -791,6 +791,24 @@ public:
             : 0.0;
     }
 
+    // order_count_at (#447): how many DISTINCT orders rest at a price — the
+    // queue length in PARTICIPANTS. queue_ahead (#317) gives the SHARES in
+    // front of a would-be joiner; this gives the head count: ten 100-lots
+    // and one 1000-lot are the same shares but very different queues (each
+    // order ahead is a separate fill event to wait through, and a separate
+    // trader who may cancel). With qty_at (total size) and
+    // largest_resting_order (#391, biggest clip) it fully shapes a level:
+    // size / clip / head count. 0 when nothing rests there.
+    std::size_t order_count_at(char side, double price) const noexcept {
+        const int64_t px = to_ticks(price);
+        std::size_t c = 0;
+        for (const auto& kv : orders_) {
+            const Resting& r = kv.second;
+            if (r.side == side && r.price_ticks == px) ++c;
+        }
+        return c;
+    }
+
     // largest_resting_order (#391): the single biggest order resting on a
     // side — the "wall". One institutional-size clip is a very different
     // book than many retail-size clips at the same total depth: it signals

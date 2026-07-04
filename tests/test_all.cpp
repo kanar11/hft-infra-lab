@@ -2362,6 +2362,29 @@ void test_itch_book() {
     ASSERT(ilvl.largest_level('B', &ilvl_px) == 400
            && std::fabs(ilvl_px - 10.00) < 1e-9, "itchbook_lvl_crown_moves");
 
+    // #447 order_count_at — queue length in PARTICIPANTS at a price.
+    itch::ITCHOrderBook ioca;
+    ASSERT(ioca.order_count_at('B', 10.00) == 0, "itchbook_oca_empty");
+    ioca.on_add(1, 'B', 10.00, 100);
+    ioca.on_add(2, 'B', 10.00, 200);
+    ioca.on_add(3, 'B', 10.00, 700);
+    ioca.on_add(4, 'B', 9.99, 500);               // different level
+    ioca.on_add(5, 'S', 10.00, 300);              // same price, other side
+    ASSERT(ioca.order_count_at('B', 10.00) == 3, "itchbook_oca_three_in_queue");
+    ASSERT(ioca.order_count_at('B', 9.99) == 1, "itchbook_oca_other_level");
+    ASSERT(ioca.order_count_at('S', 10.00) == 1, "itchbook_oca_side_separate");
+    // Same shares, different queues: 9.99's single 500-lot vs three orders
+    // totalling 1000 at 10.00 — qty_at alone cannot tell them apart.
+    ASSERT(ioca.qty_at('B', 10.00) == 1000 && ioca.qty_at('B', 9.99) == 500,
+           "itchbook_oca_qty_context");
+    // A partial execute keeps the participant; a full one removes it.
+    ioca.on_execute(1, 60);
+    ASSERT(ioca.order_count_at('B', 10.00) == 3, "itchbook_oca_partial_keeps");
+    ioca.on_execute(1, 40);
+    ASSERT(ioca.order_count_at('B', 10.00) == 2, "itchbook_oca_full_exec_leaves");
+    ioca.on_delete(2);
+    ASSERT(ioca.order_count_at('B', 10.00) == 1, "itchbook_oca_delete_leaves");
+
     // #439 depth_concentration — the book's shape as a mass fraction.
     itch::ITCHOrderBook idcn;
     ASSERT(idcn.depth_concentration('B', 3) == 0.0, "itchbook_dcn_empty_zero");
