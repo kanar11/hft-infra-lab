@@ -1231,6 +1231,34 @@ public:
         return r;
     }
 
+    // SessionStatusRequest — the key TradingSessionStatusRequest (35=g)
+    // fields in a typed struct (#505). The acceptor-side (venue) decode of a
+    // client asking for the session phase, closing the g->h pair with
+    // parse_trading_session_status (#497, the 35=h answer): 335=TradSesReqID
+    // names the request the venue echoes on its Status reply, 336=Trading
+    // SessionID the session asked about, 263=SubscriptionRequestType
+    // ('0'=snapshot, '1'=snapshot+updates so the venue keeps pushing on
+    // every phase change, '2'=unsubscribe). valid=false when not 35=g.
+    struct SessionStatusRequest {
+        char req_id[24]     = {};   // 335=TradSesReqID
+        char session_id[24] = {};   // 336=TradingSessionID
+        char sub_type       = '\0'; // 263=SubscriptionRequestType
+        bool valid          = false;// true when msg type == 'g'
+    };
+
+    static SessionStatusRequest parse_trading_session_status_request(const FIXMessage& m) noexcept {
+        SessionStatusRequest r;
+        if (m.get_msg_type()[0] != 'g') return r;   // valid stays false
+        const char* rid = m.get_field(335);
+        const char* sid = m.get_field(336);
+        const char* st  = m.get_field(263);
+        if (rid) std::strncpy(r.req_id,     rid, sizeof(r.req_id) - 1);
+        if (sid) std::strncpy(r.session_id, sid, sizeof(r.session_id) - 1);
+        r.sub_type = (st && *st) ? st[0] : '\0';
+        r.valid    = true;
+        return r;
+    }
+
     // SessionStatus — the key TradingSessionStatus (35=h) fields in a typed
     // struct (#497). The CLIENT-side decode of the venue's session-phase
     // broadcast, closing the g->h handshake with build_trading_session_

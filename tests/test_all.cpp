@@ -7024,6 +7024,22 @@ void test_fix_session() {
         ASSERT(std::strcmp(tsr.get_field(263), "1") == 0, "fix_tsr_subtype");
         ASSERT(!tsr.is_admin(), "fix_tsr_application");
 
+        // #505 parse_trading_session_status_request — typed decode of 35=g;
+        // closes the g->h pair with parse_trading_session_status (#497).
+        const auto tsrq = fix::FIXSession::parse_trading_session_status_request(tsr);
+        ASSERT(tsrq.valid && std::strcmp(tsrq.req_id, "TSR1") == 0
+               && std::strcmp(tsrq.session_id, "REG") == 0, "fix_parse_tsr_id_session");
+        ASSERT(tsrq.sub_type == '1', "fix_parse_tsr_subtype_updates");
+        // A snapshot-only request (sub_type '0') decodes verbatim.
+        s.build_trading_session_status_request(buf, sizeof(buf), "TSR2", "AH", '0', '|');
+        FIXMessage tsr0; tsr0.parse(buf);
+        const auto tsrq0 = fix::FIXSession::parse_trading_session_status_request(tsr0);
+        ASSERT(tsrq0.valid && tsrq0.sub_type == '0'
+               && std::strcmp(tsrq0.session_id, "AH") == 0, "fix_parse_tsr_snapshot");
+        FIXMessage not_g_tsr; not_g_tsr.parse("35=h|336=REG|");
+        ASSERT(!fix::FIXSession::parse_trading_session_status_request(not_g_tsr).valid,
+               "fix_parse_tsr_non_g_invalid");
+
         // #303 TradingSessionStatus (35=h) — venue session phase (answers 35=g above).
         s.build_trading_session_status(buf, sizeof(buf), "REG", 2, '|');  // 2 = Open
         FIXMessage tss; tss.parse(buf);
