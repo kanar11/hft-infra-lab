@@ -59,6 +59,7 @@ class ITCHOrderBook {
     int64_t  last_trade_ticks_   = 0;  // price of the most recent print (#471; 0 = none)
     bool     last_trade_buy_     = false; // aggressor of the last print (#471)
     int      last_tick_dir_      = 0;  // uptick/downtick carry (#479; SSR zero-plus rule)
+    int      aggressor_run_      = 0;  // signed run of same-aggressor prints (#487)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -124,6 +125,12 @@ public:
             }
             last_trade_ticks_ = new_px;
             last_trade_buy_   = (it->second.side == 'S');
+            // #487: the aggressor run — consecutive prints on the same side.
+            // A hit resting BID is seller-initiated, a lifted ASK is buyer-
+            // initiated; same side extends the run, a flip restarts it at +-1.
+            if      (aggressor_run_ > 0 &&  last_trade_buy_) ++aggressor_run_;
+            else if (aggressor_run_ < 0 && !last_trade_buy_) --aggressor_run_;
+            else                                             aggressor_run_ = last_trade_buy_ ? 1 : -1;
         }
         reduce_(ref, exec_shares);
         ++executes_;
@@ -218,6 +225,7 @@ public:
         exec_prints_ = 0;                              // #463
         last_trade_ticks_ = 0; last_trade_buy_ = false; // #471
         last_tick_dir_ = 0;                             // #479
+        aggressor_run_ = 0;                             // #487
     }
     // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
@@ -782,6 +790,15 @@ public:
     // aggressor on a print that moves the price the "wrong" way. 0 before
     // the second print (no prior price to tick against).
     int tick_direction() const noexcept { return last_tick_dir_; }
+
+    // aggressor_run (#487): the current streak of same-aggressor prints —
+    // +N for N consecutive buyer-initiated trades (asks lifted), -N for N
+    // seller-initiated (bids hit), restarting at +-1 when the aggressor
+    // flips. A live order-flow read: a long positive run is sustained
+    // buying pressure (someone working a large buy across the offers, an
+    // iceberg being swept), where tape_imbalance (#415) is the session
+    // aggregate. 0 before any print.
+    int aggressor_run() const noexcept { return aggressor_run_; }
 
     // is_uptick (#479): true when the last price tick was up (or a carried
     // zero-plus-tick) — the SSR short-sale gate (a short at or below the

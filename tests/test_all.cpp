@@ -2649,6 +2649,31 @@ void test_itch_book() {
     itk.clear();
     ASSERT(itk.tick_direction() == 0, "itchbook_tick_clear");
 
+    // #487 aggressor_run — the live streak of same-side prints.
+    itch::ITCHOrderBook iar;
+    ASSERT(iar.aggressor_run() == 0, "itchbook_run_empty_zero");
+    iar.on_add(1, 'S', 10.05, 100);
+    iar.on_add(2, 'S', 10.06, 100);
+    iar.on_add(3, 'S', 10.07, 100);
+    iar.on_add(4, 'B', 9.98, 100);
+    iar.on_add(5, 'B', 9.97, 100);
+    iar.on_execute(1, 100);                       // lift ask -> buy, run +1
+    ASSERT(iar.aggressor_run() == 1, "itchbook_run_first_buy");
+    iar.on_execute(2, 100);                       // buy, run +2
+    iar.on_execute(3, 100);                       // buy, run +3
+    ASSERT(iar.aggressor_run() == 3, "itchbook_run_three_buys");
+    iar.on_execute(4, 100);                       // hit bid -> sell, run flips to -1
+    ASSERT(iar.aggressor_run() == -1, "itchbook_run_flip_to_sell");
+    iar.on_execute(5, 100);                       // sell, run -2
+    ASSERT(iar.aggressor_run() == -2, "itchbook_run_two_sells");
+    // Cancels/deletes/orphans do not print -> the run is unchanged.
+    iar.on_add(6, 'S', 11.00, 100);
+    iar.on_cancel(6, 50); iar.on_delete(6);
+    iar.on_execute(999, 10);
+    ASSERT(iar.aggressor_run() == -2, "itchbook_run_only_prints_move_it");
+    iar.clear();
+    ASSERT(iar.aggressor_run() == 0, "itchbook_run_clear");
+
     // #415 executed_against_bid/ask + tape_imbalance — exact aggressor flow.
     itch::ITCHOrderBook iagr;
     ASSERT(iagr.tape_imbalance() == 0.0, "itchbook_agr_empty_zero");
