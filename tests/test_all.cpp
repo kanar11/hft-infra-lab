@@ -7447,6 +7447,42 @@ void test_ouch_order_state() {
                && rff.net_filled_shares() == 0, "ouch_rff_reset");
     }
 
+    // #474 avg_buy_price / avg_sell_price / realized_spread_capture.
+    {
+        ouch::OUCHOrderTracker mmk;
+        uint8_t mmb[64];
+        auto cl = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        ASSERT(mmk.avg_buy_price() == 0.0 && mmk.realized_spread_capture() == 0.0, "ouch_mmk_empty");
+        // Buy 100@10.00 then 100@10.20 -> buy VWAP 10.10.
+        mmk.on_new("B1", 200);
+        int mmn = OUCHMessage::encode_accepted(mmb, "B1", 'B', 200, "AAPL", 10.0, 1);
+        mmk.on_response(OUCHMessage::parse_response(mmb, mmn));
+        mmn = OUCHMessage::encode_executed(mmb, "B1", 100, 10.00, 900);
+        mmk.on_response(OUCHMessage::parse_response(mmb, mmn));
+        mmn = OUCHMessage::encode_executed(mmb, "B1", 100, 10.20, 901);
+        mmk.on_response(OUCHMessage::parse_response(mmb, mmn));
+        ASSERT(cl(mmk.avg_buy_price(), 10.10), "ouch_mmk_buy_vwap");
+        // Only one side filled -> spread capture not yet meaningful.
+        ASSERT(mmk.realized_spread_capture() == 0.0, "ouch_mmk_one_sided_zero");
+        // Sell 100@10.30 -> sell VWAP 10.30, capture 0.20.
+        mmk.on_new("S1", 100);
+        mmn = OUCHMessage::encode_accepted(mmb, "S1", 'S', 100, "AAPL", 10.3, 2);
+        mmk.on_response(OUCHMessage::parse_response(mmb, mmn));
+        mmn = OUCHMessage::encode_executed(mmb, "S1", 100, 10.30, 902);
+        mmk.on_response(OUCHMessage::parse_response(mmb, mmn));
+        ASSERT(cl(mmk.avg_sell_price(), 10.30), "ouch_mmk_sell_vwap");
+        ASSERT(cl(mmk.realized_spread_capture(), 0.20), "ouch_mmk_spread_capture");
+        // A bust on the buy leg leaves the buy VWAP unchanged (proportional
+        // notional unwind): 50 of 200 busted -> avg_buy still 10.10.
+        mmn = OUCHMessage::encode_broken_trade(mmb, "B1", 50, 900, 'E');
+        mmk.on_response(OUCHMessage::parse_response(mmb, mmn));
+        ASSERT(mmk.bought_shares() == 150 && cl(mmk.avg_buy_price(), 10.10),
+               "ouch_mmk_bust_keeps_vwap");
+        ASSERT(cl(mmk.realized_spread_capture(), 0.20), "ouch_mmk_capture_after_bust");
+        mmk.reset_session();
+        ASSERT(mmk.avg_buy_price() == 0.0 && mmk.avg_sell_price() == 0.0, "ouch_mmk_reset");
+    }
+
     // #466 projected_net_shares — realized (#458) + working (#450) exposure.
     {
         ouch::OUCHOrderTracker pnt;

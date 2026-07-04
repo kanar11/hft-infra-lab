@@ -67,6 +67,8 @@ class OUCHOrderTracker {
     double   session_fill_notional_ = 0.0;  // Σ exec shares × price across all orders (#410)
     int64_t  bought_shares_ = 0;   // executed shares on BUY orders (#458)
     int64_t  sold_shares_   = 0;   // executed shares on SELL orders (#458)
+    double   buy_notional_  = 0.0; // Σ exec shares × price on BUY orders (#474)
+    double   sell_notional_ = 0.0; // Σ exec shares × price on SELL orders (#474)
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -132,8 +134,8 @@ public:
                 session_fill_notional_ += notional;
                 // #458: realized directional flow, split by the order's side
                 // (captured from Accepted #450; ' ' counts on neither).
-                if      (rec->side == 'B') bought_shares_ += exec;
-                else if (rec->side == 'S') sold_shares_   += exec;
+                if      (rec->side == 'B') { bought_shares_ += exec; buy_notional_  += notional; }
+                else if (rec->side == 'S') { sold_shares_   += exec; sell_notional_ += notional; }
             }
             if (rec->remaining <= 0) { rec->state = OrderState::FILLED; ++filled_; }
             else                       rec->state = OrderState::PARTIAL;
@@ -156,9 +158,18 @@ public:
             }
             rec->filled    -= back;
             rec->remaining += back;
-            // #458: a bust unwinds realized flow on the order's side too.
-            if      (rec->side == 'B') bought_shares_ -= back;
-            else if (rec->side == 'S') sold_shares_   -= back;
+            // #458/#474: a bust unwinds realized flow AND its notional on the
+            // order's side, scaling the notional proportionally so the side
+            // VWAP survives the bust (the #410 treatment, one level up).
+            if (rec->side == 'B') {
+                if (bought_shares_ > 0)
+                    buy_notional_ -= buy_notional_ * (static_cast<double>(back) / static_cast<double>(bought_shares_));
+                bought_shares_ -= back;
+            } else if (rec->side == 'S') {
+                if (sold_shares_ > 0)
+                    sell_notional_ -= sell_notional_ * (static_cast<double>(back) / static_cast<double>(sold_shares_));
+                sold_shares_ -= back;
+            }
             rec->state = (rec->filled > 0) ? OrderState::PARTIAL : OrderState::LIVE;
             ++broken_;
             broken_shares_ += back;   // #320: accumulate unwound volume
@@ -310,6 +321,28 @@ public:
     int64_t sold_shares()      const noexcept { return sold_shares_; }
     int64_t net_filled_shares() const noexcept { return bought_shares_ - sold_shares_; }
 
+    // avg_buy_price / avg_sell_price (#474): the realized VWAP of the BUY
+    // and SELL fills separately = side notional / side shares. Where
+    // fill_vwap (#410) blends both sides into one gross tape, this splits
+    // them — a market maker's buy VWAP should sit BELOW its sell VWAP, and
+    // the gap is the edge. Bust-adjusted (the side VWAP survives a Broken
+    // Trade). 0 for a side with no fills.
+    double avg_buy_price() const noexcept {
+        return bought_shares_ > 0 ? buy_notional_ / static_cast<double>(bought_shares_) : 0.0;
+    }
+    double avg_sell_price() const noexcept {
+        return sold_shares_ > 0 ? sell_notional_ / static_cast<double>(sold_shares_) : 0.0;
+    }
+    // realized_spread_capture (#474): avg_sell_price - avg_buy_price, the
+    // per-share edge a two-sided maker actually captured this session
+    // (positive = sold higher than bought on average). Only meaningful once
+    // BOTH sides have fills; 0 otherwise. The tracker's headline
+    // market-making P&L read.
+    double realized_spread_capture() const noexcept {
+        return (bought_shares_ > 0 && sold_shares_ > 0)
+            ? avg_sell_price() - avg_buy_price() : 0.0;
+    }
+
     // net_working_shares: buy-side minus sell-side working shares (#450) —
     // the SIGNED directional tilt of the resting book. 0 is a balanced
     // (market-making) book; a large positive number means the working
@@ -459,6 +492,8 @@ public:
         session_fill_notional_ = 0.0;
         bought_shares_ = 0;
         sold_shares_   = 0;
+        buy_notional_  = 0.0;
+        sell_notional_ = 0.0;
     }
 
     // desyncs: responses that named a token the tracker never registered
