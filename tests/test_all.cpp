@@ -423,12 +423,21 @@ void test_oms_short_and_replace() {
         ASSERT(oms.largest_position() == 100, "largest_is_AAA");
         // #314 inventory_value — cost basis: 100*10 (long) + 60*20 (short) = 2200.
         ASSERT(close(to_float(oms.inventory_value()), 2200.0), "inventory_value_cost");
+        // #484 net_position_shares / net_inventory_value — signed directional.
+        // +100 long AAA, -60 short BBB -> net +40 shares, below the gross 160.
+        ASSERT(oms.net_position_shares() == 40, "net_position_shares_40");
+        ASSERT(oms.net_position_shares() < oms.gross_position_shares(), "net_below_gross");
+        // Net $: 100*10 - 60*20 = -200 (short by dollar value despite net long shares).
+        ASSERT(close(to_float(oms.net_inventory_value()), -200.0), "net_inventory_value_minus200");
         // #330 largest_position_notional — by $: BBB 60*20=1200 > AAA 100*10=1000, so the
         // dollar leader (BBB) differs from largest_position (AAA, by shares).
         ASSERT(close(to_float(oms.largest_position_notional()), 1200.0), "largest_notional_is_BBB");
         OMS empt(1000000, 1000000000.0);
         ASSERT(empt.inventory_value() == 0, "inventory_value_flat_zero");
         ASSERT(empt.largest_position_notional() == 0, "largest_notional_flat_zero");
+        // #484: empty book nets zero on both.
+        ASSERT(empt.net_position_shares() == 0 && empt.net_inventory_value() == 0,
+               "net_position_flat_zero");
     }
 
     {   // #228 fill_ratio (filled / ordered shares).

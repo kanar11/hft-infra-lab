@@ -577,6 +577,31 @@ public:
         return s;
     }
 
+    // net_position_shares: the SIGNED sum of net_qty across all symbols
+    // (#484) — the book's directional tilt in shares, positive = net long.
+    // The signed companion to gross_position_shares (#220, the absolute
+    // sum): a market-neutral book has a large gross and a near-zero net,
+    // and the gap between them is how directional the desk actually is
+    // (net == gross means every name leans the same way). 0 when flat.
+    int64_t net_position_shares() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, p] : positions_) s += p.net_qty;
+        return s;
+    }
+
+    // net_inventory_value: the SIGNED cost-basis value of the book (#484) =
+    // Σ net_qty * avg_price, fixed-point (×PRICE_SCALE). The directional $
+    // companion to inventory_value (#314, the gross absolute value): long
+    // positions add, shorts subtract, so this is the net long-minus-short
+    // dollar exposure at cost. A market-neutral book nets near zero here
+    // even with a large gross inventory. to_float for dollars.
+    int64_t net_inventory_value() const noexcept {
+        int64_t s = 0;
+        for (const auto& [key, p] : positions_)
+            s += static_cast<int64_t>(p.net_qty) * p.avg_price;
+        return s;
+    }
+
     // largest_position_notional: the biggest SINGLE position by absolute $ value (#330)
     // = max over positions of |net_qty| * avg_price, fixed-point (×PRICE_SCALE). The
     // dollar companion to largest_position (#220, shares): risk limits care about
