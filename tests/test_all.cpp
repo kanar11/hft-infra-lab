@@ -682,10 +682,21 @@ void test_oms_short_and_replace() {
         // closed @20 = 0; short 50@20 covered @19.5 = +25. Total +75 / 3.
         ASSERT(close(oms.avg_pnl_per_round_trip(), 25.0), "artp_75_over_3");
 
+        // #436 symbol_round_trips — WHICH names recycle capital.
+        // AAA closed once, BBB flipped once and closed once = 2 cycles.
+        ASSERT(oms.symbol_round_trips("AAA") == 1, "srt_aaa_one");
+        ASSERT(oms.symbol_round_trips("BBB") == 2, "srt_bbb_two");
+        ASSERT(oms.symbol_round_trips("AAA") + oms.symbol_round_trips("BBB")
+               == oms.round_trips(), "srt_sums_to_global");
+        ASSERT(oms.symbol_round_trips("GHOST") == 0, "srt_unknown_zero");
+
         oms.reset_session_counters();
         ASSERT(oms.round_trips() == 0, "rtp_session_reset");
         // Denominator gone -> back to 0 (positions keep their realized P&L).
         ASSERT(oms.avg_pnl_per_round_trip() == 0.0, "artp_reset_denominator");
+        // #436 lifetime note pinned: the per-name counter lives on the
+        // Position and SURVIVES the session-counter reset, like realized_pnl.
+        ASSERT(oms.symbol_round_trips("BBB") == 2, "srt_survives_session_reset");
     }
 
     {   // #396 price improvement vs limit — the price-quality TCA axis.

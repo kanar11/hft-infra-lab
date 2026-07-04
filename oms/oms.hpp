@@ -153,6 +153,7 @@ struct Position {
     int64_t realized_pnl;    // cumulative P&L (gross) × PRICE_SCALE
     int64_t total_cost;      // sum of qty × price for the current long
     int64_t fees;            // cumulative commissions × PRICE_SCALE (#83)
+    uint32_t round_trips = 0;   // flat-to-flat cycles completed by THIS name (#436)
 
     Position() noexcept
         : net_qty(0), pending_qty(0), avg_price(0), realized_pnl(0), total_cost(0), fees(0) {
@@ -351,8 +352,10 @@ public:
         // denominator for per-trade session analytics. Opening from flat and
         // partial reductions do not count.
         if (net_before != 0
-            && (pos.net_qty == 0 || (net_before > 0) != (pos.net_qty > 0)))
+            && (pos.net_qty == 0 || (net_before > 0) != (pos.net_qty > 0))) {
             ++round_trips_;
+            ++pos.round_trips;   // #436: the per-name share of the cycle count
+        }
 
         // Commission: charged on every executed share (taker fee). It reduces
         // net P&L, not gross — realized_pnl stays "clean" for attribution.
@@ -945,6 +948,18 @@ public:
         return round_trips_ > 0
             ? to_float(total_realized_pnl()) / static_cast<double>(round_trips_)
             : 0.0;
+    }
+    // symbol_round_trips: flat-to-flat cycles completed by ONE name (#436) —
+    // WHICH names actually recycle capital, where round_trips (#420) only
+    // totals them. A name with many cycles and thin realized P&L churns;
+    // one cycle carrying most of the profit is where the edge lives.
+    // LIFETIME NOTE: this lives on the Position (kept across
+    // reset_session_counters, like realized_pnl), while the global #420
+    // counter is a session stat and zeroes — the divergence is pinned by
+    // test. 0 for an unknown symbol.
+    uint32_t symbol_round_trips(const char* symbol) const noexcept {
+        const auto it = positions_.find(sym_to_key(symbol));
+        return it != positions_.end() ? it->second.round_trips : 0;
     }
     // cancel_rate: fraction of submitted orders that were cancelled (#258) =
     // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high
