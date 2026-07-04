@@ -6118,6 +6118,22 @@ void test_fix_session() {
         ASSERT(std::strcmp(mdr.get_field(263), "1") == 0, "fix_mdr_subtype");
         ASSERT(mdr.get_int(264) == 1 && std::strcmp(mdr.get_symbol(), "AAPL") == 0, "fix_mdr_depth_symbol");
 
+        // #457 parse_market_data_request — typed acceptor-side decode of 35=V.
+        const auto mdrq = fix::FIXSession::parse_market_data_request(mdr);
+        ASSERT(mdrq.valid && std::strcmp(mdrq.md_req_id, "MDR1") == 0, "fix_parse_mdr_id");
+        ASSERT(mdrq.sub_type == '1' && mdrq.depth == 1
+               && std::strcmp(mdrq.symbol, "AAPL") == 0, "fix_parse_mdr_subtype_depth_symbol");
+        // A full-book request (depth 0) is distinct from an absent tag (-1).
+        s.build_market_data_request(buf, sizeof(buf), "MDR2", '0', 0, "MSFT", '|');
+        FIXMessage mdr0; mdr0.parse(buf);
+        const auto mdrq0 = fix::FIXSession::parse_market_data_request(mdr0);
+        ASSERT(mdrq0.valid && mdrq0.depth == 0 && mdrq0.sub_type == '0', "fix_parse_mdr_full_book_zero");
+        FIXMessage mdr_bare; mdr_bare.parse("35=V|262=MDR3|55=IBM|");
+        ASSERT(fix::FIXSession::parse_market_data_request(mdr_bare).depth == -1,
+               "fix_parse_mdr_absent_depth_minus1");
+        FIXMessage not_v; not_v.parse("35=W|262=X|");
+        ASSERT(!fix::FIXSession::parse_market_data_request(not_v).valid, "fix_parse_mdr_non_V_invalid");
+
         // #217 MarketDataSnapshotFullRefresh (35=W) — response to 35=V.
         s.build_md_snapshot(buf, sizeof(buf), "MDR1", "AAPL", 99.98, 100, 100.02, 200, '|');
         FIXMessage mdw; mdw.parse(buf);

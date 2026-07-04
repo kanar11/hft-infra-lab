@@ -1231,6 +1231,38 @@ public:
         return r;
     }
 
+    // MDRequest — the key MarketDataRequest (35=V) fields in a typed struct
+    // (#457). The acceptor-side (venue) decode that closes the round-trip
+    // with build_market_data_request (#209): a client subscribes to, or
+    // snapshots, a symbol's book. 263=SubscriptionRequestType ('0'=snapshot,
+    // '1'=snapshot+updates, '2'=unsubscribe), 264=MarketDepth (0=full book,
+    // 1=top-of-book, N=N levels), 262 the request id to echo on every reply.
+    // depth is -1 when tag 264 is absent (0 is a real "full book"). Same
+    // shape as the rest of the typed-parse family. valid=false when not 35=V.
+    struct MDRequest {
+        char md_req_id[32] = {};   // 262=MDReqID
+        char symbol[16]    = {};   // 55=Symbol
+        char sub_type      = '\0'; // 263=SubscriptionRequestType
+        int  depth         = -1;   // 264=MarketDepth (-1 = absent)
+        bool valid         = false;// true when msg type == 'V'
+    };
+
+    static MDRequest parse_market_data_request(const FIXMessage& m) noexcept {
+        MDRequest r;
+        if (m.get_msg_type()[0] != 'V') return r;   // valid stays false
+        const char* rid = m.get_field(262);
+        const char* sym = m.get_field(55);
+        const char* st  = m.get_field(263);
+        // sources are runtime pointers (no compile-time length) so strncpy bounded
+        // to size-1 over a value-initialized array stays nul-terminated.
+        if (rid) std::strncpy(r.md_req_id, rid, sizeof(r.md_req_id) - 1);
+        if (sym) std::strncpy(r.symbol,    sym, sizeof(r.symbol) - 1);
+        r.sub_type = (st && *st) ? st[0] : '\0';
+        r.depth    = m.get_field(264) ? m.get_int(264) : -1;
+        r.valid    = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 
