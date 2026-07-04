@@ -531,6 +531,7 @@ struct OutOfOrderMeter {
     std::uint64_t total = 0;
     std::uint64_t out_of_order = 0;
     std::uint64_t max_depth = 0;   // deepest backward jump seen (#370)
+    std::uint64_t depth_sum = 0;   // Σ backward-jump depth over ooo packets (#467)
     bool          init = false;
 
     void on_packet(std::uint64_t seq) noexcept {
@@ -539,6 +540,7 @@ struct OutOfOrderMeter {
         if (seq < highest) {
             ++out_of_order;   // arrived after a higher number
             const std::uint64_t depth = highest - seq;   // #370: how far behind
+            depth_sum += depth;                          // #467
             if (depth > max_depth) max_depth = depth;
         } else {
             highest = seq;
@@ -555,7 +557,23 @@ struct OutOfOrderMeter {
     // of ContiguousTracker::max_lookahead (#354, the forward gap ahead of the
     // watermark). 0 when no packet has arrived out of order.
     std::uint64_t max_reorder_depth() const noexcept { return max_depth; }
-    void reset() noexcept { highest = total = out_of_order = max_depth = 0; init = false; }
+    // avg_reorder_depth (#467): the MEAN backward-jump depth over the
+    // out-of-order packets = depth_sum / out_of_order. max_reorder_depth
+    // (#370) sizes the buffer for the worst case; this says whether
+    // reordering is usually shallow (adjacent swaps, avg near 1 — benign
+    // NIC/driver batching) or consistently deep (avg approaching the max —
+    // a genuinely disordered path). A max far above a near-1 average is one
+    // freak reorder; a max close to the average is systemic. 0 when no
+    // packet arrived out of order.
+    double avg_reorder_depth() const noexcept {
+        return out_of_order
+            ? static_cast<double>(depth_sum) / static_cast<double>(out_of_order)
+            : 0.0;
+    }
+    void reset() noexcept {
+        highest = total = out_of_order = max_depth = depth_sum = 0;
+        init = false;
+    }
 };
 
 

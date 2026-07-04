@@ -2824,9 +2824,17 @@ void test_multicast_gap_recovery() {
     for (uint64_t s : dseq) ooo2.on_packet(s);
     ASSERT(ooo2.out_of_order == 2, "ooo_max_depth_counts");
     ASSERT(ooo2.max_reorder_depth() == 6, "ooo_max_depth_6");
+    // #467 avg_reorder_depth: depths 2 and 6 -> mean 4.0 (vs max 6 = a
+    // freak deep reorder over an otherwise shallow one).
+    ASSERT(std::fabs(ooo2.avg_reorder_depth() - 4.0) < 1e-9, "ooo_avg_depth_4");
+    // A single shallow swap: avg == max == 1.
+    ASSERT(std::fabs(ooo.avg_reorder_depth() - 1.0) < 1e-9, "ooo_avg_depth_shallow_1");
     multicast::OutOfOrderMeter ooo0;
     ooo0.on_packet(1); ooo0.on_packet(2); ooo0.on_packet(3);   // all in order
     ASSERT(ooo0.max_reorder_depth() == 0, "ooo_max_depth_in_order_zero");
+    ASSERT(ooo0.avg_reorder_depth() == 0.0, "ooo_avg_depth_in_order_zero");
+    ooo2.reset();
+    ASSERT(ooo2.avg_reorder_depth() == 0.0 && ooo2.max_reorder_depth() == 0, "ooo_avg_reset");
 
     // #203 SequenceResetDetector — reset vs reorder.
     multicast::SequenceResetDetector srd(1000);
