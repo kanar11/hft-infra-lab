@@ -115,6 +115,7 @@ struct Order {
     int64_t     filled_ns;      // time of the last fill
     int64_t     fill_notional;  // Σ fill_qty × fill_price (#141) — for avg fill price
     int64_t     expire_ns;      // GTD: expiry (#172); 0 = no expiry (DAY/GTC)
+    uint32_t    fill_count = 0; // how many execution slices filled this order (#444)
 
     Order() noexcept
         : order_id(0), side(Side::BUY), price(0), quantity(0),
@@ -314,6 +315,7 @@ public:
 
         order.filled_qty    += fill_qty;
         order.fill_notional += static_cast<int64_t>(fill_qty) * fill_price;  // #141
+        ++order.fill_count;  // #444: one more slice on THIS order
         ++total_fills_;   // #151
         total_filled_shares_ += fill_qty;   // #228
         total_traded_notional_ += static_cast<double>(fill_qty) * fill_price_f;  // #266
@@ -960,6 +962,25 @@ public:
     uint32_t symbol_round_trips(const char* symbol) const noexcept {
         const auto it = positions_.find(sym_to_key(symbol));
         return it != positions_.end() ? it->second.round_trips : 0;
+    }
+    // order_fill_count: how many execution slices filled ONE order (#444) —
+    // the per-order face of avg_fill_size's (#274) global mean, and the OMS
+    // analog of the OUCH tracker's executions_per_order (#337). 0 for an
+    // unknown id.
+    uint32_t order_fill_count(uint64_t order_id) const noexcept {
+        const auto it = orders_.find(order_id);
+        return it != orders_.end() ? it->second.fill_count : 0;
+    }
+    // max_order_fill_count: the most-fragmented order's slice count (#444).
+    // avg_fill_size can look healthy while one order got shredded into
+    // dozens of odd lots (per-fill fees, information leakage) — the worst
+    // case is the number the venue-quality review wants. 0 when nothing
+    // has filled.
+    uint32_t max_order_fill_count() const noexcept {
+        uint32_t mx = 0;
+        for (const auto& [id, o] : orders_)
+            if (o.fill_count > mx) mx = o.fill_count;
+        return mx;
     }
     // cancel_rate: fraction of submitted orders that were cancelled (#258) =
     // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high

@@ -700,6 +700,28 @@ void test_oms_short_and_replace() {
         ASSERT(oms.symbol_round_trips("BBB") == 2, "srt_survives_session_reset");
     }
 
+    {   // #444 order_fill_count / max_order_fill_count — per-order fragmentation.
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.max_order_fill_count() == 0, "ofc_empty_zero");
+        Order* fca = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        Order* fcb = oms.submit_order("BBB", Side::BUY, 20.0, 100);
+        // AAA gets shredded into 3 odd lots; BBB fills in one print.
+        oms.fill_order(fca->order_id, 30, 10.0);
+        oms.fill_order(fca->order_id, 30, 10.0);
+        oms.fill_order(fca->order_id, 40, 10.0);
+        oms.fill_order(fcb->order_id, 100, 20.0);
+        ASSERT(oms.order_fill_count(fca->order_id) == 3, "ofc_shredded_three");
+        ASSERT(oms.order_fill_count(fcb->order_id) == 1, "ofc_clean_one");
+        ASSERT(oms.max_order_fill_count() == 3, "ofc_max_names_worst");
+        ASSERT(oms.order_fill_count(999999) == 0, "ofc_unknown_zero");
+        // A fully-clamped over-fill (0 applied) does not count a slice.
+        oms.fill_order(fca->order_id, 50, 10.0);   // AAA already complete
+        ASSERT(oms.order_fill_count(fca->order_id) == 3, "ofc_clamped_overfill_ignored");
+        // Consistency: slices across orders sum to the global fill counter.
+        ASSERT(oms.order_fill_count(fca->order_id) + oms.order_fill_count(fcb->order_id)
+               == oms.total_fills(), "ofc_sums_to_total_fills");
+    }
+
     {   // #396 price improvement vs limit — the price-quality TCA axis.
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.total_price_improvement() == 0.0
