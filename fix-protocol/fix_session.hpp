@@ -1169,6 +1169,35 @@ public:
         return r;
     }
 
+    // MassCancel — the key OrderMassCancelRequest (35=q) fields in a typed
+    // struct (#433). The acceptor-side decode of the PANIC BUTTON, closing
+    // the round-trip with build_mass_cancel (#193): 530=MassCancelRequestType
+    // ('1' = this symbol only, '7' = ALL the firm's orders), 55 names the
+    // symbol for type '1' (absent for '7'). A gateway wants this decoded
+    // fast and precisely — a misread mass-cancel scope is either a desk left
+    // exposed or a book wiped by mistake. valid=false when not 35=q.
+    struct MassCancel {
+        char cl_ord_id[32] = {};   // 11=ClOrdID (of the mass-cancel request)
+        char request_type  = '\0'; // 530 ('1'=by symbol, '7'=all)
+        char symbol[16]    = {};   // 55=Symbol (type '1' only; empty for '7')
+        bool valid         = false;// true when msg type == 'q'
+    };
+
+    static MassCancel parse_mass_cancel(const FIXMessage& m) noexcept {
+        MassCancel r;
+        if (m.get_msg_type()[0] != 'q') return r;   // valid stays false
+        const char* coi = m.get_field(11);
+        const char* rt  = m.get_field(530);
+        const char* sym = m.get_field(55);
+        // sources are runtime pointers (no compile-time length) so strncpy bounded
+        // to size-1 over a value-initialized array stays nul-terminated.
+        if (coi) std::strncpy(r.cl_ord_id, coi, sizeof(r.cl_ord_id) - 1);
+        if (sym) std::strncpy(r.symbol,    sym, sizeof(r.symbol) - 1);
+        r.request_type = (rt && *rt) ? rt[0] : '\0';
+        r.valid = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

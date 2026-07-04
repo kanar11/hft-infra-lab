@@ -5654,6 +5654,19 @@ void test_fix_session() {
         FIXMessage mc2; mc2.parse(buf);
         ASSERT(std::strcmp(mc2.get_field(530), "7") == 0, "fix_masscancel_all");
 
+        // #433 parse_mass_cancel — the panic button decoded acceptor-side;
+        // a misread scope is a desk left exposed or a book wiped by mistake.
+        const auto mcq1 = fix::FIXSession::parse_mass_cancel(mc1);
+        ASSERT(mcq1.valid && std::strcmp(mcq1.cl_ord_id, "MC1") == 0, "fix_parse_mc_id");
+        ASSERT(mcq1.request_type == '1' && std::strcmp(mcq1.symbol, "AAPL") == 0,
+               "fix_parse_mc_by_symbol_scope");
+        const auto mcq2 = fix::FIXSession::parse_mass_cancel(mc2);
+        // The ALL scope carries no symbol — the empty field is the contract.
+        ASSERT(mcq2.valid && mcq2.request_type == '7' && mcq2.symbol[0] == '\0',
+               "fix_parse_mc_all_scope_no_symbol");
+        FIXMessage not_q; not_q.parse("35=F|11=X|41=Y|");
+        ASSERT(!fix::FIXSession::parse_mass_cancel(not_q).valid, "fix_parse_mc_non_q_invalid");
+
         // #201 OrderMassCancelReport (35=r) — the exchange's response.
         s.build_mass_cancel_report(buf, sizeof(buf), "MC2", '7', 5, '|');
         FIXMessage mcr; mcr.parse(buf);
