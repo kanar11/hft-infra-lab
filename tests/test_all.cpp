@@ -4756,10 +4756,21 @@ void test_router_ewma_partial() {
         // B+C at NBO 100.02 (A's ask 100.05 excluded) -> 2.
         ASSERT(rsum.venues_at_nbbo(true) == 2, "router_vatn_bid_two");
         ASSERT(rsum.venues_at_nbbo(false) == 2, "router_vatn_ask_two");
+        // #480 nbbo_depth: BUY takes asks at NBO 100.02 -> B 100 + C 150 = 250;
+        // SELL takes bids at NBB 100.00 -> A 200 + B 300 = 500.
+        ASSERT(rsum.nbbo_depth(true) == 250, "router_nbbo_depth_ask");
+        ASSERT(rsum.nbbo_depth(false) == 500, "router_nbbo_depth_bid");
+        // Distinct from available_liquidity (#109): A's ask (100 @ 100.05) is
+        // top-of-book but NOT at the NBO, so it counts there but not here.
+        ASSERT(rsum.available_liquidity(true) > rsum.nbbo_depth(true),
+               "router_nbbo_depth_excludes_off_touch");
         rsum.set_venue_active("B", false);   // B was at both NBB and NBO
         // NBB now only A -> 1; NBO now only C -> 1 (fragile touch).
         ASSERT(rsum.venues_at_nbbo(true) == 1, "router_vatn_bid_one_after_disable");
         ASSERT(rsum.venues_at_nbbo(false) == 1, "router_vatn_ask_one_after_disable");
+        // #480: disabling B shrinks the touch depth to the lone remaining venue.
+        ASSERT(rsum.nbbo_depth(true) == 150 && rsum.nbbo_depth(false) == 200,
+               "router_nbbo_depth_after_disable");
 
         // balanced sizes -> 0
         SmartOrderRouter rbl(RoutingStrategy::BEST_PRICE);
@@ -4772,6 +4783,8 @@ void test_router_ewma_partial() {
         ASSERT(rem.nbbo_imbalance() == 0.0, "router_nbbo_imb_empty_zero");
         ASSERT(rem.venues_at_nbbo(true) == 0 && rem.venues_at_nbbo(false) == 0,
                "router_vatn_empty_zero");
+        // #480: empty router has no touch depth.
+        ASSERT(rem.nbbo_depth(true) == 0 && rem.nbbo_depth(false) == 0, "router_nbbo_depth_empty");
     }
 
     // --- #376 liquidity_at_limit: marketable size at a limit price ---

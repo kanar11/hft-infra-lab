@@ -628,6 +628,30 @@ public:
         return c;
     }
 
+    // nbbo_depth (#480, MILESTONE 480): the total displayed size available
+    // at EXACTLY the national best price on the side an order would take —
+    // a BUY hits the asks, so this sums ask_size across active venues
+    // quoting the National Best Offer; a SELL sums bid_size at the National
+    // Best Bid. The SIZE companion to venues_at_nbbo (#367, the venue
+    // count): how much you can take at the very best price before routing
+    // spills to a worse venue. Distinct from available_liquidity (#109),
+    // which sums EVERY venue's top-of-book regardless of price — in a
+    // fragmented market that overstates what is really at the touch. 0
+    // without liquidity on the side. (nbbo_depth(is_buy=true) is the ask
+    // side = venues_at_nbbo(bid_side=false).)
+    int64_t nbbo_depth(bool is_buy) const noexcept {
+        const double best = is_buy ? national_best_ask() : national_best_bid();
+        if (best <= 0.0) return 0;
+        int64_t sz = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (is_buy) { if (v.ask_size > 0 && v.best_ask == best) sz += v.ask_size; }
+            else        { if (v.bid_size > 0 && v.best_bid == best) sz += v.bid_size; }
+        }
+        return sz;
+    }
+
     // effective_spread_bps: the REAL cost of crossing the spread WITH FEES (#240) =
     // best all-in ask (quote+fee) - best all-in bid (quote-fee), in bps. Larger than
     // nbbo_spread_bps (#208, quote only) by the round-trip fees: it shows how much it really
