@@ -630,6 +630,7 @@ struct TokenBucket {
     double        refill_per_ns;
     std::int64_t  last_ns = 0;
     bool          init = false;
+    std::uint64_t denied = 0;      // refused consumptions (#451)
 
     TokenBucket(double capacity_, double refill_per_sec) noexcept
         : capacity(capacity_), tokens(capacity_),
@@ -638,16 +639,32 @@ struct TokenBucket {
     // try_consume: whether n tokens can be taken now. First it tops up by elapsed
     // time (cap to capacity), then consumes if there is enough.
     bool try_consume(std::int64_t now_ns, double n = 1.0) noexcept {
-        if (!init) { init = true; last_ns = now_ns; }
-        else {
-            tokens += static_cast<double>(now_ns - last_ns) * refill_per_ns;
-            if (tokens > capacity) tokens = capacity;
-            last_ns = now_ns;
-        }
+        top_up(now_ns);
         if (tokens >= n) { tokens -= n; return true; }
+        ++denied;                                     // #451
         return false;
     }
-    void reset() noexcept { tokens = capacity; last_ns = 0; init = false; }
+
+    // available (#451): the token balance RIGHT NOW — the probe a pacing
+    // scheduler asks before committing (the multicast twin of risk's
+    // rate_limit_headroom #429). Tops up by elapsed time exactly as the
+    // next try_consume would, but takes nothing; probing is free. The
+    // `denied` counter is the ops half: how often the bucket said no.
+    double available(std::int64_t now_ns) noexcept {
+        top_up(now_ns);
+        return tokens;
+    }
+
+    void reset() noexcept { tokens = capacity; last_ns = 0; init = false; denied = 0; }
+
+private:
+    // top_up: shared refill math for try_consume and available (#451).
+    void top_up(std::int64_t now_ns) noexcept {
+        if (!init) { init = true; last_ns = now_ns; return; }
+        tokens += static_cast<double>(now_ns - last_ns) * refill_per_ns;
+        if (tokens > capacity) tokens = capacity;
+        last_ns = now_ns;
+    }
 };
 
 

@@ -2774,6 +2774,19 @@ void test_multicast_gap_recovery() {
     ASSERT(tb.try_consume(2500000, 1.0), "tb_refill_2");
     ASSERT(!tb.try_consume(2500000, 1.0), "tb_refill_exhausted");
 
+    // #451 available / denied — the probe and the ops counter.
+    // Two refusals so far (tb_empty + tb_refill_exhausted).
+    ASSERT(tb.denied == 2, "tb_denied_counts_refusals");
+    // The balance is ~0.5 (2.5 refilled, 2 consumed); probing takes nothing.
+    ASSERT(std::fabs(tb.available(2500000) - 0.5) < 1e-9, "tb_available_balance");
+    ASSERT(std::fabs(tb.available(2500000) - 0.5) < 1e-9, "tb_probe_is_free");
+    // The probe tops up by elapsed time exactly like try_consume would...
+    ASSERT(std::fabs(tb.available(4000000) - 2.0) < 1e-9, "tb_available_refills");
+    // ...and caps at capacity on a long idle stretch.
+    ASSERT(std::fabs(tb.available(999000000) - 5.0) < 1e-9, "tb_available_caps");
+    tb.reset();
+    ASSERT(tb.denied == 0, "tb_reset_clears_denied");
+
     // #227 ConflationBuffer — the latest state per key + a conflation counter.
     multicast::ConflationBuffer cb;
     cb.update(1, 100.0);              // key 1
