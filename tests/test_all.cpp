@@ -5525,10 +5525,16 @@ void test_risk_price_band() {
                      - (rpw.pnl_win_rate() * rpw.avg_pnl_win()
                         - (1.0 - rpw.pnl_win_rate()) * rpw.avg_pnl_loss())) < 1e-9,
            "pex_equals_rate_magnitude_form");
+    // #469 pnl_profit_factor: gross win 40 / gross loss 5 = 8.0, and it
+    // equals payoff_ratio * (winning/losing) = 4.0 * 2.
+    ASSERT(std::fabs(rpw.pnl_profit_factor() - 8.0) < 1e-9, "ppf_eight");
+    ASSERT(std::fabs(rpw.pnl_profit_factor()
+                     - rpw.pnl_payoff_ratio() * 2.0) < 1e-9, "ppf_folds_in_frequency");
     rpw.reset_daily();
     ASSERT(rpw.avg_pnl_win() == 0.0 && rpw.avg_pnl_loss() == 0.0
            && rpw.pnl_payoff_ratio() == 0.0, "ppr_reset_daily");
     ASSERT(rpw.pnl_expectancy() == 0.0, "pex_reset_zero");
+    ASSERT(rpw.pnl_profit_factor() == 0.0, "ppf_reset_zero");
 
     // #461: a high WIN RATE can still be a NEGATIVE edge — three 1-dollar
     // wins and one 10-dollar loss is 75% wins but -1.75 per update.
@@ -5537,6 +5543,12 @@ void test_risk_price_band() {
     rpx.update_pnl(-10.0);
     ASSERT(std::fabs(rpx.pnl_win_rate() - 0.75) < 1e-9, "pex_high_win_rate");
     ASSERT(std::fabs(rpx.pnl_expectancy() + 1.75) < 1e-9, "pex_negative_edge");
+    // #469: 75% wins but gross 3 / gross 10 = 0.3 profit factor (< 1 = bleeding).
+    ASSERT(std::fabs(rpx.pnl_profit_factor() - 0.3) < 1e-9, "ppf_below_one_despite_win_rate");
+    // No losing update yet -> 0 (no denominator).
+    RiskManager rpf;
+    rpf.update_pnl(+5.0); rpf.update_pnl(+3.0);
+    ASSERT(rpf.pnl_profit_factor() == 0.0, "ppf_no_loss_zero");
 
     // #397 underwater_updates / max_underwater_updates — drawdown DURATION,
     // the time axis to max_drawdown_dollars' (#340) depth.

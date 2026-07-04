@@ -1166,6 +1166,20 @@ public:
         const double al = avg_pnl_loss();
         return (aw > 0.0 && al > 0.0) ? aw / al : 0.0;
     }
+    // pnl_profit_factor: gross profit / gross loss over update_pnl events
+    // (#469) = win_pnl_sum / loss_pnl_sum. The classic performance ratio:
+    // > 1 the winners outweigh the losers in TOTAL dollars, < 1 the desk is
+    // bleeding, = 1 breakeven. Distinct from pnl_payoff_ratio (#381, avg
+    // win / avg loss): profit_factor = payoff_ratio * (winning / losing),
+    // so it folds in the win/loss FREQUENCY the payoff ratio ignores — a
+    // great payoff ratio with rare wins can still be a profit factor below
+    // 1. The RiskManager per-event parallel of OMS profit_factor (#339,
+    // per-symbol realized). 0 until at least one losing update exists (no
+    // denominator). Reset by reset_daily via the accumulators.
+    double pnl_profit_factor() const noexcept {
+        return loss_pnl_sum_ > 0.0 ? win_pnl_sum_ / loss_pnl_sum_ : 0.0;
+    }
+
     // pnl_expectancy: the expected P&L per DECIDED update (#461) =
     // win_rate*avg_win - loss_rate*avg_loss, which collapses to
     // (win_pnl_sum - loss_pnl_sum) / decided — the net realized P&L over
