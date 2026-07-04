@@ -75,6 +75,7 @@
 #include "../strategy/accel_decel.hpp"
 #include "../strategy/rolling_median.hpp"
 #include "../strategy/supertrend.hpp"
+#include "../strategy/ultimate.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4369,6 +4370,49 @@ void test_supertrend() {
     ASSERT(!st.ready() && st.value() == 0.0 && st.direction() == 1, "st_reset");
 }
 
+// UltimateOsc #470 — Williams' three-timeframe momentum oscillator.
+void test_ultimate() {
+    SECTION("UltimateOsc (#470)");
+    UltimateOsc uof(7, 14, 28);
+    ASSERT(!uof.ready() && std::fabs(uof.value() - 50.0) < 1e-9, "uo_neutral_before_ready");
+
+    // Small windows for exact tests: 2/3/4.
+    UltimateOsc uo(2, 3, 4);
+    uo.update(100.0);                 // seed
+    ASSERT(!uo.ready(), "uo_not_ready_after_seed");
+
+    // Pure uptick run: every BP == TR, so every avg == 1 -> UO = 100.
+    UltimateOsc up(2, 3, 4);
+    double px = 100.0;
+    for (int i = 0; i < 6; ++i) { px += 1.0; up.update(px); }
+    ASSERT(up.ready() && std::fabs(up.value() - 100.0) < 1e-9, "uo_pure_uptrend_100");
+
+    // Pure downtick run: every BP == 0 -> every avg == 0 -> UO = 0.
+    UltimateOsc dn(2, 3, 4);
+    px = 100.0;
+    for (int i = 0; i < 6; ++i) { px -= 1.0; dn.update(px); }
+    ASSERT(std::fabs(dn.value()) < 1e-9, "uo_pure_downtrend_0");
+
+    // A balanced alternating tape sits strictly between the extremes.
+    UltimateOsc bal(2, 3, 4);
+    const double bseq[] = {100, 101, 100, 101, 100, 101, 100};
+    for (double v : bseq) bal.update(v);
+    ASSERT(bal.value() > 0.0 && bal.value() < 100.0, "uo_balanced_mid");
+
+    // Bounded in [0,100] on a mixed tape.
+    UltimateOsc mix(2, 3, 4);
+    const double mseq[] = {100, 103, 101, 105, 102, 108, 104, 110};
+    for (double v : mseq) mix.update(v);
+    ASSERT(mix.value() >= 0.0 && mix.value() <= 100.0, "uo_bounded");
+
+    // Invalid prints ignored; reset returns to the neutral state.
+    const double up_before = up.value();
+    up.update(0.0); up.update(-3.0);
+    ASSERT(std::fabs(up.value() - up_before) < 1e-9, "uo_ignores_invalid");
+    up.reset();
+    ASSERT(!up.ready() && std::fabs(up.value() - 50.0) < 1e-9, "uo_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -7972,6 +8016,7 @@ int main() {
     test_accel_decel();
     test_rolling_median();
     test_supertrend();
+    test_ultimate();
     test_cmo();
     test_zscore();
     test_tsi();
