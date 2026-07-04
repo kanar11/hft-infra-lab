@@ -374,6 +374,20 @@ public:
              + static_cast<double>(net_filled_shares()) * mark_price;
     }
 
+    // breakeven_mark (#498): the mark price at which mark_to_market_pnl
+    // (#490) is exactly zero = -net_cash_flow / net_filled_shares. Solving
+    // net_cash_flow + net_shares*mark == 0, this is how far the market must
+    // travel for the position to wash out to flat P&L: a long that has
+    // already captured some spread has a breakeven BELOW its entry (it can
+    // fall a bit and still be even), a short one ABOVE. The risk read that
+    // says how much room the position has before it turns red. 0 when FLAT
+    // (net_filled_shares == 0) — the P&L is then mark-independent
+    // (net_cash_flow) and no breakeven price exists.
+    double breakeven_mark() const noexcept {
+        const int64_t net = net_filled_shares();
+        return net != 0 ? -net_cash_flow() / static_cast<double>(net) : 0.0;
+    }
+
     // net_working_shares: buy-side minus sell-side working shares (#450) —
     // the SIGNED directional tilt of the resting book. 0 is a balanced
     // (market-making) book; a large positive number means the working

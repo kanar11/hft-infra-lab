@@ -7945,6 +7945,43 @@ void test_ouch_order_state() {
         // Short profits as the mark FALLS: MtM@18 = 1000 - 900 = +100.
         ASSERT(cl(sh.mark_to_market_pnl(18.0), 100.0), "ouch_mtm_short_profit");
         ASSERT(cl(sh.mark_to_market_pnl(22.0), -100.0), "ouch_mtm_short_loss");
+        // #498 breakeven for the short: -1000 / -50 = 20 = the entry (no
+        // spread captured yet), and MtM there is exactly 0.
+        ASSERT(cl(sh.breakeven_mark(), 20.0), "ouch_be_short_at_entry");
+        ASSERT(cl(sh.mark_to_market_pnl(sh.breakeven_mark()), 0.0), "ouch_be_short_zeroes_mtm");
+    }
+
+    // #498 breakeven_mark — where mark_to_market_pnl washes to zero.
+    {
+        auto cl = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        ouch::OUCHOrderTracker be;
+        uint8_t beb[64];
+        ASSERT(be.breakeven_mark() == 0.0, "ouch_be_empty");
+        // Long 100 @ 10.00: cash -1000, pos +100 -> breakeven at the entry 10.
+        be.on_new("B1", 100);
+        int bn = OUCHMessage::encode_accepted(beb, "B1", 'B', 100, "AAPL", 10.0, 1);
+        be.on_response(OUCHMessage::parse_response(beb, bn));
+        bn = OUCHMessage::encode_executed(beb, "B1", 100, 10.00, 900);
+        be.on_response(OUCHMessage::parse_response(beb, bn));
+        ASSERT(cl(be.breakeven_mark(), 10.0), "ouch_be_long_at_entry");
+        ASSERT(cl(be.mark_to_market_pnl(be.breakeven_mark()), 0.0), "ouch_be_zeroes_mtm");
+        // Sell 50 @ 12.00 -> cash -400, pos +50: captured spread drops the
+        // breakeven BELOW the entry to 8 (it can fall to 8 and still be even).
+        be.on_new("S1", 50);
+        bn = OUCHMessage::encode_accepted(beb, "S1", 'S', 50, "AAPL", 12.0, 2);
+        be.on_response(OUCHMessage::parse_response(beb, bn));
+        bn = OUCHMessage::encode_executed(beb, "S1", 50, 12.00, 901);
+        be.on_response(OUCHMessage::parse_response(beb, bn));
+        ASSERT(be.net_filled_shares() == 50, "ouch_be_still_long_50");
+        ASSERT(cl(be.breakeven_mark(), 8.0), "ouch_be_dropped_below_entry");
+        ASSERT(cl(be.mark_to_market_pnl(8.0), 0.0), "ouch_be_new_zeroes_mtm");
+        // Close the rest @ 8.00 -> flat: no breakeven (MtM is now constant).
+        be.on_new("S2", 50);
+        bn = OUCHMessage::encode_accepted(beb, "S2", 'S', 50, "AAPL", 8.0, 3);
+        be.on_response(OUCHMessage::parse_response(beb, bn));
+        bn = OUCHMessage::encode_executed(beb, "S2", 50, 8.00, 902);
+        be.on_response(OUCHMessage::parse_response(beb, bn));
+        ASSERT(be.net_filled_shares() == 0 && be.breakeven_mark() == 0.0, "ouch_be_flat_none");
     }
 
     // #466 projected_net_shares — realized (#458) + working (#450) exposure.
