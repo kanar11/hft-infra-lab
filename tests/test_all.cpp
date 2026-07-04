@@ -73,6 +73,7 @@
 #include "../strategy/chandelier.hpp"
 #include "../strategy/awesome.hpp"
 #include "../strategy/accel_decel.hpp"
+#include "../strategy/rolling_median.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4173,6 +4174,50 @@ void test_accel_decel() {
     ASSERT(!acl.ready() && acl.value() == 0.0, "ac_reset");
 }
 
+// RollingMedian #454 — the outlier-immune price filter.
+void test_rolling_median() {
+    SECTION("RollingMedian (#454)");
+    RollingMedian rmf(9);
+    ASSERT(!rmf.ready() && rmf.value() == 0.0, "rmed_empty");
+
+    // Odd window: the exact middle value regardless of arrival order.
+    RollingMedian rmo(5);
+    rmo.update(30.0); rmo.update(10.0); rmo.update(50.0);
+    rmo.update(20.0); rmo.update(40.0);
+    ASSERT(rmo.ready() && std::fabs(rmo.value() - 30.0) < 1e-9, "rmed_odd_exact_middle");
+
+    // Even window: the mean of the two middle values.
+    RollingMedian rme(4);
+    rme.update(10.0); rme.update(20.0); rme.update(30.0); rme.update(40.0);
+    ASSERT(std::fabs(rme.value() - 25.0) < 1e-9, "rmed_even_middle_pair");
+
+    // THE point: a fat-finger print cannot move it. {10,10,10,1000,10}
+    // reads 10 on the median while the mean is dragged to 208.
+    RollingMedian rmr(5);
+    rmr.update(10.0); rmr.update(10.0); rmr.update(10.0);
+    rmr.update(1000.0); rmr.update(10.0);
+    ASSERT(std::fabs(rmr.value() - 10.0) < 1e-9, "rmed_outlier_immune");
+    // ...until half the window agrees the move is real.
+    rmr.update(1000.0); rmr.update(1000.0);        // window {10,1000,10,1000,1000}
+    ASSERT(std::fabs(rmr.value() - 1000.0) < 1e-9, "rmed_majority_confirms");
+
+    // Rolling eviction: the oldest print leaves the window.
+    RollingMedian rmv(3);
+    rmv.update(10.0); rmv.update(20.0); rmv.update(30.0);
+    ASSERT(std::fabs(rmv.value() - 20.0) < 1e-9, "rmed_window_median");
+    rmv.update(40.0);                              // {20,30,40}
+    ASSERT(std::fabs(rmv.value() - 30.0) < 1e-9, "rmed_evicts_oldest");
+
+    // Partial windows use what has arrived; invalid prints ignored; reset.
+    RollingMedian rmp(9);
+    rmp.update(7.0); rmp.update(9.0);
+    ASSERT(!rmp.ready() && std::fabs(rmp.value() - 8.0) < 1e-9, "rmed_partial_window");
+    rmp.update(0.0); rmp.update(-3.0);
+    ASSERT(std::fabs(rmp.value() - 8.0) < 1e-9, "rmed_ignores_invalid");
+    rmp.reset();
+    ASSERT(!rmp.ready() && rmp.value() == 0.0, "rmed_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -7613,6 +7658,7 @@ int main() {
     test_chandelier();
     test_awesome();
     test_accel_decel();
+    test_rolling_median();
     test_cmo();
     test_zscore();
     test_tsi();
