@@ -5655,6 +5655,26 @@ void test_risk_price_band() {
     rpf.update_pnl(+5.0); rpf.update_pnl(+3.0);
     ASSERT(rpf.pnl_profit_factor() == 0.0, "ppf_no_loss_zero");
 
+    // #477 pnl_std_dev / pnl_sharpe — volatility of the P&L event stream.
+    RiskManager rsh;
+    ASSERT(rsh.pnl_std_dev() == 0.0 && rsh.pnl_sharpe() == 0.0, "psh_empty_zero");
+    // {+3,-1,+3,-1}: mean 1, sumsq 20, var 20/4 - 1 = 4, std 2, sharpe 0.5.
+    rsh.update_pnl(+3.0); rsh.update_pnl(-1.0); rsh.update_pnl(+3.0); rsh.update_pnl(-1.0);
+    ASSERT(std::fabs(rsh.pnl_std_dev() - 2.0) < 1e-9, "psh_std_2");
+    ASSERT(std::fabs(rsh.pnl_sharpe() - 0.5) < 1e-9, "psh_sharpe_half");
+    // Doubling every P&L doubles the std but leaves the Sharpe unchanged —
+    // the risk-adjustment property (same consistency, twice the size).
+    RiskManager rsh2;
+    rsh2.update_pnl(+6.0); rsh2.update_pnl(-2.0); rsh2.update_pnl(+6.0); rsh2.update_pnl(-2.0);
+    ASSERT(std::fabs(rsh2.pnl_std_dev() - 4.0) < 1e-9, "psh_scale_doubles_std");
+    ASSERT(std::fabs(rsh2.pnl_sharpe() - rsh.pnl_sharpe()) < 1e-9, "psh_sharpe_scale_invariant");
+    // A constant P&L stream has zero volatility -> Sharpe 0 (undefined).
+    RiskManager rsc;
+    rsc.update_pnl(+5.0); rsc.update_pnl(+5.0); rsc.update_pnl(+5.0);
+    ASSERT(rsc.pnl_std_dev() == 0.0 && rsc.pnl_sharpe() == 0.0, "psh_constant_zero_vol");
+    rsh.reset_daily();
+    ASSERT(rsh.pnl_std_dev() == 0.0 && rsh.pnl_sharpe() == 0.0, "psh_reset");
+
     // #397 underwater_updates / max_underwater_updates — drawdown DURATION,
     // the time axis to max_drawdown_dollars' (#340) depth.
     RiskManager ruw;

@@ -321,6 +321,9 @@ class RiskManager {
     uint64_t losing_updates_  = 0;   // count of losing update_pnl calls (#372)
     double win_pnl_sum_  = 0.0;      // sum of profitable update_pnl deltas (#381)
     double loss_pnl_sum_ = 0.0;      // sum of losing update_pnl magnitudes (#381)
+    double pnl_sum_      = 0.0;      // Σ every update_pnl delta (#477)
+    double pnl_sumsq_    = 0.0;      // Σ delta² over every update_pnl (#477)
+    uint64_t pnl_updates_ = 0;      // count of update_pnl calls, incl. flat (#477)
     int32_t underwater_updates_     = 0;  // consecutive updates below the P&L peak (#397)
     int32_t max_underwater_updates_ = 0;  // longest such spell this session (#397)
     int32_t max_consec_wins_        = 0;  // best winning streak seen this session (#405)
@@ -570,6 +573,11 @@ public:
     // peak_pnl_ is the high-water mark for computing drawdown in check #6.
     // ====================================================================
     void update_pnl(double pnl_change) noexcept {
+        // #477: accumulate the P&L event series (every update, flat included)
+        // for volatility / risk-adjusted reads.
+        pnl_sum_   += pnl_change;
+        pnl_sumsq_ += pnl_change * pnl_change;
+        ++pnl_updates_;
         daily_pnl_ += pnl_change;
         if (daily_pnl_ > peak_pnl_) peak_pnl_ = daily_pnl_;
         // Track the worst peak-to-trough decline ever seen this session (#340).
@@ -756,6 +764,9 @@ public:
         losing_updates_  = 0;     // #372
         win_pnl_sum_  = 0.0;      // #381
         loss_pnl_sum_ = 0.0;      // #381
+        pnl_sum_ = 0.0;           // #477
+        pnl_sumsq_ = 0.0;         // #477
+        pnl_updates_ = 0;         // #477
         underwater_updates_     = 0;  // #397
         max_underwater_updates_ = 0;  // #397
         max_consec_wins_        = 0;  // #405
@@ -1166,6 +1177,34 @@ public:
         const double al = avg_pnl_loss();
         return (aw > 0.0 && al > 0.0) ? aw / al : 0.0;
     }
+    // pnl_std_dev: population standard deviation of the update_pnl event
+    // series (#477) — the volatility of the P&L stream, over EVERY update
+    // including flat ones (a return series counts the zeros). Where
+    // pnl_expectancy (#461) is the mean edge, this is how BUMPY the path to
+    // it is: a strategy and its double-size clone have the same win rate
+    // but twice the std. 0 with fewer than two updates.
+    double pnl_std_dev() const noexcept {
+        if (pnl_updates_ < 2) return 0.0;
+        const double n    = static_cast<double>(pnl_updates_);
+        const double mean = pnl_sum_ / n;
+        const double var  = pnl_sumsq_ / n - mean * mean;
+        return var > 0.0 ? std::sqrt(var) : 0.0;
+    }
+    // pnl_sharpe: the risk-adjusted per-event edge (#477) = mean(update_pnl)
+    // / pnl_std_dev — a Sharpe-style ratio on the P&L event stream (no
+    // annualization, no risk-free rate; a pure reward-per-unit-volatility
+    // read). Two strategies with the same expectancy but different
+    // consistency rank differently here — the smoother one scores higher.
+    // 0 when the volatility is zero (a constant P&L stream) or before two
+    // updates. Distinct from pnl_expectancy (#461, the raw mean) and
+    // pnl_profit_factor (#469, gross ratio): only this one penalizes
+    // volatility.
+    double pnl_sharpe() const noexcept {
+        const double sd = pnl_std_dev();
+        if (sd <= 0.0 || pnl_updates_ == 0) return 0.0;
+        return (pnl_sum_ / static_cast<double>(pnl_updates_)) / sd;
+    }
+
     // pnl_profit_factor: gross profit / gross loss over update_pnl events
     // (#469) = win_pnl_sum / loss_pnl_sum. The classic performance ratio:
     // > 1 the winners outweigh the losers in TOTAL dollars, < 1 the desk is
