@@ -767,6 +767,33 @@ void test_oms_short_and_replace() {
         ASSERT(close(oms.realized_pnl_per_share(), -50.0 / 400.0), "rps_negative_after_loss");
     }
 
+    {   // #468 net_pnl_per_share — the post-fee edge (the honest number).
+        OMS oms(1000000, 1000000000.0, /*commission_per_share=*/0.01);
+        ASSERT(oms.net_pnl_per_share() == 0.0, "nps_empty_zero");
+        // Buy 100 @ 10.00, sell 100 @ 10.50 -> +50 gross, 200 shares, fees
+        // 200*0.01 = 2.00 -> net 48. gross 0.25/sh, net 0.24/sh.
+        Order* nsa = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(nsa->order_id, 100, 10.0);
+        Order* nsb = oms.submit_order("AAA", Side::SELL, 10.5, 100);
+        oms.fill_order(nsb->order_id, 100, 10.5);
+        ASSERT(close(oms.realized_pnl_per_share(), 0.25), "nps_gross_quarter");
+        ASSERT(close(oms.net_pnl_per_share(), 0.24), "nps_net_after_fees");
+        // Identity: net == gross - avg commission per share.
+        ASSERT(close(oms.net_pnl_per_share(),
+                     oms.realized_pnl_per_share() - oms.avg_commission_per_share()),
+               "nps_identity_gross_minus_comm");
+    }
+
+    {   // #468: a thin gross edge below the per-share fee reads NEGATIVE net.
+        OMS oms(1000000, 1000000000.0, /*commission_per_share=*/0.01);
+        Order* tna = oms.submit_order("BBB", Side::BUY, 10.0, 100);
+        oms.fill_order(tna->order_id, 100, 10.0);
+        Order* tnb = oms.submit_order("BBB", Side::SELL, 10.005, 100);
+        oms.fill_order(tnb->order_id, 100, 10.005);   // +0.5 gross over 200 = 0.0025/sh
+        ASSERT(oms.realized_pnl_per_share() > 0.0, "nps_thin_gross_positive");
+        ASSERT(oms.net_pnl_per_share() < 0.0, "nps_fees_eat_the_edge");
+    }
+
     {   // #396 price improvement vs limit — the price-quality TCA axis.
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.total_price_improvement() == 0.0

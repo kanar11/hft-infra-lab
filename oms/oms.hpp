@@ -968,6 +968,19 @@ public:
             ? to_float(total_realized_pnl()) / static_cast<double>(total_filled_shares_)
             : 0.0;
     }
+    // net_pnl_per_share: the per-share edge AFTER commissions (#468) =
+    // total_net_pnl / total_filled_shares. realized_pnl_per_share (#460) is
+    // GROSS; this is the honest number that decides whether the strategy
+    // makes money once it pays to trade — it equals realized_pnl_per_share
+    // minus avg_commission_per_share (#236) by construction, and a strategy
+    // with a positive gross edge below its per-share fee reads NEGATIVE
+    // here. Fixed-point converted with to_float before dividing (#347). 0
+    // before any fill.
+    double net_pnl_per_share() const noexcept {
+        return total_filled_shares_ > 0
+            ? to_float(total_net_pnl()) / static_cast<double>(total_filled_shares_)
+            : 0.0;
+    }
     // max_time_to_cancel_ns: the LONGEST quote life before a cancel (#460) —
     // the tail companion to avg_time_to_cancel_ns' (#452) mean, exactly as
     // max_time_to_fill_ns (#380) tails avg_time_to_fill_ns. One quote that
