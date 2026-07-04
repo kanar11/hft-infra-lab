@@ -5282,6 +5282,26 @@ void test_router_ewma_partial() {
         ASSERT(empt.effective_price_dispersion(true) == 0.0, "epd_empty_zero");
     }
 
+    // --- #488 touch_concentration — liquidity fraction at the NBBO ---
+    {
+        auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        SmartOrderRouter rtc(RoutingStrategy::BEST_PRICE);
+        rtc.add_venue(Venue("A", 100, 0.0));
+        rtc.add_venue(Venue("B", 100, 0.0));
+        rtc.add_venue(Venue("C", 100, 0.0));
+        rtc.update_quote("A", 9.98, 10.02, 100, 100);   // ask at NBO
+        rtc.update_quote("B", 9.98, 10.02, 100, 100);   // ask at NBO
+        rtc.update_quote("C", 9.98, 10.05, 100, 50);    // ask BEHIND the touch
+        // BUY: NBO depth 200 (A+B) of 250 available -> 0.8 at the touch.
+        ASSERT(close(rtc.touch_concentration(true), 0.8), "router_touch_conc_scattered");
+        // Consolidating C onto the NBO -> everything at the touch -> 1.0.
+        rtc.update_quote("C", 9.98, 10.02, 100, 50);
+        ASSERT(close(rtc.touch_concentration(true), 1.0), "router_touch_conc_consolidated");
+        // Empty router -> 0 (no liquidity, no division trap).
+        SmartOrderRouter rte(RoutingStrategy::BEST_PRICE);
+        ASSERT(rte.touch_concentration(true) == 0.0, "router_touch_conc_empty_zero");
+    }
+
     // --- #464 effective_price_dispersion — real cross-venue price spread ---
     {
         auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };

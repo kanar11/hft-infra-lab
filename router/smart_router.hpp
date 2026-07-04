@@ -652,6 +652,23 @@ public:
         return sz;
     }
 
+    // touch_concentration (#488): the fraction of a side's total displayed
+    // liquidity that sits AT the national best price = nbbo_depth (#480) /
+    // available_liquidity (#109), in (0,1]. Near 1 the market is
+    // consolidated — nearly every quoting venue is at the touch, so a
+    // marketable order fills at one price; low means the venues are
+    // scattered across prices and an order larger than the touch WALKS
+    // through worse venues before it fills. The router analog of itch's
+    // depth_concentration (#439, book shape as a mass fraction), measured
+    // across venues instead of price levels. 0 when the side has no
+    // liquidity.
+    double touch_concentration(bool is_buy) const noexcept {
+        const int32_t avail = available_liquidity(is_buy);
+        return avail > 0
+            ? static_cast<double>(nbbo_depth(is_buy)) / static_cast<double>(avail)
+            : 0.0;
+    }
+
     // effective_spread_bps: the REAL cost of crossing the spread WITH FEES (#240) =
     // best all-in ask (quote+fee) - best all-in bid (quote-fee), in bps. Larger than
     // nbbo_spread_bps (#208, quote only) by the round-trip fees: it shows how much it really
