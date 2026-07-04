@@ -3118,8 +3118,15 @@ void test_multicast_gap_recovery() {
     ASSERT(ct.max_lookahead() == 6, "contig_max_lookahead_grows");
     ct.receive(5);                              // distance 1 -> does not lower the high-water mark
     ASSERT(ct.max_lookahead() == 6, "contig_max_lookahead_stays_high");
+    // #499 current_lookahead — the live span, next_expected 4, furthest 10 -> 6.
+    ASSERT(ct.current_lookahead() == 6, "contig_cur_lookahead_6");
+    // Filling the gap partially DROPS the live span while the peak stays.
+    ct.receive(4);                              // next_expected 4 -> pulls 4,5 -> 6; ahead {10}
+    ASSERT(ct.current_lookahead() == 4 && ct.max_lookahead() == 6, "contig_cur_drops_peak_holds");
+    ct.receive(6); ct.receive(7); ct.receive(8); ct.receive(9);  // fill up to 10 -> drains
+    ASSERT(ct.buffered() == 0 && ct.current_lookahead() == 0, "contig_cur_zero_when_drained");
     ct.reset();
-    ASSERT(ct.max_lookahead() == 0, "contig_max_lookahead_reset");
+    ASSERT(ct.max_lookahead() == 0 && ct.current_lookahead() == 0, "contig_max_lookahead_reset");
 
     // #257 SlidingWindowRate — count within a moving window (1000 ns).
     multicast::SlidingWindowRate sw(1000);

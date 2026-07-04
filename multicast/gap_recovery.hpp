@@ -836,6 +836,18 @@ struct ContiguousTracker {
     // needs deep capacity, not just patience. 0 when nothing was ever buffered
     // ahead of a gap.
     std::uint64_t max_lookahead() const noexcept { return max_lookahead_; }
+    // current_lookahead (#499): how far ahead of the gap the buffer reaches
+    // RIGHT NOW = furthest-buffered - next_expected (0 when nothing is
+    // buffered ahead). The live companion to max_lookahead's high-water
+    // mark, in the same units: it rises as out-of-order packets pile up
+    // above an open gap and collapses to 0 the instant the gap fills and
+    // the buffer drains. Where max_lookahead sizes the buffer for the worst
+    // case ever, this is the pressure on it at this moment — and it never
+    // exceeds max_lookahead. buffered() counts the packets waiting; this is
+    // the SPAN they cover.
+    std::uint64_t current_lookahead() const noexcept {
+        return ahead.empty() ? 0 : (*ahead.rbegin() - next_expected);
+    }
     void reset(std::uint64_t start = 1) noexcept {
         next_expected = start; ahead.clear(); max_lookahead_ = 0;
     }
