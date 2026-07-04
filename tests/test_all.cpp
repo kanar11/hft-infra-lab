@@ -7620,6 +7620,40 @@ void test_ouch_order_state() {
         ASSERT(mmk.avg_buy_price() == 0.0 && mmk.avg_sell_price() == 0.0, "ouch_mmk_reset");
     }
 
+    // #482 net_cash_flow / gross_traded_notional.
+    {
+        ouch::OUCHOrderTracker ncf;
+        uint8_t ncb[64];
+        auto cl = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        ASSERT(ncf.net_cash_flow() == 0.0 && ncf.gross_traded_notional() == 0.0, "ouch_ncf_empty");
+        // Buy 100@10.00, sell 100@10.10 -> flat, net cash +10 (= realized P&L).
+        ncf.on_new("B1", 100);
+        int nn = OUCHMessage::encode_accepted(ncb, "B1", 'B', 100, "AAPL", 10.0, 1);
+        ncf.on_response(OUCHMessage::parse_response(ncb, nn));
+        nn = OUCHMessage::encode_executed(ncb, "B1", 100, 10.00, 900);
+        ncf.on_response(OUCHMessage::parse_response(ncb, nn));
+        ncf.on_new("S1", 100);
+        nn = OUCHMessage::encode_accepted(ncb, "S1", 'S', 100, "AAPL", 10.1, 2);
+        ncf.on_response(OUCHMessage::parse_response(ncb, nn));
+        nn = OUCHMessage::encode_executed(ncb, "S1", 100, 10.10, 901);
+        ncf.on_response(OUCHMessage::parse_response(ncb, nn));
+        ASSERT(ncf.net_filled_shares() == 0, "ouch_ncf_flat");
+        ASSERT(cl(ncf.net_cash_flow(), 10.0), "ouch_ncf_flat_is_realized_pnl");
+        ASSERT(cl(ncf.gross_traded_notional(), 2010.0), "ouch_ncf_turnover");
+        // Gross = buy + sell notional = fill_vwap x exec shares.
+        ASSERT(cl(ncf.gross_traded_notional(), ncf.fill_vwap() * 200.0), "ouch_ncf_gross_identity");
+        // Buy 50 more @10.00 -> net long 50, net cash goes negative (cash out).
+        ncf.on_new("B2", 50);
+        nn = OUCHMessage::encode_accepted(ncb, "B2", 'B', 50, "AAPL", 10.0, 3);
+        ncf.on_response(OUCHMessage::parse_response(ncb, nn));
+        nn = OUCHMessage::encode_executed(ncb, "B2", 50, 10.00, 902);
+        ncf.on_response(OUCHMessage::parse_response(ncb, nn));
+        ASSERT(ncf.net_filled_shares() == 50, "ouch_ncf_now_long");
+        ASSERT(cl(ncf.net_cash_flow(), 10.0 - 500.0), "ouch_ncf_open_position_cash_out");
+        ncf.reset_session();
+        ASSERT(ncf.net_cash_flow() == 0.0 && ncf.gross_traded_notional() == 0.0, "ouch_ncf_reset");
+    }
+
     // #466 projected_net_shares — realized (#458) + working (#450) exposure.
     {
         ouch::OUCHOrderTracker pnt;

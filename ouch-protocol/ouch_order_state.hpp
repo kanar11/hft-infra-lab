@@ -343,6 +343,22 @@ public:
             ? avg_sell_price() - avg_buy_price() : 0.0;
     }
 
+    // gross_traded_notional (#482): the total $ that changed hands across
+    // every execution = the session's turnover. Equal to fill_vwap (#410) x
+    // exec_shares (#328); a plain $ accessor for the raw tape value.
+    double gross_traded_notional() const noexcept { return session_fill_notional_; }
+
+    // net_cash_flow (#482): sell_notional - buy_notional, the net cash the
+    // desk has taken in from this tracker's fills — positive = a net seller
+    // of value (more cash in from sells than out for buys). Composed from
+    // the #474 side-notional accumulators. When the position has round-
+    // tripped to FLAT (net_filled_shares == 0) this IS the realized cash
+    // P&L; while the position is still open it is the cash half of the
+    // cost basis (net_cash_flow + mark x net_filled_shares = mark-to-market
+    // P&L, but the tracker has no mark, so it reports only the cash leg).
+    // Bust-adjusted via the #474 proportional notional unwind.
+    double net_cash_flow() const noexcept { return sell_notional_ - buy_notional_; }
+
     // net_working_shares: buy-side minus sell-side working shares (#450) —
     // the SIGNED directional tilt of the resting book. 0 is a balanced
     // (market-making) book; a large positive number means the working
