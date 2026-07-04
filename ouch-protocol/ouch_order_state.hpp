@@ -53,6 +53,7 @@ class OUCHOrderTracker {
         int64_t    order_ref;    // from Accepted (0 until known)
         bool       pending_cancel; // Cancel sent, awaiting confirmation (#159)
         double     fill_notional = 0.0; // Σ exec shares × price, $ (#410)
+        char       side = ' ';     // 'B'/'S' from Accepted; ' ' until acked (#450)
     };
     std::unordered_map<std::string, Record> orders_;
     uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
@@ -115,6 +116,7 @@ public:
         if (std::strcmp(r.type, "ACCEPTED") == 0) {
             rec->state     = OrderState::LIVE;
             rec->order_ref = r.order_ref;
+            rec->side      = (r.side[0] != '\0') ? r.side[0] : ' ';   // #450: "BUY"/"SELL" -> 'B'/'S'
             ++live_;
         } else if (std::strcmp(r.type, "EXECUTED") == 0) {
             const int32_t exec = (r.shares < rec->remaining) ? r.shares : rec->remaining;
@@ -272,6 +274,29 @@ public:
                 mx = rec.remaining;
         return mx;
     }
+    // working_shares_side: the LIVE/PARTIAL open shares on ONE side (#450,
+    // MILESTONE 450) — the tracker's first DIRECTION-aware read: everything
+    // before this (working_shares #304, largest_remaining #312, pending
+    // shares #402...) was direction-blind, yet a book of 500 working buys
+    // is the opposite risk of 500 working sells. The side is captured from
+    // the Accepted report ('B'/'S'); orders not yet acked carry ' ' and
+    // count on neither side (their direction is not confirmed).
+    int32_t working_shares_side(char side) const noexcept {
+        int32_t s = 0;
+        for (const auto& [tok, rec] : orders_)
+            if ((rec.state == OrderState::LIVE || rec.state == OrderState::PARTIAL)
+                && rec.side == side)
+                s += rec.remaining;
+        return s;
+    }
+    // net_working_shares: buy-side minus sell-side working shares (#450) —
+    // the SIGNED directional tilt of the resting book. 0 is a balanced
+    // (market-making) book; a large positive number means the working
+    // orders themselves are a long bet before a single fill arrives.
+    int32_t net_working_shares() const noexcept {
+        return working_shares_side('B') - working_shares_side('S');
+    }
+
     // largest_remaining_token: the TOKEN carrying largest_remaining's biggest
     // working exposure (#394) — the actionable WHICH: that is the order to
     // chase, reprice or pull first. Same LIVE/PARTIAL walk as #312, so the

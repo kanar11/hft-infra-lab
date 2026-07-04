@@ -6945,6 +6945,39 @@ void test_ouch_order_state() {
         ASSERT(rss.remaining("S1") == 50 && rss.filled("S1") == 0, "ouch_rss_token_reuse_clean");
     }
 
+    // #450 working_shares_side / net_working_shares — the tracker's first
+    // direction-aware read (MILESTONE 450).
+    {
+        ouch::OUCHOrderTracker wss;
+        uint8_t wsb[64];
+        ASSERT(wss.working_shares_side('B') == 0 && wss.net_working_shares() == 0,
+               "ouch_wss_empty");
+        wss.on_new("B1", 300);
+        // Unacked NEW carries no confirmed side — counts on neither.
+        ASSERT(wss.working_shares_side('B') == 0, "ouch_wss_unacked_sideless");
+        int wsn = OUCHMessage::encode_accepted(wsb, "B1", 'B', 300, "AAPL", 10.0, 1);
+        wss.on_response(OUCHMessage::parse_response(wsb, wsn));
+        wss.on_new("S1", 100);
+        wsn = OUCHMessage::encode_accepted(wsb, "S1", 'S', 100, "AAPL", 10.1, 2);
+        wss.on_response(OUCHMessage::parse_response(wsb, wsn));
+        ASSERT(wss.working_shares_side('B') == 300 && wss.working_shares_side('S') == 100,
+               "ouch_wss_split");
+        ASSERT(wss.net_working_shares() == 200, "ouch_wss_net_long_tilt");
+        // The split sums to the direction-blind aggregate (#304).
+        ASSERT(wss.working_shares_side('B') + wss.working_shares_side('S')
+               == wss.working_shares(), "ouch_wss_sums_to_304");
+        // A partial fill shrinks its own side only.
+        wsn = OUCHMessage::encode_executed(wsb, "B1", 120, 10.0, 900);
+        wss.on_response(OUCHMessage::parse_response(wsb, wsn));
+        ASSERT(wss.working_shares_side('B') == 180 && wss.working_shares_side('S') == 100,
+               "ouch_wss_fill_shrinks_own_side");
+        ASSERT(wss.net_working_shares() == 80, "ouch_wss_net_after_fill");
+        // A Replaced migration carries the side with the chain (#386 copy).
+        wsn = OUCHMessage::encode_replaced(wsb, "B2", "B1", 250, 10.05, 3);
+        wss.on_response(OUCHMessage::parse_response(wsb, wsn));
+        ASSERT(wss.working_shares_side('B') == 250, "ouch_wss_side_survives_migration");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100
