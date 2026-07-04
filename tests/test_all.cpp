@@ -74,6 +74,7 @@
 #include "../strategy/awesome.hpp"
 #include "../strategy/accel_decel.hpp"
 #include "../strategy/rolling_median.hpp"
+#include "../strategy/supertrend.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4279,6 +4280,42 @@ void test_rolling_median() {
     ASSERT(!rmp.ready() && rmp.value() == 0.0, "rmed_reset");
 }
 
+// SuperTrend #462 — ATR-banded trend regime signal.
+void test_supertrend() {
+    SECTION("SuperTrend (#462)");
+    SuperTrend stf(10, 3.0);
+    ASSERT(!stf.ready() && stf.value() == 0.0, "st_fresh");
+    ASSERT(stf.direction() == 1, "st_seed_regime_up");
+
+    // Warm the ATR then ride a steady uptrend: the regime stays long and
+    // the line (lower band) sits BELOW price, ratcheting up.
+    SuperTrend st(3, 2.0);
+    double p = 100.0;
+    for (int i = 0; i < 6; ++i) { p += 2.0; st.update(p); }   // rising ramp
+    ASSERT(st.ready() && st.is_uptrend(), "st_uptrend_on_ramp");
+    ASSERT(st.value() < p, "st_line_below_price_when_long");
+    const double line_lo = st.value();
+    st.update(p + 2.0);                                        // one more up bar
+    ASSERT(st.value() >= line_lo, "st_line_ratchets_up");
+
+    // A crash far through the lower band FLIPS the regime to short; the
+    // line jumps to the upper band, now ABOVE price.
+    st.update(50.0);
+    ASSERT(!st.is_uptrend() && st.direction() == -1, "st_flips_to_down");
+    ASSERT(st.value() > 50.0, "st_line_above_price_when_short");
+
+    // A recovery back above the upper band flips it long again.
+    for (int j = 0; j < 6; ++j) st.update(200.0);
+    ASSERT(st.is_uptrend(), "st_flips_back_up");
+
+    // Invalid prices ignored; reset returns to the seed state.
+    const double st_line = st.value();
+    st.update(0.0); st.update(-5.0);
+    ASSERT(std::fabs(st.value() - st_line) < 1e-9, "st_ignores_invalid");
+    st.reset();
+    ASSERT(!st.ready() && st.value() == 0.0 && st.direction() == 1, "st_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -7798,6 +7835,7 @@ int main() {
     test_awesome();
     test_accel_decel();
     test_rolling_median();
+    test_supertrend();
     test_cmo();
     test_zscore();
     test_tsi();
