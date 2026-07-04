@@ -77,6 +77,7 @@
 #include "../strategy/supertrend.hpp"
 #include "../strategy/ultimate.hpp"
 #include "../strategy/choppiness.hpp"
+#include "../strategy/percent_rank.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4551,6 +4552,45 @@ void test_choppiness() {
     ASSERT(!chop.ready() && std::fabs(chop.value() - 50.0) < 1e-9, "chop_reset");
 }
 
+// RollingPercentRank #486 — non-parametric price position.
+void test_percent_rank() {
+    SECTION("RollingPercentRank (#486)");
+    RollingPercentRank prf(20);
+    ASSERT(!prf.ready() && std::fabs(prf.value() - 50.0) < 1e-9, "prank_neutral_before_data");
+
+    // {10,20,30,40,50}: last print 50 is the highest -> rank 100 (4 below / 4).
+    RollingPercentRank ph(5);
+    for (double v : {10.0, 20.0, 30.0, 40.0, 50.0}) ph.update(v);
+    ASSERT(ph.ready() && std::fabs(ph.value() - 100.0) < 1e-9, "prank_highest_100");
+    // Now a low print: {20,30,40,50,15} -> 15 is the lowest -> rank 0.
+    ph.update(15.0);
+    ASSERT(std::fabs(ph.value()) < 1e-9, "prank_lowest_0");
+    // A middle print: {30,40,50,15,35} -> below 35 are {30,15} = 2 of 4 -> 50.
+    ph.update(35.0);
+    ASSERT(std::fabs(ph.value() - 50.0) < 1e-9, "prank_middle_50");
+
+    // The outlier immunity vs Stochastic: {10,11,12,13,100}, last print 13.
+    // Three of four are below -> rank 75, where a min-max stochastic would
+    // read ~3% (13 barely above the 10 low of a range stretched to 100).
+    RollingPercentRank po(5);
+    for (double v : {10.0, 11.0, 12.0, 100.0, 13.0}) po.update(v);
+    ASSERT(std::fabs(po.value() - 75.0) < 1e-9, "prank_outlier_immune");
+    const double stoch_like = 100.0 * (13.0 - 10.0) / (100.0 - 10.0);   // ~3.33
+    ASSERT(po.value() > stoch_like + 50.0, "prank_diverges_from_range");
+
+    // Ties: a value equal to others counts only STRICTLY-below.
+    RollingPercentRank pt(4);
+    for (double v : {50.0, 50.0, 50.0, 50.0}) pt.update(v);
+    ASSERT(std::fabs(pt.value()) < 1e-9, "prank_all_equal_zero");
+
+    // Invalid prints ignored; reset returns to neutral.
+    const double po_before = po.value();
+    po.update(0.0); po.update(-1.0);
+    ASSERT(std::fabs(po.value() - po_before) < 1e-9, "prank_ignores_invalid");
+    po.reset();
+    ASSERT(!po.ready() && std::fabs(po.value() - 50.0) < 1e-9, "prank_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -8302,6 +8342,7 @@ int main() {
     test_supertrend();
     test_ultimate();
     test_choppiness();
+    test_percent_rank();
     test_cmo();
     test_zscore();
     test_tsi();
