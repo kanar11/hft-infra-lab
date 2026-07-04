@@ -817,6 +817,29 @@ public:
         return found ? best_name : nullptr;
     }
 
+    // cheapest_fee_venue: the NAME of the active venue with the lowest
+    // fee_per_share (#496) — the most favorable fee tier, a negative value
+    // being the best maker rebate. Writes the fee into out_fee. Where
+    // cheapest_venue (#200) picks by the all-in PRICE (quote + fee) for a
+    // taker crossing now, this picks by the FEE ALONE — the venue to POST
+    // passive liquidity on to minimize cost or collect the biggest rebate,
+    // independent of the current quote. Pairs with the fee family
+    // (set_venue_fee #176, avg_fee_per_share #232). nullptr (out_fee
+    // untouched) when no venue is active.
+    const char* cheapest_fee_venue(double& out_fee) const noexcept {
+        const char* best_name = nullptr;
+        double best = 0.0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (best_name == nullptr || v.fee_per_share < best) {
+                best = v.fee_per_share; best_name = v.name;
+            }
+        }
+        if (best_name != nullptr) out_fee = best;
+        return best_name;
+    }
+
     // most_expensive_venue: the NAME of the venue with the WORST all-in
     // price on a side (#472) — the mirror of cheapest_venue (#200) and the
     // actionable WHICH behind effective_price_dispersion (#464): dispersion

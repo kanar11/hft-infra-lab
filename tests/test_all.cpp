@@ -5351,6 +5351,31 @@ void test_router_ewma_partial() {
         ASSERT(empt.effective_price_dispersion(true) == 0.0, "epd_empty_zero");
     }
 
+    // --- #496 cheapest_fee_venue — best fee tier, distinct from best price ---
+    {
+        auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        SmartOrderRouter rcf(RoutingStrategy::BEST_PRICE);
+        rcf.add_venue(Venue("A", 100, 0.003));    // taker fee
+        rcf.add_venue(Venue("B", 100, 0.001));    // cheaper taker
+        rcf.add_venue(Venue("C", 100, -0.002));   // maker rebate (best fee)
+        rcf.update_quote("A", 9.99, 10.00, 100, 100);   // all-in ask 10.003
+        rcf.update_quote("B", 9.99, 10.00, 100, 100);   // all-in ask 10.001 (cheapest to CROSS)
+        rcf.update_quote("C", 9.99, 10.10, 100, 100);   // bad quote, all-in 10.098
+        double cf = 999.0;
+        // cheapest_fee_venue picks by FEE alone -> C (the rebate).
+        ASSERT(std::strcmp(rcf.cheapest_fee_venue(cf), "C") == 0, "rcf_best_fee_C");
+        ASSERT(close(cf, -0.002), "rcf_best_fee_value");
+        // cheapest_venue (#200) picks by ALL-IN price -> B (C's quote is bad).
+        ASSERT(std::strcmp(rcf.cheapest_venue(true), "B") == 0, "rcf_cheapest_price_B_differs");
+        // Disabling C hands the best fee to B (0.001).
+        rcf.set_venue_active("C", false);
+        ASSERT(std::strcmp(rcf.cheapest_fee_venue(cf), "B") == 0 && close(cf, 0.001),
+               "rcf_best_fee_after_disable");
+        // Empty router -> nullptr.
+        SmartOrderRouter rce(RoutingStrategy::BEST_PRICE);
+        ASSERT(rce.cheapest_fee_venue(cf) == nullptr, "rcf_empty_null");
+    }
+
     // --- #488 touch_concentration — liquidity fraction at the NBBO ---
     {
         auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
