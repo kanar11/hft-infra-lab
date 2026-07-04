@@ -813,6 +813,26 @@ public:
         }
         return total;
     }
+    // fresh_available_liquidity: available_liquidity (#109) counting only
+    // venues whose quote is at most max_age_ns old at at_ns (#432) — the
+    // SIZE companion to fresh_nbbo_mid's (#424) price. Stale displayed size
+    // is the worst kind of liquidity: it looks sweepable, the order routes
+    // to it, and the market that posted it left long ago (a fade/reject in
+    // practice). The gap between #109 and this number is the phantom-size
+    // share of the touch. Never-quoted venues are excluded (they show no
+    // size anyway); same clock injection as the #392 family.
+    int32_t fresh_available_liquidity(bool is_buy, int64_t max_age_ns,
+                                      int64_t at_ns) const noexcept {
+        int32_t total = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active || v.last_quote_ns == 0) continue;
+            if (at_ns - v.last_quote_ns > max_age_ns) continue;   // stale: phantom size
+            if (is_buy) { if (v.best_ask > 0 && v.ask_size > 0) total += v.ask_size; }
+            else        { if (v.best_bid > 0 && v.bid_size > 0) total += v.bid_size; }
+        }
+        return total;
+    }
     // available_liquidity_notional: total $ value of top-of-book liquidity across
     // active venues on the order side (#310) — buy hits asks (sum best_ask*ask_size),
     // sell hits bids (sum best_bid*bid_size). The $ companion to available_liquidity

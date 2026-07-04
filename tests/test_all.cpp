@@ -4406,10 +4406,26 @@ void test_router_ewma_partial() {
         ASSERT(rfm.nbbo_mid() > rfm.fresh_nbbo_mid(600, 5000), "rfm_raw_blends_stale");
         // No fresh two-sided market -> 0 (not tradeable).
         ASSERT(rfm.fresh_nbbo_mid(100, 99999) == 0.0, "rfm_all_stale_zero");
+
+        // #432 fresh_available_liquidity — the SIZE companion to #424.
+        // All fresh at a 2000ns budget: both asks count (100 + 100).
+        ASSERT(rfm.fresh_available_liquidity(true, 2000, 5000) == 200, "rfl_all_fresh");
+        ASSERT(rfm.fresh_available_liquidity(true, 2000, 5000)
+               == rfm.available_liquidity(true), "rfl_matches_raw_when_fresh");
+        // The 600ns budget drops venue A (age 1000): its ask size is phantom.
+        ASSERT(rfm.fresh_available_liquidity(true, 600, 5000) == 100, "rfl_stale_dropped");
+        // The gap vs #109 is exactly the phantom-size share of the touch.
+        ASSERT(rfm.available_liquidity(true)
+               - rfm.fresh_available_liquidity(true, 600, 5000) == 100, "rfl_phantom_gap");
+        ASSERT(rfm.fresh_available_liquidity(false, 600, 5000) == 100, "rfl_sell_side");
+        // Everything stale -> nothing sweepable.
+        ASSERT(rfm.fresh_available_liquidity(true, 100, 99999) == 0, "rfl_all_stale_zero");
+
         // An inactive venue is out regardless of freshness.
         rfm.set_venue_active("B", false);
         ASSERT(closf(rfm.fresh_nbbo_mid(2000, 5000), (10.00 + 10.06) / 2.0),
                "rfm_inactive_excluded");
+        ASSERT(rfm.fresh_available_liquidity(true, 2000, 5000) == 100, "rfl_inactive_excluded");
     }
 
     // --- #400 sweep_to_fill_at_limit — the marketable-limit sweep planner ---
