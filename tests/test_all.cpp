@@ -6765,6 +6765,30 @@ void test_ouch_order_state() {
         ASSERT(dst.desyncs() == 2, "ouch_dsy_replaced_unknown_prev");
     }
 
+    // #442 reset_session — the tracker's new-day wipe.
+    {
+        ouch::OUCHOrderTracker rss;
+        uint8_t rssb[64];
+        rss.on_new("S1", 100);
+        int rssn = OUCHMessage::encode_accepted(rssb, "S1", 'B', 100, "AAPL", 10.0, 1);
+        rss.on_response(OUCHMessage::parse_response(rssb, rssn));
+        rssn = OUCHMessage::encode_executed(rssb, "S1", 40, 10.0, 900);
+        rss.on_response(OUCHMessage::parse_response(rssb, rssn));
+        rssn = OUCHMessage::encode_accepted(rssb, "GHOST", 'B', 10, "X", 1.0, 2);
+        rss.on_response(OUCHMessage::parse_response(rssb, rssn));   // a desync too
+        ASSERT(rss.order_count() == 1 && rss.exec_count() == 1 && rss.desyncs() == 1,
+               "ouch_rss_populated");
+        rss.reset_session();
+        ASSERT(rss.order_count() == 0 && rss.active_count() == 0, "ouch_rss_map_wiped");
+        ASSERT(rss.live() == 0 && rss.fills() == 0 && rss.rejects() == 0
+               && rss.desyncs() == 0 && rss.exec_count() == 0, "ouch_rss_counters_zero");
+        ASSERT(rss.total_ordered_shares() == 0 && rss.fill_vwap() == 0.0
+               && rss.fill_rate() == 0.0, "ouch_rss_aggregates_zero");
+        // Yesterday's token is REUSABLE today without colliding.
+        rss.on_new("S1", 50);
+        ASSERT(rss.remaining("S1") == 50 && rss.filled("S1") == 0, "ouch_rss_token_reuse_clean");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100

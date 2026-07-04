@@ -381,6 +381,26 @@ public:
     uint64_t cancel_rejects() const noexcept { return cancel_rejects_; }
     // replaces: how many Order Replaced ('U') token migrations were applied (#386).
     uint64_t replaces() const noexcept { return replaced_; }
+    // reset_session: wipe the tracker for a new trading day (#442) — clears
+    // the order map (tokens are per-session on NASDAQ; yesterday's tokens
+    // colliding with today's would silently corrupt the accounting) and
+    // zeroes every counter. The lifecycle parity of OMS
+    // reset_session_counters (#204) and risk reset_daily — the tracker was
+    // the last stateful component without one, its map growing unbounded
+    // across days. Call at the session open, after any end-of-day report.
+    void reset_session() noexcept {
+        orders_.clear();
+        live_ = filled_ = cancelled_ = rejected_ = broken_ = 0;
+        ordered_shares_ = 0;
+        broken_shares_  = 0;
+        exec_count_     = 0;
+        exec_shares_    = 0;
+        cancel_rejects_ = 0;
+        replaced_       = 0;
+        desyncs_        = 0;
+        session_fill_notional_ = 0.0;
+    }
+
     // desyncs: responses that named a token the tracker never registered
     // (#426) — including a REPLACED whose PREVIOUS token is unknown. These
     // have always been folded into rejects(), which conflates two very
