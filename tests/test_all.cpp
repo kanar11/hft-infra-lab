@@ -5440,15 +5440,23 @@ void test_router_ewma_partial() {
         // cheapest_fee_venue picks by FEE alone -> C (the rebate).
         ASSERT(std::strcmp(rcf.cheapest_fee_venue(cf), "C") == 0, "rcf_best_fee_C");
         ASSERT(close(cf, -0.002), "rcf_best_fee_value");
+        // #504 rebate_venue_count / avg_venue_fee: only C rebates -> 1;
+        // mean fee (0.003 + 0.001 - 0.002)/3 = 0.002/3.
+        ASSERT(rcf.rebate_venue_count() == 1, "rvf_one_rebate");
+        ASSERT(close(rcf.avg_venue_fee(), 0.002 / 3.0), "rvf_avg_fee");
         // cheapest_venue (#200) picks by ALL-IN price -> B (C's quote is bad).
         ASSERT(std::strcmp(rcf.cheapest_venue(true), "B") == 0, "rcf_cheapest_price_B_differs");
         // Disabling C hands the best fee to B (0.001).
         rcf.set_venue_active("C", false);
         ASSERT(std::strcmp(rcf.cheapest_fee_venue(cf), "B") == 0 && close(cf, 0.001),
                "rcf_best_fee_after_disable");
-        // Empty router -> nullptr.
+        // #504: disabling the only rebate venue leaves an all-taker landscape.
+        ASSERT(rcf.rebate_venue_count() == 0, "rvf_no_rebate_after_disable");
+        ASSERT(close(rcf.avg_venue_fee(), 0.002), "rvf_avg_fee_after_disable");   // (0.003+0.001)/2
+        // Empty router -> nullptr, zero rebates, zero avg.
         SmartOrderRouter rce(RoutingStrategy::BEST_PRICE);
         ASSERT(rce.cheapest_fee_venue(cf) == nullptr, "rcf_empty_null");
+        ASSERT(rce.rebate_venue_count() == 0 && rce.avg_venue_fee() == 0.0, "rvf_empty_zero");
     }
 
     // --- #488 touch_concentration — liquidity fraction at the NBBO ---

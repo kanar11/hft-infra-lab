@@ -817,6 +817,34 @@ public:
         return found ? best_name : nullptr;
     }
 
+    // rebate_venue_count: how many ACTIVE venues pay a maker rebate
+    // (fee_per_share < 0) (#504) — the count of places that would PAY you
+    // to add liquidity. Zero means an all-taker landscape where posting
+    // never earns; a high count means the router has real rebate options
+    // to steer passive flow to. The breadth companion to cheapest_fee_venue
+    // (#496, the single best), same fee family (set_venue_fee #176,
+    // avg_fee_per_share #232).
+    int rebate_venue_count() const noexcept {
+        int n = 0;
+        for (int i = 0; i < venue_count_; ++i)
+            if (venues_[i].is_active && venues_[i].fee_per_share < 0.0) ++n;
+        return n;
+    }
+
+    // avg_venue_fee: the mean NOMINAL fee_per_share across active venues
+    // (#504) — the current fee LANDSCAPE (positive = the average venue
+    // charges to take, negative = the average pays to make), distinct from
+    // avg_fee_per_share (#232, the REALIZED fee weighted by what actually
+    // routed). A rising nominal average with steady routed fees means fees
+    // are climbing on venues the router has learned to avoid. 0 when no
+    // venue is active.
+    double avg_venue_fee() const noexcept {
+        double sum = 0.0; int n = 0;
+        for (int i = 0; i < venue_count_; ++i)
+            if (venues_[i].is_active) { sum += venues_[i].fee_per_share; ++n; }
+        return n > 0 ? sum / static_cast<double>(n) : 0.0;
+    }
+
     // cheapest_fee_venue: the NAME of the active venue with the lowest
     // fee_per_share (#496) — the most favorable fee tier, a negative value
     // being the best maker rebate. Writes the fee into out_fee. Where
