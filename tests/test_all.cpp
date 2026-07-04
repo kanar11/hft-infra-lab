@@ -71,6 +71,7 @@
 #include "../strategy/keltner.hpp"
 #include "../strategy/zlema.hpp"
 #include "../strategy/chandelier.hpp"
+#include "../strategy/awesome.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -3975,6 +3976,48 @@ void test_chandelier() {
     ASSERT(!ch.ready() && ch.highest() == 0.0, "chand_reset");
 }
 
+// AwesomeOsc #438 — Bill Williams' AO: SMA(fast) - SMA(slow).
+void test_awesome() {
+    SECTION("AwesomeOsc (#438)");
+    AwesomeOsc aofr(5, 34);
+    ASSERT(!aofr.ready() && aofr.value() == 0.0, "ao_fresh");
+    ASSERT(aofr.fast() == 5 && aofr.slow() == 34, "ao_default_periods");
+
+    // Not ready until the SLOW window fills; the fast leg lives earlier.
+    AwesomeOsc ao(2, 4);
+    ao.update(10.0); ao.update(20.0); ao.update(30.0);
+    ASSERT(!ao.ready() && ao.value() == 0.0, "ao_not_ready_early");
+    ASSERT(std::fabs(ao.fast_ma() - 25.0) < 1e-9, "ao_fast_leg_early");   // (20+30)/2
+    ao.update(40.0);
+    ASSERT(ao.ready(), "ao_ready_at_slow");
+    // fast (30+40)/2 = 35, slow (10+..+40)/4 = 25 -> AO = +10.
+    ASSERT(std::fabs(ao.value() - 10.0) < 1e-9, "ao_ramp_plus_10");
+    // On a LINEAR ramp the gap between the two means is constant.
+    ao.update(50.0);
+    ASSERT(std::fabs(ao.value() - 10.0) < 1e-9, "ao_linear_ramp_constant");
+
+    // A falling tape mirrors the sign.
+    AwesomeOsc aod(2, 4);
+    aod.update(40.0); aod.update(30.0); aod.update(20.0); aod.update(10.0);
+    ASSERT(std::fabs(aod.value() + 10.0) < 1e-9, "ao_downramp_minus_10");
+
+    // A flat tape reads EXACTLY zero (simple means, unlike MACD's EMAs).
+    AwesomeOsc aof(2, 4);
+    for (int aoi = 0; aoi < 8; ++aoi) aof.update(77.0);
+    ASSERT(aof.ready() && aof.value() == 0.0, "ao_flat_exact_zero");
+
+    // Constructor guards: fast must stay the shorter leg.
+    AwesomeOsc aog(10, 5);
+    ASSERT(aog.slow() == 5 && aog.fast() == 4, "ao_fast_clamped_below_slow");
+
+    // Invalid prices ignored; reset returns to fresh.
+    const double ao_before = ao.value();
+    ao.update(0.0); ao.update(-2.0);
+    ASSERT(std::fabs(ao.value() - ao_before) < 1e-9, "ao_ignores_invalid");
+    ao.reset();
+    ASSERT(!ao.ready() && ao.value() == 0.0, "ao_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -7242,6 +7285,7 @@ int main() {
     test_keltner();
     test_zlema();
     test_chandelier();
+    test_awesome();
     test_cmo();
     test_zscore();
     test_tsi();
