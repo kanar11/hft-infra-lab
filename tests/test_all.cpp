@@ -439,6 +439,22 @@ void test_oms_short_and_replace() {
         ASSERT(oms.total_ordered_shares() == 200 && oms.total_filled_shares() == 160,
                "fillratio_accumulators");
         ASSERT(close(oms.fill_ratio(), 0.8), "fillratio_080");      // 160/200
+        // #476 order_fill_rate — per-ORDER completion, diverges from fill_ratio.
+        // b is FILLED (100/100), a is only PARTIAL (60/100) -> 1 of 2 orders.
+        ASSERT(close(oms.order_fill_rate(), 0.5), "order_fill_rate_half");
+        // The share-view (0.8) and order-view (0.5) differ on partial fills.
+        ASSERT(oms.order_fill_rate() < oms.fill_ratio(), "order_fill_rate_vs_shares");
+        // Completing the partial order lifts it to 100% orders filled.
+        oms.fill_order(a->order_id, 40, 10.0);                      // a now FILLED
+        ASSERT(close(oms.order_fill_rate(), 1.0), "order_fill_rate_all_filled");
+        // A fresh cancelled order never counts toward the fill rate.
+        Order* c = oms.submit_order("CCC", Side::BUY, 5.0, 10);
+        oms.cancel_order(c->order_id);
+        ASSERT(close(oms.order_fill_rate(), 2.0 / 3.0), "order_fill_rate_cancel_dilutes");
+    }
+    {   // #476 empty OMS -> 0 (no division trap).
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.order_fill_rate() == 0.0, "order_fill_rate_empty_zero");
     }
 
     {   // #236 avg_commission_per_share (commission 0.01/share).

@@ -1048,6 +1048,21 @@ public:
             if (o.fill_count > mx) mx = o.fill_count;
         return mx;
     }
+    // order_fill_rate: fraction of submitted orders that FULLY filled (#476)
+    // = count_by_status(FILLED) / total_submitted. Completes the lifecycle
+    // ratio family alongside cancel_rate (#258), replace_rate (#282),
+    // submit_reject_rate (#212) — those measure how orders DIE, this
+    // measures how many reach the goal. Per-ORDER (an order counts once no
+    // matter its share count), unlike fill_ratio (#228, shares filled /
+    // shares ordered); the two diverge when orders fill partially. The OMS
+    // analog of the OUCH tracker's order_fill_rate (#361). 0 when nothing
+    // submitted; partially-filled working orders do NOT count until FILLED.
+    double order_fill_rate() const noexcept {
+        return total_submitted_ > 0
+            ? static_cast<double>(count_by_status(OrderStatus::FILLED))
+                  / static_cast<double>(total_submitted_)
+            : 0.0;
+    }
     // cancel_rate: fraction of submitted orders that were cancelled (#258) =
     // total_cancels / total_submitted. A churn / quote-stuffing indicator: a high
     // ratio means most orders never rest long (exchange msg-rate fees, surveillance
