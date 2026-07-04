@@ -6471,6 +6471,20 @@ void test_fix_order_state() {
     ptr_.on_cancel_reject(mp2);
     ASSERT(ptr_.pending_cancel_qty() == 0 && ptr_.pending_cancel_fraction() == 0.0,
            "fixstate_pcq_reject_disarms");
+
+    // #449 reset_session — the FIX tracker's new-day wipe (#442's parity).
+    // ptr_ carries live records and a cancel_rejects count from above.
+    ASSERT(ptr_.order_count() == 2 && ptr_.cancel_rejects() == 1, "fixstate_rs_populated");
+    ptr_.reset_session();
+    ASSERT(ptr_.order_count() == 0 && ptr_.working_orders() == 0
+           && ptr_.working_qty() == 0, "fixstate_rs_map_wiped");
+    ASSERT(ptr_.fills() == 0 && ptr_.cancels() == 0 && ptr_.rejects() == 0
+           && ptr_.cancel_rejects() == 0 && ptr_.replaces() == 0,
+           "fixstate_rs_counters_zero");
+    // Yesterday's ClOrdID is reusable today without a stale record answering.
+    ptr_.on_new("PC1", 40);
+    ASSERT(ptr_.state("PC1") == fix::OrdState::NEW && ptr_.leaves_qty("PC1") == 40,
+           "fixstate_rs_id_reuse_clean");
 }
 
 // OUCH order state #89 — a client-side state machine (token → live/partial/filled).

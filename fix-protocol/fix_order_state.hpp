@@ -206,6 +206,20 @@ public:
     // cancel_rejects: refused cancel attempts (#393) — distinct from
     // rejects(), which counts orders the exchange rejected outright.
     uint64_t cancel_rejects() const noexcept { return cancel_rejects_; }
+
+    // reset_session: wipe the tracker for a new trading day (#449) — the
+    // FIX parity of the OUCH tracker's reset_session (#442). ClOrdIDs are
+    // commonly re-issued from 1 each session, so yesterday's terminal
+    // records answering for today's fresh ids would silently corrupt the
+    // accounting; the map also grows unbounded across days. Clears the
+    // order map and zeroes every counter. Call at the session open, after
+    // any end-of-day report.
+    void reset_session() noexcept {
+        orders_.clear();
+        fills_ = cancels_ = rejects_ = 0;
+        cancel_rejects_ = 0;
+        replaces_       = 0;
+    }
     // replaces: OrdStatus=5 ClOrdID migrations applied (#401).
     uint64_t replaces() const noexcept { return replaces_; }
 };
