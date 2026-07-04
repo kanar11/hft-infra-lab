@@ -2339,6 +2339,27 @@ void test_itch_book() {
     ASSERT(ilvl.largest_level('B', &ilvl_px) == 400
            && std::fabs(ilvl_px - 10.00) < 1e-9, "itchbook_lvl_crown_moves");
 
+    // #439 depth_concentration — the book's shape as a mass fraction.
+    itch::ITCHOrderBook idcn;
+    ASSERT(idcn.depth_concentration('B', 3) == 0.0, "itchbook_dcn_empty_zero");
+    // Top-heavy: 800 of 1000 shares at the touch.
+    idcn.on_add(1, 'B', 10.00, 800);
+    idcn.on_add(2, 'B', 9.99, 100);
+    idcn.on_add(3, 'B', 9.98, 100);
+    ASSERT(std::fabs(idcn.depth_concentration('B', 1) - 0.8) < 1e-9, "itchbook_dcn_top_heavy");
+    // Widening the window converges to 1 (all mass inside).
+    ASSERT(std::fabs(idcn.depth_concentration('B', 3) - 1.0) < 1e-9, "itchbook_dcn_full_window");
+    ASSERT(std::fabs(idcn.depth_concentration('B', 99) - 1.0) < 1e-9, "itchbook_dcn_overshoot_capped");
+    // A deep, even ask side reads low at the touch.
+    idcn.on_add(4, 'S', 10.10, 100);
+    idcn.on_add(5, 'S', 10.11, 100);
+    idcn.on_add(6, 'S', 10.12, 100);
+    idcn.on_add(7, 'S', 10.13, 100);
+    ASSERT(std::fabs(idcn.depth_concentration('S', 1) - 0.25) < 1e-9, "itchbook_dcn_even_book");
+    // Sweeping the heavy touch hollows the side: the remaining book is even.
+    idcn.on_execute(1, 800);
+    ASSERT(std::fabs(idcn.depth_concentration('B', 1) - 0.5) < 1e-9, "itchbook_dcn_after_sweep");
+
     // #431 avg_reprice_ticks — quote-chasing intensity (how FAR, not how often).
     itch::ITCHOrderBook irpc;
     ASSERT(irpc.avg_reprice_ticks() == 0.0, "itchbook_rpc_empty_zero");

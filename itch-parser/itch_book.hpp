@@ -567,6 +567,21 @@ public:
         }
         return 0;
     }
+    // depth_concentration: the share of a side's TOTAL displayed depth
+    // sitting in its top N levels (#439) = cumulative_qty(side, n) /
+    // total_shares(side), in (0, 1]. The book's SHAPE in one number:
+    // near 1 with many levels resting behind means top-heavy — the touch
+    // carries everything and one sweep leaves the side hollow; low values
+    // mean the touch is the tip of a deep book and refills are coming.
+    // Complements book_slope (#334, the price-axis gradient) with a
+    // mass-fraction view. 0 when the side is empty.
+    double depth_concentration(char side, int n) const noexcept {
+        const int64_t total = total_shares(side);
+        if (total <= 0) return 0.0;
+        return static_cast<double>(cumulative_qty(side, n))
+             / static_cast<double>(total);
+    }
+
     // cumulative_qty: total displayed size across the top N price levels on a side
     // (#293), summing nth_level_qty (#277). How many shares a marketable order would
     // see before walking past depth N — the sizing input for a sweep. Naturally
