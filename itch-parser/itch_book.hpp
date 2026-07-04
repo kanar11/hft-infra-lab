@@ -56,6 +56,7 @@ class ITCHOrderBook {
     int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
     uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
     uint64_t exec_prints_        = 0;  // executions that hit a resting order (#463)
+    uint32_t largest_print_      = 0;  // biggest single trade print, shares (#503)
     int64_t  last_trade_ticks_   = 0;  // price of the most recent print (#471; 0 = none)
     bool     last_trade_buy_     = false; // aggressor of the last print (#471)
     int      last_tick_dir_      = 0;  // uptick/downtick carry (#479; SSR zero-plus rule)
@@ -110,6 +111,7 @@ public:
             if (it->second.side == 'B') exec_against_bid_ += dec;
             else                        exec_against_ask_ += dec;
             ++exec_prints_;   // #463: a real trade print (orphans excluded)
+            if (dec > largest_print_) largest_print_ = dec;   // #503: block detector
             // #471: the tape's last print — a hit resting BID was SOLD into
             // (aggressor sell), a lifted ASK was BOUGHT from (aggressor buy).
             const int64_t new_px = it->second.price_ticks;
@@ -223,6 +225,7 @@ public:
         exec_against_bid_ = exec_against_ask_ = 0;     // #415
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
         exec_prints_ = 0;                              // #463
+        largest_print_ = 0;                            // #503
         last_trade_ticks_ = 0; last_trade_buy_ = false; // #471
         last_tick_dir_ = 0;                             // #479
         aggressor_run_ = 0;                             // #487
@@ -809,6 +812,15 @@ public:
     // resting order — real trade prints, orphaned executes (unknown ref)
     // excluded, unlike executes() which counts every execute event.
     uint64_t trade_prints() const noexcept { return exec_prints_; }
+
+    // largest_trade_size (#503): the biggest single trade print in shares —
+    // a block detector on the tape, the MAX companion to avg_trade_size
+    // (#463, the mean), the tape parallel of largest_resting_order (#391)
+    // for the book. Their ratio (largest / avg) is block dominance: a huge
+    // largest over a small average is one block crossing amid retail-size
+    // slicing. An over-execute counts only its truly-resting (clamped)
+    // part. 0 before any print.
+    uint32_t largest_trade_size() const noexcept { return largest_print_; }
 
     // avg_trade_size (#463): mean shares per trade print = executed_shares
     // (#407) / trade_prints. The tape's typical clip: small means the tape

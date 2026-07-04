@@ -2617,9 +2617,24 @@ void test_itch_book() {
     // 120 shares -> avg 40; the orphan execute did NOT count a print.
     ASSERT(itap.trade_prints() == 3, "itchbook_prints_three");
     ASSERT(std::fabs(itap.avg_trade_size() - 40.0) < 1e-9, "itchbook_avg_trade_40");
+    // #503 largest_trade_size: prints 40/50/30 -> the biggest single is 50.
+    ASSERT(itap.largest_trade_size() == 50, "itchbook_largest_trade_50");
     itap.clear();
     ASSERT(itap.executed_shares() == 0 && itap.executed_vwap() == 0.0, "itchbook_tape_clear");
     ASSERT(itap.trade_prints() == 0 && itap.avg_trade_size() == 0.0, "itchbook_prints_clear");
+    ASSERT(itap.largest_trade_size() == 0, "itchbook_largest_trade_clear");
+
+    // #503: block dominance -> one 1000-share block amid 100-share slices
+    // gives a largest far above the average.
+    itch::ITCHOrderBook ilg;
+    ASSERT(ilg.largest_trade_size() == 0, "itchbook_largest_empty");
+    ilg.on_add(1, 'S', 20.00, 2000);
+    ilg.on_execute(1, 100); ilg.on_execute(1, 100);
+    ilg.on_execute(1, 1000);                       // the block
+    ilg.on_execute(1, 100);
+    ASSERT(ilg.largest_trade_size() == 1000, "itchbook_largest_is_block");
+    ASSERT(ilg.largest_trade_size() > static_cast<uint32_t>(ilg.avg_trade_size() * 2),
+           "itchbook_block_dominates_avg");
 
     // #463: a block tape vs a sliced tape reads very differently in avg size.
     itch::ITCHOrderBook iblk;
