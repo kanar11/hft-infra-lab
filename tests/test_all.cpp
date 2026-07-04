@@ -7124,6 +7124,38 @@ void test_ouch_order_state() {
         ASSERT(wss.working_shares_side('B') == 250, "ouch_wss_side_survives_migration");
     }
 
+    // #458 bought/sold/net_filled_shares — realized directional flow.
+    {
+        ouch::OUCHOrderTracker rff;
+        uint8_t rfb[64];
+        ASSERT(rff.bought_shares() == 0 && rff.net_filled_shares() == 0, "ouch_rff_empty");
+        rff.on_new("B1", 200);
+        int rfn = OUCHMessage::encode_accepted(rfb, "B1", 'B', 200, "AAPL", 10.0, 1);
+        rff.on_response(OUCHMessage::parse_response(rfb, rfn));
+        rff.on_new("S1", 150);
+        rfn = OUCHMessage::encode_accepted(rfb, "S1", 'S', 150, "AAPL", 10.1, 2);
+        rff.on_response(OUCHMessage::parse_response(rfb, rfn));
+        // Buy 120 of 200, sell 150 of 150 -> net -30.
+        rfn = OUCHMessage::encode_executed(rfb, "B1", 120, 10.0, 900);
+        rff.on_response(OUCHMessage::parse_response(rfb, rfn));
+        rfn = OUCHMessage::encode_executed(rfb, "S1", 150, 10.1, 901);
+        rff.on_response(OUCHMessage::parse_response(rfb, rfn));
+        ASSERT(rff.bought_shares() == 120 && rff.sold_shares() == 150, "ouch_rff_split");
+        ASSERT(rff.net_filled_shares() == -30, "ouch_rff_net_short");
+        // The split sums to the direction-blind exec tape (#328).
+        ASSERT(rff.bought_shares() + rff.sold_shares() == rff.total_filled_shares(),
+               "ouch_rff_sums_to_filled");
+        // A bust on the buy unwinds bought flow only.
+        rfn = OUCHMessage::encode_broken_trade(rfb, "B1", 20, 900, 'E');
+        rff.on_response(OUCHMessage::parse_response(rfb, rfn));
+        ASSERT(rff.bought_shares() == 100 && rff.sold_shares() == 150, "ouch_rff_bust_unwinds_buy");
+        ASSERT(rff.net_filled_shares() == -50, "ouch_rff_net_after_bust");
+        // reset_session clears the realized flow.
+        rff.reset_session();
+        ASSERT(rff.bought_shares() == 0 && rff.sold_shares() == 0
+               && rff.net_filled_shares() == 0, "ouch_rff_reset");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100

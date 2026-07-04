@@ -65,6 +65,8 @@ class OUCHOrderTracker {
     uint64_t replaced_       = 0;   // Order Replaced ('U') migrations applied (#386)
     uint64_t desyncs_        = 0;   // responses naming an UNKNOWN token (#426)
     double   session_fill_notional_ = 0.0;  // Σ exec shares × price across all orders (#410)
+    int64_t  bought_shares_ = 0;   // executed shares on BUY orders (#458)
+    int64_t  sold_shares_   = 0;   // executed shares on SELL orders (#458)
 
     Record* find(const char* token) noexcept {
         auto it = orders_.find(token);
@@ -128,6 +130,10 @@ public:
                 const double notional = r.price * static_cast<double>(exec);
                 rec->fill_notional     += notional;
                 session_fill_notional_ += notional;
+                // #458: realized directional flow, split by the order's side
+                // (captured from Accepted #450; ' ' counts on neither).
+                if      (rec->side == 'B') bought_shares_ += exec;
+                else if (rec->side == 'S') sold_shares_   += exec;
             }
             if (rec->remaining <= 0) { rec->state = OrderState::FILLED; ++filled_; }
             else                       rec->state = OrderState::PARTIAL;
@@ -150,6 +156,9 @@ public:
             }
             rec->filled    -= back;
             rec->remaining += back;
+            // #458: a bust unwinds realized flow on the order's side too.
+            if      (rec->side == 'B') bought_shares_ -= back;
+            else if (rec->side == 'S') sold_shares_   -= back;
             rec->state = (rec->filled > 0) ? OrderState::PARTIAL : OrderState::LIVE;
             ++broken_;
             broken_shares_ += back;   // #320: accumulate unwound volume
@@ -289,6 +298,18 @@ public:
                 s += rec.remaining;
         return s;
     }
+    // bought_shares / sold_shares (#458): EXECUTED shares by order side —
+    // the REALIZED directional flow, the filled counterpart to #450's
+    // WORKING (resting) split. Side comes from the Accepted report; busts
+    // unwind the flow on the same side. net_filled_shares() is the signed
+    // realized position delta this tracker has taken on: +N means N more
+    // bought than sold. Together with net_working_shares (#450) it is the
+    // full directional picture — what has traded plus what is still resting
+    // to trade.
+    int64_t bought_shares()    const noexcept { return bought_shares_; }
+    int64_t sold_shares()      const noexcept { return sold_shares_; }
+    int64_t net_filled_shares() const noexcept { return bought_shares_ - sold_shares_; }
+
     // net_working_shares: buy-side minus sell-side working shares (#450) —
     // the SIGNED directional tilt of the resting book. 0 is a balanced
     // (market-making) book; a large positive number means the working
@@ -424,6 +445,8 @@ public:
         replaced_       = 0;
         desyncs_        = 0;
         session_fill_notional_ = 0.0;
+        bought_shares_ = 0;
+        sold_shares_   = 0;
     }
 
     // desyncs: responses that named a token the tracker never registered
