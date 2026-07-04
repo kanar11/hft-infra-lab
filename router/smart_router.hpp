@@ -678,6 +678,31 @@ public:
         return found ? best : 0.0;
     }
 
+    // effective_price_dispersion: the spread of ALL-IN prices (quote +/- fee)
+    // across active venues quoting a side (#464) = max_eff - min_eff, always
+    // >= 0. The value of smart routing in one number: zero means every venue
+    // offers the same all-in price so routing is a coin flip, a wide spread
+    // means picking the right venue saves real money per share (and the best
+    // #155 vs worst gap is exactly this). Fees are in it, so a venue with a
+    // great quote but a punishing taker fee widens the dispersion correctly.
+    // 0 with fewer than two venues quoting the side.
+    double effective_price_dispersion(bool is_buy) const noexcept {
+        double lo = 0.0, hi = 0.0;
+        int found = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            if (!has_liq) continue;
+            const double eff = effective_price(v, is_buy);
+            if (found == 0 || eff < lo) lo = eff;
+            if (found == 0 || eff > hi) hi = eff;
+            ++found;
+        }
+        return found >= 2 ? hi - lo : 0.0;
+    }
+
     // is_marketable: could a limit order execute IMMEDIATELY (#184) — there is
     // an active venue whose all-in price (quote ± fee) is on the right
     // side of the limit. BUY: best all-in ask <= limit; SELL: best all-in
