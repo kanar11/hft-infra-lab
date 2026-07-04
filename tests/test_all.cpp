@@ -5763,6 +5763,12 @@ void test_risk_price_band() {
     rsh.update_pnl(+3.0); rsh.update_pnl(-1.0); rsh.update_pnl(+3.0); rsh.update_pnl(-1.0);
     ASSERT(std::fabs(rsh.pnl_std_dev() - 2.0) < 1e-9, "psh_std_2");
     ASSERT(std::fabs(rsh.pnl_sharpe() - 0.5) < 1e-9, "psh_sharpe_half");
+    // #485 downside deviation / Sortino: losses {-1,-1}, loss_sumsq 2 over
+    // N=4 -> downside_dev sqrt(0.5) ~ 0.7071, sortino 1/0.7071 ~ 1.4142.
+    ASSERT(std::fabs(rsh.pnl_downside_dev() - std::sqrt(0.5)) < 1e-9, "psh_downside_dev");
+    ASSERT(std::fabs(rsh.pnl_sortino() - 1.0 / std::sqrt(0.5)) < 1e-9, "psh_sortino");
+    // Sortino rewards the upside the Sharpe punishes -> strictly higher here.
+    ASSERT(rsh.pnl_sortino() > rsh.pnl_sharpe(), "psh_sortino_above_sharpe");
     // Doubling every P&L doubles the std but leaves the Sharpe unchanged —
     // the risk-adjustment property (same consistency, twice the size).
     RiskManager rsh2;
@@ -5773,8 +5779,13 @@ void test_risk_price_band() {
     RiskManager rsc;
     rsc.update_pnl(+5.0); rsc.update_pnl(+5.0); rsc.update_pnl(+5.0);
     ASSERT(rsc.pnl_std_dev() == 0.0 && rsc.pnl_sharpe() == 0.0, "psh_constant_zero_vol");
+    // #485: a series with NO losses has zero downside -> Sortino 0 (not inf).
+    RiskManager rso;
+    rso.update_pnl(+2.0); rso.update_pnl(+3.0); rso.update_pnl(+1.0);
+    ASSERT(rso.pnl_downside_dev() == 0.0 && rso.pnl_sortino() == 0.0, "psh_no_downside_zero");
     rsh.reset_daily();
     ASSERT(rsh.pnl_std_dev() == 0.0 && rsh.pnl_sharpe() == 0.0, "psh_reset");
+    ASSERT(rsh.pnl_downside_dev() == 0.0 && rsh.pnl_sortino() == 0.0, "psh_downside_reset");
 
     // #397 underwater_updates / max_underwater_updates — drawdown DURATION,
     // the time axis to max_drawdown_dollars' (#340) depth.

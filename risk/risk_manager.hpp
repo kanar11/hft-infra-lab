@@ -324,6 +324,7 @@ class RiskManager {
     double pnl_sum_      = 0.0;      // Σ every update_pnl delta (#477)
     double pnl_sumsq_    = 0.0;      // Σ delta² over every update_pnl (#477)
     uint64_t pnl_updates_ = 0;      // count of update_pnl calls, incl. flat (#477)
+    double loss_sumsq_   = 0.0;      // Σ delta² over LOSING update_pnl (#485)
     int32_t underwater_updates_     = 0;  // consecutive updates below the P&L peak (#397)
     int32_t max_underwater_updates_ = 0;  // longest such spell this session (#397)
     int32_t max_consec_wins_        = 0;  // best winning streak seen this session (#405)
@@ -602,6 +603,7 @@ public:
             consec_wins_ = 0;
             ++losing_updates_;   // #372
             loss_pnl_sum_ -= pnl_change;   // #381: accumulate the magnitude
+            loss_sumsq_   += pnl_change * pnl_change;   // #485: downside deviation
             if (consec_losses_ > max_consec_losses_) max_consec_losses_ = consec_losses_;  // #364
             if (limits_.max_consecutive_losses > 0
                 && consec_losses_ >= limits_.max_consecutive_losses) {
@@ -767,6 +769,7 @@ public:
         pnl_sum_ = 0.0;           // #477
         pnl_sumsq_ = 0.0;         // #477
         pnl_updates_ = 0;         // #477
+        loss_sumsq_ = 0.0;        // #485
         underwater_updates_     = 0;  // #397
         max_underwater_updates_ = 0;  // #397
         max_consec_wins_        = 0;  // #405
@@ -1203,6 +1206,30 @@ public:
         const double sd = pnl_std_dev();
         if (sd <= 0.0 || pnl_updates_ == 0) return 0.0;
         return (pnl_sum_ / static_cast<double>(pnl_updates_)) / sd;
+    }
+    // pnl_downside_dev: the downside deviation of the P&L event series
+    // (#485) = sqrt( Σ loss² / N ) over ALL updates (winners and flats
+    // contribute 0 to the numerator but still count in N — the standard
+    // downside-deviation convention). Where pnl_std_dev (#477) penalizes
+    // ALL variance, this penalizes only the losing side: a strategy with
+    // big winners and small losers has a high std but a low downside dev.
+    // 0 with no losses or fewer than one update.
+    double pnl_downside_dev() const noexcept {
+        if (pnl_updates_ == 0) return 0.0;
+        const double dd = loss_sumsq_ / static_cast<double>(pnl_updates_);
+        return dd > 0.0 ? std::sqrt(dd) : 0.0;
+    }
+    // pnl_sortino: the Sortino-style risk-adjusted edge (#485) =
+    // mean(update_pnl) / pnl_downside_dev — like pnl_sharpe (#477) but
+    // dividing by DOWNSIDE deviation instead of total, so it rewards
+    // upside volatility instead of punishing it. Sortino >= Sharpe for any
+    // series with upside dispersion (only bad volatility is penalized). 0
+    // when there is no downside (a series with no losses is unbounded-good,
+    // reported as 0 rather than infinity) or before any update.
+    double pnl_sortino() const noexcept {
+        const double dd = pnl_downside_dev();
+        if (dd <= 0.0 || pnl_updates_ == 0) return 0.0;
+        return (pnl_sum_ / static_cast<double>(pnl_updates_)) / dd;
     }
 
     // pnl_profit_factor: gross profit / gross loss over update_pnl events
