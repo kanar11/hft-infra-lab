@@ -76,6 +76,7 @@
 #include "../strategy/rolling_median.hpp"
 #include "../strategy/supertrend.hpp"
 #include "../strategy/ultimate.hpp"
+#include "../strategy/choppiness.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4463,6 +4464,48 @@ void test_ultimate() {
     ASSERT(!up.ready() && std::fabs(up.value() - 50.0) < 1e-9, "uo_reset");
 }
 
+// ChoppinessIndex #478 — trend-vs-range regime classifier.
+void test_choppiness() {
+    SECTION("ChoppinessIndex (#478)");
+    ChoppinessIndex cif(14);
+    ASSERT(!cif.ready() && std::fabs(cif.value() - 50.0) < 1e-9, "chop_neutral_before_ready");
+
+    // A perfect oscillation fills the window with motion but no net span:
+    // window {105,100,105,100}, TRs all 5 -> sumTR 20, range 5, ratio 4 = n
+    // -> CI = 100 (maximally choppy). period 4.
+    ChoppinessIndex chop(4);
+    const double oseq[] = {100, 105, 100, 105, 100};
+    for (double v : oseq) chop.update(v);
+    ASSERT(chop.ready() && std::fabs(chop.value() - 100.0) < 1e-9, "chop_oscillation_100");
+
+    // A steady one-directional ramp is efficient: much LOWER CI than the
+    // chop, and strictly inside (0,100).
+    ChoppinessIndex trend(4);
+    double px = 100.0;
+    for (int i = 0; i < 6; ++i) { px += 1.0; trend.update(px); }
+    ASSERT(trend.ready(), "chop_trend_ready");
+    ASSERT(trend.value() < chop.value(), "chop_trend_below_oscillation");
+    ASSERT(trend.value() > 0.0 && trend.value() < 100.0, "chop_trend_bounded");
+
+    // A dead-flat window is the degenerate case -> 0 (no range).
+    ChoppinessIndex flat(4);
+    for (int i = 0; i < 6; ++i) flat.update(50.0);
+    ASSERT(flat.ready() && flat.value() == 0.0, "chop_flat_zero");
+
+    // Always bounded in [0,100] on a mixed tape.
+    ChoppinessIndex mix(4);
+    const double mseq[] = {100, 103, 99, 106, 97, 108, 95, 110};
+    for (double v : mseq) mix.update(v);
+    ASSERT(mix.value() >= 0.0 && mix.value() <= 100.0, "chop_bounded");
+
+    // Invalid prints ignored; reset returns to neutral.
+    const double chop_before = chop.value();
+    chop.update(0.0); chop.update(-2.0);
+    ASSERT(std::fabs(chop.value() - chop_before) < 1e-9, "chop_ignores_invalid");
+    chop.reset();
+    ASSERT(!chop.ready() && std::fabs(chop.value() - 50.0) < 1e-9, "chop_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -8147,6 +8190,7 @@ int main() {
     test_rolling_median();
     test_supertrend();
     test_ultimate();
+    test_choppiness();
     test_cmo();
     test_zscore();
     test_tsi();
