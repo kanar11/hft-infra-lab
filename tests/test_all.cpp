@@ -6755,6 +6755,21 @@ void test_fix_session() {
                && std::strcmp(qcm.get_field(298), "1") == 0, "fix_qcxl_id_type");
         ASSERT(std::strcmp(qcm.get_symbol(), "AAPL") == 0, "fix_qcxl_symbol");
 
+        // #489 parse_quote_cancel — typed decode of 35=Z; completes the
+        // typed quote lifecycle R (#481) -> S (#473) -> Z here.
+        const auto qcd = fix::FIXSession::parse_quote_cancel(qcm);
+        ASSERT(qcd.valid && std::strcmp(qcd.quote_id, "Q1") == 0, "fix_parse_qcxl_id");
+        ASSERT(qcd.cancel_type == '1' && std::strcmp(qcd.symbol, "AAPL") == 0,
+               "fix_parse_qcxl_one_symbol_scope");
+        // Cancel-all (type '4') carries no symbol -> empty field is the contract.
+        s.build_quote_cancel(buf, sizeof(buf), "Q2", '4', "", '|');
+        FIXMessage qcm4; qcm4.parse(buf);
+        const auto qcd4 = fix::FIXSession::parse_quote_cancel(qcm4);
+        ASSERT(qcd4.valid && qcd4.cancel_type == '4' && qcd4.symbol[0] == '\0',
+               "fix_parse_qcxl_cancel_all_no_symbol");
+        FIXMessage not_z; not_z.parse("35=S|117=X|");
+        ASSERT(!fix::FIXSession::parse_quote_cancel(not_z).valid, "fix_parse_qcxl_non_Z_invalid");
+
         // #279 MassQuote (35=i) — 2-symbol quote set read via repeating-group accessors.
         s.build_mass_quote(buf, sizeof(buf), "MQ1", "AAPL", 99.98, 100.02,
                            "MSFT", 200.00, 200.10, '|');

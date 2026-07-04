@@ -1231,6 +1231,35 @@ public:
         return r;
     }
 
+    // QuoteCancelMsg — the key QuoteCancel (35=Z) fields in a typed struct
+    // (#489). The recipient-side decode of a market maker pulling quote(s),
+    // completing the typed quote lifecycle: request 35=R (#481) -> quote
+    // 35=S (#473) -> cancel 35=Z here. 117=QuoteID names the quote,
+    // 298=QuoteCancelType ('1'=cancel for one symbol, needs 55; '4'=cancel
+    // ALL of the MM's quotes, symbol absent). The venue must apply the
+    // right scope — a misread cancel-all vs cancel-one either leaves stale
+    // quotes hittable or wrongly pulls a whole book. valid=false when the
+    // message is not 35=Z.
+    struct QuoteCancelMsg {
+        char quote_id[32] = {};   // 117=QuoteID
+        char cancel_type  = '\0'; // 298 ('1'=one symbol, '4'=all)
+        char symbol[16]   = {};   // 55=Symbol (type '1' only)
+        bool valid        = false;// true when msg type == 'Z'
+    };
+
+    static QuoteCancelMsg parse_quote_cancel(const FIXMessage& m) noexcept {
+        QuoteCancelMsg r;
+        if (m.get_msg_type()[0] != 'Z') return r;   // valid stays false
+        const char* qid = m.get_field(117);
+        const char* ct  = m.get_field(298);
+        const char* sym = m.get_field(55);
+        if (qid) std::strncpy(r.quote_id, qid, sizeof(r.quote_id) - 1);
+        if (sym) std::strncpy(r.symbol,   sym, sizeof(r.symbol) - 1);
+        r.cancel_type = (ct && *ct) ? ct[0] : '\0';
+        r.valid = true;
+        return r;
+    }
+
     // QuoteReq — the key QuoteRequest (35=R) fields in a typed struct
     // (#481). The market-maker-side decode of a client's RFQ, closing the
     // request side of the flow whose response side is parse_quote (#473,
