@@ -1166,6 +1166,21 @@ public:
     // the gross dollar volume the desk ATTEMPTED to trade, whether filled or not.
     // Compare to total_traded_notional (#266) to measure execution completeness in $.
     double   total_submitted_notional() const noexcept { return total_submitted_notional_; }
+    // notional_fill_ratio: the $-weighted fill rate (#508) = total_traded_
+    // notional / total_submitted_notional — the "execution completeness in $"
+    // the two accumulators above have promised since #322, delivered. It is
+    // the DOLLAR-weighted companion to order_fill_rate (#476, fraction of
+    // ORDERS fully filled): a book that fills all its small orders but leaves
+    // its large ones working reads high on order count yet low here, which is
+    // the honest picture of how much of the intended risk actually traded.
+    // NOTE both legs of a round trip add to the numerator, so a fully-worked
+    // session can exceed 1.0 (turnover, not a bounded fraction) — read it as
+    // traded-vs-attempted dollars, not a probability. 0 before any submit.
+    double   notional_fill_ratio() const noexcept {
+        return total_submitted_notional_ > 0.0
+            ? total_traded_notional_ / total_submitted_notional_
+            : 0.0;
+    }
     // avg_submitted_notional: total_submitted_notional / total_submitted (#322) — the
     // average order size in dollars. Rising avg signals increasing block-trade activity
     // vs. small-lot order routing; falling avg suggests fragmentation.

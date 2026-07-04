@@ -626,6 +626,22 @@ void test_oms_short_and_replace() {
         ASSERT(oms322e.avg_submitted_notional() == 0.0, "oms_avg_sub_notional_empty");
     }
 
+    {   // #508 notional_fill_ratio — $-weighted fill rate, diverges from order_fill_rate.
+        OMS nfr(1000000, 1000000000.0);
+        ASSERT(nfr.notional_fill_ratio() == 0.0, "nfr_empty_zero");
+        Order* small = nfr.submit_order("AAA", Side::BUY, 10.0, 10);   // $100 submitted
+        nfr.fill_order(small->order_id, 10, 10.0);                     // $100 traded -> FILLED
+        Order* big = nfr.submit_order("BBB", Side::BUY, 20.0, 100);    // $2000 submitted
+        nfr.fill_order(big->order_id, 10, 20.0);                       // $200 traded -> partial
+        // submitted $2100, traded $300 -> 0.142857 of intended dollars
+        ASSERT(close(nfr.notional_fill_ratio(), 300.0 / 2100.0), "nfr_dollar_weighted");
+        // per-ORDER view is 1 of 2 fully filled = 0.5, far above the $-weighted truth:
+        // the big order is barely worked, so the counts flatter the execution.
+        ASSERT(nfr.order_fill_rate() > nfr.notional_fill_ratio(), "nfr_below_order_rate");
+        nfr.reset_session_counters();
+        ASSERT(nfr.notional_fill_ratio() == 0.0, "nfr_reset_zero");
+    }
+
     {   // #274 avg_fill_size (shares per fill).
         OMS oms(1000000, 1000000000.0);
         Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
