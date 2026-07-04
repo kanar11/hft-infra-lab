@@ -79,6 +79,7 @@
 #include "../strategy/choppiness.hpp"
 #include "../strategy/percent_rank.hpp"
 #include "../strategy/cfo.hpp"
+#include "../strategy/pgo.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4710,6 +4711,40 @@ void test_cfo() {
     ASSERT(!cu.ready() && cu.value() == 0.0, "cfo_reset");
 }
 
+// PrettyGoodOsc #502 — ATR-normalized displacement from the SMA.
+void test_pgo() {
+    SECTION("PrettyGoodOsc (#502)");
+    PrettyGoodOsc pgf(14);
+    ASSERT(!pgf.ready() && pgf.value() == 0.0, "pgo_zero_before_ready");
+
+    // period 2 (ATR(n) needs n ranges = n+1 prices): 10, 20, 30 -> rolling
+    // SMA over the last two (20,30) = 25, ATR mean(|+10|,|+10|) = 10, latest
+    // 30 -> PGO = (30 - 25) / 10 = +0.5.
+    PrettyGoodOsc pg(2);
+    pg.update(10.0); pg.update(20.0); pg.update(30.0);
+    ASSERT(pg.ready(), "pgo_ready");
+    ASSERT(std::fabs(pg.atr() - 10.0) < 1e-9, "pgo_atr_10");
+    ASSERT(std::fabs(pg.value() - 0.5) < 1e-9, "pgo_half_range_above");
+
+    // A price BELOW its SMA reads negative: 30,20,10 -> SMA(20,10)=15,
+    // latest 10 -> (10 - 15) / 10 = -0.5.
+    PrettyGoodOsc pd(2);
+    pd.update(30.0); pd.update(20.0); pd.update(10.0);
+    ASSERT(std::fabs(pd.value() + 0.5) < 1e-9, "pgo_below_mean_negative");
+
+    // A flat tape has zero ATR -> no scale -> 0 (not a division blow-up).
+    PrettyGoodOsc pf(2);
+    for (int i = 0; i < 5; ++i) pf.update(50.0);
+    ASSERT(pf.ready() && pf.value() == 0.0, "pgo_flat_zero");
+
+    // Invalid prints ignored; reset returns to the unready state.
+    const double pg_before = pg.value();
+    pg.update(0.0); pg.update(-5.0);
+    ASSERT(std::fabs(pg.value() - pg_before) < 1e-9, "pgo_ignores_invalid");
+    pg.reset();
+    ASSERT(!pg.ready() && pg.value() == 0.0, "pgo_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -8641,6 +8676,7 @@ int main() {
     test_choppiness();
     test_percent_rank();
     test_cfo();
+    test_pgo();
     test_cmo();
     test_zscore();
     test_tsi();
