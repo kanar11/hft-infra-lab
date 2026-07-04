@@ -2694,19 +2694,28 @@ void test_itch_book() {
     ASSERT(iagr.executed_against_ask() == 300 && iagr.executed_against_bid() == 0,
            "itchbook_agr_lift_counts_ask");
     ASSERT(std::fabs(iagr.tape_imbalance() - 1.0) < 1e-9, "itchbook_agr_pure_buying");
+    // #495 cumulative_delta: 300 bought, 0 sold -> +300 (the LEVEL, not ratio).
+    ASSERT(iagr.cumulative_delta() == 300, "itchbook_cvd_plus_300");
     iagr.on_execute(1, 100);                      // bid hit = seller-initiated
     // (300 - 100) / 400 = +0.5 — net buying pressure.
     ASSERT(std::fabs(iagr.tape_imbalance() - 0.5) < 1e-9, "itchbook_agr_net_half");
+    // #495: CVD 300 - 100 = +200.
+    ASSERT(iagr.cumulative_delta() == 200, "itchbook_cvd_plus_200");
     // The split always sums to the #407 tape total.
     ASSERT(iagr.executed_against_bid() + iagr.executed_against_ask()
            == iagr.executed_shares(), "itchbook_agr_sums_to_tape");
     iagr.on_execute(1, 200);                      // heavy selling flips the sign
     ASSERT(iagr.tape_imbalance() == 0.0, "itchbook_agr_balanced_at_300_300");
+    // #495: balanced tape -> CVD exactly 0 (where the ratio is also 0).
+    ASSERT(iagr.cumulative_delta() == 0, "itchbook_cvd_balanced_zero");
     iagr.on_execute(1, 100);                      // 300 lifted vs 400 hit
     ASSERT(iagr.tape_imbalance() < 0.0, "itchbook_agr_net_selling_negative");
+    // #495: CVD 300 - 400 = -100 (net selling in shares).
+    ASSERT(iagr.cumulative_delta() == -100, "itchbook_cvd_net_selling");
     iagr.clear();
     ASSERT(iagr.executed_against_bid() == 0 && iagr.tape_imbalance() == 0.0,
            "itchbook_agr_clear");
+    ASSERT(iagr.cumulative_delta() == 0, "itchbook_cvd_clear");
 
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");

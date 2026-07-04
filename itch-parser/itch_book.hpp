@@ -830,6 +830,19 @@ public:
     int64_t executed_against_bid() const noexcept { return exec_against_bid_; }
     int64_t executed_against_ask() const noexcept { return exec_against_ask_; }
 
+    // cumulative_delta (#495): the running signed net aggressor volume =
+    // executed_against_ask - executed_against_bid (buyer-initiated shares
+    // minus seller-initiated), the classic CVD order-flow indicator. Where
+    // tape_imbalance (#415) is the RATIO in [-1,1], this is the LEVEL in
+    // shares: a positive and rising CVD is net buying accumulating over the
+    // session regardless of how balanced any single burst was, and a CVD
+    // that diverges from price (price up, CVD flat/down) is the classic
+    // absorption/exhaustion tell. 0 before any execution and on a
+    // perfectly balanced tape.
+    int64_t cumulative_delta() const noexcept {
+        return exec_against_ask_ - exec_against_bid_;
+    }
+
     // tape_imbalance (#415): net aggressor pressure in [-1,1] =
     // (bought - sold) / total executed. +1 = every share was buyer-
     // initiated (asks lifted), -1 = pure selling into bids, 0 = balanced
