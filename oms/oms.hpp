@@ -116,6 +116,7 @@ struct Order {
     int64_t     fill_notional;  // Σ fill_qty × fill_price (#141) — for avg fill price
     int64_t     expire_ns;      // GTD: expiry (#172); 0 = no expiry (DAY/GTC)
     uint32_t    fill_count = 0; // how many execution slices filled this order (#444)
+    int64_t     cancelled_ns = 0; // when the cancel was applied; 0 = never (#452)
 
     Order() noexcept
         : order_id(0), side(Side::BUY), price(0), quantity(0),
@@ -392,7 +393,8 @@ public:
         if (pos_it != positions_.end()) {
             pos_it->second.pending_qty -= signed_remaining;
         }
-        order.status = OrderStatus::CANCELLED;
+        order.status       = OrderStatus::CANCELLED;
+        order.cancelled_ns = mono_ns();   // #452: quote-lifetime endpoint
         ++total_cancels_;   // #151
     }
 
@@ -951,6 +953,25 @@ public:
             ? to_float(total_realized_pnl()) / static_cast<double>(round_trips_)
             : 0.0;
     }
+    // avg_time_to_cancel_ns: mean QUOTE LIFETIME of cancelled orders (#452)
+    // = mean(cancelled_ns - sent_ns) over CANCELLED records. The other half
+    // of order-lifetime TCA: avg_time_to_fill_ns (#380) times the orders
+    // the market took, this times the ones we pulled — a market maker's
+    // quote life. Short lives with a high cancel_rate (#258) mean quote
+    // churn (message-rate fees, surveillance flags); very long lives mean
+    // quotes rest far from the action. 0 when nothing was cancelled.
+    int64_t avg_time_to_cancel_ns() const noexcept {
+        int64_t sum = 0, n = 0;
+        for (const auto& kv : orders_) {
+            const Order& o = kv.second;
+            if (o.status == OrderStatus::CANCELLED && o.cancelled_ns > o.sent_ns) {
+                sum += o.cancelled_ns - o.sent_ns;
+                ++n;
+            }
+        }
+        return n > 0 ? sum / n : 0;
+    }
+
     // symbol_round_trips: flat-to-flat cycles completed by ONE name (#436) —
     // WHICH names actually recycle capital, where round_trips (#420) only
     // totals them. A name with many cycles and thin realized P&L churns;

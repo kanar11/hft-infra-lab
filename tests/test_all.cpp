@@ -723,6 +723,26 @@ void test_oms_short_and_replace() {
                == oms.total_fills(), "ofc_sums_to_total_fills");
     }
 
+    {   // #452 avg_time_to_cancel_ns — quote lifetime (forced stamps, exact).
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.avg_time_to_cancel_ns() == 0, "ttc_empty_zero");
+        Order* tca_ = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        Order* tcb_ = oms.submit_order("BBB", Side::SELL, 20.0, 50);
+        Order* tcc_ = oms.submit_order("CCC", Side::BUY, 5.0, 10);
+        oms.cancel_order(tca_->order_id);
+        oms.cancel_order(tcb_->order_id);
+        // Force the stamps for exact math: lifetimes 1000 and 3000 -> mean 2000.
+        tca_->sent_ns = 1000; tca_->cancelled_ns = 2000;
+        tcb_->sent_ns = 1000; tcb_->cancelled_ns = 4000;
+        ASSERT(oms.avg_time_to_cancel_ns() == 2000, "ttc_mean_exact");
+        // A still-working order contributes nothing; a filled one neither.
+        oms.fill_order(tcc_->order_id, 10, 5.0);
+        ASSERT(oms.avg_time_to_cancel_ns() == 2000, "ttc_fill_not_counted");
+        // The two lifetime reads split the terminal population: fills go to
+        // #380's clock, cancels to this one.
+        ASSERT(oms.avg_time_to_fill_ns() > 0, "ttc_fill_side_separate");
+    }
+
     {   // #396 price improvement vs limit — the price-quality TCA axis.
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.total_price_improvement() == 0.0
