@@ -6840,6 +6840,29 @@ void test_soupbin_ouch_session() {
     rc.consume(spkt, HEADER_SIZE + ol);
     ASSERT(rc.replaces() == 1 && rc.errors() == 0, "soup_replaced_counted");
 
+    // #434 legal-but-uncounted types no longer inflate errors().
+    ASSERT(rc.others() == 0, "soup_others_starts_zero");
+    ol = OUCHMessage::encode_broken_trade(omsg, "TOK1", 50, 4242, 'E');       // B -> "BROKEN"
+    pack_header(spkt, PacketType::SEQUENCED_DATA, static_cast<uint16_t>(ol));
+    std::memcpy(spkt + HEADER_SIZE, omsg, static_cast<size_t>(ol));
+    rc.consume(spkt, HEADER_SIZE + ol);
+    ASSERT(rc.others() == 1 && rc.errors() == 0, "soup_broken_is_other_not_error");
+    ol = OUCHMessage::encode_cancel_pending(omsg, "TOK1");                    // P -> "CXL_PEND"
+    pack_header(spkt, PacketType::SEQUENCED_DATA, static_cast<uint16_t>(ol));
+    std::memcpy(spkt + HEADER_SIZE, omsg, static_cast<size_t>(ol));
+    rc.consume(spkt, HEADER_SIZE + ol);
+    ol = OUCHMessage::encode_restated(omsg, "TOK1", 60, 150.0, 'P');          // R -> "RESTATED"
+    pack_header(spkt, PacketType::SEQUENCED_DATA, static_cast<uint16_t>(ol));
+    std::memcpy(spkt + HEADER_SIZE, omsg, static_cast<size_t>(ol));
+    rc.consume(spkt, HEADER_SIZE + ol);
+    ASSERT(rc.others() == 3 && rc.errors() == 0, "soup_lifecycle_traffic_is_normal");
+    // A genuinely unknown payload type is still an ERROR.
+    omsg[0] = 'Z';
+    pack_header(spkt, PacketType::SEQUENCED_DATA, 10);
+    std::memcpy(spkt + HEADER_SIZE, omsg, 10);
+    rc.consume(spkt, HEADER_SIZE + 10);
+    ASSERT(rc.errors() == 1 && rc.others() == 3, "soup_unknown_still_error");
+
     // #118 HeartbeatTimer — bidirekcyjne heartbeaty SoupBin.
     soupbin::HeartbeatTimer hb;
     hb.on_tx(1000); hb.on_rx(1000);

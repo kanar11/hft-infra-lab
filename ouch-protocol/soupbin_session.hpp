@@ -113,6 +113,7 @@ class OuchSessionClient {
     std::uint64_t   replaces_   = 0;   // #234
     std::uint64_t   heartbeats_ = 0;
     std::uint64_t   errors_     = 0;
+    std::uint64_t   others_     = 0;   // legal, individually uncounted types (#434)
 
 public:
     // on_packet: apply one parsed server→client packet.
@@ -141,7 +142,14 @@ public:
                 else if (std::strcmp(r.type, "CANCELLED") == 0) ++cancels_;
                 else if (std::strcmp(r.type, "REJECTED")  == 0) ++rejects_;   // #234
                 else if (std::strcmp(r.type, "REPLACED")  == 0) ++replaces_;  // #234
-                else                                            ++errors_;
+                // #434: only a genuinely unparseable payload is an ERROR.
+                // Before this, every LEGAL type outside the five above —
+                // BROKEN, CXL_PEND, CXL_REJECT, RESTATED, AIQ_CXL,
+                // SYS_EVENT — inflated errors_, so a session digesting
+                // routine busts and cancel acks looked corrupted.
+                else if (std::strcmp(r.type, "ERROR")   == 0
+                      || std::strcmp(r.type, "UNKNOWN") == 0)   ++errors_;
+                else                                            ++others_;
                 break;
             }
             case PacketType::SERVER_HEARTBEAT: ++heartbeats_; break;
@@ -176,6 +184,11 @@ public:
     std::uint64_t replaces()      const noexcept { return replaces_; }    // #234
     std::uint64_t heartbeats()    const noexcept { return heartbeats_; }
     std::uint64_t errors()        const noexcept { return errors_; }
+    // others: legal sequenced messages outside the five individually
+    // counted kinds (#434) — busts, cancel-lifecycle acks, restatements,
+    // AIQ decrements, system events. Non-zero here is NORMAL traffic;
+    // non-zero errors() is not.
+    std::uint64_t others()        const noexcept { return others_; }
     std::uint64_t expected_seq()  const noexcept { return seq_.expected; }
 };
 
