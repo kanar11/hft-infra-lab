@@ -78,6 +78,7 @@
 #include "../strategy/ultimate.hpp"
 #include "../strategy/choppiness.hpp"
 #include "../strategy/percent_rank.hpp"
+#include "../strategy/cfo.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4639,6 +4640,42 @@ void test_percent_rank() {
     ASSERT(!po.ready() && std::fabs(po.value() - 50.0) < 1e-9, "prank_reset");
 }
 
+// ChandeForecastOsc #494 — % deviation of price from its LSMA forecast.
+void test_cfo() {
+    SECTION("ChandeForecastOsc (#494)");
+    ChandeForecastOsc cff(5);
+    ASSERT(!cff.ready() && cff.value() == 0.0, "cfo_zero_before_ready");
+
+    // A perfectly linear ramp: the price sits ON its own regression line,
+    // so CFO ~ 0 however steep the trend.
+    ChandeForecastOsc cr(5);
+    double px = 100.0;
+    for (int i = 0; i < 5; ++i) { cr.update(px); px += 2.0; }
+    ASSERT(cr.ready(), "cfo_ready");
+    ASSERT(std::fabs(cr.value()) < 1e-9, "cfo_on_trend_zero");
+
+    // A price that OVERSHOOTS above the regression endpoint -> positive CFO.
+    ChandeForecastOsc cu(5);
+    for (double v : {100.0, 101.0, 102.0, 103.0, 104.0}) cu.update(v);
+    ASSERT(std::fabs(cu.value()) < 1e-9, "cfo_ramp_zero");   // on trend
+    cu.update(120.0);                                        // spike above trend
+    ASSERT(cu.value() > 0.0, "cfo_overshoot_positive");
+    ASSERT(cu.lsma() < 120.0, "cfo_lsma_below_spike");
+
+    // A price that LAGS below the regression -> negative CFO.
+    ChandeForecastOsc cd(5);
+    for (double v : {100.0, 101.0, 102.0, 103.0, 104.0}) cd.update(v);
+    cd.update(90.0);                                         // drop below trend
+    ASSERT(cd.value() < 0.0, "cfo_undershoot_negative");
+
+    // Invalid prints ignored; reset returns to the unready state.
+    const double cu_before = cu.value();
+    cu.update(0.0); cu.update(-5.0);
+    ASSERT(std::fabs(cu.value() - cu_before) < 1e-9, "cfo_ignores_invalid");
+    cu.reset();
+    ASSERT(!cu.ready() && cu.value() == 0.0, "cfo_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -8475,6 +8512,7 @@ int main() {
     test_ultimate();
     test_choppiness();
     test_percent_rank();
+    test_cfo();
     test_cmo();
     test_zscore();
     test_tsi();
