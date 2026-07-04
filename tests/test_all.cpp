@@ -2383,6 +2383,25 @@ void test_itch_book() {
     ASSERT(ilvl.largest_level('B', &ilvl_px) == 400
            && std::fabs(ilvl_px - 10.00) < 1e-9, "itchbook_lvl_crown_moves");
 
+    // #455 participant_imbalance — heads, not shares (crowd vs whale).
+    itch::ITCHOrderBook ipim;
+    ASSERT(ipim.participant_imbalance() == 0.0, "itchbook_pim_empty_zero");
+    // Three small retail bids vs one institutional block ask of equal size:
+    // the SHARE imbalance is flat, the HEAD count leans hard to the bid.
+    ipim.on_add(1, 'B', 10.00, 100);
+    ipim.on_add(2, 'B', 9.99, 100);
+    ipim.on_add(3, 'B', 9.98, 100);
+    ipim.on_add(4, 'S', 10.05, 300);
+    ASSERT(std::fabs(ipim.participant_imbalance() - 0.5) < 1e-9, "itchbook_pim_crowd_leans_bid");
+    ASSERT(std::fabs(ipim.depth_imbalance(5)) < 1e-9, "itchbook_pim_shares_flat_divergence");
+    // Balanced heads -> 0.
+    ipim.on_add(5, 'S', 10.06, 50);
+    ipim.on_add(6, 'S', 10.07, 50);
+    ASSERT(ipim.participant_imbalance() == 0.0, "itchbook_pim_balanced");
+    // A full execute removes a participant and tips the count.
+    ipim.on_execute(1, 100);
+    ASSERT(std::fabs(ipim.participant_imbalance() + 0.2) < 1e-9, "itchbook_pim_exec_tips");
+
     // #447 order_count_at — queue length in PARTICIPANTS at a price.
     itch::ITCHOrderBook ioca;
     ASSERT(ioca.order_count_at('B', 10.00) == 0, "itchbook_oca_empty");

@@ -791,6 +791,23 @@ public:
             : 0.0;
     }
 
+    // participant_imbalance (#455): resting-ORDER-count imbalance in [-1,1]
+    // = (bid orders - ask orders) / total resting orders. depth_imbalance
+    // (#148) weighs SHARES, so one whale dominates it; this counts HEADS —
+    // many small orders stacking one side is the crowd's opinion, and the
+    // two diverging tells who is leaning: +imbalance here with -imbalance
+    // in shares = a retail herd against one institutional block. Built on
+    // resting_order_count (#374). 0 when the book is empty or balanced.
+    double participant_imbalance() const noexcept {
+        const std::size_t b = resting_order_count('B');
+        const std::size_t a = resting_order_count('S');
+        const std::size_t total = b + a;
+        return total > 0
+            ? (static_cast<double>(b) - static_cast<double>(a))
+                  / static_cast<double>(total)
+            : 0.0;
+    }
+
     // order_count_at (#447): how many DISTINCT orders rest at a price — the
     // queue length in PARTICIPANTS. queue_ahead (#317) gives the SHARES in
     // front of a would-be joiner; this gives the head count: ten 100-lots
