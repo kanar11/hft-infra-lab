@@ -343,6 +343,19 @@ public:
             ? avg_sell_price() - avg_buy_price() : 0.0;
     }
 
+    // realized_spread_capture_bps (#506): the per-share edge (#474) as a
+    // fraction of the buy VWAP, in basis points = (avg_sell - avg_buy) /
+    // avg_buy * 10000. The $/share capture is not comparable across a $10
+    // name and a $1000 name — 10 cents is a lot on one and nothing on the
+    // other — so bps normalizes it to the price level, the units a desk
+    // actually compares market-making performance in. Only meaningful once
+    // both sides have fills and a positive buy VWAP; 0 otherwise.
+    double realized_spread_capture_bps() const noexcept {
+        const double bp = avg_buy_price();
+        return (bought_shares_ > 0 && sold_shares_ > 0 && bp > 0.0)
+            ? (avg_sell_price() - bp) / bp * 10000.0 : 0.0;
+    }
+
     // gross_traded_notional (#482): the total $ that changed hands across
     // every execution = the session's turnover. Equal to fill_vwap (#410) x
     // exec_shares (#328); a plain $ accessor for the raw tape value.

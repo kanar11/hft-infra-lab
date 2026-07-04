@@ -7976,6 +7976,9 @@ void test_ouch_order_state() {
         mmk.on_response(OUCHMessage::parse_response(mmb, mmn));
         ASSERT(cl(mmk.avg_sell_price(), 10.30), "ouch_mmk_sell_vwap");
         ASSERT(cl(mmk.realized_spread_capture(), 0.20), "ouch_mmk_spread_capture");
+        // #506 bps version: 0.20 over a 10.10 buy VWAP.
+        ASSERT(cl(mmk.realized_spread_capture_bps(), (10.30 - 10.10) / 10.10 * 10000.0),
+               "ouch_mmk_spread_capture_bps");
         // A bust on the buy leg leaves the buy VWAP unchanged (proportional
         // notional unwind): 50 of 200 busted -> avg_buy still 10.10.
         mmn = OUCHMessage::encode_broken_trade(mmb, "B1", 50, 900, 'E');
@@ -7985,6 +7988,25 @@ void test_ouch_order_state() {
         ASSERT(cl(mmk.realized_spread_capture(), 0.20), "ouch_mmk_capture_after_bust");
         mmk.reset_session();
         ASSERT(mmk.avg_buy_price() == 0.0 && mmk.avg_sell_price() == 0.0, "ouch_mmk_reset");
+
+        // #506: a clean 100-bps scenario (0.10 over a 10.00 buy VWAP).
+        ouch::OUCHOrderTracker sc;
+        uint8_t scb[64];
+        ASSERT(sc.realized_spread_capture_bps() == 0.0, "ouch_scbps_empty");
+        sc.on_new("B", 100);
+        int scn = OUCHMessage::encode_accepted(scb, "B", 'B', 100, "AAPL", 10.0, 1);
+        sc.on_response(OUCHMessage::parse_response(scb, scn));
+        scn = OUCHMessage::encode_executed(scb, "B", 100, 10.00, 900);
+        sc.on_response(OUCHMessage::parse_response(scb, scn));
+        // One-sided so far -> not meaningful.
+        ASSERT(sc.realized_spread_capture_bps() == 0.0, "ouch_scbps_one_sided");
+        sc.on_new("S", 100);
+        scn = OUCHMessage::encode_accepted(scb, "S", 'S', 100, "AAPL", 10.1, 2);
+        sc.on_response(OUCHMessage::parse_response(scb, scn));
+        scn = OUCHMessage::encode_executed(scb, "S", 100, 10.10, 901);
+        sc.on_response(OUCHMessage::parse_response(scb, scn));
+        // 0.10 over 10.00 = 100 bps exactly.
+        ASSERT(cl(sc.realized_spread_capture_bps(), 100.0), "ouch_scbps_100");
     }
 
     // #482 net_cash_flow / gross_traded_notional.
