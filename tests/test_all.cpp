@@ -5385,6 +5385,38 @@ void test_risk_price_band() {
     RiskManager rrl0(rlh0);
     ASSERT(rrl0.rate_limit_headroom(0) == -1, "rlh_disabled_minus1");
 
+    // #437 would_breach_symbol_notional — the per-name $ what-if (#189's probe).
+    RiskLimits wsn;
+    wsn.max_position_per_symbol = 100000;
+    wsn.max_portfolio_exposure  = 100000000;
+    wsn.max_order_value         = 100000000;
+    wsn.max_orders_per_second   = 1000000;
+    wsn.max_price_band_pct      = 0.0;
+    wsn.max_symbol_notional     = 10000.0;        // $10k per name
+    RiskManager rsnw(wsn);
+    // 100 shares at $99: projected $9900 <= $10k; at $101: $10100 breaches.
+    ASSERT(!rsnw.would_breach_symbol_notional("AAPL", Side::BUY, 100, 99.0),
+           "wsn_under_cap_ok");
+    ASSERT(rsnw.would_breach_symbol_notional("AAPL", Side::BUY, 100, 101.0),
+           "wsn_over_cap_breaches");
+    // Existing exposure counts: 80 held + 30 more at $100 = $11000.
+    rsnw.on_order_sent("AAPL", Side::BUY, 80);
+    ASSERT(rsnw.would_breach_symbol_notional("AAPL", Side::BUY, 30, 100.0),
+           "wsn_existing_counts");
+    // Reducing the name frees notional — never a breach on the way down.
+    ASSERT(!rsnw.would_breach_symbol_notional("AAPL", Side::SELL, 50, 100.0),
+           "wsn_reduction_ok");
+    // Probing is side-effect-free.
+    const uint64_t wsn_checks = rsnw.get_total_checks();
+    (void)rsnw.would_breach_symbol_notional("AAPL", Side::BUY, 1, 1.0);
+    ASSERT(rsnw.get_total_checks() == wsn_checks, "wsn_no_side_effects");
+    // Disabled cap never breaches.
+    RiskLimits wsn0 = wsn;
+    wsn0.max_symbol_notional = 0.0;
+    RiskManager rsn0w(wsn0);
+    ASSERT(!rsn0w.would_breach_symbol_notional("AAPL", Side::BUY, 99999, 999.0),
+           "wsn_disabled_never");
+
     // #189 per-symbol position value limit ($10k; shares generous).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;

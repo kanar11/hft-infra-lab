@@ -967,6 +967,21 @@ public:
         return room > 0 ? room : 0;
     }
 
+    // would_breach_symbol_notional: pre-trade predicate — would this order
+    // push the symbol's $ position value past max_symbol_notional (#437)?
+    // Mirrors check_order's #189 check exactly (|projected shares| * price
+    // vs the cap) as a const, side-effect-free read, completing the what-if
+    // family: position #291, portfolio exposure #413, rate headroom #429,
+    // and now the per-name $ cap. false when the cap is disabled (<= 0).
+    bool would_breach_symbol_notional(const char* symbol, Side side,
+                                      int32_t qty, double price) const noexcept {
+        if (limits_.max_symbol_notional <= 0.0) return false;
+        const uint64_t k = sym_to_key(symbol);
+        const int32_t projected = lookup(positions_, k) + lookup(pending_, k)
+                                + signed_qty(side, qty);
+        return std::abs(projected) * price > limits_.max_symbol_notional;
+    }
+
     // would_breach_exposure: pre-trade predicate — would this order breach
     // the PORTFOLIO exposure limit (#413)? The portfolio-level companion to
     // would_breach_position (#291, per-symbol caps): mirrors check_order's
