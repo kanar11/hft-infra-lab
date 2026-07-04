@@ -1135,6 +1135,34 @@ public:
             if (std::strcmp(venues_[i].name, venue_name) == 0) return venues_[i].routed_shares;
         return 0;
     }
+    // venue_route_count: how many times an order LANDED on a venue (#456) —
+    // the count face of venue_routed_shares' volume. A SPLIT bumps this on
+    // every leg it touches, so a venue can carry a high count of small
+    // clips or a low count of blocks. -1 for an unknown venue (0 is a real
+    // "quoted but never chosen").
+    int64_t venue_route_count(const char* venue_name) const noexcept {
+        for (int i = 0; i < venue_count_; ++i)
+            if (std::strcmp(venues_[i].name, venue_name) == 0)
+                return static_cast<int64_t>(venues_[i].routes_count);
+        return -1;
+    }
+    // avg_route_size: mean shares per routing decision on a venue (#456) =
+    // routed_shares / routes_count. venue_share_pct (#216) says how much
+    // VOLUME a venue got and routing_concentration (#384) how concentrated
+    // the volume is; this says the TYPICAL CLIP — a venue fed many odd lots
+    // reads small here even at a large volume share, a block venue reads
+    // large. The routing-side analog of OMS avg_fill_size (#274). 0 for an
+    // unknown venue or one never routed to.
+    double avg_route_size(const char* venue_name) const noexcept {
+        for (int i = 0; i < venue_count_; ++i) {
+            if (std::strcmp(venues_[i].name, venue_name) != 0) continue;
+            const Venue& v = venues_[i];
+            return v.routes_count > 0
+                ? static_cast<double>(v.routed_shares) / static_cast<double>(v.routes_count)
+                : 0.0;
+        }
+        return 0.0;
+    }
     // total_routed_shares: total volume routed across all venues (#130).
     int64_t total_routed_shares() const noexcept {
         int64_t s = 0;

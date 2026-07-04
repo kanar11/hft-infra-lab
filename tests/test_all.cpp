@@ -4591,6 +4591,19 @@ void test_router_ewma_partial() {
         // #130 agregat + reset
         ASSERT(rs.total_routed_shares() == 120, "tca_total_120");
 
+        // #456 venue_route_count / avg_route_size — the typical clip per venue.
+        // A took two BEST_PRICE landings (100 + 50) of 150 shares -> avg 75.
+        ASSERT(r.venue_route_count("A") == 2, "vrc_a_two_landings");
+        ASSERT(std::fabs(r.avg_route_size("A") - 75.0) < 1e-9, "ars_a_avg_75");
+        // B was quoted but never chosen: count 0, avg 0 (not a division trap).
+        ASSERT(r.venue_route_count("B") == 0 && r.avg_route_size("B") == 0.0, "ars_b_never_routed");
+        // Unknown venue -> -1 count sentinel, 0 avg.
+        ASSERT(r.venue_route_count("GHOST") == -1 && r.avg_route_size("GHOST") == 0.0,
+               "vrc_unknown_minus1");
+        // SPLIT: X and Y each took one 60-share leg -> avg 60 apiece.
+        ASSERT(rs.venue_route_count("X") == 1 && rs.venue_route_count("Y") == 1, "vrc_split_one_each");
+        ASSERT(std::fabs(rs.avg_route_size("X") - 60.0) < 1e-9, "ars_split_60");
+
         // #384 routing_concentration — HHI over routed volume.
         // r sent all 150 shares to A -> fully concentrated, HHI 1.0.
         ASSERT(std::fabs(r.routing_concentration() - 1.0) < 1e-9, "rhhi_single_venue_one");
@@ -4616,6 +4629,8 @@ void test_router_ewma_partial() {
         rs.reset_routing_stats();
         ASSERT(rs.total_routed_shares() == 0, "tca_reset_zero");
         ASSERT(rs.routing_concentration() == 0.0, "rhhi_reset_zero");
+        // #456: the reset zeroes the route count and average too.
+        ASSERT(rs.venue_route_count("X") == 0 && rs.avg_route_size("X") == 0.0, "ars_reset_zero");
     }
 
     // --- #392 quote staleness: clock-injected freshness of the NBBO inputs ---
