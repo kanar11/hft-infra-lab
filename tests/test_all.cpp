@@ -7311,6 +7311,34 @@ void test_ouch_order_state() {
                && rff.net_filled_shares() == 0, "ouch_rff_reset");
     }
 
+    // #466 projected_net_shares — realized (#458) + working (#450) exposure.
+    {
+        ouch::OUCHOrderTracker pnt;
+        uint8_t pnb[64];
+        ASSERT(pnt.projected_net_shares() == 0, "ouch_pnt_empty");
+        // Buy order 200, accepted then 120 filled -> filled +120, working buy 80.
+        pnt.on_new("B1", 200);
+        int pnn = OUCHMessage::encode_accepted(pnb, "B1", 'B', 200, "AAPL", 10.0, 1);
+        pnt.on_response(OUCHMessage::parse_response(pnb, pnn));
+        pnn = OUCHMessage::encode_executed(pnb, "B1", 120, 10.0, 900);
+        pnt.on_response(OUCHMessage::parse_response(pnb, pnn));
+        // A resting sell of 100 (working, not filled).
+        pnt.on_new("S1", 100);
+        pnn = OUCHMessage::encode_accepted(pnb, "S1", 'S', 100, "AAPL", 10.2, 2);
+        pnt.on_response(OUCHMessage::parse_response(pnb, pnn));
+        ASSERT(pnt.net_filled_shares() == 120, "ouch_pnt_realized_120");
+        ASSERT(pnt.net_working_shares() == -20, "ouch_pnt_working_minus20");   // 80 buy - 100 sell
+        // Projected = 120 + (80 - 100) = 100.
+        ASSERT(pnt.projected_net_shares() == 100, "ouch_pnt_projected_100");
+        // Filling the resting sell moves it from working to realized — the
+        // projection is unchanged (it already counted the sell).
+        pnn = OUCHMessage::encode_executed(pnb, "S1", 100, 10.2, 901);
+        pnt.on_response(OUCHMessage::parse_response(pnb, pnn));
+        ASSERT(pnt.net_filled_shares() == 20 && pnt.net_working_shares() == 80,
+               "ouch_pnt_after_sell_fill");
+        ASSERT(pnt.projected_net_shares() == 100, "ouch_pnt_projection_stable");
+    }
+
     // #288 filled_fraction — per-order completion.
     ouch::OUCHOrderTracker ff;
     ff.on_new("A", 100);                                       // filled 0 / remaining 100

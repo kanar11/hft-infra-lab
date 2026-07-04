@@ -318,6 +318,18 @@ public:
         return working_shares_side('B') - working_shares_side('S');
     }
 
+    // projected_net_shares: the signed position this tracker would hold if
+    // every working order fully filled at its side (#466) =
+    // net_filled_shares (#458, realized) + net_working_shares (#450,
+    // potential). The pre-trade exposure projection: realized position plus
+    // what the resting book would add if it all executes. A desk sizing the
+    // next order reads this, not just the realized net, to avoid stacking a
+    // long on top of resting buys that are about to fill. Working orders
+    // whose side is unconfirmed (unacked, ' ') contribute to neither leg.
+    int32_t projected_net_shares() const noexcept {
+        return static_cast<int32_t>(net_filled_shares()) + net_working_shares();
+    }
+
     // largest_remaining_token: the TOKEN carrying largest_remaining's biggest
     // working exposure (#394) — the actionable WHICH: that is the order to
     // chase, reprice or pull first. Same LIVE/PARTIAL walk as #312, so the
