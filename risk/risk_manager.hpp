@@ -325,6 +325,8 @@ class RiskManager {
     double pnl_sumsq_    = 0.0;      // Σ delta² over every update_pnl (#477)
     uint64_t pnl_updates_ = 0;      // count of update_pnl calls, incl. flat (#477)
     double loss_sumsq_   = 0.0;      // Σ delta² over LOSING update_pnl (#485)
+    double max_gain_     = 0.0;      // largest single winning update_pnl (#501)
+    double max_loss_     = 0.0;      // largest single losing update_pnl magnitude (#501)
     int32_t underwater_updates_     = 0;  // consecutive updates below the P&L peak (#397)
     int32_t max_underwater_updates_ = 0;  // longest such spell this session (#397)
     int32_t max_consec_wins_        = 0;  // best winning streak seen this session (#405)
@@ -604,6 +606,7 @@ public:
             ++losing_updates_;   // #372
             loss_pnl_sum_ -= pnl_change;   // #381: accumulate the magnitude
             loss_sumsq_   += pnl_change * pnl_change;   // #485: downside deviation
+            if (-pnl_change > max_loss_) max_loss_ = -pnl_change;   // #501: worst single loss
             if (consec_losses_ > max_consec_losses_) max_consec_losses_ = consec_losses_;  // #364
             if (limits_.max_consecutive_losses > 0
                 && consec_losses_ >= limits_.max_consecutive_losses) {
@@ -614,6 +617,7 @@ public:
             ++consec_wins_;
             ++winning_updates_;   // #372
             win_pnl_sum_ += pnl_change;   // #381
+            if (pnl_change > max_gain_) max_gain_ = pnl_change;   // #501: best single gain
             if (consec_wins_ > max_consec_wins_) max_consec_wins_ = consec_wins_;  // #405
         }
     }
@@ -770,6 +774,8 @@ public:
         pnl_sumsq_ = 0.0;         // #477
         pnl_updates_ = 0;         // #477
         loss_sumsq_ = 0.0;        // #485
+        max_gain_ = 0.0;          // #501
+        max_loss_ = 0.0;          // #501
         underwater_updates_     = 0;  // #397
         max_underwater_updates_ = 0;  // #397
         max_consec_wins_        = 0;  // #405
@@ -1222,6 +1228,18 @@ public:
         if (sd <= 0.0 || pnl_updates_ == 0) return 0.0;
         return (pnl_sum_ / static_cast<double>(pnl_updates_)) / sd;
     }
+    // largest_pnl_gain / largest_pnl_loss: the single biggest winning and
+    // losing update_pnl this session (#501) — the tail events of the P&L
+    // stream, the loss returned as a POSITIVE magnitude. Where avg_pnl_win/
+    // loss (#381) are the means, these are the extremes: a total that is
+    // dominated by one huge gain (largest_pnl_gain near the whole win sum
+    // #381) is a fragile result, and largest_pnl_loss is the worst hit the
+    // desk took in one event — the number a risk review checks against the
+    // per-event limits. 0 before any winning / losing update; reset by
+    // reset_daily.
+    double largest_pnl_gain() const noexcept { return max_gain_; }
+    double largest_pnl_loss() const noexcept { return max_loss_; }
+
     // pnl_downside_dev: the downside deviation of the P&L event series
     // (#485) = sqrt( Σ loss² / N ) over ALL updates (winners and flats
     // contribute 0 to the numerator but still count in N — the standard

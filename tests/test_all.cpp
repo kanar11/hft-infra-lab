@@ -5991,6 +5991,20 @@ void test_risk_price_band() {
     ASSERT(rsh.pnl_std_dev() == 0.0 && rsh.pnl_sharpe() == 0.0, "psh_reset");
     ASSERT(rsh.pnl_downside_dev() == 0.0 && rsh.pnl_sortino() == 0.0, "psh_downside_reset");
 
+    // #501 largest_pnl_gain / largest_pnl_loss — the tail events.
+    RiskManager rtx;
+    ASSERT(rtx.largest_pnl_gain() == 0.0 && rtx.largest_pnl_loss() == 0.0, "ptx_empty_zero");
+    rtx.update_pnl(+3.0); rtx.update_pnl(-1.0); rtx.update_pnl(+10.0); rtx.update_pnl(-5.0);
+    ASSERT(std::fabs(rtx.largest_pnl_gain() - 10.0) < 1e-9, "ptx_biggest_gain_10");
+    ASSERT(std::fabs(rtx.largest_pnl_loss() - 5.0) < 1e-9, "ptx_biggest_loss_5_positive");
+    // Smaller subsequent moves never lower the high-water marks; a flat
+    // update touches neither.
+    rtx.update_pnl(+2.0); rtx.update_pnl(-1.0); rtx.update_pnl(0.0);
+    ASSERT(std::fabs(rtx.largest_pnl_gain() - 10.0) < 1e-9
+           && std::fabs(rtx.largest_pnl_loss() - 5.0) < 1e-9, "ptx_extremes_survive");
+    rtx.reset_daily();
+    ASSERT(rtx.largest_pnl_gain() == 0.0 && rtx.largest_pnl_loss() == 0.0, "ptx_reset");
+
     // #397 underwater_updates / max_underwater_updates — drawdown DURATION,
     // the time axis to max_drawdown_dollars' (#340) depth.
     RiskManager ruw;
