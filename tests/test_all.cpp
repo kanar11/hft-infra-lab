@@ -6610,6 +6610,14 @@ void test_fix_session() {
         ASSERT(std::strcmp(qrq.get_field(131), "QR1") == 0
                && std::strcmp(qrq.get_symbol(), "AAPL") == 0, "fix_qreq_id_symbol");
 
+        // #481 parse_quote_request — typed decode of 35=R; the RFQ request
+        // side, closing the R->S round-trip with parse_quote (#473).
+        const auto qreqd = fix::FIXSession::parse_quote_request(qrq);
+        ASSERT(qreqd.valid && std::strcmp(qreqd.quote_req_id, "QR1") == 0
+               && std::strcmp(qreqd.symbol, "AAPL") == 0, "fix_parse_qreq_id_symbol");
+        FIXMessage not_r_qr; not_r_qr.parse("35=S|131=X|");
+        ASSERT(!fix::FIXSession::parse_quote_request(not_r_qr).valid, "fix_parse_qreq_non_R_invalid");
+
         // #263 repeating-group readers on a MarketDataSnapshot (35=W): bid + ask.
         s.build_md_snapshot(buf, sizeof(buf), "MDR1", "AAPL", 99.98, 100, 100.02, 200, '|');
         FIXMessage rgm; rgm.parse(buf);

@@ -1231,6 +1231,31 @@ public:
         return r;
     }
 
+    // QuoteReq — the key QuoteRequest (35=R) fields in a typed struct
+    // (#481). The market-maker-side decode of a client's RFQ, closing the
+    // request side of the flow whose response side is parse_quote (#473,
+    // the 35=S quote): 131=QuoteReqID names the request so the maker can
+    // tie its returned Quote (35=S) back to it, 55=Symbol is what the
+    // client wants a market in. The RFQ round-trip is now both typed:
+    // R (request) in via this, S (quote) out via #473. valid=false when
+    // the message is not 35=R.
+    struct QuoteReq {
+        char quote_req_id[32] = {};   // 131=QuoteReqID
+        char symbol[16]       = {};   // 55=Symbol
+        bool valid            = false;// true when msg type == 'R'
+    };
+
+    static QuoteReq parse_quote_request(const FIXMessage& m) noexcept {
+        QuoteReq r;
+        if (m.get_msg_type()[0] != 'R') return r;   // valid stays false
+        const char* qid = m.get_field(131);
+        const char* sym = m.get_field(55);
+        if (qid) std::strncpy(r.quote_req_id, qid, sizeof(r.quote_req_id) - 1);
+        if (sym) std::strncpy(r.symbol,       sym, sizeof(r.symbol) - 1);
+        r.valid = true;
+        return r;
+    }
+
     // Quote — the key Quote (35=S) fields in a typed struct (#473). The
     // CLIENT-side decode of a market maker's two-sided quote, closing the
     // round-trip with build_quote (#249): 117=QuoteID, 132/133=BidPx/OfferPx,
