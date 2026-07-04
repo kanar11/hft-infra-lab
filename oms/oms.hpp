@@ -953,6 +953,38 @@ public:
             ? to_float(total_realized_pnl()) / static_cast<double>(round_trips_)
             : 0.0;
     }
+    // realized_pnl_per_share: the average $ edge captured per executed
+    // share (#460, MILESTONE 460) = total_realized_pnl / total_filled_
+    // shares. The headline efficiency number: avg_pnl_per_round_trip (#428)
+    // is per completed TRADE, this is per SHARE of flow — directly
+    // comparable against avg_commission_per_share (#236) to see whether the
+    // edge survives fees (realized_pnl_per_share - avg_commission_per_share
+    // is the net per-share take). Fixed-point accumulator: to_float BEFORE
+    // dividing (the #347 lesson). 0 before any fill. Both opening and
+    // closing legs count in the denominator, so this is edge per share of
+    // TURNOVER, not per round trip.
+    double realized_pnl_per_share() const noexcept {
+        return total_filled_shares_ > 0
+            ? to_float(total_realized_pnl()) / static_cast<double>(total_filled_shares_)
+            : 0.0;
+    }
+    // max_time_to_cancel_ns: the LONGEST quote life before a cancel (#460) —
+    // the tail companion to avg_time_to_cancel_ns' (#452) mean, exactly as
+    // max_time_to_fill_ns (#380) tails avg_time_to_fill_ns. One quote that
+    // rested for minutes hides in a healthy average. 0 when nothing was
+    // cancelled.
+    int64_t max_time_to_cancel_ns() const noexcept {
+        int64_t mx = 0;
+        for (const auto& kv : orders_) {
+            const Order& o = kv.second;
+            if (o.status == OrderStatus::CANCELLED && o.cancelled_ns > o.sent_ns) {
+                const int64_t d = o.cancelled_ns - o.sent_ns;
+                if (d > mx) mx = d;
+            }
+        }
+        return mx;
+    }
+
     // avg_time_to_cancel_ns: mean QUOTE LIFETIME of cancelled orders (#452)
     // = mean(cancelled_ns - sent_ns) over CANCELLED records. The other half
     // of order-lifetime TCA: avg_time_to_fill_ns (#380) times the orders

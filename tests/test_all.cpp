@@ -742,6 +742,28 @@ void test_oms_short_and_replace() {
         // The two lifetime reads split the terminal population: fills go to
         // #380's clock, cancels to this one.
         ASSERT(oms.avg_time_to_fill_ns() > 0, "ttc_fill_side_separate");
+        // #460 max_time_to_cancel_ns — the tail of the cancel lifetime.
+        ASSERT(oms.max_time_to_cancel_ns() == 3000, "ttc_max_tail");
+    }
+
+    {   // #460 realized_pnl_per_share — the per-share edge (MILESTONE 460).
+        OMS oms(1000000, 1000000000.0);
+        ASSERT(oms.realized_pnl_per_share() == 0.0, "rps_empty_zero");
+        // Buy 100 @ 10.00, sell 100 @ 10.50 -> +50 realized over 200 filled
+        // shares of turnover -> 0.25 $/share.
+        Order* rpa = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(rpa->order_id, 100, 10.0);
+        Order* rpb = oms.submit_order("AAA", Side::SELL, 10.5, 100);
+        oms.fill_order(rpb->order_id, 100, 10.5);
+        ASSERT(close(to_float(oms.total_realized_pnl()), 50.0), "rps_realized_50");
+        ASSERT(oms.total_filled_shares() == 200, "rps_turnover_200");
+        ASSERT(close(oms.realized_pnl_per_share(), 0.25), "rps_quarter_per_share");
+        // A losing round trip pulls the per-share edge negative.
+        Order* rpc = oms.submit_order("BBB", Side::BUY, 20.0, 100);
+        oms.fill_order(rpc->order_id, 100, 20.0);
+        Order* rpd = oms.submit_order("BBB", Side::SELL, 19.0, 100);
+        oms.fill_order(rpd->order_id, 100, 19.0);      // -100 over +50 -> -50 / 400
+        ASSERT(close(oms.realized_pnl_per_share(), -50.0 / 400.0), "rps_negative_after_loss");
     }
 
     {   // #396 price improvement vs limit — the price-quality TCA axis.
