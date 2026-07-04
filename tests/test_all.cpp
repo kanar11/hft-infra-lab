@@ -2955,6 +2955,26 @@ void test_multicast_gap_recovery() {
     ASSERT(ssb.dropped == 1 && ssb.pending_replay() == 2, "ssb_dropped_one");
     ASSERT(ssb.on_increment(8), "ssb_live_apply");        // now live -> apply directly
 
+    // #459 total_buffered / snapshot_coverage — recovery-snapshot freshness.
+    // 3 buffered, snapshot covered 1, 2 replay -> coverage 1/3.
+    ASSERT(ssb.total_buffered() == 3, "ssb_total_buffered_three");
+    ASSERT(std::fabs(ssb.snapshot_coverage() - 1.0 / 3.0) < 1e-9, "ssb_coverage_one_third");
+    // A FRESH snapshot that lands past everything buffered -> coverage 1.0.
+    multicast::SnapshotSyncBuffer ssf;
+    ASSERT(ssf.snapshot_coverage() == 0.0 && ssf.total_buffered() == 0, "ssb_fresh_zero");
+    ssf.on_increment(10); ssf.on_increment(11); ssf.on_increment(12);
+    // Before the snapshot lands, coverage is 0 (nothing dropped yet).
+    ASSERT(ssf.snapshot_coverage() == 0.0 && ssf.total_buffered() == 3, "ssb_pre_apply_zero");
+    ASSERT(ssf.apply_snapshot(99) == 0, "ssf_all_covered");   // snapshot@99 covers all 3
+    ASSERT(std::fabs(ssf.snapshot_coverage() - 1.0) < 1e-9, "ssb_fresh_full_coverage");
+    // A LAGGING snapshot that covers none -> coverage 0.0, all replay.
+    multicast::SnapshotSyncBuffer ssl;
+    ssl.on_increment(50); ssl.on_increment(51);
+    ASSERT(ssl.apply_snapshot(49) == 2, "ssl_none_covered");  // snapshot@49 covers nothing
+    ASSERT(ssl.snapshot_coverage() == 0.0 && ssl.total_buffered() == 2, "ssb_lagging_zero_coverage");
+    ssl.reset();
+    ASSERT(ssl.snapshot_coverage() == 0.0 && ssl.total_buffered() == 0, "ssb_coverage_reset");
+
     // #289 FeedHealth — composite 0-100 score from loss/reorder/staleness.
     multicast::FeedHealth fh;                             // defaults loss 200, ooo 100, stale 50, min 70
     ASSERT(std::fabs(fh.score(0.0, 0.0, false) - 100.0) < 1e-9 && fh.is_healthy(0.0, 0.0, false),

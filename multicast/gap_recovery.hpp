@@ -960,6 +960,27 @@ struct SnapshotSyncBuffer {
         return buffered.size();
     }
     std::size_t pending_replay() const noexcept { return buffered.size(); }
+
+    // total_buffered (#459): every increment held during recovery = the
+    // ones the snapshot already covered (dropped) plus the ones kept to
+    // replay. Before apply_snapshot this is just the live buffer; after,
+    // it is the full recovery workload.
+    std::size_t total_buffered() const noexcept { return dropped + buffered.size(); }
+
+    // snapshot_coverage (#459): the fraction of buffered increments the
+    // snapshot already reflected = dropped / total_buffered, in [0,1]. The
+    // FRESHNESS of the recovery snapshot: near 1 means it landed current
+    // and almost nothing needs replaying; low means the snapshot lagged the
+    // incremental feed and most of the buffer must be replayed to catch up
+    // (a slow snapshot service, or a long recovery). 0 before apply_snapshot
+    // (nothing dropped yet) and when no increment was buffered.
+    double snapshot_coverage() const noexcept {
+        const std::size_t total = total_buffered();
+        return total > 0
+            ? static_cast<double>(dropped) / static_cast<double>(total)
+            : 0.0;
+    }
+
     void reset() noexcept { applied = false; snapshot_seq = 0; buffered.clear(); dropped = 0; }
 };
 
