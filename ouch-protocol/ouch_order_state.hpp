@@ -359,6 +359,21 @@ public:
     // Bust-adjusted via the #474 proportional notional unwind.
     double net_cash_flow() const noexcept { return sell_notional_ - buy_notional_; }
 
+    // mark_to_market_pnl (#490, MILESTONE 490): the tracker's total P&L at a
+    // caller-supplied mark price = net_cash_flow + net_filled_shares * mark.
+    // The cash already taken in (#482) plus the value of the still-open
+    // inventory (#458) marked to `mark`: a long adds mark*shares, a short
+    // subtracts it. When the position is FLAT this collapses to net_cash_
+    // flow (the realized cash P&L, mark-independent); while it is open the
+    // mark moves it (a long profits as the mark rises). The mark is injected
+    // because the tracker is protocol-level and holds no market data — the
+    // same pattern as OMS unrealized_pnl (#96). Bust-adjusted via the #474
+    // notional unwind. This is the tracker's headline P&L read.
+    double mark_to_market_pnl(double mark_price) const noexcept {
+        return net_cash_flow()
+             + static_cast<double>(net_filled_shares()) * mark_price;
+    }
+
     // net_working_shares: buy-side minus sell-side working shares (#450) —
     // the SIGNED directional tilt of the resting book. 0 is a balanced
     // (market-making) book; a large positive number means the working

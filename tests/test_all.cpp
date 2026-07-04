@@ -7786,6 +7786,45 @@ void test_ouch_order_state() {
         ASSERT(ncf.net_cash_flow() == 0.0 && ncf.gross_traded_notional() == 0.0, "ouch_ncf_reset");
     }
 
+    // #490 mark_to_market_pnl — total P&L at a caller-supplied mark.
+    {
+        auto cl = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        ouch::OUCHOrderTracker mtm;
+        uint8_t mtb[64];
+        ASSERT(mtm.mark_to_market_pnl(100.0) == 0.0, "ouch_mtm_empty_zero");
+        // Long 100 @ 10.00: cash -1000, pos +100. MtM = -1000 + 100*mark.
+        mtm.on_new("L1", 100);
+        int mn = OUCHMessage::encode_accepted(mtb, "L1", 'B', 100, "AAPL", 10.0, 1);
+        mtm.on_response(OUCHMessage::parse_response(mtb, mn));
+        mn = OUCHMessage::encode_executed(mtb, "L1", 100, 10.00, 900);
+        mtm.on_response(OUCHMessage::parse_response(mtb, mn));
+        ASSERT(cl(mtm.mark_to_market_pnl(12.0), 200.0), "ouch_mtm_long_unrealized_up");
+        ASSERT(cl(mtm.mark_to_market_pnl(10.0), 0.0), "ouch_mtm_long_at_cost");
+        ASSERT(cl(mtm.mark_to_market_pnl(8.0), -200.0), "ouch_mtm_long_underwater");
+        // Sell 100 @ 11.00 -> flat: MtM collapses to the realized cash (+100),
+        // independent of the mark.
+        mtm.on_new("S1", 100);
+        mn = OUCHMessage::encode_accepted(mtb, "S1", 'S', 100, "AAPL", 11.0, 2);
+        mtm.on_response(OUCHMessage::parse_response(mtb, mn));
+        mn = OUCHMessage::encode_executed(mtb, "S1", 100, 11.00, 901);
+        mtm.on_response(OUCHMessage::parse_response(mtb, mn));
+        ASSERT(mtm.net_filled_shares() == 0, "ouch_mtm_flat");
+        ASSERT(cl(mtm.mark_to_market_pnl(12.0), 100.0)
+               && cl(mtm.mark_to_market_pnl(5.0), 100.0), "ouch_mtm_flat_mark_independent");
+
+        // A fresh SHORT: sell 50 @ 20.00 -> cash +1000, pos -50.
+        ouch::OUCHOrderTracker sh;
+        uint8_t shb[64];
+        sh.on_new("SH1", 50);
+        int sn = OUCHMessage::encode_accepted(shb, "SH1", 'S', 50, "TSLA", 20.0, 1);
+        sh.on_response(OUCHMessage::parse_response(shb, sn));
+        sn = OUCHMessage::encode_executed(shb, "SH1", 50, 20.00, 902);
+        sh.on_response(OUCHMessage::parse_response(shb, sn));
+        // Short profits as the mark FALLS: MtM@18 = 1000 - 900 = +100.
+        ASSERT(cl(sh.mark_to_market_pnl(18.0), 100.0), "ouch_mtm_short_profit");
+        ASSERT(cl(sh.mark_to_market_pnl(22.0), -100.0), "ouch_mtm_short_loss");
+    }
+
     // #466 projected_net_shares — realized (#458) + working (#450) exposure.
     {
         ouch::OUCHOrderTracker pnt;
