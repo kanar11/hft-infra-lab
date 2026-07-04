@@ -72,6 +72,7 @@
 #include "../strategy/zlema.hpp"
 #include "../strategy/chandelier.hpp"
 #include "../strategy/awesome.hpp"
+#include "../strategy/accel_decel.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4077,6 +4078,45 @@ void test_awesome() {
     ASSERT(!ao.ready() && ao.value() == 0.0, "ao_reset");
 }
 
+// AccelDecel #446 — Bill Williams' AC: the derivative of AO momentum.
+void test_accel_decel() {
+    SECTION("AccelDecel (#446)");
+    AccelDecel acf(5, 34, 5);
+    ASSERT(!acf.ready() && acf.value() == 0.0, "ac_fresh");
+
+    // On a LINEAR ramp the AO is constant (#438) -> AC is exactly 0:
+    // constant momentum carries zero acceleration.
+    AccelDecel acl(2, 4, 3);
+    double aclp = 10.0;
+    for (int aci = 0; aci < 12; ++aci) { aclp += 5.0; acl.update(aclp); }
+    ASSERT(acl.ready(), "ac_ready");
+    ASSERT(std::fabs(acl.value()) < 1e-9, "ac_linear_ramp_zero");
+    ASSERT(std::fabs(acl.ao() - 5.0) < 1e-9, "ac_ao_leg_constant");   // (2-mean)-(4-mean) gap
+
+    // A BEND in the path (acceleration) pushes AC positive: the fresh AO
+    // readings outrun their own recent mean.
+    acl.update(aclp + 20.0);
+    ASSERT(acl.value() > 0.0, "ac_acceleration_positive");
+    // Deceleration (a stall after the ramp) flips it negative.
+    AccelDecel acd(2, 4, 3);
+    double acdp = 10.0;
+    for (int acj = 0; acj < 12; ++acj) { acdp += 5.0; acd.update(acdp); }
+    acd.update(acdp); acd.update(acdp);            // momentum bleeds off
+    ASSERT(acd.value() < 0.0, "ac_deceleration_negative");
+
+    // A flat tape is zero all the way through (AO 0, mean 0).
+    AccelDecel acz(2, 4, 3);
+    for (int ack = 0; ack < 10; ++ack) acz.update(50.0);
+    ASSERT(acz.ready() && acz.value() == 0.0, "ac_flat_zero");
+
+    // Invalid prices ignored; reset returns to fresh.
+    const double ac_before = acl.value();
+    acl.update(0.0); acl.update(-1.0);
+    ASSERT(std::fabs(acl.value() - ac_before) < 1e-9, "ac_ignores_invalid");
+    acl.reset();
+    ASSERT(!acl.ready() && acl.value() == 0.0, "ac_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -7439,6 +7479,7 @@ int main() {
     test_zlema();
     test_chandelier();
     test_awesome();
+    test_accel_decel();
     test_cmo();
     test_zscore();
     test_tsi();
