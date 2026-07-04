@@ -2528,8 +2528,26 @@ void test_itch_book() {
     // An orphan execute (unknown ref) leaves the tape untouched.
     itap.on_execute(777, 50);
     ASSERT(itap.executed_shares() == 120, "itchbook_tape_orphan_ignored");
+    // #463 trade_prints / avg_trade_size — three real prints (40, 50, 30) of
+    // 120 shares -> avg 40; the orphan execute did NOT count a print.
+    ASSERT(itap.trade_prints() == 3, "itchbook_prints_three");
+    ASSERT(std::fabs(itap.avg_trade_size() - 40.0) < 1e-9, "itchbook_avg_trade_40");
     itap.clear();
     ASSERT(itap.executed_shares() == 0 && itap.executed_vwap() == 0.0, "itchbook_tape_clear");
+    ASSERT(itap.trade_prints() == 0 && itap.avg_trade_size() == 0.0, "itchbook_prints_clear");
+
+    // #463: a block tape vs a sliced tape reads very differently in avg size.
+    itch::ITCHOrderBook iblk;
+    ASSERT(iblk.avg_trade_size() == 0.0, "itchbook_avg_trade_empty");
+    iblk.on_add(1, 'S', 20.00, 1000);
+    iblk.on_execute(1, 1000);                      // one block print of 1000
+    ASSERT(iblk.trade_prints() == 1 && std::fabs(iblk.avg_trade_size() - 1000.0) < 1e-9,
+           "itchbook_avg_trade_block");
+    itch::ITCHOrderBook islc;
+    islc.on_add(1, 'S', 20.00, 1000);
+    for (int k = 0; k < 10; ++k) islc.on_execute(1, 100);   // ten sliced prints
+    ASSERT(islc.trade_prints() == 10 && std::fabs(islc.avg_trade_size() - 100.0) < 1e-9,
+           "itchbook_avg_trade_sliced");
 
     // #415 executed_against_bid/ask + tape_imbalance — exact aggressor flow.
     itch::ITCHOrderBook iagr;

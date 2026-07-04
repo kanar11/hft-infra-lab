@@ -55,6 +55,7 @@ class ITCHOrderBook {
     int64_t exec_against_ask_    = 0;  // tape: shares lifted from ASKS = buyer-initiated (#415)
     int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
     uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
+    uint64_t exec_prints_        = 0;  // executions that hit a resting order (#463)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -104,6 +105,7 @@ public:
             // resting BID was sold into, a lifted ASK was bought from.
             if (it->second.side == 'B') exec_against_bid_ += dec;
             else                        exec_against_ask_ += dec;
+            ++exec_prints_;   // #463: a real trade print (orphans excluded)
         }
         reduce_(ref, exec_shares);
         ++executes_;
@@ -195,6 +197,7 @@ public:
         exec_shares_sum_ = exec_notional_ticks_ = 0;   // #407
         exec_against_bid_ = exec_against_ask_ = 0;     // #415
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
+        exec_prints_ = 0;                              // #463
     }
     // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
@@ -732,6 +735,23 @@ public:
         return exec_shares_sum_ > 0
             ? (static_cast<double>(exec_notional_ticks_)
                / static_cast<double>(exec_shares_sum_)) / 100.0
+            : 0.0;
+    }
+
+    // trade_prints (#463): the number of executions that actually hit a
+    // resting order — real trade prints, orphaned executes (unknown ref)
+    // excluded, unlike executes() which counts every execute event.
+    uint64_t trade_prints() const noexcept { return exec_prints_; }
+
+    // avg_trade_size (#463): mean shares per trade print = executed_shares
+    // (#407) / trade_prints. The tape's typical clip: small means the tape
+    // is dominated by algo slicing (many odd lots, information leakage),
+    // large means block activity. The tape analog of the book-side clip
+    // reads (order_count_at #447, largest_resting_order #391) and the
+    // itch parallel of router avg_route_size (#456). 0 before any print.
+    double avg_trade_size() const noexcept {
+        return exec_prints_ > 0
+            ? static_cast<double>(exec_shares_sum_) / static_cast<double>(exec_prints_)
             : 0.0;
     }
 
