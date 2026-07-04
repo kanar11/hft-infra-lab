@@ -2615,6 +2615,30 @@ void test_itch_book() {
     iltp.clear();
     ASSERT(iltp.last_trade_price() == 0.0 && !iltp.last_trade_is_buy(), "itchbook_ltp_clear");
 
+    // #479 tick_direction — the SSR uptick rule with zero-plus carry.
+    itch::ITCHOrderBook itk;
+    ASSERT(itk.tick_direction() == 0 && !itk.is_uptick(), "itchbook_tick_empty_zero");
+    itk.on_add(1, 'S', 10.00, 100);
+    itk.on_add(2, 'S', 10.02, 100);
+    itk.on_add(3, 'S', 10.05, 100);
+    itk.on_add(4, 'B', 9.98, 100);
+    itk.on_add(5, 'B', 9.98, 100);
+    itk.on_execute(1, 100);                       // first print @10.00 -> no prior tick
+    ASSERT(itk.tick_direction() == 0, "itchbook_tick_first_print_zero");
+    itk.on_execute(2, 100);                       // @10.02 > 10.00 -> uptick
+    ASSERT(itk.tick_direction() == 1 && itk.is_uptick(), "itchbook_tick_uptick");
+    itk.on_execute(3, 100);                       // @10.05 > 10.02 -> still up
+    ASSERT(itk.tick_direction() == 1, "itchbook_tick_still_up");
+    itk.on_execute(4, 100);                       // @9.98 < 10.05 -> downtick
+    ASSERT(itk.tick_direction() == -1 && !itk.is_uptick(), "itchbook_tick_downtick");
+    itk.on_execute(5, 100);                       // @9.98 == 9.98 -> carry -1 (zero-minus)
+    ASSERT(itk.tick_direction() == -1, "itchbook_tick_zero_minus_carry");
+    // The tick test is price-based, distinct from the aggressor (#471):
+    // the last print hit a bid (seller-initiated) AND was a downtick.
+    ASSERT(!itk.last_trade_is_buy() && itk.tick_direction() == -1, "itchbook_tick_vs_aggressor");
+    itk.clear();
+    ASSERT(itk.tick_direction() == 0, "itchbook_tick_clear");
+
     // #415 executed_against_bid/ask + tape_imbalance — exact aggressor flow.
     itch::ITCHOrderBook iagr;
     ASSERT(iagr.tape_imbalance() == 0.0, "itchbook_agr_empty_zero");

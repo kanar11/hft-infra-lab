@@ -58,6 +58,7 @@ class ITCHOrderBook {
     uint64_t exec_prints_        = 0;  // executions that hit a resting order (#463)
     int64_t  last_trade_ticks_   = 0;  // price of the most recent print (#471; 0 = none)
     bool     last_trade_buy_     = false; // aggressor of the last print (#471)
+    int      last_tick_dir_      = 0;  // uptick/downtick carry (#479; SSR zero-plus rule)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -110,7 +111,18 @@ public:
             ++exec_prints_;   // #463: a real trade print (orphans excluded)
             // #471: the tape's last print — a hit resting BID was SOLD into
             // (aggressor sell), a lifted ASK was BOUGHT from (aggressor buy).
-            last_trade_ticks_ = it->second.price_ticks;
+            const int64_t new_px = it->second.price_ticks;
+            // #479: the price tick test with the SSR zero-plus/zero-minus
+            // carry — a print above the last DIFFERENT price is +1, below is
+            // -1, and a same-price print keeps the prior direction (the
+            // uptick rule treats a zero-plus-tick as an uptick). Only from
+            // the second print on (needs a prior price to compare).
+            if (last_trade_ticks_ != 0) {
+                if      (new_px > last_trade_ticks_) last_tick_dir_ = 1;
+                else if (new_px < last_trade_ticks_) last_tick_dir_ = -1;
+                // equal price -> carry the previous direction
+            }
+            last_trade_ticks_ = new_px;
             last_trade_buy_   = (it->second.side == 'S');
         }
         reduce_(ref, exec_shares);
@@ -205,6 +217,7 @@ public:
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
         exec_prints_ = 0;                              // #463
         last_trade_ticks_ = 0; last_trade_buy_ = false; // #471
+        last_tick_dir_ = 0;                             // #479
     }
     // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
@@ -757,6 +770,23 @@ public:
     // price to classify the most recent trade's direction without a
     // rolling window (tape_imbalance #415 is the session aggregate).
     bool last_trade_is_buy() const noexcept { return last_trade_buy_; }
+
+    // tick_direction (#479): the PRICE tick test with the SSR zero-plus/
+    // zero-minus carry — +1 if the last print was above the previous
+    // different price (uptick), -1 if below (downtick), and a same-price
+    // print keeps the prior sign (a zero-plus-tick counts as an uptick,
+    // the SEC Rule 201 short-sale convention). Distinct from
+    // last_trade_is_buy (#471), which reads the AGGRESSOR from the resting
+    // side: the tick test is a price-history fallback (Lee-Ready uses it
+    // when the quote-based side is ambiguous) and can disagree with the
+    // aggressor on a print that moves the price the "wrong" way. 0 before
+    // the second print (no prior price to tick against).
+    int tick_direction() const noexcept { return last_tick_dir_; }
+
+    // is_uptick (#479): true when the last price tick was up (or a carried
+    // zero-plus-tick) — the SSR short-sale gate (a short at or below the
+    // bid is only allowed on an uptick).
+    bool is_uptick() const noexcept { return last_tick_dir_ > 0; }
 
     // trade_prints (#463): the number of executions that actually hit a
     // resting order — real trade prints, orphaned executes (unknown ref)
