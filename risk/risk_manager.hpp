@@ -1193,6 +1193,21 @@ public:
         const double var  = pnl_sumsq_ / n - mean * mean;
         return var > 0.0 ? std::sqrt(var) : 0.0;
     }
+    // pnl_recovery_factor: the session return covered by its worst drawdown
+    // (#493) = daily_pnl / max_drawdown_dollars — a Calmar/recovery-factor
+    // read. > 1 means the desk has made more than its worst peak-to-trough
+    // loss (it fully recovered and then some), < 1 means the deepest hole
+    // still exceeds the standing profit. Where pnl_sharpe (#477) adjusts by
+    // volatility and pnl_sortino (#485) by downside deviation, this adjusts
+    // by the single worst DRAWDOWN (#340) — the loss path that actually
+    // scares a desk, not its dispersion. 0 when there has been no drawdown
+    // (an only-up session, reported as 0 rather than infinity). Can go
+    // negative when the session is net down. Reset by reset_daily via its
+    // inputs.
+    double pnl_recovery_factor() const noexcept {
+        return max_drawdown_dollars_ > 0.0 ? daily_pnl_ / max_drawdown_dollars_ : 0.0;
+    }
+
     // pnl_sharpe: the risk-adjusted per-event edge (#477) = mean(update_pnl)
     // / pnl_std_dev — a Sharpe-style ratio on the P&L event stream (no
     // annualization, no risk-free rate; a pure reward-per-unit-volatility

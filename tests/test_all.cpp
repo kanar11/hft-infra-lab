@@ -6350,10 +6350,20 @@ void test_risk_price_band() {
     ASSERT(std::fabs(rmdd.max_drawdown_dollars() - 300.0) < 1e-6, "mdd_first_300");
     rmdd.update_pnl(500.0);                   // daily 1200 -> new high, current dd 0, max_dd still 300
     ASSERT(std::fabs(rmdd.max_drawdown_dollars() - 300.0) < 1e-6, "mdd_survives_recovery");
+    // #493 pnl_recovery_factor: daily 1200 over max_dd 300 -> 4.0 (fully
+    // recovered and then some).
+    ASSERT(std::fabs(rmdd.pnl_recovery_factor() - 4.0) < 1e-9, "rf_four");
     rmdd.update_pnl(-800.0);                  // daily 400 -> dd from peak 1200 = 800 > 300
     ASSERT(std::fabs(rmdd.max_drawdown_dollars() - 800.0) < 1e-6, "mdd_new_worse_trough");
+    // #493: daily 400 over max_dd 800 -> 0.5 (the hole still exceeds profit).
+    ASSERT(std::fabs(rmdd.pnl_recovery_factor() - 0.5) < 1e-9, "rf_half");
+    // #493: an only-up session has no drawdown -> recovery factor 0 (not inf).
+    RiskManager rfu;
+    rfu.update_pnl(+100.0); rfu.update_pnl(+50.0);
+    ASSERT(rfu.pnl_recovery_factor() == 0.0, "rf_no_drawdown_zero");
     rmdd.reset_daily();
     ASSERT(std::fabs(rmdd.max_drawdown_dollars() - 0.0) < 1e-6, "mdd_reset_daily");
+    ASSERT(rmdd.pnl_recovery_factor() == 0.0, "rf_reset_zero");
 
     // #205 consecutive_losses_remaining (loss-streak breaker, threshold 3).
     RiskLimits cll; cll.max_consecutive_losses = 3;
