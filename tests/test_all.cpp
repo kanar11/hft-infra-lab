@@ -3166,9 +3166,14 @@ void test_multicast_gap_recovery() {
     multicast::SlidingWindowRate sw(1000);
     sw.on_event(0); sw.on_event(500); sw.on_event(900);
     ASSERT(sw.count() == 3, "swr_all_in_window");          // all within [-100, 900]
+    ASSERT(sw.peak_count() == 3, "swr_peak_3");            // #507: high-water = 3
     sw.on_event(1500);                                     // prunes <= 500 (0 and 500)
     ASSERT(sw.count() == 2, "swr_pruned_old");             // keeps 900, 1500
+    ASSERT(sw.peak_count() == 3, "swr_peak_holds");        // #507: burst peak survives prune
+    ASSERT(std::fabs(sw.peak_rate_per_sec() - 3.0 * 1e9 / 1000.0) < 1e-3, "swr_peak_rate");
     ASSERT(std::fabs(sw.rate_per_sec() - 2.0 * 1e9 / 1000.0) < 1e-3, "swr_rate");
+    sw.reset();
+    ASSERT(sw.count() == 0 && sw.peak_count() == 0, "swr_reset_clears_peak");   // #507
     // ring wrap: 10k events 1 ns apart wrap the 4096 ring; 1000 ns window keeps 1000.
     multicast::SlidingWindowRate swr(1000);
     for (int i = 0; i < 10000; ++i) swr.on_event(i);

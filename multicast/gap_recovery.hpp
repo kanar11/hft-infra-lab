@@ -878,14 +878,28 @@ struct SlidingWindowRate {
     void on_event(std::int64_t now_ns) noexcept {
         ring_.push(now_ns);
         ring_.evict(now_ns - window_ns);
+        const std::size_t c = ring_.count();
+        if (c > peak_count_) peak_count_ = c;   // #507: window high-water mark
     }
     std::size_t count() const noexcept { return ring_.count(); }   // events within the window
     double rate_per_sec() const noexcept {
         return window_ns > 0 ? static_cast<double>(count()) * 1e9 / static_cast<double>(window_ns) : 0.0;
     }
-    void reset() noexcept { ring_.reset(); }
+    // peak_count / peak_rate_per_sec (#507): the busiest the window ever got
+    // — the high-water mark of count() over the session, the burst peak.
+    // count() is the load RIGHT NOW (whatever is inside the sliding window);
+    // this remembers the worst burst even after it aged out, exactly as
+    // FeedRateMeter's peak (#163) does for its window. A sizing/alert input:
+    // the transient spike that count() no longer shows is the one that
+    // overran a buffer. 0 before any event.
+    std::size_t peak_count() const noexcept { return peak_count_; }
+    double peak_rate_per_sec() const noexcept {
+        return window_ns > 0 ? static_cast<double>(peak_count_) * 1e9 / static_cast<double>(window_ns) : 0.0;
+    }
+    void reset() noexcept { ring_.reset(); peak_count_ = 0; }
 
 private:
+    std::size_t peak_count_ = 0;   // #507
     TimestampRing<RING_SIZE> ring_;
 };
 
