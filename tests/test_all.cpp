@@ -4517,6 +4517,27 @@ void test_router_ewma_partial() {
         ASSERT(closf(rfm.fresh_nbbo_mid(2000, 5000), (10.00 + 10.06) / 2.0),
                "rfm_inactive_excluded");
         ASSERT(rfm.fresh_available_liquidity(true, 2000, 5000) == 100, "rfl_inactive_excluded");
+        rfm.set_venue_active("B", true);
+
+        // #440 sweep_to_fill_fresh — the phantom-free sweep plan (MILESTONE 440).
+        double rsf_vwap = -1.0;
+        // Everything fresh: identical to the unguarded sweep.
+        double rsf_raw = 0.0;
+        const int32_t rsf_all = rfm.sweep_to_fill(true, 150, rsf_raw);
+        ASSERT(rfm.sweep_to_fill_fresh(true, 150, 2000, 5000, rsf_vwap) == rsf_all
+               && closf(rsf_vwap, rsf_raw), "rsf_all_fresh_matches_raw");
+        // B (ask 10.02 x 100) fresh, A (ask 10.06 x 100) stale at 600ns:
+        // the plan takes B first and CANNOT finish 150 from fresh venues.
+        ASSERT(rfm.sweep_to_fill_fresh(true, 150, 600, 5000, rsf_vwap) == 100,
+               "rsf_stale_leg_dropped");
+        ASSERT(closf(rsf_vwap, 10.02), "rsf_vwap_fresh_only");
+        // The raw sweep happily books the phantom 50 at A's stale 10.06.
+        ASSERT(rfm.sweep_to_fill(true, 150, rsf_raw) == 150, "rsf_raw_books_phantom");
+        // Nothing fresh -> nothing planned, vwap zeroed.
+        ASSERT(rfm.sweep_to_fill_fresh(true, 150, 100, 99999, rsf_vwap) == 0
+               && rsf_vwap == 0.0, "rsf_all_stale_zero");
+        // Zero-size request is a no-op.
+        ASSERT(rfm.sweep_to_fill_fresh(true, 0, 2000, 5000, rsf_vwap) == 0, "rsf_zero_shares");
     }
 
     // --- #400 sweep_to_fill_at_limit — the marketable-limit sweep planner ---

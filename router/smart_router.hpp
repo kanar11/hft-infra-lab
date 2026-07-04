@@ -920,6 +920,52 @@ public:
         const double diff = is_buy ? (vwap - m) : (m - vwap);
         return diff / m * 10000.0;
     }
+    // sweep_to_fill_fresh (#440, MILESTONE 440): sweep_to_fill (#335) with
+    // the #392 staleness gate — only venues whose quote is at most
+    // max_age_ns old participate. The planner-tier member of the fresh
+    // family (fresh_nbbo_mid #424 = price, fresh_available_liquidity #432
+    // = size, this = COST): a sweep planned over stale quotes books fills
+    // that fade on arrival, so the plan itself must drop them. Same
+    // raw-quote VWAP convention as #335 (NBBO terms; the at-limit family
+    // #400 is the all-in view). Returns the fillable shares from FRESH
+    // venues and writes their VWAP into out_vwap (0 on no fill); the gap
+    // vs sweep_to_fill is the phantom part of the plan.
+    int32_t sweep_to_fill_fresh(bool is_buy, int32_t shares,
+                                int64_t max_age_ns, int64_t at_ns,
+                                double& out_vwap) const noexcept {
+        out_vwap = 0.0;
+        if (shares <= 0) return 0;
+        bool    used[MAX_VENUES] = {};   // value-init: cppcheck-clean, no heap
+        int32_t remaining = shares, filled = 0;
+        double  notional = 0.0;
+        for (int pass = 0; pass < venue_count_ && remaining > 0; ++pass) {
+            int    best_i  = -1;
+            double best_px = 0.0;
+            for (int i = 0; i < venue_count_; ++i) {
+                if (used[i]) continue;
+                const Venue& v = venues_[i];
+                if (!v.is_active || v.last_quote_ns == 0) continue;
+                if (at_ns - v.last_quote_ns > max_age_ns) continue;   // stale: not in the plan
+                const double  px = is_buy ? v.best_ask : v.best_bid;
+                const int32_t sz = is_buy ? v.ask_size : v.bid_size;
+                if (px <= 0.0 || sz <= 0) continue;
+                const bool better = (best_i < 0) ||
+                                    (is_buy ? px < best_px : px > best_px);
+                if (better) { best_i = i; best_px = px; }
+            }
+            if (best_i < 0) break;                       // no fresh liquidity left
+            used[best_i] = true;
+            const Venue&  v    = venues_[best_i];
+            const int32_t sz   = is_buy ? v.ask_size : v.bid_size;
+            const int32_t take = remaining < sz ? remaining : sz;
+            notional  += best_px * take;
+            filled    += take;
+            remaining -= take;
+        }
+        if (filled > 0) out_vwap = notional / static_cast<double>(filled);
+        return filled;
+    }
+
     // sweep_to_fill_at_limit (#400, MILESTONE 400): the marketable-limit
     // sweep planner — how many of `shares` fill RIGHT NOW without paying
     // worse than `limit_price`, and at what blended cost. Walks venues in
