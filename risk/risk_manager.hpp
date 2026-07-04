@@ -1070,6 +1070,19 @@ public:
         const double room = limits_.max_drawdown_pct - current_drawdown_pct();
         return room > 0.0 ? room : 0.0;
     }
+    // remaining_turnover_budget: how many more $ can trade today before the
+    // turnover check (#144, check 2c) starts rejecting (#453) — the
+    // remaining-budget face of daily_turnover_pct's (#221) utilization,
+    // completing the headroom family: remaining_loss_budget #213 /
+    // consecutive_losses_remaining #205 / drawdown_headroom_pct #267 /
+    // headroom_shares #245. An execution scheduler paces the tail of the
+    // day with this number instead of discovering the wall from rejects.
+    // -1 when the limit is disabled (unlimited); 0 when already exhausted.
+    double remaining_turnover_budget() const noexcept {
+        if (limits_.max_daily_traded_notional <= 0.0) return -1.0;
+        const double room = limits_.max_daily_traded_notional - traded_notional_;
+        return room > 0.0 ? room : 0.0;
+    }
     // current_drawdown_dollars: absolute drawdown from the high-water mark in $
     // (#275) = peak_pnl_ - daily_pnl_, clamped >= 0. The dollar companion to
     // current_drawdown_pct (#197) — some desks size and alert on absolute drawdown

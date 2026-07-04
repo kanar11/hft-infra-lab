@@ -5786,6 +5786,24 @@ void test_risk_price_band() {
     rtd.add_traded_notional(50000.0);
     ASSERT(std::fabs(rtd.daily_turnover_pct() - 0.0) < 1e-6, "turnover_disabled");
 
+    // #453 remaining_turnover_budget — the $ headroom behind #221's percent.
+    // rtn stands at 50000 of 100000 -> 50000 left.
+    ASSERT(std::fabs(rtn.remaining_turnover_budget() - 50000.0) < 1e-6, "tob_half_left");
+    rtn.add_traded_notional(49999.0);
+    ASSERT(std::fabs(rtn.remaining_turnover_budget() - 1.0) < 1e-6, "tob_one_dollar_left");
+    // Exhaustion floors at 0 — and check 2c starts rejecting exactly there.
+    rtn.add_traded_notional(1.0);
+    ASSERT(rtn.remaining_turnover_budget() == 0.0, "tob_exhausted_zero");
+    ASSERT(rtn.check_order("AAPL", Side::BUY, 1.0, 1).action == RiskAction::REJECT,
+           "tob_agrees_with_check_2c");
+    // Overshoot stays floored; the disabled limit reads -1 (unlimited).
+    rtn.add_traded_notional(5000.0);
+    ASSERT(rtn.remaining_turnover_budget() == 0.0, "tob_overshoot_floored");
+    ASSERT(rtd.remaining_turnover_budget() == -1.0, "tob_disabled_minus1");
+    // reset_daily refills the whole budget.
+    rtn.reset_daily();
+    ASSERT(std::fabs(rtn.remaining_turnover_budget() - 100000.0) < 1e-6, "tob_reset_refills");
+
     // #229 check_reject_rate (small max_order_value -> some checks rejected).
     RiskLimits crl;
     crl.max_order_value        = 500;
