@@ -6301,6 +6301,20 @@ void test_fix_session() {
         ASSERT(std::strcmp(mdy.get_field(262), "MDR1") == 0, "fix_mdy_reqid_echo");
         ASSERT(std::strcmp(mdy.get_field(281), "0") == 0, "fix_mdy_reject_reason");
 
+        // #465 parse_md_request_reject — typed CLIENT-side decode of 35=Y;
+        // closes the V->Y handshake with parse_market_data_request (#457).
+        const auto mdyr = fix::FIXSession::parse_md_request_reject(mdy);
+        ASSERT(mdyr.valid && std::strcmp(mdyr.md_req_id, "MDR1") == 0, "fix_parse_mdy_id_echo");
+        ASSERT(mdyr.reason == '0', "fix_parse_mdy_reason_unknown_symbol");
+        // A different reason code decodes verbatim (unsupported depth).
+        s.build_md_request_reject(buf, sizeof(buf), "MDR2", '4', '|');
+        FIXMessage mdy4; mdy4.parse(buf);
+        const auto mdyr4 = fix::FIXSession::parse_md_request_reject(mdy4);
+        ASSERT(mdyr4.valid && mdyr4.reason == '4' && std::strcmp(mdyr4.md_req_id, "MDR2") == 0,
+               "fix_parse_mdy_unsupported_depth");
+        FIXMessage not_y; not_y.parse("35=V|262=X|");
+        ASSERT(!fix::FIXSession::parse_md_request_reject(not_y).valid, "fix_parse_mdy_non_Y_invalid");
+
         // #241 parse_exec_report — ekstrakcja pol 35=8 do struktury.
         s.build_exec_report(buf, sizeof(buf), "ORD1", "EX1", "E1", '2', '2',  // Fill/Fill
                             "AAPL", Side::BUY, 100, 150.25, 100, 0, '|');

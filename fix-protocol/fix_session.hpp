@@ -1231,6 +1231,32 @@ public:
         return r;
     }
 
+    // MDReject — the key MarketDataRequestReject (35=Y) fields in a typed
+    // struct (#465). The CLIENT-side decode of the venue's refusal of a
+    // MarketDataRequest, closing the V->Y handshake symmetrically with
+    // parse_market_data_request (#457, the request decoded acceptor-side):
+    // 262=MDReqID echoes the request the client sent so it can match the
+    // reject to the outstanding subscription, 281=MDReqRejReason says why
+    // ('0'=unknown symbol, '1'=duplicate, '4'=unsupported depth,
+    // '5'=unsupported sub type). reason is '\0' when tag 281 is absent.
+    // valid=false when the message is not 35=Y.
+    struct MDReject {
+        char md_req_id[32] = {};   // 262=MDReqID (echo of the rejected request)
+        char reason        = '\0'; // 281=MDReqRejReason
+        bool valid         = false;// true when msg type == 'Y'
+    };
+
+    static MDReject parse_md_request_reject(const FIXMessage& m) noexcept {
+        MDReject r;
+        if (m.get_msg_type()[0] != 'Y') return r;   // valid stays false
+        const char* rid = m.get_field(262);
+        const char* rr  = m.get_field(281);
+        if (rid) std::strncpy(r.md_req_id, rid, sizeof(r.md_req_id) - 1);
+        r.reason = (rr && *rr) ? rr[0] : '\0';
+        r.valid  = true;
+        return r;
+    }
+
     // MDRequest — the key MarketDataRequest (35=V) fields in a typed struct
     // (#457). The acceptor-side (venue) decode that closes the round-trip
     // with build_market_data_request (#209): a client subscribes to, or
