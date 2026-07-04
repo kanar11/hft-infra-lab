@@ -967,6 +967,22 @@ public:
         return room > 0 ? room : 0;
     }
 
+    // would_breach_price_band: pre-trade predicate — would this price trip
+    // the fat-finger band (#445)? Mirrors check_order's check #2b exactly:
+    // |price - reference| / reference in percent vs max_price_band_pct.
+    // false when the band is disabled OR the symbol has no reference price
+    // — the real check SKIPS in both cases, and the probe must not be
+    // stricter than the check it predicts. The remaining member of the
+    // what-if family (#291/#413/#429/#437): a pricing engine can sanity-
+    // check a quote before submitting instead of learning from the reject.
+    bool would_breach_price_band(const char* symbol, double price) const noexcept {
+        if (limits_.max_price_band_pct <= 0.0) return false;
+        const auto rp = ref_price_.find(sym_to_key(symbol));
+        if (rp == ref_price_.end() || rp->second <= 0.0) return false;
+        const double dev_pct = std::fabs(price - rp->second) / rp->second * 100.0;
+        return dev_pct > limits_.max_price_band_pct;
+    }
+
     // would_breach_symbol_notional: pre-trade predicate — would this order
     // push the symbol's $ position value past max_symbol_notional (#437)?
     // Mirrors check_order's #189 check exactly (|projected shares| * price

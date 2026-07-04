@@ -5540,6 +5540,35 @@ void test_risk_price_band() {
     ASSERT(!rsn0w.would_breach_symbol_notional("AAPL", Side::BUY, 99999, 999.0),
            "wsn_disabled_never");
 
+    // #445 would_breach_price_band — the fat-finger what-if (check #2b's probe).
+    RiskLimits wpb;
+    wpb.max_position_per_symbol = 100000;
+    wpb.max_portfolio_exposure  = 100000000;
+    wpb.max_order_value         = 100000000;
+    wpb.max_orders_per_second   = 1000000;
+    wpb.max_price_band_pct      = 10.0;            // ±10% around the reference
+    RiskManager rpb(wpb);
+    // No reference yet: the real check SKIPS, so the probe must say false.
+    ASSERT(!rpb.would_breach_price_band("AAPL", 999999.0), "wpb_no_ref_skips");
+    rpb.update_reference_price("AAPL", 100.0);
+    ASSERT(!rpb.would_breach_price_band("AAPL", 109.0), "wpb_inside_band_ok");
+    ASSERT(!rpb.would_breach_price_band("AAPL", 91.0), "wpb_inside_low_side_ok");
+    ASSERT(rpb.would_breach_price_band("AAPL", 111.0), "wpb_high_side_breaches");
+    // The classic fat finger: 1500.00 instead of 150-ish.
+    ASSERT(rpb.would_breach_price_band("AAPL", 1500.0), "wpb_gross_mistake");
+    // Probing is side-effect-free and agrees with the real check.
+    const uint64_t wpb_checks = rpb.get_total_checks();
+    (void)rpb.would_breach_price_band("AAPL", 111.0);
+    ASSERT(rpb.get_total_checks() == wpb_checks, "wpb_no_side_effects");
+    ASSERT(rpb.check_order("AAPL", Side::BUY, 111.0, 10).action == RiskAction::REJECT,
+           "wpb_agrees_with_check_order");
+    // Disabled band never breaches.
+    RiskLimits wpb0 = wpb;
+    wpb0.max_price_band_pct = 0.0;
+    RiskManager rpb0(wpb0);
+    rpb0.update_reference_price("AAPL", 100.0);
+    ASSERT(!rpb0.would_breach_price_band("AAPL", 999999.0), "wpb_disabled_never");
+
     // #189 per-symbol position value limit ($10k; shares generous).
     RiskLimits snl;
     snl.max_symbol_notional    = 10000.0;
