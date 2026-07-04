@@ -1166,6 +1166,22 @@ public:
         const double al = avg_pnl_loss();
         return (aw > 0.0 && al > 0.0) ? aw / al : 0.0;
     }
+    // pnl_expectancy: the expected P&L per DECIDED update (#461) =
+    // win_rate*avg_win - loss_rate*avg_loss, which collapses to
+    // (win_pnl_sum - loss_pnl_sum) / decided — the net realized P&L over
+    // the updates that had a direction, per update. The single number that
+    // says whether the edge is positive: frequency (#372) and magnitude
+    // (#381) each tell half the story, this fuses them (a high win rate
+    // with tiny wins and fat losses reads NEGATIVE here). Flat updates are
+    // excluded from both the sum and the count. The RiskManager parallel of
+    // OMS expectancy_per_symbol (#363). 0 before any decided update; reset
+    // by reset_daily via its win/loss accumulators.
+    double pnl_expectancy() const noexcept {
+        const uint64_t decided = winning_updates_ + losing_updates_;
+        return decided > 0
+            ? (win_pnl_sum_ - loss_pnl_sum_) / static_cast<double>(decided)
+            : 0.0;
+    }
     // underwater_updates: consecutive update_pnl calls spent below the P&L
     // high-water mark (#397) — the LIVE duration of the current drawdown,
     // the time axis to max_drawdown_dollars' (#340) depth. A shallow but

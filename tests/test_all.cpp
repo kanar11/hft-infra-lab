@@ -5400,9 +5400,24 @@ void test_risk_price_band() {
     ASSERT(std::fabs(rpw.pnl_win_rate() * rpw.avg_pnl_win()
                      - (1.0 - rpw.pnl_win_rate()) * rpw.avg_pnl_loss()
                      - 35.0 / 3.0) < 1e-9, "ppr_expectancy_closed_form");
+    // #461 pnl_expectancy — the fused edge, equal to that closed form.
+    ASSERT(std::fabs(rpw.pnl_expectancy() - 35.0 / 3.0) < 1e-9, "pex_matches_closed_form");
+    ASSERT(std::fabs(rpw.pnl_expectancy()
+                     - (rpw.pnl_win_rate() * rpw.avg_pnl_win()
+                        - (1.0 - rpw.pnl_win_rate()) * rpw.avg_pnl_loss())) < 1e-9,
+           "pex_equals_rate_magnitude_form");
     rpw.reset_daily();
     ASSERT(rpw.avg_pnl_win() == 0.0 && rpw.avg_pnl_loss() == 0.0
            && rpw.pnl_payoff_ratio() == 0.0, "ppr_reset_daily");
+    ASSERT(rpw.pnl_expectancy() == 0.0, "pex_reset_zero");
+
+    // #461: a high WIN RATE can still be a NEGATIVE edge — three 1-dollar
+    // wins and one 10-dollar loss is 75% wins but -1.75 per update.
+    RiskManager rpx;
+    rpx.update_pnl(+1.0); rpx.update_pnl(+1.0); rpx.update_pnl(+1.0);
+    rpx.update_pnl(-10.0);
+    ASSERT(std::fabs(rpx.pnl_win_rate() - 0.75) < 1e-9, "pex_high_win_rate");
+    ASSERT(std::fabs(rpx.pnl_expectancy() + 1.75) < 1e-9, "pex_negative_edge");
 
     // #397 underwater_updates / max_underwater_updates — drawdown DURATION,
     // the time axis to max_drawdown_dollars' (#340) depth.
