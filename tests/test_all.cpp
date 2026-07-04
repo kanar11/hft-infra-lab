@@ -4639,6 +4639,18 @@ void test_router_ewma_partial() {
                && rsf_vwap == 0.0, "rsf_all_stale_zero");
         // Zero-size request is a no-op.
         ASSERT(rfm.sweep_to_fill_fresh(true, 0, 2000, 5000, rsf_vwap) == 0, "rsf_zero_shares");
+
+        // #448 fresh_venue_count — the breadth behind the fresh picture.
+        // A (age 1000) + B (age 500) quoted; C never did.
+        ASSERT(rfm.fresh_venue_count(2000, 5000) == 2, "rfc_both_fresh");
+        // The 600ns budget leaves the picture resting on B alone — the
+        // fragile single-venue case the count exists to expose.
+        ASSERT(rfm.fresh_venue_count(600, 5000) == 1, "rfc_single_venue_fragile");
+        ASSERT(rfm.fresh_venue_count(100, 99999) == 0, "rfc_all_stale");
+        // Inactive and never-quoted venues never count.
+        rfm.set_venue_active("B", false);
+        ASSERT(rfm.fresh_venue_count(2000, 5000) == 1, "rfc_inactive_excluded");
+        rfm.set_venue_active("B", true);
     }
 
     // --- #400 sweep_to_fill_at_limit — the marketable-limit sweep planner ---

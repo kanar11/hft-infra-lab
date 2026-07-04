@@ -314,6 +314,25 @@ public:
         }
     }
 
+    // fresh_venue_count: how many ACTIVE venues carry a quote at most
+    // max_age_ns old at at_ns (#448) — the BREADTH of the fresh family.
+    // fresh_nbbo_mid (#424), fresh_available_liquidity (#432) and
+    // sweep_to_fill_fresh (#440) say what the fresh market looks like;
+    // this says how MANY independent venues back that picture — a fresh
+    // NBBO resting on one venue is one outage away from nothing (the
+    // market-coverage analog of multicast channels_with_gaps #395).
+    // Never-quoted venues are excluded; same clock injection as #392.
+    int fresh_venue_count(int64_t max_age_ns, int64_t at_ns) const noexcept {
+        int n = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active || v.last_quote_ns == 0) continue;
+            if (at_ns - v.last_quote_ns > max_age_ns) continue;
+            ++n;
+        }
+        return n;
+    }
+
     // venue_quote_age_ns: ns since the venue's quote was refreshed, against
     // a caller-supplied clock (#392; same injection pattern as OMS #388).
     // -1 when the venue is unknown or has NEVER quoted — 0 would look
