@@ -1198,6 +1198,39 @@ public:
         return r;
     }
 
+    // MassCancelReport — the key OrderMassCancelReport (35=r) fields in a
+    // typed struct (#441). The CLIENT-side decode of the panic button's ACK,
+    // closing the mass-cancel loop symmetrically with parse_mass_cancel
+    // (#433, the request decoded acceptor-side): 531=MassCancelResponse
+    // ('0' = REJECTED — nothing was cancelled and the desk still carries
+    // every working order it hoped to drop — '1' = by symbol, '7' = all)
+    // and 533=TotalAffectedOrders says how many actually died. The client
+    // must reconcile 533 against its own working_orders — a mismatch means
+    // orders the exchange no longer has (or ones it kept that the client
+    // thinks are gone). affected = -1 when tag 533 is absent, since 0 is a
+    // real answer. valid=false when the message is not 35=r.
+    struct MassCancelReport {
+        char cl_ord_id[32] = {};   // 11=ClOrdID (echo of the request's id)
+        char response      = '\0'; // 531 ('0'=rejected, '1'=by symbol, '7'=all)
+        int  affected      = -1;   // 533=TotalAffectedOrders (-1 = absent)
+        bool valid         = false;// true when msg type == 'r'
+    };
+
+    static MassCancelReport parse_mass_cancel_report(const FIXMessage& m) noexcept {
+        MassCancelReport r;
+        const char* mt = m.get_msg_type();
+        if (mt[0] != 'r' || mt[1] != '\0') return r;   // valid stays false
+        const char* coi = m.get_field(11);
+        const char* rp  = m.get_field(531);
+        // source is a runtime pointer (no compile-time length) so strncpy
+        // bounded to size-1 over a value-initialized array stays terminated.
+        if (coi) std::strncpy(r.cl_ord_id, coi, sizeof(r.cl_ord_id) - 1);
+        r.response = (rp && *rp) ? rp[0] : '\0';
+        r.affected = m.get_field(533) ? m.get_int(533) : -1;
+        r.valid    = true;
+        return r;
+    }
+
     // fix_side: Side → FIX tag 54 ('1'=Buy, '2'=Sell).
     static char fix_side(Side s) noexcept { return (s == Side::BUY) ? '1' : '2'; }
 

@@ -5818,6 +5818,26 @@ void test_fix_session() {
         ASSERT(std::strcmp(mcr.get_field(531), "7") == 0, "fix_mcr_response_all");
         ASSERT(mcr.get_int(533) == 5, "fix_mcr_affected_count");
 
+        // #441 parse_mass_cancel_report — the panic button's ACK, typed;
+        // closes the mass-cancel loop symmetrically with #433.
+        const auto mcrr = fix::FIXSession::parse_mass_cancel_report(mcr);
+        ASSERT(mcrr.valid && std::strcmp(mcrr.cl_ord_id, "MC2") == 0, "fix_parse_mcr_id");
+        ASSERT(mcrr.response == '7' && mcrr.affected == 5, "fix_parse_mcr_scope_affected");
+        // A REJECTED report with zero affected: 0 is a REAL answer (nothing
+        // died and the desk still carries everything), -1 is absence.
+        s.build_mass_cancel_report(buf, sizeof(buf), "MC3", '0', 0, '|');
+        FIXMessage mcr0; mcr0.parse(buf);
+        const auto mcrr0 = fix::FIXSession::parse_mass_cancel_report(mcr0);
+        ASSERT(mcrr0.valid && mcrr0.response == '0' && mcrr0.affected == 0,
+               "fix_parse_mcr_rejected_zero_real");
+        FIXMessage bare_r; bare_r.parse("35=r|11=MC4|");
+        ASSERT(fix::FIXSession::parse_mass_cancel_report(bare_r).valid
+               && fix::FIXSession::parse_mass_cancel_report(bare_r).affected == -1,
+               "fix_parse_mcr_absent_minus1");
+        FIXMessage not_r; not_r.parse("35=q|11=X|");
+        ASSERT(!fix::FIXSession::parse_mass_cancel_report(not_r).valid,
+               "fix_parse_mcr_non_r_invalid");
+
         // #209 MarketDataRequest (35=V) — subskrypcja danych rynkowych.
         s.build_market_data_request(buf, sizeof(buf), "MDR1", '1', 1, "AAPL", '|');
         FIXMessage mdr; mdr.parse(buf);
