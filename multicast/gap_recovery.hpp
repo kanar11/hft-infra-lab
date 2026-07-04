@@ -497,6 +497,28 @@ struct BackpressureMonitor {
     }
     std::uint64_t depth() const noexcept { return enqueued - dequeued; }
     bool overloaded(std::uint64_t threshold) const noexcept { return depth() >= threshold; }
+
+    // drain_ratio (#491): the fraction of everything ever enqueued that the
+    // consumer has processed = dequeued / enqueued, in [0,1]. depth() is the
+    // instantaneous backlog; this is the cumulative keep-up — near 1 the
+    // consumer is draining as fast as the feed fills, persistently below 1
+    // means a chronic backlog that only grows. 1.0 before anything is
+    // enqueued (nothing outstanding).
+    double drain_ratio() const noexcept {
+        return enqueued > 0
+            ? static_cast<double>(dequeued) / static_cast<double>(enqueued)
+            : 1.0;
+    }
+
+    // ever_overloaded (#491): whether the backlog EVER reached the threshold
+    // = peak_depth >= threshold. overloaded() only sees the depth RIGHT NOW,
+    // so a queue that spiked and drained looks healthy there while this
+    // remembers the breach — the difference between a live alarm and a
+    // post-incident review. threshold 0 is always true once anything queued.
+    bool ever_overloaded(std::uint64_t threshold) const noexcept {
+        return peak_depth >= threshold;
+    }
+
     void reset() noexcept { enqueued = dequeued = peak_depth = 0; }
 };
 

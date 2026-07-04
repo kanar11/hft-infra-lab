@@ -2939,6 +2939,19 @@ void test_multicast_gap_recovery() {
     ASSERT(bp.overloaded(2) && !bp.overloaded(5), "bp_overloaded_threshold");
     bp.on_dequeue(10);                                   // does not go below 0
     ASSERT(bp.depth() == 0, "bp_no_underflow");
+    // #491 drain_ratio / ever_overloaded. bp fully drained (3 in, 3 out).
+    ASSERT(std::fabs(bp.drain_ratio() - 1.0) < 1e-9, "bp_drain_full");
+    // The queue spiked to 3 then drained: overloaded() is now false but
+    // ever_overloaded remembers the breach.
+    ASSERT(!bp.overloaded(3) && bp.ever_overloaded(3), "bp_ever_vs_now");
+    ASSERT(!bp.ever_overloaded(4), "bp_ever_below_peak_false");
+    // A fresh monitor: 1.0 before anything, then the mid-drain fraction.
+    multicast::BackpressureMonitor bpd;
+    ASSERT(bpd.drain_ratio() == 1.0, "bp_drain_empty_one");
+    bpd.on_enqueue(4); bpd.on_dequeue(1);                 // 1 of 4 processed
+    ASSERT(std::fabs(bpd.drain_ratio() - 0.25) < 1e-9, "bp_drain_quarter");
+    bpd.reset();
+    ASSERT(bpd.drain_ratio() == 1.0 && !bpd.ever_overloaded(1), "bp_drain_reset");
 
     // #187 LossRateMeter — agregatowa stopa utraty.
     multicast::LossRateMeter lrm;
