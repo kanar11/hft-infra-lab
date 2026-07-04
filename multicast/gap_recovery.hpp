@@ -1109,8 +1109,21 @@ struct FeedStalenessMonitor {
     bool     seen         = false;   // whether we have seen the first packet
     bool     stale_       = false;
     uint64_t stale_events = 0;       // how many times the feed went stale (edges)
+    int64_t  longest_outage_ns_ = 0; // worst completed silent window (#443)
+    int64_t  total_outage_ns_   = 0; // Σ completed silent windows (#443)
 
     void on_packet(int64_t now_ns) noexcept {
+        // #443: reviving from a DETECTED stale spell completes an outage.
+        // The duration is measured from the LAST PACKET — the whole silent
+        // window the consumer actually sat through — not from the moment
+        // check() first noticed it.
+        if (stale_ && seen) {
+            const int64_t outage = now_ns - last_ns;
+            if (outage > 0) {
+                total_outage_ns_ += outage;
+                if (outage > longest_outage_ns_) longest_outage_ns_ = outage;
+            }
+        }
         last_ns = now_ns;
         seen    = true;
         stale_  = false;             // a fresh packet revives the feed
@@ -1125,6 +1138,13 @@ struct FeedStalenessMonitor {
     }
 
     bool is_stale() const noexcept { return stale_; }
+    // longest_outage_ns / total_outage_ns (#443): the DURATION axis of feed
+    // health — stale_events says how OFTEN the feed died, these say for how
+    // LONG (worst single outage and the summed downtime an SLA reports).
+    // Only COMPLETED outages count; a still-running one is visible live via
+    // check(). 0 before any revival from a detected stale spell.
+    int64_t longest_outage_ns() const noexcept { return longest_outage_ns_; }
+    int64_t total_outage_ns()   const noexcept { return total_outage_ns_; }
     void reset()    noexcept { *this = FeedStalenessMonitor{}; }
 };
 

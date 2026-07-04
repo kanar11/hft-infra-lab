@@ -2986,6 +2986,22 @@ void test_multicast_gap_recovery() {
     sm.on_packet(1700);
     ASSERT(!sm.check(1800, 500), "stale_recovered");
 
+    // #443 outage durations — how LONG the feed died, not just how often.
+    // sm's revival at 1700 came from a stale spell whose last packet was at
+    // 1000 -> a completed 700ns outage.
+    ASSERT(sm.longest_outage_ns() == 700 && sm.total_outage_ns() == 700,
+           "stale_outage_recorded_from_last_packet");
+    // A second, shorter outage adds to the total but not the maximum.
+    ASSERT(sm.check(2300, 500), "stale_second_spell");        // 600 > 500
+    sm.on_packet(2350);                                        // outage 650
+    ASSERT(sm.longest_outage_ns() == 700, "stale_longest_retained");
+    ASSERT(sm.total_outage_ns() == 1350, "stale_total_accumulates");
+    // A healthy inter-packet gap (never detected stale) records nothing.
+    sm.on_packet(2400);
+    ASSERT(sm.total_outage_ns() == 1350, "stale_healthy_gap_not_outage");
+    sm.reset();
+    ASSERT(sm.longest_outage_ns() == 0 && sm.total_outage_ns() == 0, "stale_outage_reset");
+
     // #321 GapRecovery::duplicate_rate / primary_packets
     multicast::GapRecovery grdup;
     grdup.observe(1); grdup.observe(2); grdup.observe(3);  // 3 in-order
