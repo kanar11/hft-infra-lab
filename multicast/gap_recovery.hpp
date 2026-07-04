@@ -133,6 +133,20 @@ struct GapRecovery {
             : 0.0;
     }
 
+    // gap_event_rate (#475): how often a gap OPENS per primary packet
+    // observed = gap_events / primary_packets. Distinct from duplicate_rate
+    // (#321, dups per packet) and from avg_gap_burst (#329, SIZE per event):
+    // this is the FREQUENCY of gap events normalized by traffic — the SLA
+    // number, e.g. gaps-per-million-packets. A rising rate at a steady
+    // burst size means the path is dropping more OFTEN (line quality),
+    // where a rising avg_gap_burst at a steady rate means the drops got
+    // BIGGER (buffer overflow). 0 before any packet.
+    double gap_event_rate() const noexcept {
+        return primary_packets > 0
+            ? static_cast<double>(gap_events) / static_cast<double>(primary_packets)
+            : 0.0;
+    }
+
     // recovery_completeness (#156): the fraction of detected gaps already recovered
     // = recovered / (recovered + still_missing). 1.0 = nothing outstanding (the book
     // is certain), <1.0 = some gaps still open. A recovery-health metric.

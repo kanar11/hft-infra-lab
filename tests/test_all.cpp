@@ -2674,9 +2674,22 @@ void test_multicast_gap_recovery() {
     agb.observe(8);                                     // second gap event, run of 1 (7)
     // total lost = 3 (3,4,7) over 2 gap events -> 1.5
     ASSERT(agb.gap_events == 2 && std::fabs(agb.avg_gap_burst() - 1.5) < 1e-9, "gaprec_burst_avg_1p5");
+    // #475 gap_event_rate: 2 gap events over 5 observed packets -> 0.4.
+    // Distinct from avg_gap_burst (SIZE per event): this is FREQUENCY per
+    // packet. observe count = 5 (1,2,5,6,8).
+    ASSERT(agb.primary_packets == 5 && std::fabs(agb.gap_event_rate() - 0.4) < 1e-9,
+           "gaprec_gap_event_rate");
     // recovering does not change the lifetime burst average (recovered+missing invariant)
     agb.on_retransmit(3); agb.on_retransmit(4); agb.on_retransmit(7);
     ASSERT(std::fabs(agb.avg_gap_burst() - 1.5) < 1e-9, "gaprec_burst_recover_invariant");
+    // #475: recovery touches neither gap_events nor primary_packets.
+    ASSERT(std::fabs(agb.gap_event_rate() - 0.4) < 1e-9, "gaprec_gap_event_rate_stable");
+    // A clean in-order feed never opens a gap -> rate 0.
+    multicast::GapRecovery gcln;
+    gcln.observe(1); gcln.observe(2); gcln.observe(3); gcln.observe(4);
+    ASSERT(gcln.gap_event_rate() == 0.0, "gaprec_gap_event_rate_clean_zero");
+    multicast::GapRecovery gempty;
+    ASSERT(gempty.gap_event_rate() == 0.0, "gaprec_gap_event_rate_empty_zero");
 
     // #338 outstanding_range_count / largest_outstanding_run — live fragmentation.
     multicast::GapRecovery gror;
