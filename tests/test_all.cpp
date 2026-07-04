@@ -2845,6 +2845,22 @@ void test_multicast_gap_recovery() {
     gft.record(5000, 4000);   // negative -> ignored
     ASSERT(gft.gaps == 3, "gft_negative_ignored");
 
+    // #435 min_recovery_ms / recovery_jitter_ms — the envelope's floor.
+    ASSERT(gft.min_recovery_ms() == 10, "gft_min_10");
+    ASSERT(gft.recovery_jitter_ms() == 140, "gft_jitter_150_minus_10");
+    // A slower fill never lowers the floor; a faster one does.
+    gft.record(6000, 6200);   // 200 ms
+    ASSERT(gft.min_recovery_ms() == 10, "gft_min_survives_slow");
+    gft.record(7000, 7005);   // 5 ms — a new best case
+    ASSERT(gft.min_recovery_ms() == 5 && gft.recovery_jitter_ms() == 195, "gft_new_floor");
+    // Fresh timer: 0/0 until the first recovery; an instant fill floors at 0.
+    multicast::GapFillTimer gfz;
+    ASSERT(gfz.min_recovery_ms() == 0 && gfz.recovery_jitter_ms() == 0, "gft_fresh_zero");
+    gfz.record(100, 100);     // 0 ms fill — valid, and the floor is truly 0
+    ASSERT(gfz.gaps == 1 && gfz.min_recovery_ms() == 0, "gft_instant_fill_floor");
+    gfz.reset();
+    ASSERT(gfz.min_recovery_ms() == 0 && gfz.gaps == 0, "gft_reset");
+
     // #305 InterArrivalStats — feed jitter envelope.
     multicast::InterArrivalStats ias;
     ias.on_message(1000);     // first -> no gap

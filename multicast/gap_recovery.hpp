@@ -984,11 +984,13 @@ struct GapFillTimer {
     uint64_t gaps = 0;
     int64_t  total_recovery_ms = 0;
     int64_t  max_recovery_ms = 0;
+    int64_t  min_recovery_ms_ = 0;   // best case seen; valid once gaps > 0 (#435)
 
     // record: a gap detected at detect_ms was filled at fill_ms.
     void record(int64_t detect_ms, int64_t fill_ms) noexcept {
         const int64_t dur = fill_ms - detect_ms;
         if (dur < 0) return;
+        if (gaps == 0 || dur < min_recovery_ms_) min_recovery_ms_ = dur;   // #435
         ++gaps;
         total_recovery_ms += dur;
         if (dur > max_recovery_ms) max_recovery_ms = dur;
@@ -996,7 +998,22 @@ struct GapFillTimer {
     double avg_recovery_ms() const noexcept {
         return gaps > 0 ? static_cast<double>(total_recovery_ms) / static_cast<double>(gaps) : 0.0;
     }
-    void reset() noexcept { gaps = 0; total_recovery_ms = 0; max_recovery_ms = 0; }
+    // min_recovery_ms (#435): the FASTEST gap-fill seen — completing the
+    // min/mean/max envelope. The floor is set by the retransmit server's
+    // round trip: a min far above the network RTT means even the best case
+    // pays a queueing penalty, and the avg (#297) can never beat it. 0
+    // before any recovery.
+    int64_t min_recovery_ms() const noexcept { return gaps > 0 ? min_recovery_ms_ : 0; }
+    // recovery_jitter_ms (#435): max - min, the recovery-time spread. Tight
+    // = a predictable recovery path; wide = the retransmit service degrades
+    // under load exactly when it is needed most.
+    int64_t recovery_jitter_ms() const noexcept {
+        return gaps > 0 ? max_recovery_ms - min_recovery_ms_ : 0;
+    }
+    void reset() noexcept {
+        gaps = 0; total_recovery_ms = 0; max_recovery_ms = 0;
+        min_recovery_ms_ = 0;   // #435
+    }
 };
 
 
