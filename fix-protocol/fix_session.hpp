@@ -1231,6 +1231,34 @@ public:
         return r;
     }
 
+    // SessionStatus — the key TradingSessionStatus (35=h) fields in a typed
+    // struct (#497). The CLIENT-side decode of the venue's session-phase
+    // broadcast, closing the g->h handshake with build_trading_session_
+    // status (#303, its own comment names 35=g #352 as the request side):
+    // 336=TradingSessionID, 340=TradSesStatus (1=Halted, 2=Open, 3=Closed,
+    // 4=PreOpen, 5=PreClose). A trading app gates order flow on this — stop
+    // quoting on a Halted, do not send before Open. is_open()/is_halted()
+    // decode the two the flow logic cares about most. status is -1 when tag
+    // 340 is absent, since 1..5 are all real. valid=false when not 35=h.
+    struct SessionStatus {
+        char session_id[24] = {};   // 336=TradingSessionID
+        int  status         = -1;   // 340=TradSesStatus (-1 = absent)
+        bool valid          = false;// true when msg type == 'h'
+
+        bool is_open()   const noexcept { return status == 2; }
+        bool is_halted() const noexcept { return status == 1; }
+    };
+
+    static SessionStatus parse_trading_session_status(const FIXMessage& m) noexcept {
+        SessionStatus r;
+        if (m.get_msg_type()[0] != 'h') return r;   // valid stays false
+        const char* sid = m.get_field(336);
+        if (sid) std::strncpy(r.session_id, sid, sizeof(r.session_id) - 1);
+        r.status = m.get_field(340) ? m.get_int(340) : -1;
+        r.valid  = true;
+        return r;
+    }
+
     // QuoteCancelMsg — the key QuoteCancel (35=Z) fields in a typed struct
     // (#489). The recipient-side decode of a market maker pulling quote(s),
     // completing the typed quote lifecycle: request 35=R (#481) -> quote

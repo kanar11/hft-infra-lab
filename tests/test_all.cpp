@@ -6935,6 +6935,24 @@ void test_fix_session() {
                "fix_tss_id_status");
         ASSERT(!tss.is_admin(), "fix_tss_application");
 
+        // #497 parse_trading_session_status — typed decode of 35=h; closes
+        // the g->h handshake with build_trading_session_status (#303).
+        const auto tssd = fix::FIXSession::parse_trading_session_status(tss);
+        ASSERT(tssd.valid && std::strcmp(tssd.session_id, "REG") == 0, "fix_parse_tss_id");
+        ASSERT(tssd.status == 2 && tssd.is_open() && !tssd.is_halted(), "fix_parse_tss_open");
+        // A Halted (1) session decodes with is_halted() true, is_open() false.
+        s.build_trading_session_status(buf, sizeof(buf), "REG", 1, '|');
+        FIXMessage tsh; tsh.parse(buf);
+        const auto tshd = fix::FIXSession::parse_trading_session_status(tsh);
+        ASSERT(tshd.valid && tshd.is_halted() && !tshd.is_open(), "fix_parse_tss_halted");
+        // An absent status tag -> -1 sentinel.
+        FIXMessage tsb; tsb.parse("35=h|336=REG|");
+        ASSERT(fix::FIXSession::parse_trading_session_status(tsb).status == -1,
+               "fix_parse_tss_absent_status");
+        FIXMessage not_h_tss; not_h_tss.parse("35=g|335=X|");
+        ASSERT(!fix::FIXSession::parse_trading_session_status(not_h_tss).valid,
+               "fix_parse_tss_non_h_invalid");
+
         // #311 OrderMassStatusRequest (35=AF) — bulk order-status query.
         s.build_mass_status_request(buf, sizeof(buf), "MS1", 7, "AAPL", '|');  // 7 = by symbol
         FIXMessage msr; msr.parse(buf);
