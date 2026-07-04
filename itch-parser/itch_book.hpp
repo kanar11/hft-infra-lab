@@ -56,6 +56,8 @@ class ITCHOrderBook {
     int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
     uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
     uint64_t exec_prints_        = 0;  // executions that hit a resting order (#463)
+    int64_t  last_trade_ticks_   = 0;  // price of the most recent print (#471; 0 = none)
+    bool     last_trade_buy_     = false; // aggressor of the last print (#471)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -106,6 +108,10 @@ public:
             if (it->second.side == 'B') exec_against_bid_ += dec;
             else                        exec_against_ask_ += dec;
             ++exec_prints_;   // #463: a real trade print (orphans excluded)
+            // #471: the tape's last print — a hit resting BID was SOLD into
+            // (aggressor sell), a lifted ASK was BOUGHT from (aggressor buy).
+            last_trade_ticks_ = it->second.price_ticks;
+            last_trade_buy_   = (it->second.side == 'S');
         }
         reduce_(ref, exec_shares);
         ++executes_;
@@ -198,6 +204,7 @@ public:
         exec_against_bid_ = exec_against_ask_ = 0;     // #415
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
         exec_prints_ = 0;                              // #463
+        last_trade_ticks_ = 0; last_trade_buy_ = false; // #471
     }
     // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
@@ -737,6 +744,19 @@ public:
                / static_cast<double>(exec_shares_sum_)) / 100.0
             : 0.0;
     }
+
+    // last_trade_price (#471): the price of the most recent execution — the
+    // tape's last print, distinct from the book's mid/best (those are where
+    // you COULD trade, this is where someone DID). 0 before any print.
+    double last_trade_price() const noexcept {
+        return static_cast<double>(last_trade_ticks_) / 100.0;
+    }
+    // last_trade_is_buy (#471): the aggressor of the last print — true when
+    // an ask was lifted (buyer-initiated), false when a bid was hit
+    // (seller-initiated). The single-print tick test: pairs with the last
+    // price to classify the most recent trade's direction without a
+    // rolling window (tape_imbalance #415 is the session aggregate).
+    bool last_trade_is_buy() const noexcept { return last_trade_buy_; }
 
     // trade_prints (#463): the number of executions that actually hit a
     // resting order — real trade prints, orphaned executes (unknown ref)

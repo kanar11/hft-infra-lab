@@ -2577,6 +2577,27 @@ void test_itch_book() {
     ASSERT(islc.trade_prints() == 10 && std::fabs(islc.avg_trade_size() - 100.0) < 1e-9,
            "itchbook_avg_trade_sliced");
 
+    // #471 last_trade_price / last_trade_is_buy — the tape's last print + tick.
+    itch::ITCHOrderBook iltp;
+    ASSERT(iltp.last_trade_price() == 0.0, "itchbook_ltp_empty_zero");
+    iltp.on_add(1, 'B', 10.00, 500);              // resting bid
+    iltp.on_add(2, 'S', 10.05, 500);              // resting ask
+    iltp.on_execute(2, 100);                      // ask lifted -> buyer-initiated @10.05
+    ASSERT(std::fabs(iltp.last_trade_price() - 10.05) < 1e-9, "itchbook_ltp_lift_price");
+    ASSERT(iltp.last_trade_is_buy(), "itchbook_ltp_lift_is_buy");
+    iltp.on_execute(1, 100);                      // bid hit -> seller-initiated @10.00
+    ASSERT(std::fabs(iltp.last_trade_price() - 10.00) < 1e-9, "itchbook_ltp_hit_price");
+    ASSERT(!iltp.last_trade_is_buy(), "itchbook_ltp_hit_is_sell");
+    // Cancels/deletes do NOT print — the last trade is unchanged.
+    iltp.on_cancel(1, 50);
+    iltp.on_add(3, 'S', 11.00, 100); iltp.on_delete(3);
+    ASSERT(std::fabs(iltp.last_trade_price() - 10.00) < 1e-9, "itchbook_ltp_cancel_no_print");
+    // An orphan execute does not move the tape either.
+    iltp.on_execute(999, 10);
+    ASSERT(std::fabs(iltp.last_trade_price() - 10.00) < 1e-9, "itchbook_ltp_orphan_no_print");
+    iltp.clear();
+    ASSERT(iltp.last_trade_price() == 0.0 && !iltp.last_trade_is_buy(), "itchbook_ltp_clear");
+
     // #415 executed_against_bid/ask + tape_imbalance — exact aggressor flow.
     itch::ITCHOrderBook iagr;
     ASSERT(iagr.tape_imbalance() == 0.0, "itchbook_agr_empty_zero");
