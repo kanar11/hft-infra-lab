@@ -5101,10 +5101,21 @@ void test_router_ewma_partial() {
         ASSERT(close(rd.effective_price_dispersion(true), 0.08), "epd_buy_wide");
         // SELL bids 9.98/9.99/10.00 -> dispersion 0.02.
         ASSERT(close(rd.effective_price_dispersion(false), 0.02), "epd_sell_narrow");
+        // #472 most_expensive_venue — the culprit behind the dispersion.
+        // BUY worst all-in ask is C (10.10); SELL worst (min bid) is A (9.98).
+        ASSERT(std::strcmp(rd.most_expensive_venue(true), "C") == 0, "mev_buy_C");
+        ASSERT(std::strcmp(rd.most_expensive_venue(false), "A") == 0, "mev_sell_A");
+        // Mirror of cheapest_venue (#200): best buy is A, best sell is C.
+        ASSERT(std::strcmp(rd.cheapest_venue(true), "A") == 0, "mev_cheapest_buy_A");
         // A punishing taker fee on the best-priced venue widens the buy
         // dispersion (all-in, not raw): A's ask 10.02 + 0.20 = 10.22 all-in.
         rd.set_venue_fee("A", 0.20);
         ASSERT(close(rd.effective_price_dispersion(true), 10.22 - 10.05), "epd_fee_widens");
+        // #472: the fee makes A the worst all-in venue to buy on.
+        ASSERT(std::strcmp(rd.most_expensive_venue(true), "A") == 0, "mev_fee_flips_worst_to_A");
+        // Empty router -> nullptr.
+        SmartOrderRouter rme(RoutingStrategy::BEST_PRICE);
+        ASSERT(rme.most_expensive_venue(true) == nullptr, "mev_empty_null");
     }
 
     // --- #162 reject_rate + avg_routing_latency ---

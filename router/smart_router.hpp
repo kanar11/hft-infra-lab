@@ -776,6 +776,31 @@ public:
         return found ? best_name : nullptr;
     }
 
+    // most_expensive_venue: the NAME of the venue with the WORST all-in
+    // price on a side (#472) — the mirror of cheapest_venue (#200) and the
+    // actionable WHICH behind effective_price_dispersion (#464): dispersion
+    // is the magnitude of the cross-venue price gap, this names the venue
+    // at the bad end of it (a punishing-fee venue a naive router might hit,
+    // or a blacklist candidate). BUY: max all-in ask; SELL: min all-in bid.
+    // nullptr when no venue quotes the side. Fees are in the comparison, so
+    // a good raw quote wrecked by a taker fee is correctly named worst.
+    const char* most_expensive_venue(bool is_buy) const noexcept {
+        const char* worst_name = nullptr;
+        double worst = 0.0; bool found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            if (!has_liq) continue;
+            const double eff = effective_price(v, is_buy);
+            if (!found || (is_buy ? (eff > worst) : (eff < worst))) {
+                worst = eff; worst_name = v.name; found = true;
+            }
+        }
+        return found ? worst_name : nullptr;
+    }
+
     // deepest_venue: name of the venue with the LARGEST displayed size on a side
     // (#255). BUY looks at ask_size, SELL at bid_size; only active venues with a
     // positive quote. Complements cheapest_venue (#200, best price): a large order
