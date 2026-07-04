@@ -509,6 +509,24 @@ void test_oms_short_and_replace() {
         // Empty book: no realized P&L -> empty name, 0.
         rsym[0] = 'X';
         ASSERT(empt.best_realized_symbol(rsym) == 0.0 && rsym[0] == '\0', "oms_best_realized_empty");
+        // #500 profit_concentration / loss_concentration — HHI-lite of P&L.
+        // AAA is the ONLY winner (+200) -> profit fully concentrated at 1.0;
+        // BBB the only loser (-100) -> loss concentration 1.0.
+        ASSERT(close(oms.profit_concentration(), 1.0), "oms_profit_conc_single_1");
+        ASSERT(close(oms.loss_concentration(), 1.0), "oms_loss_conc_single_1");
+        ASSERT(empt.profit_concentration() == 0.0 && empt.loss_concentration() == 0.0,
+               "oms_conc_empty_zero");
+        // #500: two winners spread the profit -> concentration below 1.
+        // AAA +200 (100@10 -> @12), DDD +100 (100@10 -> @11): gross 300,
+        // best 200 -> 200/300 = 2/3.
+        OMS oms2(1000000, 1000000000.0);
+        Order* pc1 = oms2.submit_order("AAA", Side::BUY, 10.0, 100); oms2.fill_order(pc1->order_id, 100, 10.0);
+        Order* pc2 = oms2.submit_order("AAA", Side::SELL, 12.0, 100); oms2.fill_order(pc2->order_id, 100, 12.0);
+        Order* pc3 = oms2.submit_order("DDD", Side::BUY, 10.0, 100); oms2.fill_order(pc3->order_id, 100, 10.0);
+        Order* pc4 = oms2.submit_order("DDD", Side::SELL, 11.0, 100); oms2.fill_order(pc4->order_id, 100, 11.0);
+        ASSERT(close(oms2.profit_concentration(), 2.0 / 3.0), "oms_profit_conc_two_thirds");
+        // No losers at all -> loss_concentration is 0 (no denominator).
+        ASSERT(oms2.loss_concentration() == 0.0, "oms_loss_conc_no_losers_zero");
         // #347 avg_win_per_symbol / avg_loss_per_symbol — dollars won/lost PER NAME.
         ASSERT(close(oms.avg_win_per_symbol(), 200.0), "oms_avgwin_200");    // 200/1 winner (AAA)
         ASSERT(close(oms.avg_loss_per_symbol(), 100.0), "oms_avgloss_100"); // 100/1 loser (BBB)

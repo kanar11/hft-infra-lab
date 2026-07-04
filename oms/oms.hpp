@@ -835,6 +835,26 @@ public:
         if (who) { std::memcpy(out, who->symbol, 9); return to_float(worst); }
         out[0] = '\0'; return 0.0;
     }
+    // profit_concentration / loss_concentration (#500, MILESTONE 500): the
+    // fraction of the session's gross profit (#339) that came from the
+    // single biggest WINNER, and of the gross loss from the single biggest
+    // LOSER, each in (0,1]. An HHI-lite risk-quality read on top of the
+    // best/worst attribution (#492): 1.0 means one name made (or lost) the
+    // whole thing — a fragile result that hangs on a single trade — while a
+    // low value means the P&L is spread across many names (robust,
+    // repeatable). 0 when there are no winners / losers respectively.
+    double profit_concentration() const noexcept {
+        int64_t gp = 0, best = 0;
+        for (const auto& [key, p] : positions_)
+            if (p.realized_pnl > 0) { gp += p.realized_pnl; if (p.realized_pnl > best) best = p.realized_pnl; }
+        return gp > 0 ? static_cast<double>(best) / static_cast<double>(gp) : 0.0;
+    }
+    double loss_concentration() const noexcept {
+        int64_t gl = 0, worst = 0;   // worst is the most-negative realized P&L
+        for (const auto& [key, p] : positions_)
+            if (p.realized_pnl < 0) { gl -= p.realized_pnl; if (p.realized_pnl < worst) worst = p.realized_pnl; }
+        return gl > 0 ? static_cast<double>(-worst) / static_cast<double>(gl) : 0.0;
+    }
     // profit_factor: gross_profit / gross_loss (#339) — the classic ratio (>1 =
     // realized winners outweigh losers). Same convention as the Backtester: with no
     // losing symbols it is +inf when there is any profit, 0 when nothing is realized.
