@@ -498,6 +498,16 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(oms.gross_loss()),   100.0), "oms_gross_loss_100");    // BBB
         ASSERT(close(oms.profit_factor(), 2.0), "oms_profit_factor_2");              // 200/100
         ASSERT(empt.profit_factor() == 0.0, "oms_pf_empty_zero");
+        // #492 best_realized_symbol / worst_realized_symbol — the names.
+        // AAA is the +200 winner, BBB the -100 loser (CCC flat is skipped).
+        char rsym[9];
+        ASSERT(close(oms.best_realized_symbol(rsym), 200.0)
+               && std::strcmp(rsym, "AAA") == 0, "oms_best_realized_AAA");
+        ASSERT(close(oms.worst_realized_symbol(rsym), -100.0)
+               && std::strcmp(rsym, "BBB") == 0, "oms_worst_realized_BBB");
+        // Empty book: no realized P&L -> empty name, 0.
+        rsym[0] = 'X';
+        ASSERT(empt.best_realized_symbol(rsym) == 0.0 && rsym[0] == '\0', "oms_best_realized_empty");
         // #347 avg_win_per_symbol / avg_loss_per_symbol — dollars won/lost PER NAME.
         ASSERT(close(oms.avg_win_per_symbol(), 200.0), "oms_avgwin_200");    // 200/1 winner (AAA)
         ASSERT(close(oms.avg_loss_per_symbol(), 100.0), "oms_avgloss_100"); // 100/1 loser (BBB)

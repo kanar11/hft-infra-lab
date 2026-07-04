@@ -805,6 +805,36 @@ public:
         for (const auto& [key, p] : positions_) if (p.realized_pnl < 0) s -= p.realized_pnl;
         return s;   // positive magnitude of the losing symbols
     }
+    // best_realized_symbol / worst_realized_symbol: the NAME of the biggest
+    // realized winner / loser by P&L (#492) — the actionable attribution
+    // behind gross_profit / gross_loss (#339, the totals): which single
+    // name carried the day and which dragged it down. Writes the ticker
+    // into out (>= 9 bytes, always nul-terminated) and returns its realized
+    // P&L in dollars (best is the max, worst the min — so worst is negative
+    // when any name lost). Only symbols with NON-ZERO realized P&L are
+    // considered; out[0] == '\0' and 0 when none has realized anything.
+    // The P&L-attribution companion to largest_position_notional (#330,
+    // which names by SIZE, not P&L).
+    double best_realized_symbol(char* out) const noexcept {
+        int64_t best = 0; const Position* who = nullptr;
+        for (const auto& [key, p] : positions_) {
+            if (p.realized_pnl == 0) continue;
+            if (who == nullptr || p.realized_pnl > best) { best = p.realized_pnl; who = &p; }
+        }
+        // symbol is char[9], already nul-terminated -> copy all 9 bytes
+        // (memcpy avoids the -Werror=stringop-truncation strncpy heuristic).
+        if (who) { std::memcpy(out, who->symbol, 9); return to_float(best); }
+        out[0] = '\0'; return 0.0;
+    }
+    double worst_realized_symbol(char* out) const noexcept {
+        int64_t worst = 0; const Position* who = nullptr;
+        for (const auto& [key, p] : positions_) {
+            if (p.realized_pnl == 0) continue;
+            if (who == nullptr || p.realized_pnl < worst) { worst = p.realized_pnl; who = &p; }
+        }
+        if (who) { std::memcpy(out, who->symbol, 9); return to_float(worst); }
+        out[0] = '\0'; return 0.0;
+    }
     // profit_factor: gross_profit / gross_loss (#339) — the classic ratio (>1 =
     // realized winners outweigh losers). Same convention as the Backtester: with no
     // losing symbols it is +inf when there is any profit, 0 when nothing is realized.
