@@ -83,6 +83,7 @@
 #include "../strategy/kst.hpp"
 #include "../strategy/vidya.hpp"
 #include "../strategy/center_of_gravity.hpp"
+#include "../strategy/tsf.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4974,6 +4975,36 @@ void test_cog() {
     ASSERT(!cu.ready() && cu.value() == 0.0, "cog_reset");
 }
 
+// TSF #534 — Time Series Forecast (regression line projected one bar ahead).
+void test_tsf() {
+    SECTION("TSF Time Series Forecast (#534)");
+    TSF tf;                                        // period 14
+    tf.update(10.0); tf.update(11.0); tf.update(12.0);
+    ASSERT(!tf.ready(), "tsf_not_ready_during_warmup");
+
+    // Perfect uptrend line y = 10 + 2x over 5 bars: slope 2, LSMA(endpoint) 18,
+    // TSF projects one bar ahead -> 20 (exact on a linear series).
+    TSF up(5);
+    up.update(10.0); up.update(12.0); up.update(14.0); up.update(16.0); up.update(18.0);
+    ASSERT(up.ready(), "tsf_ready");
+    ASSERT(std::fabs(up.slope() - 2.0) < 1e-9, "tsf_slope_2");
+    ASSERT(std::fabs(up.value() - 20.0) < 1e-9, "tsf_forecast_20");
+    ASSERT(up.value() > 18.0, "tsf_leads_above_last");   // projects past the latest bar
+
+    // Downtrend is the mirror: slope -2, LSMA 10, forecast 8.
+    TSF dn(5);
+    dn.update(18.0); dn.update(16.0); dn.update(14.0); dn.update(12.0); dn.update(10.0);
+    ASSERT(std::fabs(dn.value() - 8.0) < 1e-9, "tsf_forecast_down_8");
+
+    // A flat series has zero slope -> the forecast equals the level.
+    TSF fl(5);
+    for (int i = 0; i < 5; ++i) fl.update(50.0);
+    ASSERT(std::fabs(fl.slope()) < 1e-12 && std::fabs(fl.value() - 50.0) < 1e-9, "tsf_flat_level");
+
+    up.reset();
+    ASSERT(!up.ready() && up.value() == 0.0, "tsf_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -9170,6 +9201,7 @@ int main() {
     test_kst();
     test_vidya();
     test_cog();
+    test_tsf();
     test_cmo();
     test_zscore();
     test_tsi();
