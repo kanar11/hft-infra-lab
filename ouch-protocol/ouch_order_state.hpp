@@ -61,6 +61,7 @@ class OUCHOrderTracker {
     int64_t  broken_shares_  = 0;   // total shares unwound by Broken Trade messages (#320)
     uint64_t exec_count_     = 0;   // number of Executed ('E') reports applied (#328)
     int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
+    int64_t  max_exec_shares_ = 0;  // largest single Executed report (clamped) (#530)
     uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
     uint64_t replaced_       = 0;   // Order Replaced ('U') migrations applied (#386)
     uint64_t desyncs_        = 0;   // responses naming an UNKNOWN token (#426)
@@ -128,6 +129,7 @@ public:
             rec->remaining -= exec;
             if (exec > 0) {
                 exec_shares_ += exec; ++exec_count_;   // #328 per-execution
+                if (exec > max_exec_shares_) max_exec_shares_ = exec;   // #530 block-fill high-water
                 // #410: price the fill — Executed carries the exec price.
                 const double notional = r.price * static_cast<double>(exec);
                 rec->fill_notional     += notional;
@@ -577,6 +579,7 @@ public:
         broken_shares_  = 0;
         exec_count_     = 0;
         exec_shares_    = 0;
+        max_exec_shares_ = 0;   // #530
         cancel_rejects_ = 0;
         replaced_       = 0;
         desyncs_        = 0;
@@ -656,6 +659,16 @@ public:
             ? static_cast<double>(exec_shares_) / static_cast<double>(exec_count_)
             : 0.0;
     }
+    // largest_execution (#530): the biggest single Executed report this session,
+    // in shares — the block-fill detector, the MAX companion to avg_exec_shares
+    // (#328, the mean per execution). Their ratio (largest / avg) is block
+    // dominance: one big print among many small child-order clips reads high,
+    // an evenly sliced iceberg near 1. The OUCH client-side analog of itch's
+    // largest_trade_size (#503) on the public tape. Counts the CLAMPED applied
+    // shares (an over-execute past the remaining is trimmed, matching #328), so
+    // it never exceeds the order it filled. 0 before any fill; reset by
+    // reset_session.
+    int64_t largest_execution() const noexcept { return max_exec_shares_; }
     // avg_order_size: mean ordered quantity per tracked order = total_ordered_shares
     // / order_count (#337). The sizing companion to avg_exec_shares (#328, mean
     // shares per execution): together they show how finely the venue slices orders

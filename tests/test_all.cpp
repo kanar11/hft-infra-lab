@@ -8611,6 +8611,7 @@ void test_ouch_order_state() {
     // #328 exec_count / avg_exec_shares — per-execution slice granularity.
     ouch::OUCHOrderTracker aes;
     ASSERT(aes.exec_count() == 0 && aes.avg_exec_shares() == 0.0, "ouch_aes_empty");
+    ASSERT(aes.largest_execution() == 0, "ouch_aes_largest_empty");   // #530
     aes.on_new("E1", 300);
     n = OUCHMessage::encode_accepted(buf, "E1", 'B', 300, "AAPL", 50.0, 77001);
     aes.on_response(OUCHMessage::parse_response(buf, n));
@@ -8620,15 +8621,19 @@ void test_ouch_order_state() {
     aes.on_response(OUCHMessage::parse_response(buf, n));
     ASSERT(aes.exec_count() == 2, "ouch_aes_two_execs");
     ASSERT(std::fabs(aes.avg_exec_shares() - 150.0) < 1e-9, "ouch_aes_avg_150"); // (100+200)/2
+    // #530 largest_execution — the block-fill high-water (200 > the 150 mean).
+    ASSERT(aes.largest_execution() == 200, "ouch_aes_largest_200");
     // an over-fill attempt clamps to remaining 0 -> exec 0 -> NOT counted
     n = OUCHMessage::encode_executed(buf, "E1", 50, 50.0, 3);
     aes.on_response(OUCHMessage::parse_response(buf, n));
     ASSERT(aes.exec_count() == 2, "ouch_aes_overfill_not_counted");
+    ASSERT(aes.largest_execution() == 200, "ouch_aes_largest_overfill_unchanged");   // #530
     // a Broken Trade does NOT change the execution-event stats (#328 vs #320)
     n = OUCHMessage::encode_broken_trade(buf, "E1", 100, 77001, 'E');
     aes.on_response(OUCHMessage::parse_response(buf, n));
     ASSERT(aes.exec_count() == 2 && std::fabs(aes.avg_exec_shares() - 150.0) < 1e-9,
            "ouch_aes_break_unaffected");
+    ASSERT(aes.largest_execution() == 200, "ouch_aes_largest_break_unaffected");   // #530
 
     // #337 avg_order_size / executions_per_order — order sizing & fill fragmentation.
     ouch::OUCHOrderTracker frag;
