@@ -989,6 +989,26 @@ public:
         }
         return mx;
     }
+    // min_time_to_fill_ns: the FASTEST submit→completion latency over FILLED
+    // orders (#516) — the best-case leg that completes the min/avg/max triple
+    // with avg_time_to_fill_ns and max_time_to_fill_ns (#380), the same
+    // best/typical/worst shape LatencyTracker and InterArrivalMeter expose in
+    // multicast. On its own it is the marketable order that lifted the touch
+    // instantly; paired with the max it bounds the completion-latency spread
+    // (max - min) the way router's venue_latency_spread_ns (#351) bounds venue
+    // latency. Working/partial orders are skipped (no completion). 0 when
+    // nothing has completed.
+    int64_t min_time_to_fill_ns() const noexcept {
+        int64_t mn = 0; bool found = false;
+        for (const auto& kv : orders_) {
+            const Order& o = kv.second;
+            if (o.status == OrderStatus::FILLED && o.filled_ns > o.sent_ns) {
+                const int64_t d = o.filled_ns - o.sent_ns;
+                if (!found || d < mn) { mn = d; found = true; }
+            }
+        }
+        return mn;
+    }
     // total_price_improvement: cumulative signed fill-vs-limit improvement in
     // $ (#396). BUY filling below its limit and SELL filling above accrue
     // positive; a fill AT the limit contributes 0; negative = filled past

@@ -667,21 +667,30 @@ void test_oms_short_and_replace() {
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.avg_time_to_fill_ns() == 0 && oms.max_time_to_fill_ns() == 0,
                "ttf_empty_zero");
+        ASSERT(oms.min_time_to_fill_ns() == 0, "ttf_min_empty_zero");   // #516
         Order* ta = oms.submit_order("AAA", Side::BUY, 10.0, 100);
         oms.fill_order(ta->order_id, 60, 10.0);            // PARTIAL — not complete yet
         ASSERT(oms.avg_time_to_fill_ns() == 0, "ttf_partial_not_counted");
+        ASSERT(oms.min_time_to_fill_ns() == 0, "ttf_min_partial_not_counted");   // #516
         oms.fill_order(ta->order_id, 40, 10.0);            // FILLED — now measured
         ASSERT(oms.avg_time_to_fill_ns() > 0, "ttf_filled_positive");
+        ASSERT(oms.min_time_to_fill_ns() > 0, "ttf_min_positive");   // #516
         ASSERT(oms.max_time_to_fill_ns() >= oms.avg_time_to_fill_ns(), "ttf_max_ge_avg");
+        // #516: min/avg/max ordering — with a single completed order all three coincide.
+        ASSERT(oms.min_time_to_fill_ns() <= oms.avg_time_to_fill_ns()
+               && oms.avg_time_to_fill_ns() <= oms.max_time_to_fill_ns(), "ttf_min_le_avg_le_max");
         Order* tb = oms.submit_order("BBB", Side::SELL, 20.0, 50);
         oms.fill_order(tb->order_id, 50, 20.0);            // second completed order
         ASSERT(oms.avg_time_to_fill_ns() > 0 && oms.max_time_to_fill_ns() >= oms.avg_time_to_fill_ns(),
                "ttf_two_orders_invariant");
+        ASSERT(oms.min_time_to_fill_ns() <= oms.max_time_to_fill_ns(), "ttf_min_le_max_two");   // #516
         // Cancelled working orders never enter the fill-latency stats.
         Order* tc = oms.submit_order("CCC", Side::BUY, 5.0, 10);
         const int64_t ttf_before = oms.avg_time_to_fill_ns();
+        const int64_t ttf_min_before = oms.min_time_to_fill_ns();
         oms.cancel_order(tc->order_id);
         ASSERT(oms.avg_time_to_fill_ns() == ttf_before, "ttf_cancel_not_counted");
+        ASSERT(oms.min_time_to_fill_ns() == ttf_min_before, "ttf_min_cancel_not_counted");   // #516
     }
 
     {   // #388 oldest_working_order_age_ns / oldest_working_order_id —
