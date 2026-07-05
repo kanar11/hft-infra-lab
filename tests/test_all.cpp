@@ -2584,20 +2584,35 @@ void test_itch_book() {
     // #431 avg_reprice_ticks — quote-chasing intensity (how FAR, not how often).
     itch::ITCHOrderBook irpc;
     ASSERT(irpc.avg_reprice_ticks() == 0.0, "itchbook_rpc_empty_zero");
+    ASSERT(irpc.max_reprice_ticks() == 0, "itchbook_rpc_max_empty_zero");   // #519
     irpc.on_add(1, 'B', 10.00, 100);
     irpc.on_replace(1, 2, 10.05, 100);            // +5 ticks chase
     ASSERT(std::fabs(irpc.avg_reprice_ticks() - 5.0) < 1e-9, "itchbook_rpc_five_ticks");
+    ASSERT(irpc.max_reprice_ticks() == 5, "itchbook_rpc_max_5");   // #519
     // A size-only amendment (same price) dilutes the average toward zero.
     irpc.on_replace(2, 3, 10.05, 50);
     ASSERT(std::fabs(irpc.avg_reprice_ticks() - 2.5) < 1e-9, "itchbook_rpc_size_only_dilutes");
     // Direction does not matter — a retreat is the same distance.
     irpc.on_replace(3, 4, 10.02, 50);             // -3 ticks
     ASSERT(std::fabs(irpc.avg_reprice_ticks() - 8.0 / 3.0) < 1e-9, "itchbook_rpc_retreat_counts");
+    // #519: the mean has fallen to 8/3, but the peak still remembers the +5 jump.
+    ASSERT(irpc.max_reprice_ticks() == 5, "itchbook_rpc_max_holds_above_mean");
     // An orphaned replace has no old price — excluded from the average.
     irpc.on_replace(999, 5, 20.00, 10);
     ASSERT(std::fabs(irpc.avg_reprice_ticks() - 8.0 / 3.0) < 1e-9, "itchbook_rpc_orphan_excluded");
     irpc.clear();
     ASSERT(irpc.avg_reprice_ticks() == 0.0, "itchbook_rpc_clear");
+    ASSERT(irpc.max_reprice_ticks() == 0, "itchbook_rpc_max_clear");   // #519
+
+    // #519: a bigger later reprice raises the high-water mark; a smaller one never lowers it.
+    itch::ITCHOrderBook irpm;
+    irpm.on_add(1, 'B', 10.00, 100);
+    irpm.on_replace(1, 2, 10.03, 100);            // +3 ticks
+    ASSERT(irpm.max_reprice_ticks() == 3, "itchbook_rpc_max_3");
+    irpm.on_replace(2, 3, 10.15, 100);            // +12 ticks -> new peak
+    ASSERT(irpm.max_reprice_ticks() == 12, "itchbook_rpc_max_grows_12");
+    irpm.on_replace(3, 4, 10.16, 100);            // +1 tick -> peak unchanged
+    ASSERT(irpm.max_reprice_ticks() == 12, "itchbook_rpc_max_not_lowered");
 
     // #399 orphan_rate / ref_event_count — feed-health ratio behind orphans().
     itch::ITCHOrderBook iorf;

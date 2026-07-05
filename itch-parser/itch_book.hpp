@@ -55,6 +55,7 @@ class ITCHOrderBook {
     int64_t exec_against_ask_    = 0;  // tape: shares lifted from ASKS = buyer-initiated (#415)
     int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
     uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
+    int64_t  max_reprice_ticks_  = 0;  // largest single |new - old| reprice move (#519)
     uint64_t exec_prints_        = 0;  // executions that hit a resting order (#463)
     uint32_t largest_print_      = 0;  // biggest single trade print, shares (#503)
     int64_t  last_trade_ticks_   = 0;  // price of the most recent print (#471; 0 = none)
@@ -157,7 +158,9 @@ public:
         // because only this moment has BOTH prices side by side.
         const int64_t old_px = it->second.price_ticks;
         const int64_t new_px = to_ticks(new_price);
-        reprice_ticks_sum_ += (new_px > old_px) ? new_px - old_px : old_px - new_px;
+        const int64_t move = (new_px > old_px) ? new_px - old_px : old_px - new_px;
+        reprice_ticks_sum_ += move;
+        if (move > max_reprice_ticks_) max_reprice_ticks_ = move;   // #519
         ++repriced_;
         reduce_(orig_ref, it->second.shares);
         on_add(new_ref, side, new_price, new_shares);
@@ -229,6 +232,7 @@ public:
         exec_shares_sum_ = exec_notional_ticks_ = 0;   // #407
         exec_against_bid_ = exec_against_ask_ = 0;     // #415
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
+        max_reprice_ticks_ = 0;                        // #519
         exec_prints_ = 0;                              // #463
         largest_print_ = 0;                            // #503
         last_trade_ticks_ = 0; last_trade_buy_ = false; // #471
@@ -898,6 +902,18 @@ public:
             ? static_cast<double>(reprice_ticks_sum_) / static_cast<double>(repriced_)
             : 0.0;
     }
+
+    // max_reprice_ticks (#519): the LARGEST single |new - old| price move of an
+    // applied replace, in ticks — the tail companion to avg_reprice_ticks
+    // (#431, the mean). A book that gently amends size all session hides one
+    // violent reprice in a near-zero average; this surfaces it. The biggest
+    // single quote jump is the actionable read: a maker yanking a quote far
+    // from the market (a fast repricing away from a runaway print, or a stale
+    // quote snapping to a gapped open), the reprice analog of largest_trade_
+    // size (#503) on the tape and max_reorder_depth (#370) on the feed.
+    // Orphaned replaces carry no old price and are excluded. 0 before any
+    // applied replace.
+    int64_t max_reprice_ticks() const noexcept { return max_reprice_ticks_; }
 
     // ref_event_count (#399): how many ref-based events (execute/cancel/
     // delete/replace) the book has processed — including the ones that
