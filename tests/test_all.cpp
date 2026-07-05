@@ -2260,6 +2260,13 @@ void test_itch_book() {
     lw.on_add(1, 'S', 100.00, 100); lw.on_add(2, 'S', 100.01, 200); lw.on_add(3, 'S', 100.05, 300);
     ASSERT(lw.liquidity_within('S', 1) == 300, "itchbook_liq_within_1");  // 10000+10001
     ASSERT(lw.liquidity_within('S', 5) == 600, "itchbook_liq_within_5");  // + 10005
+    // #527 notional_within — the $ companion: price*qty over the same tick band.
+    // within 1: 100.00*100 + 100.01*200 = 30002; within 5: + 100.05*300 = 60017.
+    ASSERT(close(lw.notional_within('S', 1), 30002.0), "itchbook_notional_within_1");
+    ASSERT(close(lw.notional_within('S', 5), 60017.0), "itchbook_notional_within_5");
+    // Empty side or negative ticks -> 0.
+    ASSERT(lw.notional_within('B', 5) == 0.0, "itchbook_notional_within_empty_side");
+    ASSERT(lw.notional_within('S', -1) == 0.0, "itchbook_notional_within_negative_zero");
 
     // #269 liquidity_imbalance_within (ticks-based imbalance).
     itch::ITCHOrderBook li;

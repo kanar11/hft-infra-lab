@@ -278,6 +278,32 @@ public:
         return sum;
     }
 
+    // notional_within (#527): the total $ NOTIONAL resting within `ticks` of the
+    // touch on a side = sum(price * qty) over levels no more than `ticks` away
+    // from the best. The dollar companion to liquidity_within (#164, which sums
+    // SHARES over the same tick window): capital defends a price, not share
+    // count, so a thin band of a high-priced name can outweigh a fat band of a
+    // penny name. Distinct from depth_notional (#309), which walks a fixed
+    // LEVEL COUNT rather than a price DISTANCE — within a tick band the two
+    // diverge when levels are unevenly spaced. 0 when the side is empty or
+    // ticks < 0.
+    double notional_within(char side, int ticks) const noexcept {
+        if (ticks < 0) return 0.0;
+        double sum = 0.0;
+        if (side == 'B') {
+            if (bids_.empty()) return 0.0;
+            const int64_t floor = bids_.rbegin()->first - ticks;
+            for (auto it = bids_.rbegin(); it != bids_.rend() && it->first >= floor; ++it)
+                sum += (static_cast<double>(it->first) / 100.0) * static_cast<double>(it->second);
+        } else {
+            if (asks_.empty()) return 0.0;
+            const int64_t ceil = asks_.begin()->first + ticks;
+            for (auto it = asks_.begin(); it != asks_.end() && it->first <= ceil; ++it)
+                sum += (static_cast<double>(it->first) / 100.0) * static_cast<double>(it->second);
+        }
+        return sum;
+    }
+
     // fillable_shares: how many shares can be executed up to a LIMIT PRICE (#223). BUY:
     // sum of ask qty at price <= limit; SELL: sum of bid qty at price >= limit. Unlike
     // liquidity_within (ticks from best) — here the threshold is a specific order price.
