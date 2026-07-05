@@ -405,6 +405,21 @@ public:
             : 0.0;
     }
 
+    // unrealized_pnl (#522): the P&L on the still-OPEN inventory at a caller-
+    // supplied mark = mark_to_market_pnl(mark) - realized_pnl(). It completes
+    // the P&L decomposition the tracker now carries: total (#490 mark-to-
+    // market) = realized (#514, banked on the round-tripped shares) +
+    // unrealized (the open position marked to `mark`). By construction it
+    // equals net_filled_shares valued at the gap between `mark` and the open
+    // lot's average cost — a long gains as the mark rises above its entry, a
+    // short as it falls below. 0 when FLAT (every share matched, nothing open)
+    // regardless of the mark: all the P&L is then realized. The mark is
+    // injected because the tracker holds no market data, the same pattern as
+    // mark_to_market_pnl (#490) and OMS unrealized_pnl (#96).
+    double unrealized_pnl(double mark_price) const noexcept {
+        return mark_to_market_pnl(mark_price) - realized_pnl();
+    }
+
     // breakeven_mark (#498): the mark price at which mark_to_market_pnl
     // (#490) is exactly zero = -net_cash_flow / net_filled_shares. Solving
     // net_cash_flow + net_shares*mark == 0, this is how far the market must

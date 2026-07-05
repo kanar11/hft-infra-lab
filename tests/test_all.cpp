@@ -8377,6 +8377,14 @@ void test_ouch_order_state() {
         ASSERT(cl(rpl.net_cash_flow(), 660.0 - 1000.0), "ouch_rpnl_ncf_diverges_open");
         // Per-share identity: realized_pnl == matched * realized_spread_capture.
         ASSERT(cl(rpl.realized_pnl(), 60.0 * rpl.realized_spread_capture()), "ouch_rpnl_edge_identity");
+        // #522 unrealized_pnl — the open long (40 @ avg cost 10) marked to a price.
+        // At 12: 40*(12-10) = +80; at 10 (cost): 0; at 8: 40*(8-10) = -80.
+        ASSERT(cl(rpl.unrealized_pnl(12.0), 80.0), "ouch_upnl_long_up");
+        ASSERT(cl(rpl.unrealized_pnl(10.0), 0.0), "ouch_upnl_long_at_cost");
+        ASSERT(cl(rpl.unrealized_pnl(8.0), -80.0), "ouch_upnl_long_underwater");
+        // Decomposition identity: mark-to-market == realized + unrealized at any mark.
+        ASSERT(cl(rpl.mark_to_market_pnl(12.0), rpl.realized_pnl() + rpl.unrealized_pnl(12.0)),
+               "ouch_upnl_decomposition");
         // Close the last 40 @ 12.00 -> FLAT. avg_sell 11.4, realized 100*(11.4-10)
         // = 140, and now it equals net_cash_flow exactly (every share matched).
         rpl.on_new("S2", 40);
@@ -8387,8 +8395,11 @@ void test_ouch_order_state() {
         ASSERT(rpl.net_filled_shares() == 0, "ouch_rpnl_flat");
         ASSERT(cl(rpl.realized_pnl(), 140.0)
                && cl(rpl.realized_pnl(), rpl.net_cash_flow()), "ouch_rpnl_flat_eq_ncf");
+        // #522: FLAT -> nothing open -> unrealized is 0 at any mark (within fp tol).
+        ASSERT(cl(rpl.unrealized_pnl(12.0), 0.0) && cl(rpl.unrealized_pnl(5.0), 0.0),
+               "ouch_upnl_flat_zero");
         rpl.reset_session();
-        ASSERT(rpl.realized_pnl() == 0.0, "ouch_rpnl_reset");
+        ASSERT(rpl.realized_pnl() == 0.0 && rpl.unrealized_pnl(10.0) == 0.0, "ouch_rpnl_reset");
     }
 
     // #466 projected_net_shares — realized (#458) + working (#450) exposure.
