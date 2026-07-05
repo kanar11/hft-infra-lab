@@ -1019,6 +1019,19 @@ void test_oms_short_and_replace() {
         ASSERT(oms.reject_count(OMSReject::ORDER_VALUE) == 1, "rejcnt_value");
         ASSERT(oms.reject_count(OMSReject::POSITION_LIMIT) == 1, "rejcnt_position");
         ASSERT(oms.reject_count(OMSReject::NONE) == 0, "rejcnt_none_zero");
+        // #532 most_common_reject — the dominant reason. All three fired once,
+        // so the tie resolves to the lowest enum value (INVALID_INPUT).
+        ASSERT(oms.most_common_reject() == OMSReject::INVALID_INPUT, "rej_most_common_tie_lowest");
+        // A clear winner: two ORDER_VALUE rejects against one INVALID_INPUT.
+        OMS omw(/*max_pos=*/100, /*max_val=*/1000.0);
+        OMSReject wy = OMSReject::NONE;
+        omw.submit_order("AAA", Side::BUY, 100.0, 50, &wy);   // ORDER_VALUE (5000>1000)
+        omw.submit_order("AAA", Side::BUY, 200.0, 60, &wy);   // ORDER_VALUE (12000>1000)
+        omw.submit_order("AAA", Side::BUY, -1.0, 10, &wy);    // INVALID_INPUT
+        ASSERT(omw.most_common_reject() == OMSReject::ORDER_VALUE, "rej_most_common_order_value");
+        // Nothing rejected -> NONE.
+        OMS omn(100, 1000.0);
+        ASSERT(omn.most_common_reject() == OMSReject::NONE, "rej_most_common_empty_none");
     }
 }
 

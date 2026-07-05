@@ -923,6 +923,23 @@ public:
     uint64_t total_rejects() const noexcept {
         return reject_counts_[1] + reject_counts_[2] + reject_counts_[3];
     }
+    // most_common_reject: the OMSReject reason that has fired the MOST this
+    // session (#532) — the actionable WHICH behind total_rejects (#212, the
+    // aggregate) and reject_count (#136, one reason at a time). submit_reject_
+    // rate (#212) says HOW OFTEN pre-trade checks fail; this says WHY they fail
+    // most, the single knob to fix first: INVALID_INPUT points at a malformed
+    // order builder, ORDER_VALUE at a notional cap or a fat-finger price,
+    // POSITION_LIMIT at sizing that keeps overshooting the book. Scans only the
+    // real reasons (1..3); NONE (index 0, success) is never a rejection. A tie
+    // resolves to the lowest enum value. Returns OMSReject::NONE when nothing
+    // has been rejected. The OMS analog of FeedHealth::worst_impairment (#531).
+    OMSReject most_common_reject() const noexcept {
+        int best = 0; uint64_t best_n = 0;
+        for (int i = 1; i < 4; ++i) {
+            if (reject_counts_[i] > best_n) { best_n = reject_counts_[i]; best = i; }
+        }
+        return static_cast<OMSReject>(best);
+    }
     // submit_reject_rate: fraction of submit attempts that ended in rejection (#212) =
     // rejects / (accepted + rejects). Observability of pre-trade quality (bad limit
     // tuning / a runaway algo give a high rate). 0 when there are no attempts.
