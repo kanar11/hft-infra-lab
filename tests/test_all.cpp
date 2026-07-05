@@ -3394,6 +3394,20 @@ void test_multicast_gap_recovery() {
     ASSERT(im.max_gap_ns() == 250, "iam_max_250");
     ASSERT(im.jitter_ns() == 200, "iam_jitter_200");      // 250-50
     ASSERT(std::fabs(im.avg_gap_ns() - 400.0/3.0) < 1e-6, "iam_avg");
+    // #523 burst_ratio — worst gap over the average (scale-free): 250/(400/3) = 1.875.
+    ASSERT(std::fabs(im.burst_ratio() - 250.0 / (400.0 / 3.0)) < 1e-6, "iam_burst_ratio");
+    multicast::InterArrivalMeter imf;
+    ASSERT(imf.burst_ratio() == 0.0, "iam_burst_empty_zero");
+    // A perfectly even feed -> every gap equals the mean -> ratio exactly 1.0.
+    multicast::InterArrivalMeter ime;
+    ime.on_message(0); ime.on_message(100); ime.on_message(200); ime.on_message(300);
+    ASSERT(std::fabs(ime.burst_ratio() - 1.0) < 1e-9, "iam_burst_even_one");
+    // A single long stall among tight gaps -> gaps 100,100,1000 -> avg 400, max
+    // 1000 -> ratio 2.5, well above the even feed's 1.0 (scale-free burst flag).
+    multicast::InterArrivalMeter imb;
+    imb.on_message(0); imb.on_message(100); imb.on_message(200); imb.on_message(1200);
+    ASSERT(std::fabs(imb.burst_ratio() - 2.5) < 1e-9 && imb.burst_ratio() > ime.burst_ratio(),
+           "iam_burst_bursty_2p5");
 
     // #91 A/B line arbitration — the first line wins, the second is deduped; B patches A's gap.
     multicast::ABLineArbitrator arb;

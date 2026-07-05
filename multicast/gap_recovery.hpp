@@ -417,6 +417,19 @@ struct InterArrivalMeter {
     std::int64_t min_gap_ns() const noexcept { return gaps ? min_gap : 0; }
     std::int64_t max_gap_ns() const noexcept { return max_gap; }
     std::int64_t jitter_ns()  const noexcept { return gaps ? (max_gap - min_gap) : 0; }  // span
+    // burst_ratio (#523): the worst inter-arrival gap as a MULTIPLE of the
+    // average = max_gap / avg_gap. Where jitter_ns (#142) is the ABSOLUTE span
+    // (max - min, in ns) — which reads large on a slow feed and small on a fast
+    // one for the same relative burstiness — this is SCALE-FREE: 1.0 is a
+    // perfectly even feed (every gap equals the mean), and a large value flags
+    // a bursty stall (one long pause among otherwise tight arrivals) regardless
+    // of the feed's base rate. It is >= 1 whenever any variation exists (max is
+    // never below the mean). 0 before any gap, or when every gap is 0
+    // (simultaneous arrivals — no timescale to normalize against).
+    double burst_ratio() const noexcept {
+        const double avg = avg_gap_ns();
+        return avg > 0.0 ? static_cast<double>(max_gap) / avg : 0.0;
+    }
     void reset() noexcept { *this = InterArrivalMeter{}; }
 };
 
