@@ -6304,6 +6304,30 @@ void test_risk_price_band() {
     ASSERT(rsh.pnl_std_dev() == 0.0 && rsh.pnl_sharpe() == 0.0, "psh_reset");
     ASSERT(rsh.pnl_downside_dev() == 0.0 && rsh.pnl_sortino() == 0.0, "psh_downside_reset");
 
+    // #533 pnl_skewness — the third moment (signed distribution asymmetry).
+    RiskManager rsk;
+    ASSERT(rsk.pnl_skewness() == 0.0, "skew_empty_zero");
+    rsk.update_pnl(+1.0);
+    ASSERT(rsk.pnl_skewness() == 0.0, "skew_single_zero");   // needs >= 2 updates
+    // A symmetric pair has no asymmetry -> skew 0.
+    RiskManager rsy;
+    rsy.update_pnl(+1.0); rsy.update_pnl(-1.0);
+    ASSERT(std::fabs(rsy.pnl_skewness()) < 1e-12, "skew_symmetric_zero");
+    // Right tail: three small losses, one big win -> POSITIVE skew = 2/sqrt(3).
+    RiskManager rrt;
+    rrt.update_pnl(-1.0); rrt.update_pnl(-1.0); rrt.update_pnl(-1.0); rrt.update_pnl(+3.0);
+    ASSERT(std::fabs(rrt.pnl_skewness() - 2.0 / std::sqrt(3.0)) < 1e-9, "skew_right_tail_positive");
+    // The left-tail mirror -> the exact negative (the blow-up profile).
+    RiskManager rlt;
+    rlt.update_pnl(+1.0); rlt.update_pnl(+1.0); rlt.update_pnl(+1.0); rlt.update_pnl(-3.0);
+    ASSERT(std::fabs(rlt.pnl_skewness() + 2.0 / std::sqrt(3.0)) < 1e-9, "skew_left_tail_negative");
+    // A constant (zero-variance) stream has no defined shape -> 0, not a blow-up.
+    RiskManager rfl;
+    rfl.update_pnl(+5.0); rfl.update_pnl(+5.0); rfl.update_pnl(+5.0);
+    ASSERT(rfl.pnl_skewness() == 0.0, "skew_constant_zero");
+    rrt.reset_daily();
+    ASSERT(rrt.pnl_skewness() == 0.0, "skew_reset");
+
     // #501 largest_pnl_gain / largest_pnl_loss — the tail events.
     RiskManager rtx;
     ASSERT(rtx.largest_pnl_gain() == 0.0 && rtx.largest_pnl_loss() == 0.0, "ptx_empty_zero");

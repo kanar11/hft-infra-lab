@@ -323,6 +323,7 @@ class RiskManager {
     double loss_pnl_sum_ = 0.0;      // sum of losing update_pnl magnitudes (#381)
     double pnl_sum_      = 0.0;      // Σ every update_pnl delta (#477)
     double pnl_sumsq_    = 0.0;      // Σ delta² over every update_pnl (#477)
+    double pnl_sumcube_  = 0.0;      // Σ delta³ over every update_pnl (#533)
     uint64_t pnl_updates_ = 0;      // count of update_pnl calls, incl. flat (#477)
     double loss_sumsq_   = 0.0;      // Σ delta² over LOSING update_pnl (#485)
     double max_gain_     = 0.0;      // largest single winning update_pnl (#501)
@@ -581,6 +582,7 @@ public:
         // for volatility / risk-adjusted reads.
         pnl_sum_   += pnl_change;
         pnl_sumsq_ += pnl_change * pnl_change;
+        pnl_sumcube_ += pnl_change * pnl_change * pnl_change;   // #533
         ++pnl_updates_;
         daily_pnl_ += pnl_change;
         if (daily_pnl_ > peak_pnl_) peak_pnl_ = daily_pnl_;
@@ -774,6 +776,7 @@ public:
         loss_pnl_sum_ = 0.0;      // #381
         pnl_sum_ = 0.0;           // #477
         pnl_sumsq_ = 0.0;         // #477
+        pnl_sumcube_ = 0.0;       // #533
         pnl_updates_ = 0;         // #477
         loss_sumsq_ = 0.0;        // #485
         max_gain_ = 0.0;          // #501
@@ -1218,6 +1221,29 @@ public:
         const double mean = pnl_sum_ / n;
         const double var  = pnl_sumsq_ / n - mean * mean;
         return var > 0.0 ? std::sqrt(var) : 0.0;
+    }
+    // pnl_skewness: the (population) skewness of the update_pnl event series
+    // (#533) = E[(x-μ)³] / σ³, over EVERY update including flat ones — the same
+    // population pnl_std_dev (#477) uses, so the two are consistent. It is the
+    // SHAPE of the return distribution that the second moment cannot see:
+    // POSITIVE skew is a long right tail (many small losses, the occasional big
+    // win — a trend-follower's payoff), NEGATIVE skew a long left tail (many
+    // small wins, the occasional big loss — the premium-selling blow-up
+    // profile). It puts a signed number on what pnl_tail_ratio (#509, the ratio
+    // of extremes) and kelly_fraction (#525) only hint at: two strategies with
+    // the same mean and volatility but opposite skew carry very different tail
+    // risk. Built on a Σδ³ accumulator mirroring pnl_sumsq_ (#477). 0 before
+    // two updates or on a zero-variance (constant) stream; reset by reset_daily.
+    double pnl_skewness() const noexcept {
+        if (pnl_updates_ < 2) return 0.0;
+        const double n    = static_cast<double>(pnl_updates_);
+        const double mean = pnl_sum_ / n;
+        const double m2   = pnl_sumsq_ / n;
+        const double var  = m2 - mean * mean;
+        if (var <= 0.0) return 0.0;
+        const double sd = std::sqrt(var);
+        const double central3 = pnl_sumcube_ / n - 3.0 * mean * m2 + 2.0 * mean * mean * mean;
+        return central3 / (sd * sd * sd);
     }
     // pnl_recovery_factor: the session return covered by its worst drawdown
     // (#493) = daily_pnl / max_drawdown_dollars — a Calmar/recovery-factor
