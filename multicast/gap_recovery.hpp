@@ -1127,6 +1127,26 @@ struct FeedHealth {
     bool is_healthy(double loss_rate, double ooo_rate, bool stale) const noexcept {
         return score(loss_rate, ooo_rate, stale) >= min_healthy;
     }
+    // worst_impairment (#531): names WHICH of the three penalties took the most
+    // off score() — the actionable companion to the single composite number.
+    // score() says HOW degraded the feed is; this says WHY, so an operator sees
+    // "loss" vs "reorder" vs "stale" and knows what to chase instead of reading
+    // three meters back. It compares the SAME weighted deductions score()
+    // applies (loss_rate*loss_weight, ooo_rate*ooo_weight, and the flat
+    // stale_penalty when stale), so a feed that scores badly on raw loss_rate
+    // but weights reordering heavier can still name "reorder" as the true
+    // culprit. Ties break loss > reorder > stale, the usual severity order.
+    // Returns "none" when nothing is deducting (a clean feed). The failover-
+    // triage analog of MultiChannelRecovery::worst_channel (#395).
+    const char* worst_impairment(double loss_rate, double ooo_rate, bool stale) const noexcept {
+        const double dl  = loss_rate * loss_weight;
+        const double doo = ooo_rate * ooo_weight;
+        const double ds  = stale ? stale_penalty : 0.0;
+        if (dl <= 0.0 && doo <= 0.0 && ds <= 0.0) return "none";
+        if (dl >= doo && dl >= ds) return "loss";
+        if (doo >= ds)             return "reorder";
+        return "stale";
+    }
 };
 
 

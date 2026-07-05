@@ -3342,6 +3342,13 @@ void test_multicast_gap_recovery() {
     ASSERT(std::fabs(fh.score(0.0, 0.0, true) - 50.0) < 1e-9 && !fh.is_healthy(0.0, 0.0, true),
            "fh_stale_unhealthy");
     ASSERT(std::fabs(fh.score(0.6, 0.0, false) - 0.0) < 1e-9, "fh_clamped_zero"); // 100 - 120 -> 0
+    // #531 worst_impairment — names the dominant penalty behind the score.
+    ASSERT(std::strcmp(fh.worst_impairment(0.0, 0.0, false), "none") == 0, "fh_worst_none");
+    ASSERT(std::strcmp(fh.worst_impairment(0.10, 0.05, false), "loss") == 0, "fh_worst_loss");      // 20 vs 5
+    ASSERT(std::strcmp(fh.worst_impairment(0.02, 0.10, false), "reorder") == 0, "fh_worst_reorder"); // 4 vs 10
+    ASSERT(std::strcmp(fh.worst_impairment(0.01, 0.02, true), "stale") == 0, "fh_worst_stale");     // 2,2 vs 50
+    // Weighted deductions can outrank a bigger raw rate; ties break loss > reorder.
+    ASSERT(std::strcmp(fh.worst_impairment(0.05, 0.10, false), "loss") == 0, "fh_worst_tie_loss");  // 10 == 10
 
     // #297 GapFillTimer — recovery-SLA timing.
     multicast::GapFillTimer gft;
