@@ -329,6 +329,7 @@ class RiskManager {
     double max_loss_     = 0.0;      // largest single losing update_pnl magnitude (#501)
     int32_t underwater_updates_     = 0;  // consecutive updates below the P&L peak (#397)
     int32_t max_underwater_updates_ = 0;  // longest such spell this session (#397)
+    uint64_t total_underwater_updates_ = 0;  // cumulative updates below the peak (#517)
     int32_t max_consec_wins_        = 0;  // best winning streak seen this session (#405)
     uint64_t kill_activations_      = 0;  // fresh false->true kill-switch latches (#421)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
@@ -592,6 +593,7 @@ public:
         // win/loss counters (#372/#381), which exclude them.
         if (daily_pnl_ < peak_pnl_) {
             ++underwater_updates_;
+            ++total_underwater_updates_;   // #517: cumulative time in drawdown
             if (underwater_updates_ > max_underwater_updates_)
                 max_underwater_updates_ = underwater_updates_;
         } else {
@@ -778,6 +780,7 @@ public:
         max_loss_ = 0.0;          // #501
         underwater_updates_     = 0;  // #397
         max_underwater_updates_ = 0;  // #397
+        total_underwater_updates_ = 0;  // #517
         max_consec_wins_        = 0;  // #405
         kill_activations_       = 0;  // #421
         traded_notional_ = 0.0;
@@ -1317,6 +1320,28 @@ public:
     // max_underwater_updates: the LONGEST underwater spell this session
     // (#397) — high-water mark of the counter above; reset by reset_daily.
     int32_t max_underwater_updates() const noexcept { return max_underwater_updates_; }
+    // total_underwater_updates: the CUMULATIVE number of update_pnl events spent
+    // below the P&L high-water mark this session (#517), summed across every
+    // separate spell — where underwater_updates (#397) is only the CURRENT
+    // spell and max_underwater_updates (#397) the longest single one. A book
+    // with shallow, short individual drawdowns can still spend most of the
+    // session underwater; this is the count that exposes it. Reset by
+    // reset_daily.
+    uint64_t total_underwater_updates() const noexcept { return total_underwater_updates_; }
+    // underwater_fraction: the share of the session spent below the high-water
+    // mark (#517) = total_underwater_updates / pnl_updates, in [0,1]. The
+    // "pain fraction" in the spirit of the Ulcer Index: 0 means every update
+    // set or held a new high (a monotonically rising equity curve), near 1
+    // means the desk almost never recovered its peak. FLAT updates count as
+    // underwater time (the position is still below the peak), matching #397.
+    // It separates two strategies with the SAME max_drawdown_dollars (#340) by
+    // how much of the ride was spent in the red — depth is not duration. 0
+    // before any update.
+    double underwater_fraction() const noexcept {
+        return pnl_updates_ > 0
+            ? static_cast<double>(total_underwater_updates_) / static_cast<double>(pnl_updates_)
+            : 0.0;
+    }
     // consecutive_losses_remaining: how many more losing fills IN A ROW until the
     // loss-streak breaker trips (#205, based on #114). -1 when the breaker is off,
     // 0 when it already tripped. Early warning before the desk is halted.

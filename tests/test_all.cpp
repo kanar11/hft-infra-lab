@@ -6189,6 +6189,8 @@ void test_risk_price_band() {
     RiskManager ruw;
     ASSERT(ruw.underwater_updates() == 0 && ruw.max_underwater_updates() == 0,
            "uw_fresh_zero");
+    ASSERT(ruw.total_underwater_updates() == 0 && ruw.underwater_fraction() == 0.0,
+           "uw_total_fresh_zero");   // #517
     ruw.update_pnl(+10.0);                       // new peak -> at the surface
     ASSERT(ruw.underwater_updates() == 0, "uw_at_peak_zero");
     ruw.update_pnl(-2.0);
@@ -6208,9 +6210,20 @@ void test_risk_price_band() {
     ruw.update_pnl(-1.0); ruw.update_pnl(-1.0);
     ruw.update_pnl(-1.0); ruw.update_pnl(-1.0);
     ASSERT(ruw.max_underwater_updates() == 4, "uw_max_grows");
+    // #517: cumulative time underwater — 9 of the 12 updates were below the
+    // running peak (only the 3 that set/held a new high were at the surface).
+    ASSERT(ruw.total_underwater_updates() == 9, "uw_total_9");
+    ASSERT(std::fabs(ruw.underwater_fraction() - 9.0 / 12.0) < 1e-9, "uw_fraction_075");
     ruw.reset_daily();
     ASSERT(ruw.underwater_updates() == 0 && ruw.max_underwater_updates() == 0,
            "uw_reset_daily");
+    ASSERT(ruw.total_underwater_updates() == 0 && ruw.underwater_fraction() == 0.0,
+           "uw_total_reset");   // #517
+    // #517: a monotonically rising equity curve never dips below its peak.
+    RiskManager rmono;
+    rmono.update_pnl(+1.0); rmono.update_pnl(+2.0); rmono.update_pnl(+3.0);
+    ASSERT(rmono.total_underwater_updates() == 0 && rmono.underwater_fraction() == 0.0,
+           "uw_monotone_zero_fraction");
 
     // #405 max_consecutive_wins_seen — the win-side high-water mark (#364's twin).
     RiskManager rmw;
