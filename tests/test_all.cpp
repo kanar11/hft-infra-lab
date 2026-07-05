@@ -8249,6 +8249,46 @@ void test_ouch_order_state() {
         ASSERT(be.net_filled_shares() == 0 && be.breakeven_mark() == 0.0, "ouch_be_flat_none");
     }
 
+    // #514 realized_pnl — banked P&L on the round-tripped portion, mark-independent.
+    {
+        auto cl = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        ouch::OUCHOrderTracker rpl;
+        uint8_t rpb[64];
+        ASSERT(rpl.realized_pnl() == 0.0, "ouch_rpnl_empty_zero");
+        // Buy 100 @ 10.00 -> long, nothing round-tripped yet.
+        rpl.on_new("B1", 100);
+        int rn = OUCHMessage::encode_accepted(rpb, "B1", 'B', 100, "AAPL", 10.0, 1);
+        rpl.on_response(OUCHMessage::parse_response(rpb, rn));
+        rn = OUCHMessage::encode_executed(rpb, "B1", 100, 10.00, 900);
+        rpl.on_response(OUCHMessage::parse_response(rpb, rn));
+        ASSERT(rpl.realized_pnl() == 0.0, "ouch_rpnl_one_sided_zero");
+        // Sell 60 @ 11.00 -> matched 60 at (11 - 10) = +60 banked, still long 40.
+        rpl.on_new("S1", 60);
+        rn = OUCHMessage::encode_accepted(rpb, "S1", 'S', 60, "AAPL", 11.0, 2);
+        rpl.on_response(OUCHMessage::parse_response(rpb, rn));
+        rn = OUCHMessage::encode_executed(rpb, "S1", 60, 11.00, 901);
+        rpl.on_response(OUCHMessage::parse_response(rpb, rn));
+        ASSERT(rpl.net_filled_shares() == 40, "ouch_rpnl_still_long");
+        ASSERT(cl(rpl.realized_pnl(), 60.0), "ouch_rpnl_partial_banked");
+        // net_cash_flow still carries the open inventory's cash cost, so the two
+        // DIVERGE while the position is open (660 sold - 1000 bought = -340).
+        ASSERT(cl(rpl.net_cash_flow(), 660.0 - 1000.0), "ouch_rpnl_ncf_diverges_open");
+        // Per-share identity: realized_pnl == matched * realized_spread_capture.
+        ASSERT(cl(rpl.realized_pnl(), 60.0 * rpl.realized_spread_capture()), "ouch_rpnl_edge_identity");
+        // Close the last 40 @ 12.00 -> FLAT. avg_sell 11.4, realized 100*(11.4-10)
+        // = 140, and now it equals net_cash_flow exactly (every share matched).
+        rpl.on_new("S2", 40);
+        rn = OUCHMessage::encode_accepted(rpb, "S2", 'S', 40, "AAPL", 12.0, 3);
+        rpl.on_response(OUCHMessage::parse_response(rpb, rn));
+        rn = OUCHMessage::encode_executed(rpb, "S2", 40, 12.00, 902);
+        rpl.on_response(OUCHMessage::parse_response(rpb, rn));
+        ASSERT(rpl.net_filled_shares() == 0, "ouch_rpnl_flat");
+        ASSERT(cl(rpl.realized_pnl(), 140.0)
+               && cl(rpl.realized_pnl(), rpl.net_cash_flow()), "ouch_rpnl_flat_eq_ncf");
+        rpl.reset_session();
+        ASSERT(rpl.realized_pnl() == 0.0, "ouch_rpnl_reset");
+    }
+
     // #466 projected_net_shares — realized (#458) + working (#450) exposure.
     {
         ouch::OUCHOrderTracker pnt;

@@ -387,6 +387,24 @@ public:
              + static_cast<double>(net_filled_shares()) * mark_price;
     }
 
+    // realized_pnl (#514): the P&L already BANKED on the round-tripped portion,
+    // independent of any mark = matched_shares * (avg_sell_price - avg_buy_
+    // price), where matched_shares = min(bought, sold). Where net_cash_flow
+    // (#482) still carries the cost of the OPEN inventory and mark_to_market_
+    // pnl (#490) needs a mark to value that inventory, this isolates the closed
+    // round trips — the money locked in regardless of where the market goes
+    // next. It is the $ total whose per-share edge is realized_spread_capture
+    // (#474): realized_pnl == matched_shares * that edge. When the book is FLAT
+    // (bought == sold) every share is matched and this equals net_cash_flow
+    // exactly. 0 until both a buy and a sell have filled (nothing is round-
+    // tripped yet). Bust-adjusted through the #474 side accumulators it reads.
+    double realized_pnl() const noexcept {
+        const int64_t matched = bought_shares_ < sold_shares_ ? bought_shares_ : sold_shares_;
+        return matched > 0
+            ? static_cast<double>(matched) * (avg_sell_price() - avg_buy_price())
+            : 0.0;
+    }
+
     // breakeven_mark (#498): the mark price at which mark_to_market_pnl
     // (#490) is exactly zero = -net_cash_flow / net_filled_shares. Solving
     // net_cash_flow + net_shares*mark == 0, this is how far the market must
