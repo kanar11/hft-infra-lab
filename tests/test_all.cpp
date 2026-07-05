@@ -6084,6 +6084,24 @@ void test_risk_price_band() {
     rtx.reset_daily();
     ASSERT(rtx.largest_pnl_gain() == 0.0 && rtx.largest_pnl_loss() == 0.0, "ptx_reset");
 
+    // #509 pnl_tail_ratio — the ratio of the EXTREMES (best gain / worst loss),
+    // the tail companion to pnl_payoff_ratio (#381, averages) and
+    // pnl_profit_factor (#469, sums).
+    RiskManager rtl;
+    ASSERT(rtl.pnl_tail_ratio() == 0.0, "ptr_empty_zero");
+    rtl.update_pnl(+8.0);                                // a gain but no loss yet -> no ratio
+    ASSERT(rtl.pnl_tail_ratio() == 0.0, "ptr_no_loss_zero");
+    rtl.update_pnl(-4.0); rtl.update_pnl(+2.0); rtl.update_pnl(-1.0);
+    // biggest gain 8, biggest loss 4 -> 2.0, a convex tail (> 1)
+    ASSERT(std::fabs(rtl.pnl_tail_ratio() - 2.0) < 1e-9, "ptr_convex_2");
+    // negative-skew signature: two small wins then one loss larger than any
+    // gain -> ratio < 1, the blow-up shape a high win rate would hide.
+    RiskManager rtl2;
+    rtl2.update_pnl(+3.0); rtl2.update_pnl(+3.0); rtl2.update_pnl(-9.0);
+    ASSERT(rtl2.pnl_tail_ratio() < 1.0, "ptr_negative_skew_below_one");
+    rtl.reset_daily();
+    ASSERT(rtl.pnl_tail_ratio() == 0.0, "ptr_reset_zero");
+
     // #397 underwater_updates / max_underwater_updates — drawdown DURATION,
     // the time axis to max_drawdown_dollars' (#340) depth.
     RiskManager ruw;

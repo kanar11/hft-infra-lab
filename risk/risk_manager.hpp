@@ -1239,6 +1239,19 @@ public:
     // reset_daily.
     double largest_pnl_gain() const noexcept { return max_gain_; }
     double largest_pnl_loss() const noexcept { return max_loss_; }
+    // pnl_tail_ratio: the ratio of the EXTREMES (#509) = largest_pnl_gain /
+    // largest_pnl_loss. It completes the ladder of gain-vs-loss ratios on
+    // the update_pnl stream: pnl_payoff_ratio (#381) is the ratio of the
+    // AVERAGES, pnl_profit_factor (#469) the ratio of the SUMS, and this the
+    // ratio of the single biggest events. > 1 means the best event outweighs
+    // the worst (convex tail); < 1 is the negative-skew signature — one loss
+    // larger than any gain — the blow-up shape that a high win rate and a
+    // healthy payoff ratio both hide (many small wins, one fat tail). 0 until
+    // a losing update exists (division guarded); reset by reset_daily via the
+    // #501 accumulators it reads.
+    double pnl_tail_ratio() const noexcept {
+        return max_loss_ > 0.0 ? max_gain_ / max_loss_ : 0.0;
+    }
 
     // pnl_downside_dev: the downside deviation of the P&L event series
     // (#485) = sqrt( Σ loss² / N ) over ALL updates (winners and flats
