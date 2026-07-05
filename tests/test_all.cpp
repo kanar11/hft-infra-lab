@@ -2814,11 +2814,16 @@ void test_itch_book() {
     ASSERT(std::fabs(iagr.tape_imbalance() - 1.0) < 1e-9, "itchbook_agr_pure_buying");
     // #495 cumulative_delta: 300 bought, 0 sold -> +300 (the LEVEL, not ratio).
     ASSERT(iagr.cumulative_delta() == 300, "itchbook_cvd_plus_300");
+    // #535: the CVD high/low water marks — peak +300, trough still the start 0.
+    ASSERT(iagr.max_cumulative_delta() == 300 && iagr.min_cumulative_delta() == 0,
+           "itchbook_cvd_peak_300");
     iagr.on_execute(1, 100);                      // bid hit = seller-initiated
     // (300 - 100) / 400 = +0.5 — net buying pressure.
     ASSERT(std::fabs(iagr.tape_imbalance() - 0.5) < 1e-9, "itchbook_agr_net_half");
     // #495: CVD 300 - 100 = +200.
     ASSERT(iagr.cumulative_delta() == 200, "itchbook_cvd_plus_200");
+    // #535: CVD fell to +200 but the peak still remembers +300.
+    ASSERT(iagr.max_cumulative_delta() == 300, "itchbook_cvd_peak_holds");
     // The split always sums to the #407 tape total.
     ASSERT(iagr.executed_against_bid() + iagr.executed_against_ask()
            == iagr.executed_shares(), "itchbook_agr_sums_to_tape");
@@ -2830,10 +2835,15 @@ void test_itch_book() {
     ASSERT(iagr.tape_imbalance() < 0.0, "itchbook_agr_net_selling_negative");
     // #495: CVD 300 - 400 = -100 (net selling in shares).
     ASSERT(iagr.cumulative_delta() == -100, "itchbook_cvd_net_selling");
+    // #535: the trough now reaches -100 while the peak still holds +300.
+    ASSERT(iagr.max_cumulative_delta() == 300 && iagr.min_cumulative_delta() == -100,
+           "itchbook_cvd_trough_minus100");
     iagr.clear();
     ASSERT(iagr.executed_against_bid() == 0 && iagr.tape_imbalance() == 0.0,
            "itchbook_agr_clear");
     ASSERT(iagr.cumulative_delta() == 0, "itchbook_cvd_clear");
+    ASSERT(iagr.max_cumulative_delta() == 0 && iagr.min_cumulative_delta() == 0,
+           "itchbook_cvd_extremes_clear");   // #535
 
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");

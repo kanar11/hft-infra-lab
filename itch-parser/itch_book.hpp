@@ -53,6 +53,8 @@ class ITCHOrderBook {
     int64_t exec_notional_ticks_ = 0;  // tape: Σ shares × resting price_ticks (#407)
     int64_t exec_against_bid_    = 0;  // tape: shares hit on resting BIDS = seller-initiated (#415)
     int64_t exec_against_ask_    = 0;  // tape: shares lifted from ASKS = buyer-initiated (#415)
+    int64_t max_cum_delta_       = 0;  // session peak of cumulative_delta (#535)
+    int64_t min_cum_delta_       = 0;  // session trough of cumulative_delta (#535)
     int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
     uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
     int64_t  max_reprice_ticks_  = 0;  // largest single |new - old| reprice move (#519)
@@ -113,6 +115,10 @@ public:
             // resting BID was sold into, a lifted ASK was bought from.
             if (it->second.side == 'B') exec_against_bid_ += dec;
             else                        exec_against_ask_ += dec;
+            // #535: track the running CVD high/low water marks.
+            const int64_t cd = exec_against_ask_ - exec_against_bid_;
+            if (cd > max_cum_delta_) max_cum_delta_ = cd;
+            if (cd < min_cum_delta_) min_cum_delta_ = cd;
             ++exec_prints_;   // #463: a real trade print (orphans excluded)
             if (dec > largest_print_) largest_print_ = dec;   // #503: block detector
             // #471: the tape's last print — a hit resting BID was SOLD into
@@ -231,6 +237,7 @@ public:
         adds_ = executes_ = cancels_ = deletes_ = replaces_ = orphans_ = 0;
         exec_shares_sum_ = exec_notional_ticks_ = 0;   // #407
         exec_against_bid_ = exec_against_ask_ = 0;     // #415
+        max_cum_delta_ = min_cum_delta_ = 0;           // #535
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
         max_reprice_ticks_ = 0;                        // #519
         exec_prints_ = 0;                              // #463
@@ -902,6 +909,20 @@ public:
     int64_t cumulative_delta() const noexcept {
         return exec_against_ask_ - exec_against_bid_;
     }
+
+    // max_cumulative_delta / min_cumulative_delta (#535): the session HIGH and
+    // LOW water marks of cumulative_delta (#495) — the peak net buyer-initiated
+    // accumulation and the peak net seller-initiated distribution reached this
+    // session, both anchored at the session-start 0 (so max >= 0 >= min).
+    // cumulative_delta() is the CVD right NOW; these remember its extremes, the
+    // reference points order-flow DIVERGENCE is read against: price making a new
+    // high while CVD sits below max_cumulative_delta is the classic absorption/
+    // exhaustion tell (buyers no longer following price up), and a CVD that
+    // reclaims its max confirms the move. The tape-flow parallel of the depth
+    // high-water reads (largest_level #385, largest_trade_size #503). 0 before
+    // any print; reset by clear().
+    int64_t max_cumulative_delta() const noexcept { return max_cum_delta_; }
+    int64_t min_cumulative_delta() const noexcept { return min_cum_delta_; }
 
     // tape_imbalance (#415): net aggressor pressure in [-1,1] =
     // (bought - sold) / total executed. +1 = every share was buyer-
