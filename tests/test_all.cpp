@@ -80,6 +80,7 @@
 #include "../strategy/percent_rank.hpp"
 #include "../strategy/cfo.hpp"
 #include "../strategy/pgo.hpp"
+#include "../strategy/kst.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4781,6 +4782,48 @@ void test_pgo() {
     ASSERT(!pg.ready() && pg.value() == 0.0, "pgo_reset");
 }
 
+// KST #510 — Know Sure Thing (Pring's weighted sum of four smoothed ROCs).
+void test_kst() {
+    SECTION("KST Know Sure Thing (#510)");
+    // Default params need ROC(30)+1, then SMA(15), then signal(9) -> ~53 prices.
+    KST kdef;
+    for (int i = 0; i < 20; ++i) kdef.update(100.0 + i);
+    ASSERT(!kdef.ready(), "kst_not_ready_during_warmup");
+
+    // Compact params for deterministic tests: ROC 3/5/7/9, SMA 3 each, signal 3.
+    // Steady linear uptrend -> every ROC positive -> KST > 0.
+    KST up(3, 5, 7, 9, 3, 3, 3, 3, 3);
+    for (int i = 0; i < 40; ++i) up.update(100.0 + 2.0 * i);
+    ASSERT(up.ready(), "kst_ready_after_warmup");
+    ASSERT(up.value() > 0.0, "kst_uptrend_positive");
+
+    // Accelerating uptrend -> KST leads its lagging signal line -> bullish.
+    KST acc(3, 5, 7, 9, 3, 3, 3, 3, 3);
+    double pa = 100.0, g = 1.005;
+    for (int i = 0; i < 40; ++i) { acc.update(pa); pa *= g; g += 0.002; }
+    ASSERT(acc.value() > 0.0 && acc.bullish(), "kst_accelerating_bullish");
+
+    // Steady downtrend -> every ROC negative -> KST < 0, not bullish.
+    KST dn(3, 5, 7, 9, 3, 3, 3, 3, 3);
+    for (int i = 0; i < 40; ++i) dn.update(300.0 - 2.0 * i);
+    ASSERT(dn.value() < 0.0, "kst_downtrend_negative");
+    ASSERT(!dn.bullish(), "kst_downtrend_not_bullish");
+
+    // Flat tape -> every ROC 0 -> KST 0 (no division blow-up).
+    KST fl(3, 5, 7, 9, 3, 3, 3, 3, 3);
+    for (int i = 0; i < 40; ++i) fl.update(50.0);
+    ASSERT(fl.ready() && std::fabs(fl.value()) < 1e-9, "kst_flat_zero");
+
+    // Scale invariance: KST sums ROC PERCENTAGES, so a 10x-priced but
+    // identically-shaped path gives the same reading bit-for-bit in the limit.
+    KST sa(3, 5, 7, 9, 3, 3, 3, 3, 3), sb(3, 5, 7, 9, 3, 3, 3, 3, 3);
+    for (int i = 0; i < 40; ++i) { const double x = 30.0 + i; sa.update(x); sb.update(x * 10.0); }
+    ASSERT(std::fabs(sa.value() - sb.value()) < 1e-9, "kst_scale_invariant");
+
+    up.reset();
+    ASSERT(!up.ready() && up.value() == 0.0, "kst_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -8777,6 +8820,7 @@ int main() {
     test_percent_rank();
     test_cfo();
     test_pgo();
+    test_kst();
     test_cmo();
     test_zscore();
     test_tsi();
