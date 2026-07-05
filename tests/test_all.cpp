@@ -6178,6 +6178,25 @@ void test_risk_price_band() {
     ASSERT(rpw.pnl_expectancy() == 0.0, "pex_reset_zero");
     ASSERT(rpw.pnl_profit_factor() == 0.0, "ppf_reset_zero");
 
+    // #525 kelly_fraction — optimal risk fraction W - (1-W)/b from win rate + payoff.
+    RiskManager rkf;
+    ASSERT(rkf.kelly_fraction() == 0.0, "kelly_empty_zero");
+    rkf.update_pnl(+5.0);                     // a win, but no loss yet -> b undefined
+    ASSERT(rkf.kelly_fraction() == 0.0, "kelly_no_loss_zero");
+    // W=0.5, payoff b=2 (avg win 2, avg loss 1) -> f = 0.5 - 0.5/2 = 0.25.
+    RiskManager rkf2;
+    rkf2.update_pnl(+2.0); rkf2.update_pnl(+2.0);
+    rkf2.update_pnl(-1.0); rkf2.update_pnl(-1.0);
+    ASSERT(std::fabs(rkf2.kelly_fraction() - 0.25) < 1e-9, "kelly_coinflip_2to1_quarter");
+    // A losing edge reads NEGATIVE: W=0.5, b=0.5 -> f = 0.5 - 0.5/0.5 = -0.5.
+    RiskManager rkf3;
+    rkf3.update_pnl(+1.0); rkf3.update_pnl(+1.0);
+    rkf3.update_pnl(-2.0); rkf3.update_pnl(-2.0);
+    ASSERT(rkf3.kelly_fraction() < 0.0
+           && std::fabs(rkf3.kelly_fraction() + 0.5) < 1e-9, "kelly_losing_edge_negative");
+    rkf2.reset_daily();
+    ASSERT(rkf2.kelly_fraction() == 0.0, "kelly_reset");
+
     // #461: a high WIN RATE can still be a NEGATIVE edge — three 1-dollar
     // wins and one 10-dollar loss is 75% wins but -1.75 per update.
     RiskManager rpx;

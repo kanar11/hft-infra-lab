@@ -1189,6 +1189,23 @@ public:
         const double al = avg_pnl_loss();
         return (aw > 0.0 && al > 0.0) ? aw / al : 0.0;
     }
+    // kelly_fraction: the Kelly-criterion optimal risk fraction (#525) from the
+    // live win rate and payoff = W - (1 - W)/b, where W = pnl_win_rate (#372)
+    // and b = pnl_payoff_ratio (#381). The position-SIZING output the frequency
+    // and magnitude axes were built toward: it answers what fraction of capital
+    // an edge justifies risking per bet, fusing hit rate and payoff the way
+    // pnl_expectancy (#461) does but in sizing units. A coin flip with a 2:1
+    // payoff (W=0.5, b=2) returns 0.25; a NEGATIVE or zero result means no
+    // exploitable edge — bet nothing. It is deliberately left UNCLAMPED and can
+    // go negative (a losing edge) or above 1 (a huge one); the caller applies
+    // its own risk appetite (half-Kelly, a hard cap). 0 until both a win and a
+    // loss exist (b undefined before then). Reset by reset_daily via #372/#381.
+    double kelly_fraction() const noexcept {
+        const double b = pnl_payoff_ratio();
+        if (b <= 0.0) return 0.0;
+        const double w = pnl_win_rate();
+        return w - (1.0 - w) / b;
+    }
     // pnl_std_dev: population standard deviation of the update_pnl event
     // series (#477) — the volatility of the P&L stream, over EVERY update
     // including flat ones (a return series counts the zeros). Where
