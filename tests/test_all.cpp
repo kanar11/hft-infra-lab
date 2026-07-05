@@ -82,6 +82,7 @@
 #include "../strategy/pgo.hpp"
 #include "../strategy/kst.hpp"
 #include "../strategy/vidya.hpp"
+#include "../strategy/center_of_gravity.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4919,6 +4920,33 @@ void test_vidya() {
     ASSERT(!vu.ready() && vu.value() == 0.0, "vidya_reset");
 }
 
+// CenterOfGravity #526 — Ehlers' zero-centered balance-point oscillator.
+void test_cog() {
+    SECTION("Center of Gravity (#526)");
+    CenterOfGravity cf;                            // period 10
+    for (int i = 0; i < 6; ++i) cf.update(100.0 + i);
+    ASSERT(!cf.ready(), "cog_not_ready_during_warmup");
+
+    // A flat window is perfectly centered -> COG exactly 0.
+    CenterOfGravity cc(3);
+    cc.update(10.0); cc.update(10.0); cc.update(10.0);
+    ASSERT(cc.ready() && std::fabs(cc.value()) < 1e-12, "cog_flat_zero");
+
+    // Rising window (recent heavier) -> COG positive; period 3, 10/20/30 -> +1/3.
+    CenterOfGravity cu(3);
+    cu.update(10.0); cu.update(20.0); cu.update(30.0);
+    ASSERT(std::fabs(cu.value() - 1.0 / 3.0) < 1e-9, "cog_rising_plus_third");
+
+    // The falling window is the exact mirror -> -1/3.
+    CenterOfGravity cd(3);
+    cd.update(30.0); cd.update(20.0); cd.update(10.0);
+    ASSERT(std::fabs(cd.value() + 1.0 / 3.0) < 1e-9, "cog_falling_minus_third");
+    ASSERT(std::fabs(cu.value() + cd.value()) < 1e-12, "cog_symmetric");
+
+    cu.reset();
+    ASSERT(!cu.ready() && cu.value() == 0.0, "cog_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -9061,6 +9089,7 @@ int main() {
     test_pgo();
     test_kst();
     test_vidya();
+    test_cog();
     test_cmo();
     test_zscore();
     test_tsi();
