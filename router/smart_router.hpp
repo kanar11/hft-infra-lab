@@ -930,6 +930,26 @@ public:
         return best_name;
     }
 
+    // slowest_venue: name of the active venue with the HIGHEST selection
+    // latency (#512) — the laggard that venue_latency_spread_ns (#351)
+    // measures but does not name. fastest_venue (#278) gives the path to
+    // prefer; this gives the one to route latency-sensitive flow AWAY from
+    // (or to investigate), the actionable WHICH the spread's own comment calls
+    // for. Distinct from least_healthy_venue (#86), which ranks by failure
+    // streak rather than speed. With a single active venue it IS the fastest
+    // too (spread 0). nullptr when no venue is active.
+    const char* slowest_venue() const noexcept {
+        const char* worst_name = nullptr;
+        int64_t worst = 0; bool found = false;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const int64_t lat = v.selection_latency_ns();
+            if (!found || lat > worst) { worst = lat; worst_name = v.name; found = true; }
+        }
+        return worst_name;
+    }
+
     // avg_venue_latency_ns: mean selection latency across all ACTIVE venues (#286).
     // Whereas fastest_venue gives the single best path, this is the market-wide
     // connectivity health — a rising average warns that the whole fabric (not just

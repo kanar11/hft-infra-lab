@@ -5689,10 +5689,14 @@ void test_router_ewma_partial() {
         r.add_venue(Venue("B", 200, 0.0));   // 200 (fastest)
         r.add_venue(Venue("C", 800, 0.0));   // 800
         ASSERT(std::strcmp(r.fastest_venue(), "B") == 0, "fastest_B");
+        // #512 slowest_venue: C at 800 is the laggard venue_latency_spread_ns names.
+        ASSERT(std::strcmp(r.slowest_venue(), "C") == 0, "slowest_C");
         r.set_venue_active("B", false);
         ASSERT(std::strcmp(r.fastest_venue(), "A") == 0, "fastest_A_after_disable");
+        ASSERT(std::strcmp(r.slowest_venue(), "C") == 0, "slowest_C_after_disable");
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.fastest_venue() == nullptr, "fastest_empty_null");
+        ASSERT(empt.slowest_venue() == nullptr, "slowest_empty_null");
         // #286 avg_venue_latency_ns: A 500, C 800 active (B disabled above) -> 650
         ASSERT(std::fabs(r.avg_venue_latency_ns() - 650.0) < 1e-9, "avglat_after_disable");
         // #351 venue_latency_spread_ns: A 500, C 800 active -> 800 - 500 = 300
@@ -5712,6 +5716,9 @@ void test_router_ewma_partial() {
         ASSERT(std::fabs(r.avg_venue_latency_ns() - 100.0) < 1e-9, "avglat_one_active");
         // only A active -> lo == hi -> spread 0
         ASSERT(r.venue_latency_spread_ns() == 0, "latspread_one_active_zero");
+        // #512: with one active venue the slowest IS the fastest.
+        ASSERT(std::strcmp(r.slowest_venue(), "A") == 0
+               && std::strcmp(r.fastest_venue(), "A") == 0, "slowest_eq_fastest_one_active");
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.avg_venue_latency_ns() == 0.0, "avglat_empty_zero");
     }
