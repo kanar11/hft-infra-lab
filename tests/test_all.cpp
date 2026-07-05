@@ -3120,12 +3120,16 @@ void test_multicast_gap_recovery() {
     cb.update(2, 50.0);             // new key
     cb.update(1, 102.0);            // konflacja 2
     ASSERT(cb.pending() == 2 && cb.conflated == 2, "conflate_pending_count");
+    ASSERT(cb.peak_pending() == 2, "conflate_peak_2");   // #515: two distinct keys piled up
     double v = 0.0;
     ASSERT(cb.get(1, v) && std::fabs(v - 102.0) < 1e-9, "conflate_latest_value");
     ASSERT(cb.get(2, v) && std::fabs(v - 50.0) < 1e-9, "conflate_other_key");
     ASSERT(!cb.get(99, v), "conflate_unknown_false");
     cb.drain();
     ASSERT(cb.pending() == 0, "conflate_drain");
+    // #515: the peak deliberately SURVIVES drain — pending() collapsed to 0 but
+    // the worst backlog (2) is still remembered for buffer sizing.
+    ASSERT(cb.peak_pending() == 2, "conflate_peak_survives_drain");
 
     // #427 received / conflation_ratio — how summarized the consumer's view is.
     // cb saw 4 updates, 2 of which were overwrites -> ratio 0.5.
@@ -3137,12 +3141,16 @@ void test_multicast_gap_recovery() {
     // A fresh buffer with distinct keys only: the consumer sees every tick.
     multicast::ConflationBuffer cbr;
     ASSERT(cbr.conflation_ratio() == 0.0, "conflate_ratio_empty_zero");
+    ASSERT(cbr.peak_pending() == 0, "conflate_peak_empty_zero");   // #515
     cbr.update(1, 1.0); cbr.update(2, 2.0); cbr.update(3, 3.0);
     ASSERT(cbr.conflation_ratio() == 0.0 && cbr.received == 3, "conflate_ratio_no_overwrites");
+    ASSERT(cbr.peak_pending() == 3, "conflate_peak_distinct_3");   // #515: three distinct keys
     // A hot key drives the ratio up: 1 insert + 3 overwrites of 4 -> 0.75.
     multicast::ConflationBuffer cbh;
     cbh.update(7, 1.0); cbh.update(7, 2.0); cbh.update(7, 3.0); cbh.update(7, 4.0);
     ASSERT(std::fabs(cbh.conflation_ratio() - 0.75) < 1e-9, "conflate_ratio_hot_key");
+    // #515: conflated overwrites of ONE key never inflate the backlog -> peak 1.
+    ASSERT(cbh.peak_pending() == 1, "conflate_peak_hot_key_1");
 
     // #235 LatencyTracker — EWMA + peak latency.
     multicast::LatencyTracker lt(0.5);

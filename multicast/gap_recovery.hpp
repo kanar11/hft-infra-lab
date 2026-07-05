@@ -733,11 +733,13 @@ struct ConflationBuffer {
     std::map<std::uint64_t, double> latest;   // key -> latest value
     std::uint64_t conflated = 0;
     std::uint64_t received  = 0;              // every update offered (#427)
+    std::size_t   peak_pending_ = 0;          // high-water of latest.size() (#515)
 
     void update(std::uint64_t key, double value) {
         ++received;
         auto [it, inserted] = latest.try_emplace(key, value);
         if (!inserted) { it->second = value; ++conflated; }   // overwrite = conflation
+        if (latest.size() > peak_pending_) peak_pending_ = latest.size();   // #515
     }
     bool get(std::uint64_t key, double& out) const {
         const auto it = latest.find(key);
@@ -747,6 +749,17 @@ struct ConflationBuffer {
     }
     std::size_t pending() const noexcept { return latest.size(); }
     void drain() noexcept { latest.clear(); }   // the consumer took the latest state
+
+    // peak_pending (#515): the high-water mark of pending() — the most DISTINCT
+    // keys that ever piled up between two drains. pending() collapses to 0 on
+    // drain(), so the burst that made the consumer fall furthest behind leaves
+    // no trace there; this remembers it, deliberately SURVIVING drain() the way
+    // SlidingWindowRate::peak_count (#507) survives its window aging out. The
+    // sizing input for the drain buffer: conflation_ratio (#427) says what
+    // FRACTION was absorbed, this says the worst absolute backlog of instruments
+    // the consumer had to catch up on in one sweep. Counts distinct keys, so a
+    // conflated overwrite (same key) never inflates it. 0 before any update.
+    std::size_t peak_pending() const noexcept { return peak_pending_; }
 
     // conflation_ratio (#427): overwritten updates / all updates offered,
     // in [0,1) — how much of the feed the conflation absorbed before the
