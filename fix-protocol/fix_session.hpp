@@ -1140,6 +1140,48 @@ public:
         return r;
     }
 
+    // BusinessReject — the key BusinessMessageReject (35=j) fields in a typed
+    // struct (#513). The CLIENT-side decode that closes the round-trip with
+    // BOTH build_business_reject overloads: the #295 form identifies the
+    // offending message by 45=RefSeqNum, the #133 form by 379=BusinessReject
+    // RefID (an app-level id like a ClOrdID) — a real 35=j may carry either or
+    // both, so the parser reads both and leaves the absent one at its sentinel
+    // (ref_seq 0, ref_id empty). 372=RefMsgType is the rejected type,
+    // 380=BusinessRejectReason the code (0=Other, 1=UnknownID, 2=Unknown
+    // Security, 3=UnsupportedMsgType, 4=AppNotAvailable, 5=CondReqFieldMissing,
+    // ...; -1 when absent since 0 is a real reason), 58=Text a free-form note.
+    // Distinct from CancelReject (#385, 35=9), which refuses a cancel/replace
+    // of a KNOWN order — this refuses the application message itself — and from
+    // the session-level Reject (35=3), which handles malformed/out-of-sequence
+    // frames. valid=false when the message is not 35=j.
+    struct BusinessReject {
+        uint32_t ref_seq        = 0;    // 45=RefSeqNum (0 = absent)
+        char     ref_id[32]     = {};   // 379=BusinessRejectRefID (empty = absent)
+        char     ref_msg_type[8]= {};   // 372=RefMsgType (the rejected 35= value)
+        int      reason         = -1;   // 380=BusinessRejectReason (-1 = absent)
+        char     text[64]       = {};   // 58=Text
+        bool     valid          = false;// true when msg type == 'j'
+
+        // is_unknown_security: reason 2, the most common actionable case — the
+        // venue does not know the symbol, so retrying the message is pointless.
+        bool is_unknown_security() const noexcept { return reason == 2; }
+    };
+
+    static BusinessReject parse_business_reject(const FIXMessage& m) noexcept {
+        BusinessReject r;
+        if (m.get_msg_type()[0] != 'j') return r;   // valid stays false
+        const char* rid = m.get_field(379);
+        const char* rmt = m.get_field(372);
+        const char* txt = m.get_field(58);
+        if (rid) std::strncpy(r.ref_id,       rid, sizeof(r.ref_id) - 1);
+        if (rmt) std::strncpy(r.ref_msg_type, rmt, sizeof(r.ref_msg_type) - 1);
+        if (txt) std::strncpy(r.text,         txt, sizeof(r.text) - 1);
+        r.ref_seq = m.get_field(45)  ? static_cast<uint32_t>(m.get_int(45)) : 0;
+        r.reason  = m.get_field(380) ? m.get_int(380) : -1;
+        r.valid   = true;
+        return r;
+    }
+
     // StatusRequest — the key OrderStatusRequest (35=H) fields in a typed
     // struct (#417). The acceptor-side decode that closes the round-trip
     // with build_order_status_request (#185): after a reconnect / sequence

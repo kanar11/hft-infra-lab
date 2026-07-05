@@ -7321,6 +7321,32 @@ void test_fix_session() {
         FIXMessage not_nine; not_nine.parse("35=8|11=X|37=Y|");
         ASSERT(!fix::FIXSession::parse_cancel_reject(not_nine).valid, "fix_parse_cxlrej_non9_invalid");
 
+        // #513 parse_business_reject — typed CLIENT-side decode of 35=j; closes
+        // the round-trip with BOTH build_business_reject overloads.
+        // The #295 form identifies the offending message by 45=RefSeqNum.
+        s.build_business_reject(buf, sizeof(buf), 42u, "D", 2, "Unknown symbol", '|');
+        FIXMessage bzr; bzr.parse(buf);
+        const auto brj = fix::FIXSession::parse_business_reject(bzr);
+        ASSERT(brj.valid && brj.ref_seq == 42 && std::strcmp(brj.ref_msg_type, "D") == 0,
+               "fix_parse_bizrej_refseq");
+        ASSERT(brj.reason == 2 && brj.is_unknown_security()
+               && std::strcmp(brj.text, "Unknown symbol") == 0, "fix_parse_bizrej_reason_text");
+        ASSERT(brj.ref_id[0] == '\0', "fix_parse_bizrej_refid_absent");   // #295 form carries no 379
+        // The #133 form identifies it by 379=BusinessRejectRefID (no 45).
+        s.build_business_reject(buf, sizeof(buf), "D", "ORD9", 5, "Missing field", '|');
+        FIXMessage bzr2; bzr2.parse(buf);
+        const auto brj2 = fix::FIXSession::parse_business_reject(bzr2);
+        ASSERT(brj2.valid && std::strcmp(brj2.ref_id, "ORD9") == 0
+               && std::strcmp(brj2.ref_msg_type, "D") == 0, "fix_parse_bizrej_refid");
+        ASSERT(brj2.ref_seq == 0 && brj2.reason == 5 && !brj2.is_unknown_security(),
+               "fix_parse_bizrej_refseq_absent");
+        // A 35=j without tag 380 -> reason falls back to the -1 sentinel.
+        FIXMessage bzr_bare; bzr_bare.parse("35=j|372=D|379=ORD1|");
+        ASSERT(fix::FIXSession::parse_business_reject(bzr_bare).reason == -1,
+               "fix_parse_bizrej_absent_reason_minus1");
+        FIXMessage bzr_notj; bzr_notj.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_business_reject(bzr_notj).valid, "fix_parse_bizrej_nonj_invalid");
+
         // #319 QuoteStatusReport (35=AI) — venue ack/reject of a Quote.
         // Full RFQ lifecycle: 35=R (request) -> 35=S (quote) -> 35=AI (status) -> 35=Z (cancel).
         s.build_quote_status_report(buf, sizeof(buf), "Q1", "AAPL", 0, nullptr, '|'); // Accepted
