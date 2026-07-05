@@ -937,6 +937,47 @@ public:
         return r;
     }
 
+    // MDIncrement — typed view of a MarketDataIncrementalRefresh (35=X) (#529).
+    // The client-side decode that closes the round-trip with build_md_
+    // incremental (#225): after the 35=W snapshot the venue streams single-
+    // entry book deltas, and this parses one. 262=MDReqID ties it to the
+    // subscription, 279=MDUpdateAction ('0'=New, '1'=Change, '2'=Delete),
+    // 269=MDEntryType ('0'=bid, '1'=offer), 55=Symbol, 270=MDEntryPx,
+    // 271=MDEntrySize. is_bid()/is_delete() decode the two flags the book-
+    // update logic branches on — a Delete removes the named level, a New/Change
+    // sets it. px is 0.0 and size -1 when their tags are absent. This is the
+    // flat single-entry sibling of the 35=W snapshot (which carries a repeating
+    // MDEntries group). valid=false when the message is not 35=X.
+    struct MDIncrement {
+        char    md_req_id[24] = {};   // 262=MDReqID
+        char    symbol[16]    = {};   // 55=Symbol
+        char    update_action = '\0'; // 279 ('0'=New/'1'=Change/'2'=Delete)
+        char    entry_type    = '\0'; // 269 ('0'=bid/'1'=offer)
+        double  px            = 0.0;  // 270=MDEntryPx
+        int32_t size          = -1;   // 271=MDEntrySize (-1 = absent)
+        bool    valid         = false;// true when msg type == 'X'
+
+        bool is_bid()    const noexcept { return entry_type == '0'; }
+        bool is_delete() const noexcept { return update_action == '2'; }
+    };
+
+    static MDIncrement parse_md_incremental(const FIXMessage& m) noexcept {
+        MDIncrement r;
+        if (m.get_msg_type()[0] != 'X') return r;   // valid stays false
+        const char* rid = m.get_field(262);
+        const char* sym = m.get_field(55);
+        const char* ua  = m.get_field(279);
+        const char* et  = m.get_field(269);
+        if (rid) std::strncpy(r.md_req_id, rid, sizeof(r.md_req_id) - 1);
+        if (sym) std::strncpy(r.symbol,    sym, sizeof(r.symbol) - 1);
+        r.update_action = (ua && *ua) ? ua[0] : '\0';
+        r.entry_type    = (et && *et) ? et[0] : '\0';
+        r.px   = m.get_field(270) ? m.get_double(270) : 0.0;
+        r.size = m.get_field(271) ? static_cast<int32_t>(m.get_int(271)) : -1;
+        r.valid = true;
+        return r;
+    }
+
     // DontKnowTrade (35=Q): the client repudiates an ExecutionReport (35=8, #101) it
     // cannot reconcile — an execution for an order it has no record of (#327). Instead
     // of silently dropping a mystery fill (which would desync the position), the client

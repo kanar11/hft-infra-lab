@@ -7130,6 +7130,23 @@ void test_fix_session() {
         ASSERT(std::fabs(mdx.get_double(270) - 100.05) < 1e-6 && mdx.get_int(271) == 500,
                "fix_mdx_px_size");
 
+        // #529 parse_md_incremental — typed CLIENT-side decode of 35=X; closes
+        // the round-trip with build_md_incremental (#225).
+        const auto mdi = fix::FIXSession::parse_md_incremental(mdx);
+        ASSERT(mdi.valid && std::strcmp(mdi.md_req_id, "MDR1") == 0
+               && std::strcmp(mdi.symbol, "AAPL") == 0, "fix_parse_mdx_ids");
+        ASSERT(mdi.update_action == '1' && mdi.entry_type == '0'
+               && mdi.is_bid() && !mdi.is_delete(), "fix_parse_mdx_change_bid");
+        ASSERT(std::fabs(mdi.px - 100.05) < 1e-6 && mdi.size == 500, "fix_parse_mdx_px_size");
+        // A delete on the offer side decodes the two branch flags.
+        s.build_md_incremental(buf, sizeof(buf), "MDR2", '2', '1', "AAPL", 100.10, 0, '|');
+        FIXMessage mdx2; mdx2.parse(buf);
+        const auto mdi2 = fix::FIXSession::parse_md_incremental(mdx2);
+        ASSERT(mdi2.valid && mdi2.is_delete() && !mdi2.is_bid(), "fix_parse_mdx_delete_offer");
+        // A non-X message is invalid.
+        FIXMessage not_x; not_x.parse("35=8|11=A|37=B|");
+        ASSERT(!fix::FIXSession::parse_md_incremental(not_x).valid, "fix_parse_mdx_nonX_invalid");
+
         // #233 MarketDataRequestReject (35=Y) — subscription rejection.
         s.build_md_request_reject(buf, sizeof(buf), "MDR1", '0', '|');  // unknown symbol
         FIXMessage mdy; mdy.parse(buf);
