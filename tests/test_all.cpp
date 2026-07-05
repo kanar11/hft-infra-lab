@@ -813,6 +813,7 @@ void test_oms_short_and_replace() {
     {   // #452 avg_time_to_cancel_ns — quote lifetime (forced stamps, exact).
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.avg_time_to_cancel_ns() == 0, "ttc_empty_zero");
+        ASSERT(oms.min_time_to_cancel_ns() == 0, "ttc_min_empty_zero");   // #524
         Order* tca_ = oms.submit_order("AAA", Side::BUY, 10.0, 100);
         Order* tcb_ = oms.submit_order("BBB", Side::SELL, 20.0, 50);
         Order* tcc_ = oms.submit_order("CCC", Side::BUY, 5.0, 10);
@@ -830,6 +831,10 @@ void test_oms_short_and_replace() {
         ASSERT(oms.avg_time_to_fill_ns() > 0, "ttc_fill_side_separate");
         // #460 max_time_to_cancel_ns — the tail of the cancel lifetime.
         ASSERT(oms.max_time_to_cancel_ns() == 3000, "ttc_max_tail");
+        // #524 min_time_to_cancel_ns — the reflex pull (shortest of 1000 and 3000).
+        ASSERT(oms.min_time_to_cancel_ns() == 1000, "ttc_min_tail");
+        ASSERT(oms.min_time_to_cancel_ns() <= oms.avg_time_to_cancel_ns()
+               && oms.avg_time_to_cancel_ns() <= oms.max_time_to_cancel_ns(), "ttc_min_le_avg_le_max");
     }
 
     {   // #460 realized_pnl_per_share — the per-share edge (MILESTONE 460).

@@ -1111,6 +1111,25 @@ public:
         }
         return n > 0 ? sum / n : 0;
     }
+    // min_time_to_cancel_ns: the SHORTEST quote life before a cancel (#524) —
+    // the best-case leg that completes the min/avg/max triple with avg_time_to_
+    // cancel_ns (#452) and max_time_to_cancel_ns (#460), exactly as min_time_to_
+    // fill_ns (#516) completed the fill-latency triple. A very short minimum is
+    // the reflex pull — a quote yanked almost as fast as it was posted (a
+    // fleeting order, or a maker reacting to a tick the instant it quoted);
+    // paired with the max it bounds the quote-life spread. Mirrors max_time_to_
+    // cancel_ns with < for >. 0 when nothing was cancelled.
+    int64_t min_time_to_cancel_ns() const noexcept {
+        int64_t mn = 0; bool found = false;
+        for (const auto& kv : orders_) {
+            const Order& o = kv.second;
+            if (o.status == OrderStatus::CANCELLED && o.cancelled_ns > o.sent_ns) {
+                const int64_t d = o.cancelled_ns - o.sent_ns;
+                if (!found || d < mn) { mn = d; found = true; }
+            }
+        }
+        return mn;
+    }
 
     // symbol_round_trips: flat-to-flat cycles completed by ONE name (#436) —
     // WHICH names actually recycle capital, where round_trips (#420) only
