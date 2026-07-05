@@ -1382,6 +1382,26 @@ public:
         }
         return hhi;
     }
+    // busiest_venue: the NAME of the venue that took the most routed volume
+    // (#528), writing its share count into out_shares — the actionable WHICH
+    // behind routing_concentration (#384): the HHI says HOW concentrated the
+    // flow is, this names WHERE it concentrated, the venue whose outage would
+    // cost the most execution and whose share a best-ex review must justify.
+    // The routing-flow analog of risk's largest_exposure_symbol (#389) and
+    // itch's largest_resting_order (#391). A tie resolves to the first venue
+    // seen. nullptr (out_shares untouched) before anything is routed.
+    const char* busiest_venue(int64_t& out_shares) const noexcept {
+        const char* name = nullptr;
+        int64_t best = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            if (venues_[i].routed_shares > best) {
+                best = venues_[i].routed_shares;
+                name = venues_[i].name;
+            }
+        }
+        if (name != nullptr) out_shares = best;
+        return name;
+    }
     // reset_routing_stats: zero the per-venue TCA counters (new session/window).
     void reset_routing_stats() noexcept {
         for (int i = 0; i < venue_count_; ++i) {

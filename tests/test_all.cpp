@@ -5356,9 +5356,16 @@ void test_router_ewma_partial() {
         rhe.add_venue(Venue("Z", 100, 0.0));
         ASSERT(rhe.routing_concentration() == 0.0, "rhhi_nothing_routed_zero");
 
+        // #528 busiest_venue — the actionable WHICH behind the HHI.
+        int64_t bv_sh = 0;
+        ASSERT(std::strcmp(r.busiest_venue(bv_sh), "A") == 0, "rhhi_busiest_single_A");
+        ASSERT(std::strcmp(rhu.busiest_venue(bv_sh), "P") == 0 && bv_sh == 90, "rhhi_busiest_P");
+        ASSERT(rhe.busiest_venue(bv_sh) == nullptr, "rhhi_busiest_empty_null");
+
         rs.reset_routing_stats();
         ASSERT(rs.total_routed_shares() == 0, "tca_reset_zero");
         ASSERT(rs.routing_concentration() == 0.0, "rhhi_reset_zero");
+        ASSERT(rs.busiest_venue(bv_sh) == nullptr, "rhhi_busiest_reset_null");   // #528
         // #456: the reset zeroes the route count and average too.
         ASSERT(rs.venue_route_count("X") == 0 && rs.avg_route_size("X") == 0.0, "ars_reset_zero");
     }
