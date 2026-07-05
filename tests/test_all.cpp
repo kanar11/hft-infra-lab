@@ -7261,6 +7261,26 @@ void test_fix_session() {
         ASSERT(std::strcmp(msr.get_symbol(), "AAPL") == 0, "fix_massstat_symbol");
         ASSERT(!msr.is_admin(), "fix_massstat_application");
 
+        // #521 parse_mass_status_request — typed acceptor-side decode of 35=AF;
+        // closes the round-trip with build_mass_status_request (#311).
+        const auto msrq = fix::FIXSession::parse_mass_status_request(msr);
+        ASSERT(msrq.valid && std::strcmp(msrq.req_id, "MS1") == 0 && msrq.req_type == 7,
+               "fix_parse_massstat_id_type");
+        ASSERT(std::strcmp(msrq.symbol, "AAPL") == 0 && !msrq.is_all_orders(),
+               "fix_parse_massstat_symbol_scoped");
+        // An AllOrders (type 1) request needs no symbol.
+        s.build_mass_status_request(buf, sizeof(buf), "MS2", 1, "", '|');
+        FIXMessage msr2; msr2.parse(buf);
+        const auto msrq2 = fix::FIXSession::parse_mass_status_request(msr2);
+        ASSERT(msrq2.valid && msrq2.is_all_orders() && msrq2.symbol[0] == '\0',
+               "fix_parse_massstat_all_orders");
+        // Absent 585 -> req_type falls back to the -1 sentinel.
+        FIXMessage msr_bare; msr_bare.parse("35=AF|584=MS3|");
+        ASSERT(fix::FIXSession::parse_mass_status_request(msr_bare).req_type == -1,
+               "fix_parse_massstat_absent_type_minus1");
+        FIXMessage not_af; not_af.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_mass_status_request(not_af).valid, "fix_parse_massstat_nonAF_invalid");
+
         // #344 IOI (35=6) — Indication of Interest, non-binding advertised liquidity.
         s.build_ioi(buf, sizeof(buf), "IOI1", 'N', "AAPL", Side::SELL, 500, 151.50, '|');
         FIXMessage ioi; ioi.parse(buf);

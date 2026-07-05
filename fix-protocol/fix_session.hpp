@@ -906,6 +906,37 @@ public:
         return r;
     }
 
+    // MassStatusRequest — typed view of a parsed OrderMassStatusRequest (35=AF)
+    // (#521). The acceptor-side decode that closes the round-trip with build_
+    // mass_status_request (#311): after a gap or reconnect the client asks the
+    // venue for the state of MANY working orders at once, and the venue replies
+    // with an ExecutionReport per match. 584=MassStatusReqID names the request,
+    // 585=MassStatusReqType scopes it (1=AllOrders, 7=Status for one symbol;
+    // -1 when the tag is absent), 55=Symbol carries the scope when req_type==7
+    // (empty for AllOrders). The bulk analog of parse_order_status_request
+    // (#417, the single-order 35=H). is_all_orders() decodes the common
+    // no-symbol case. valid=false when the message is not 35=AF.
+    struct MassStatusRequest {
+        char req_id[24] = {};   // 584=MassStatusReqID
+        int  req_type   = -1;   // 585=MassStatusReqType (-1 = absent)
+        char symbol[16] = {};   // 55=Symbol (empty when scoped to all orders)
+        bool valid      = false;// true when msg type == "AF"
+
+        bool is_all_orders() const noexcept { return req_type == 1; }
+    };
+
+    static MassStatusRequest parse_mass_status_request(const FIXMessage& m) noexcept {
+        MassStatusRequest r;
+        if (std::strcmp(m.get_msg_type(), "AF") != 0) return r;   // valid stays false
+        const char* rid = m.get_field(584);
+        const char* sym = m.get_field(55);
+        if (rid) std::strncpy(r.req_id, rid, sizeof(r.req_id) - 1);
+        if (sym) std::strncpy(r.symbol, sym, sizeof(r.symbol) - 1);
+        r.req_type = m.get_field(585) ? m.get_int(585) : -1;
+        r.valid    = true;
+        return r;
+    }
+
     // DontKnowTrade (35=Q): the client repudiates an ExecutionReport (35=8, #101) it
     // cannot reconcile — an execution for an order it has no record of (#327). Instead
     // of silently dropping a mystery fill (which would desync the position), the client
