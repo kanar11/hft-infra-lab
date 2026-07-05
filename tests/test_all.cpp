@@ -81,6 +81,7 @@
 #include "../strategy/cfo.hpp"
 #include "../strategy/pgo.hpp"
 #include "../strategy/kst.hpp"
+#include "../strategy/vidya.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -4856,6 +4857,34 @@ void test_kst() {
     ASSERT(!up.ready() && up.value() == 0.0, "kst_reset");
 }
 
+// VIDYA #518 — Variable Index Dynamic Average (CMO-adaptive MA).
+void test_vidya() {
+    SECTION("VIDYA (#518)");
+    VIDYA vf;                                  // period 9 -> CMO needs 10 prices
+    for (int i = 0; i < 5; ++i) vf.update(100.0 + i);
+    ASSERT(!vf.ready(), "vidya_not_ready_during_warmup");
+
+    // Flat tape: CMO = 0 -> effective alpha 0 -> VIDYA pins exactly to the level.
+    VIDYA vc(9);
+    for (int i = 0; i < 30; ++i) vc.update(50.0);
+    ASSERT(vc.ready() && std::fabs(vc.value() - 50.0) < 1e-9, "vidya_flat_pins_price");
+
+    // Steady uptrend: CMO -> +100 (all up moves) so VIDYA behaves as an EMA,
+    // lagging below the latest price while rising monotonically.
+    VIDYA vu(9);
+    double last = 0.0;
+    for (int i = 0; i < 30; ++i) { last = 100.0 + 2.0 * i; vu.update(last); }
+    ASSERT(vu.ready(), "vidya_ready");
+    ASSERT(vu.value() > 0.0 && vu.value() < last, "vidya_uptrend_lags_below_price");
+    const double before = vu.value();
+    for (int i = 30; i < 40; ++i) { last = 100.0 + 2.0 * i; vu.update(last); }
+    ASSERT(vu.value() > before, "vidya_uptrend_rises");
+    ASSERT(vu.value() < last, "vidya_bounded_below_latest");  // an EMA never overshoots a ramp
+
+    vu.reset();
+    ASSERT(!vu.ready() && vu.value() == 0.0, "vidya_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -8939,6 +8968,7 @@ int main() {
     test_cfo();
     test_pgo();
     test_kst();
+    test_vidya();
     test_cmo();
     test_zscore();
     test_tsi();
