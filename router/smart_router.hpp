@@ -868,6 +868,29 @@ public:
         return best_name;
     }
 
+    // dearest_fee_venue: the NAME of the active venue with the HIGHEST
+    // fee_per_share (#520) — the mirror of cheapest_fee_venue (#496): the
+    // costliest fee tier, the venue a taker overpays on (or a poster earns the
+    // least resting on). Writes the fee into out_fee. It ranks by the FEE
+    // ALONE, quote-independent — distinct from most_expensive_venue (#472),
+    // which names the worst all-in PRICE on a side. Together with cheapest_fee_
+    // venue it bounds the fee spread across the fabric, the fee analog of
+    // fastest/slowest_venue (#278/#512) for latency. nullptr (out_fee
+    // untouched) when no venue is active.
+    const char* dearest_fee_venue(double& out_fee) const noexcept {
+        const char* worst_name = nullptr;
+        double worst = 0.0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            if (worst_name == nullptr || v.fee_per_share > worst) {
+                worst = v.fee_per_share; worst_name = v.name;
+            }
+        }
+        if (worst_name != nullptr) out_fee = worst;
+        return worst_name;
+    }
+
     // most_expensive_venue: the NAME of the venue with the WORST all-in
     // price on a side (#472) — the mirror of cheapest_venue (#200) and the
     // actionable WHICH behind effective_price_dispersion (#464): dispersion

@@ -5576,10 +5576,12 @@ void test_router_ewma_partial() {
         rcf.update_quote("A", 9.99, 10.00, 100, 100);   // all-in ask 10.003
         rcf.update_quote("B", 9.99, 10.00, 100, 100);   // all-in ask 10.001 (cheapest to CROSS)
         rcf.update_quote("C", 9.99, 10.10, 100, 100);   // bad quote, all-in 10.098
-        double cf = 999.0;
+        double cf = 999.0, df = 999.0;
         // cheapest_fee_venue picks by FEE alone -> C (the rebate).
         ASSERT(std::strcmp(rcf.cheapest_fee_venue(cf), "C") == 0, "rcf_best_fee_C");
         ASSERT(close(cf, -0.002), "rcf_best_fee_value");
+        // #520 dearest_fee_venue — the mirror: the HIGHEST fee -> A (0.003).
+        ASSERT(std::strcmp(rcf.dearest_fee_venue(df), "A") == 0 && close(df, 0.003), "rdf_dearest_A");
         // #504 rebate_venue_count / avg_venue_fee: only C rebates -> 1;
         // mean fee (0.003 + 0.001 - 0.002)/3 = 0.002/3.
         ASSERT(rcf.rebate_venue_count() == 1, "rvf_one_rebate");
@@ -5593,9 +5595,15 @@ void test_router_ewma_partial() {
         // #504: disabling the only rebate venue leaves an all-taker landscape.
         ASSERT(rcf.rebate_venue_count() == 0, "rvf_no_rebate_after_disable");
         ASSERT(close(rcf.avg_venue_fee(), 0.002), "rvf_avg_fee_after_disable");   // (0.003+0.001)/2
+        // #520: A is still the dearest with C gone; disabling A hands it to B.
+        ASSERT(std::strcmp(rcf.dearest_fee_venue(df), "A") == 0, "rdf_dearest_still_A");
+        rcf.set_venue_active("A", false);
+        ASSERT(std::strcmp(rcf.dearest_fee_venue(df), "B") == 0 && close(df, 0.001),
+               "rdf_dearest_B_after_disable");
         // Empty router -> nullptr, zero rebates, zero avg.
         SmartOrderRouter rce(RoutingStrategy::BEST_PRICE);
         ASSERT(rce.cheapest_fee_venue(cf) == nullptr, "rcf_empty_null");
+        ASSERT(rce.dearest_fee_venue(df) == nullptr, "rdf_empty_null");   // #520
         ASSERT(rce.rebate_venue_count() == 0 && rce.avg_venue_fee() == 0.0, "rvf_empty_zero");
     }
 
