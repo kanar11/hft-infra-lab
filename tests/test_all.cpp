@@ -2733,8 +2733,23 @@ void test_itch_book() {
     iar.on_cancel(6, 50); iar.on_delete(6);
     iar.on_execute(999, 10);
     ASSERT(iar.aggressor_run() == -2, "itchbook_run_only_prints_move_it");
+    // #511 longest_buy_run / longest_sell_run — sweep-length high-water marks.
+    // iar ran 3 buys then 2 sells, so the peaks are 3 and 2.
+    ASSERT(iar.longest_buy_run() == 3 && iar.longest_sell_run() == 2, "itchbook_sweep_highwater");
     iar.clear();
     ASSERT(iar.aggressor_run() == 0, "itchbook_run_clear");
+    ASSERT(iar.longest_buy_run() == 0 && iar.longest_sell_run() == 0, "itchbook_sweep_highwater_clear");
+
+    // #511: a later, SHORTER run must not lower the high-water mark.
+    itch::ITCHOrderBook isw;
+    isw.on_add(1, 'S', 10.0, 100); isw.on_add(2, 'S', 10.0, 100); isw.on_add(3, 'S', 10.0, 100);
+    isw.on_add(4, 'B', 9.0, 100);  isw.on_add(5, 'S', 10.0, 100);
+    isw.on_execute(1, 100); isw.on_execute(2, 100); isw.on_execute(3, 100);   // 3 buys in a row
+    ASSERT(isw.longest_buy_run() == 3, "itchbook_sweep_buy_3");
+    isw.on_execute(4, 100);   // hit bid -> 1 sell, flips the live run
+    isw.on_execute(5, 100);   // lift ask -> new BUY run of just +1
+    ASSERT(isw.aggressor_run() == 1 && isw.longest_buy_run() == 3, "itchbook_sweep_survives_shorter");
+    ASSERT(isw.longest_sell_run() == 1, "itchbook_sweep_sell_1");
 
     // #415 executed_against_bid/ask + tape_imbalance — exact aggressor flow.
     itch::ITCHOrderBook iagr;

@@ -61,6 +61,8 @@ class ITCHOrderBook {
     bool     last_trade_buy_     = false; // aggressor of the last print (#471)
     int      last_tick_dir_      = 0;  // uptick/downtick carry (#479; SSR zero-plus rule)
     int      aggressor_run_      = 0;  // signed run of same-aggressor prints (#487)
+    int      max_buy_run_        = 0;  // longest buyer-initiated sweep this session (#511)
+    int      max_sell_run_       = 0;  // longest seller-initiated sweep this session (#511)
 
     static int64_t to_ticks(double price) noexcept {
         return static_cast<int64_t>(price * 100.0 + (price >= 0 ? 0.5 : -0.5));
@@ -133,6 +135,9 @@ public:
             if      (aggressor_run_ > 0 &&  last_trade_buy_) ++aggressor_run_;
             else if (aggressor_run_ < 0 && !last_trade_buy_) --aggressor_run_;
             else                                             aggressor_run_ = last_trade_buy_ ? 1 : -1;
+            // #511: high-water marks of the sweep length, per side.
+            if      (aggressor_run_ >  max_buy_run_)  max_buy_run_  =  aggressor_run_;
+            else if (-aggressor_run_ > max_sell_run_) max_sell_run_ = -aggressor_run_;
         }
         reduce_(ref, exec_shares);
         ++executes_;
@@ -229,6 +234,7 @@ public:
         last_trade_ticks_ = 0; last_trade_buy_ = false; // #471
         last_tick_dir_ = 0;                             // #479
         aggressor_run_ = 0;                             // #487
+        max_buy_run_ = 0; max_sell_run_ = 0;            // #511
     }
     // mid_price: average of best bid/ask; 0 when the book is one-sided.
     double  mid_price() const noexcept {
@@ -802,6 +808,18 @@ public:
     // iceberg being swept), where tape_imbalance (#415) is the session
     // aggregate. 0 before any print.
     int aggressor_run() const noexcept { return aggressor_run_; }
+
+    // longest_buy_run / longest_sell_run (#511): the high-water marks of the
+    // aggressor run (#487) — the longest sustained BUYER-initiated sweep (asks
+    // lifted in a row) and SELLER-initiated sweep (bids hit in a row) seen this
+    // session, both as positive magnitudes. aggressor_run() is the LIVE streak,
+    // which resets on every flip; these remember the worst sweep even after it
+    // ended — the sweep/iceberg severity a post-session review checks, the tape
+    // parallel of risk's max_consec_wins / max_consec_losses (#405/#364). The
+    // pair also localizes one-sided pressure: a long buy run with a tiny sell
+    // run is a persistently bought name. 0 before any print / any run on a side.
+    int longest_buy_run()  const noexcept { return max_buy_run_; }
+    int longest_sell_run() const noexcept { return max_sell_run_; }
 
     // is_uptick (#479): true when the last price tick was up (or a carried
     // zero-plus-tick) — the SSR short-sale gate (a short at or below the
