@@ -5789,9 +5789,19 @@ void test_router_ewma_partial() {
         r.route_order("BUY", 10); r.route_order("BUY", 10);   // 2 udane
         ASSERT(close(r.reject_rate(), 0.0), "rejrate_all_ok");
         ASSERT(r.avg_routing_latency_ns() >= 0.0, "rejrate_avg_lat_nonneg");
+        // #536 max_routing_latency_ns — the tail (real clock -> invariants only:
+        // non-negative, and the max never sits below the mean).
+        ASSERT(r.max_routing_latency_ns() >= 0, "rejlat_max_nonneg");
+        ASSERT(static_cast<double>(r.max_routing_latency_ns()) >= r.avg_routing_latency_ns(),
+               "rejlat_max_ge_avg");
         SmartOrderRouter e;                                    // no venue -> reject
         e.route_order("BUY", 10);
         ASSERT(close(e.reject_rate(), 1.0), "rejrate_all_rejected");
+        // A rejected attempt is not a successful route -> no latency recorded.
+        ASSERT(e.max_routing_latency_ns() == 0, "rejlat_max_no_route_zero");   // #536
+        // reset_session_stats clears the tail high-water.
+        r.reset_session_stats();
+        ASSERT(r.max_routing_latency_ns() == 0, "rejlat_max_reset_zero");      // #536
     }
 
     // --- #170 remove_venue (decommission) ---

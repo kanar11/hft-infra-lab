@@ -152,6 +152,7 @@ class SmartOrderRouter {
     uint64_t total_routes_;
     uint64_t total_rejected_;
     uint64_t total_latency_ns_;
+    int64_t  max_routing_latency_ns_ = 0;  // worst single decision latency (#536)
     double   total_fees_paid_ = 0.0;   // sum of fee/rebate over routes (#138; <0 = net rebate)
 
     static int64_t now_ns() noexcept {
@@ -440,6 +441,7 @@ public:
         ++best->routes_count;
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
+        if (d.latency_ns > max_routing_latency_ns_) max_routing_latency_ns_ = d.latency_ns;   // #536
         total_fees_paid_  += d.total_fee;   // #138 cumulative cost
         return d;
     }
@@ -1418,6 +1420,7 @@ public:
         total_routes_     = 0;
         total_rejected_   = 0;
         total_latency_ns_ = 0;
+        max_routing_latency_ns_ = 0;   // #536
         total_fees_paid_  = 0.0;
         reset_routing_stats();
     }
@@ -1459,6 +1462,15 @@ public:
     double avg_routing_latency_ns() const noexcept {
         return total_routes_ > 0 ? static_cast<double>(total_latency_ns_) / static_cast<double>(total_routes_) : 0.0;
     }
+    // max_routing_latency_ns: the WORST single router DECISION latency this
+    // session (#536) — the tail companion to avg_routing_latency_ns (#162, the
+    // mean), exactly as OMS max_time_to_fill_ns (#380) tails its average. One
+    // route stalled by a GC pause, a cache miss or a cold slow path hides in a
+    // healthy average; this surfaces it, the number a latency SLA is actually
+    // written against. It measures the router's OWN venue-selection time, not
+    // the venue round-trip. 0 before any successful route; reset by
+    // reset_session_stats.
+    int64_t max_routing_latency_ns() const noexcept { return max_routing_latency_ns_; }
 
     void print_stats() const {
         printf("\n=== Router Statistics ===\n");
@@ -1529,6 +1541,7 @@ private:
 
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
+        if (d.latency_ns > max_routing_latency_ns_) max_routing_latency_ns_ = d.latency_ns;   // #536
         total_fees_paid_  += d.total_fee;   // #138 cumulative cost
         return d;
     }
