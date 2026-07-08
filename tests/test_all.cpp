@@ -8742,6 +8742,35 @@ void test_ouch_order_state() {
            "ouch_aes_break_unaffected");
     ASSERT(aes.largest_execution() == 200, "ouch_aes_largest_break_unaffected");   // #530
 
+    // #538 total_cancelled_shares / cancelled_share_rate — the share-weighted cancel face.
+    ouch::OUCHOrderTracker csh;
+    ASSERT(csh.total_cancelled_shares() == 0 && csh.cancelled_share_rate() == 0.0,
+           "ouch_csh_empty");
+    // C1: 100 ordered, 40 filled, then cancelled -> the 60 remainder is freed.
+    csh.on_new("C1", 100);
+    n = OUCHMessage::encode_accepted(buf, "C1", 'B', 100, "AAPL", 10.0, 88001);
+    csh.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "C1", 40, 10.0, 1);
+    csh.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_cancelled(buf, "C1", 60, 'U');
+    csh.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(csh.total_cancelled_shares() == 60, "ouch_csh_remainder_60");
+    // C2: 200 ordered, SMP shaves 30 (AIQ decrement) but the order keeps working.
+    csh.on_new("C2", 200);
+    n = OUCHMessage::encode_accepted(buf, "C2", 'S', 200, "AAPL", 10.1, 88002);
+    csh.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_aiq_canceled(buf, "C2", 30, 'Q');
+    csh.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(csh.total_cancelled_shares() == 90, "ouch_csh_aiq_adds_30");
+    ASSERT(csh.state("C2") == ouch::OrderState::LIVE, "ouch_csh_aiq_keeps_working");
+    // Rate: 90 pulled of 300 ordered = 0.3; fills took 40/300 — the two split
+    // the decided volume between taken and withdrawn.
+    ASSERT(std::fabs(csh.cancelled_share_rate() - 0.3) < 1e-9, "ouch_csh_rate_030");
+    ASSERT(std::fabs(csh.fill_rate() - 40.0 / 300.0) < 1e-9, "ouch_csh_fill_side");
+    csh.reset_session();
+    ASSERT(csh.total_cancelled_shares() == 0 && csh.cancelled_share_rate() == 0.0,
+           "ouch_csh_reset");
+
     // #337 avg_order_size / executions_per_order — order sizing & fill fragmentation.
     ouch::OUCHOrderTracker frag;
     ASSERT(frag.avg_order_size() == 0.0 && frag.executions_per_order() == 0.0, "ouch_frag_empty");

@@ -62,6 +62,7 @@ class OUCHOrderTracker {
     uint64_t exec_count_     = 0;   // number of Executed ('E') reports applied (#328)
     int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
     int64_t  max_exec_shares_ = 0;  // largest single Executed report (clamped) (#530)
+    int64_t  cancelled_shares_ = 0; // shares freed by CANCELLED remainders + AIQ decrements (#538)
     uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
     uint64_t replaced_       = 0;   // Order Replaced ('U') migrations applied (#386)
     uint64_t desyncs_        = 0;   // responses naming an UNKNOWN token (#426)
@@ -142,6 +143,7 @@ public:
             if (rec->remaining <= 0) { rec->state = OrderState::FILLED; ++filled_; }
             else                       rec->state = OrderState::PARTIAL;
         } else if (std::strcmp(r.type, "CANCELLED") == 0) {
+            cancelled_shares_  += rec->remaining;   // #538: the unfilled remainder freed
             rec->state          = OrderState::CANCELLED;
             rec->remaining      = 0;
             rec->pending_cancel = false;   // #159: request confirmed
@@ -201,6 +203,7 @@ public:
             // order (r.shares = the decrement). Not an error: reduce the open
             // quantity; only a decrement to zero cancels the order.
             const int32_t dec = (r.shares < rec->remaining) ? r.shares : rec->remaining;
+            cancelled_shares_ += dec;   // #538: SMP removed these shares from the book
             rec->remaining -= dec;
             if (rec->remaining == 0) {
                 rec->state          = OrderState::CANCELLED;
@@ -580,6 +583,7 @@ public:
         exec_count_     = 0;
         exec_shares_    = 0;
         max_exec_shares_ = 0;   // #530
+        cancelled_shares_ = 0;  // #538
         cancel_rejects_ = 0;
         replaced_       = 0;
         desyncs_        = 0;
@@ -610,6 +614,26 @@ public:
     double broken_share_rate() const noexcept {
         return ordered_shares_ > 0
             ? static_cast<double>(broken_shares_) / static_cast<double>(ordered_shares_)
+            : 0.0;
+    }
+    // total_cancelled_shares: cumulative shares removed from the book by
+    // cancels (#538) — the unfilled remainder freed by each CANCELLED report
+    // plus every AIQ self-match-prevention decrement. The share-weighted face
+    // of the cancel outcome: cancelled_ / cancel_rate (#353) count ORDERS, so a
+    // 10-share cancel and a 10,000-share cancel weigh the same there — this is
+    // the liquidity actually pulled back, the cancel-side parity of
+    // total_filled_shares (#242, taken) and total_broken_shares (#320,
+    // unwound). 0 before any cancel; reset by reset_session.
+    int64_t total_cancelled_shares() const noexcept { return cancelled_shares_; }
+    // cancelled_share_rate: total_cancelled_shares / ordered_shares (#538) —
+    // the fraction of everything the desk ORDERED that it later pulled back,
+    // in [0,1]. The share-weighted sibling of cancel_rate (#353, per-order)
+    // and the mirror of fill_rate (#250, the fraction the market TOOK): the
+    // two split the decided volume between taken and withdrawn. High = quote
+    // churn in size, not just in message count. 0 when nothing was ordered.
+    double cancelled_share_rate() const noexcept {
+        return ordered_shares_ > 0
+            ? static_cast<double>(cancelled_shares_) / static_cast<double>(ordered_shares_)
             : 0.0;
     }
     // reject_rate: fraction of tracked ORDERS that ended up REJECTED (#345) =
