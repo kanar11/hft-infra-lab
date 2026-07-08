@@ -439,9 +439,21 @@ void test_oms_short_and_replace() {
         // #330 largest_position_notional — by $: BBB 60*20=1200 > AAA 100*10=1000, so the
         // dollar leader (BBB) differs from largest_position (AAA, by shares).
         ASSERT(close(to_float(oms.largest_position_notional()), 1200.0), "largest_notional_is_BBB");
+        // #540 largest_position_symbol — the actionable WHICH behind #330:
+        // names BBB (the $ leader), not AAA (the share leader).
+        char lps[9];
+        ASSERT(close(oms.largest_position_symbol(lps), 1200.0), "lps_returns_notional");
+        ASSERT(std::strcmp(lps, "BBB") == 0, "lps_names_dollar_leader");
+        // Flattening BBB removes it from consideration -> AAA takes over.
+        Order* bc = oms.submit_order("BBB", Side::BUY, 20.0, 60);
+        oms.fill_order(bc->order_id, 60, 20.0);                 // short covered -> flat
+        ASSERT(close(oms.largest_position_symbol(lps), 1000.0)
+               && std::strcmp(lps, "AAA") == 0, "lps_flat_skipped_AAA_leads");
         OMS empt(1000000, 1000000000.0);
         ASSERT(empt.inventory_value() == 0, "inventory_value_flat_zero");
         ASSERT(empt.largest_position_notional() == 0, "largest_notional_flat_zero");
+        ASSERT(empt.largest_position_symbol(lps) == 0.0 && lps[0] == '\0',
+               "lps_empty_null");   // #540
         // #484: empty book nets zero on both.
         ASSERT(empt.net_position_shares() == 0 && empt.net_inventory_value() == 0,
                "net_position_flat_zero");

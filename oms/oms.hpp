@@ -615,6 +615,27 @@ public:
         }
         return m;
     }
+    // largest_position_symbol: the NAME of the position largest_position_
+    // notional (#330) measures (#540) — the actionable WHICH behind the $
+    // concentration number, the position-size sibling of best/worst_realized_
+    // symbol (#492, which name by P&L) and the OMS parity of risk's
+    // largest_exposure_symbol (#389). Writes the ticker into out (>= 9 bytes,
+    // always nul-terminated) and returns that position's absolute notional in
+    // DOLLARS. Flat records (net_qty == 0) are skipped — a closed position is
+    // history, not concentration. out[0] == '\0' and 0.0 when everything is
+    // flat. A tie resolves to the first position seen.
+    double largest_position_symbol(char* out) const noexcept {
+        int64_t best = 0; const Position* who = nullptr;
+        for (const auto& [key, p] : positions_) {
+            if (p.net_qty == 0) continue;
+            const int64_t v = std::abs(static_cast<int64_t>(p.net_qty)) * p.avg_price;
+            if (who == nullptr || v > best) { best = v; who = &p; }
+        }
+        // symbol is char[9], already nul-terminated -> copy all 9 bytes
+        // (memcpy avoids the -Werror=stringop-truncation strncpy heuristic).
+        if (who) { std::memcpy(out, who->symbol, 9); return to_float(best); }
+        out[0] = '\0'; return 0.0;
+    }
 
     // pending_buy_shares / pending_sell_shares: total working (pending) shares per
     // side across all symbols (#251). pending_qty is signed (buy +, sell -); these
