@@ -6498,6 +6498,7 @@ void test_risk_price_band() {
     kal.max_consecutive_losses  = 2;
     RiskManager rka(kal);
     ASSERT(rka.kill_switch_activations() == 0, "ksa_fresh_zero");
+    ASSERT(rka.kill_count(KillReason::MANUAL) == 0, "kcount_fresh_zero");   // #541
     rka.activate_kill_switch();
     ASSERT(rka.kill_switch_activations() == 1, "ksa_manual_counts");
     rka.activate_kill_switch();                  // already on — re-assert only
@@ -6514,8 +6515,20 @@ void test_risk_price_band() {
            "ksa_streak_latch_counts");
     rka.update_pnl(-1.0);
     ASSERT(rka.kill_switch_activations() == 3, "ksa_tripped_reassert_ignored");
+    // #541 kill_count — the per-reason histogram: two MANUAL halts and one
+    // streak latch; the re-asserts added to neither bucket; the buckets sum
+    // to the #421 total.
+    ASSERT(rka.kill_count(KillReason::MANUAL) == 2, "kcount_manual_2");
+    ASSERT(rka.kill_count(KillReason::CONSECUTIVE_LOSSES) == 1, "kcount_streak_1");
+    ASSERT(rka.kill_count(KillReason::MANUAL)
+               + rka.kill_count(KillReason::CONSECUTIVE_LOSSES)
+           == rka.kill_switch_activations(), "kcount_sums_to_total");
+    ASSERT(rka.kill_count(KillReason::CIRCUIT_BREAKER) == 0
+           && rka.kill_count(KillReason::DRAWDOWN) == 0, "kcount_untouched_zero");
     rka.reset_daily();
     ASSERT(rka.kill_switch_activations() == 0, "ksa_reset_daily");
+    ASSERT(rka.kill_count(KillReason::MANUAL) == 0
+           && rka.kill_count(KillReason::CONSECUTIVE_LOSSES) == 0, "kcount_reset");   // #541
 
     // #121 reason the kill switch latched.
     RiskManager rk(lim);

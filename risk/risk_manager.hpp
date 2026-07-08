@@ -333,6 +333,7 @@ class RiskManager {
     uint64_t total_underwater_updates_ = 0;  // cumulative updates below the peak (#517)
     int32_t max_consec_wins_        = 0;  // best winning streak seen this session (#405)
     uint64_t kill_activations_      = 0;  // fresh false->true kill-switch latches (#421)
+    uint64_t kill_counts_[5]        = {}; // fresh latches per KillReason (#541; index = enum)
     double  traded_notional_ = 0.0;  // daily notional turnover (#144)
 
     // --------------------------------------------------------------------
@@ -699,7 +700,10 @@ public:
     // state RESTORE path does not come through here: restoring yesterday's
     // trip is not a new activation.
     void latch_kill_switch(KillReason r) noexcept {
-        if (!kill_switch_active_) ++kill_activations_;
+        if (!kill_switch_active_) {
+            ++kill_activations_;
+            ++kill_counts_[static_cast<int>(r)];   // #541: per-reason histogram
+        }
         kill_switch_active_ = true;
         kill_reason_        = r;
         persist_state();
@@ -711,6 +715,18 @@ public:
     }
     bool       is_kill_switch_active() const noexcept { return kill_switch_active_; }
     KillReason get_kill_reason()       const noexcept { return kill_reason_; }   // #121
+    // kill_count: how many FRESH kill-switch activations a given reason caused
+    // this session (#541) — the per-reason histogram behind kill_activations_
+    // (#421, the total) and get_kill_reason (#121, only the LAST one standing):
+    // a session that halted five times cannot say from those two whether it was
+    // one flaky breaker or five different problems; this can, and it is the
+    // mirror of OMS reject_count (#136) for the halt side. Counts only
+    // false->true transitions (re-asserts while already halted do not add,
+    // matching #421); the persisted-state restore path never comes through the
+    // latch, so yesterday's trip is not counted today. Reset by reset_daily.
+    uint64_t kill_count(KillReason r) const noexcept {
+        return kill_counts_[static_cast<int>(r)];
+    }
 
     // Runtime limit update (#129) — risk often tightens limits intraday
     // (e.g. after a loss) without a restart. get_limits for inspection/dashboard.
@@ -786,6 +802,7 @@ public:
         total_underwater_updates_ = 0;  // #517
         max_consec_wins_        = 0;  // #405
         kill_activations_       = 0;  // #421
+        for (int i = 0; i < 5; ++i) kill_counts_[i] = 0;   // #541
         traded_notional_ = 0.0;
         rate_ring_.reset();
         pending_.clear();
