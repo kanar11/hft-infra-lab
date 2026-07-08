@@ -698,6 +698,7 @@ struct TokenBucket {
     std::int64_t  last_ns = 0;
     bool          init = false;
     std::uint64_t denied = 0;      // refused consumptions (#451)
+    std::uint64_t granted = 0;     // successful consumptions (#539)
 
     TokenBucket(double capacity_, double refill_per_sec) noexcept
         : capacity(capacity_), tokens(capacity_),
@@ -707,9 +708,24 @@ struct TokenBucket {
     // time (cap to capacity), then consumes if there is enough.
     bool try_consume(std::int64_t now_ns, double n = 1.0) noexcept {
         top_up(now_ns);
-        if (tokens >= n) { tokens -= n; return true; }
+        if (tokens >= n) { tokens -= n; ++granted; return true; }   // #539
         ++denied;                                     // #451
         return false;
+    }
+
+    // denial_rate (#539): the fraction of consumption attempts the bucket
+    // refused = denied / (granted + denied), in [0,1]. The FREQUENCY face of
+    // the raw denied counter (#451): near 0 the producer runs inside its
+    // budget and the bucket is a no-op; a rising rate means the demand
+    // SUSTAINEDLY exceeds the refill rate (bursts alone are absorbed by
+    // capacity, so persistent denials are a sizing problem — raise the rate or
+    // slow the producer). The same shape as OMS submit_reject_rate (#212) and
+    // router reject_rate (#162), applied to pacing. 0 before any attempt.
+    double denial_rate() const noexcept {
+        const std::uint64_t attempts = granted + denied;
+        return attempts > 0
+            ? static_cast<double>(denied) / static_cast<double>(attempts)
+            : 0.0;
     }
 
     // available (#451): the token balance RIGHT NOW — the probe a pacing
@@ -722,7 +738,7 @@ struct TokenBucket {
         return tokens;
     }
 
-    void reset() noexcept { tokens = capacity; last_ns = 0; init = false; denied = 0; }
+    void reset() noexcept { tokens = capacity; last_ns = 0; init = false; denied = 0; granted = 0; }
 
 private:
     // top_up: shared refill math for try_consume and available (#451).

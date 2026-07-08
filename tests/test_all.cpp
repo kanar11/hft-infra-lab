@@ -3165,6 +3165,12 @@ void test_multicast_gap_recovery() {
     // #451 available / denied — the probe and the ops counter.
     // Two refusals so far (tb_empty + tb_refill_exhausted).
     ASSERT(tb.denied == 2, "tb_denied_counts_refusals");
+    // #539 granted / denial_rate — 7 granted (5 burst + 2 refill), 2 denied of 9.
+    ASSERT(tb.granted == 7, "tb_granted_counts");
+    ASSERT(std::fabs(tb.denial_rate() - 2.0 / 9.0) < 1e-9, "tb_denial_rate_2of9");
+    // A fresh bucket has no attempts -> rate 0 (not a division blow-up).
+    multicast::TokenBucket tbf(5.0, 1000.0);
+    ASSERT(tbf.denial_rate() == 0.0, "tb_denial_rate_empty_zero");
     // The balance is ~0.5 (2.5 refilled, 2 consumed); probing takes nothing.
     ASSERT(std::fabs(tb.available(2500000) - 0.5) < 1e-9, "tb_available_balance");
     ASSERT(std::fabs(tb.available(2500000) - 0.5) < 1e-9, "tb_probe_is_free");
@@ -3174,6 +3180,7 @@ void test_multicast_gap_recovery() {
     ASSERT(std::fabs(tb.available(999000000) - 5.0) < 1e-9, "tb_available_caps");
     tb.reset();
     ASSERT(tb.denied == 0, "tb_reset_clears_denied");
+    ASSERT(tb.granted == 0 && tb.denial_rate() == 0.0, "tb_reset_clears_granted");   // #539
 
     // #227 ConflationBuffer — the latest state per key + a conflation counter.
     multicast::ConflationBuffer cb;
