@@ -7788,15 +7788,20 @@ void test_fix_order_state() {
     // #409 working_orders / working_qty — FIX parity of OUCH #272/#304.
     fix::FIXOrderTracker wtr;
     ASSERT(wtr.working_orders() == 0 && wtr.working_qty() == 0, "fixstate_wq_empty");
+    ASSERT(wtr.total_filled_qty() == 0 && wtr.fill_rate() == 0.0, "fixstate_fr_empty");   // #537
     wtr.on_new("W1", 100);                        // NEW, leaves 100
     wtr.on_new("W2", 50);                         // NEW, leaves 50
     ASSERT(wtr.working_orders() == 2 && wtr.working_qty() == 150, "fixstate_wq_two_new");
+    ASSERT(wtr.fill_rate() == 0.0, "fixstate_fr_nothing_filled");   // #537: ordered but unfilled
     // A partial fill keeps the order working with reduced leaves.
     s.build_exec_report(buf, sizeof(buf), "W1", "EXG", "EW1", '1', '1',
                         "AAPL", Side::BUY, 40, 150.0, 40, 60, '|');
     FIXMessage mw1; mw1.parse(buf);
     wtr.on_exec_report(mw1);
     ASSERT(wtr.working_orders() == 2 && wtr.working_qty() == 110, "fixstate_wq_partial");
+    // #537: the confirmed tape so far is W1's partial 40 of 150 ordered.
+    ASSERT(wtr.total_filled_qty() == 40, "fixstate_fr_partial_40");
+    ASSERT(std::fabs(wtr.fill_rate() - 40.0 / 150.0) < 1e-9, "fixstate_fr_partial_ratio");
     // A cancel is terminal — its remainder leaves the working aggregate
     // even though the record keeps its last leaves_qty snapshot.
     s.build_exec_report(buf, sizeof(buf), "W2", "EXG", "EW2", '4', '4',
@@ -7811,6 +7816,13 @@ void test_fix_order_state() {
     FIXMessage mw3; mw3.parse(buf);
     wtr.on_exec_report(mw3);
     ASSERT(wtr.working_orders() == 0 && wtr.working_qty() == 0, "fixstate_wq_all_done");
+    // #537: W1 filled to 100, W2 canceled at 0 -> share-weighted 100/150 = 2/3,
+    // where the ORDER-count view (1 of 2 terminal orders filled) reads 0.5 —
+    // the same share-vs-order divergence OUCH pins between #250 and #361.
+    ASSERT(wtr.total_filled_qty() == 100, "fixstate_fr_total_100");
+    ASSERT(std::fabs(wtr.fill_rate() - 2.0 / 3.0) < 1e-9, "fixstate_fr_two_thirds");
+    wtr.reset_session();
+    ASSERT(wtr.total_filled_qty() == 0 && wtr.fill_rate() == 0.0, "fixstate_fr_reset");   // #537
 
     // #425 pending_cancel_qty / pending_cancel_fraction — condemned exposure
     // on the FIX side (parity of OUCH #402).

@@ -200,6 +200,31 @@ public:
             ? static_cast<double>(pending_cancel_qty()) / static_cast<double>(w)
             : 0.0;
     }
+    // total_filled_qty: Σ cum_qty over every tracked order (#537) — the volume
+    // the exchange has CONFIRMED filled via 35=8 reports, the FIX parity of the
+    // OUCH tracker's total_filled_shares (#242). Terminal records keep their
+    // final cum_qty (a canceled order's partial fills still count), so this is
+    // the session's confirmed executed volume, not just the live book's.
+    int32_t total_filled_qty() const noexcept {
+        int32_t s = 0;
+        for (const auto& kv : orders_) s += kv.second.cum_qty;
+        return s;
+    }
+    // fill_rate: share-weighted completion (#537) = total_filled_qty / Σ
+    // ordered, in [0,1] — the FIX parity of the OUCH tracker's fill_rate
+    // (#250). Distinct from fills() (a count of ORDERS that reached FILLED):
+    // one huge half-filled order and many small complete ones read very
+    // differently here than by order count, the same divergence OUCH pins
+    // between #250 and order_fill_rate (#361). A replace migration carries
+    // both cum_qty and the original ordered qty with the chain, so the ratio
+    // survives it. 0 when nothing has been ordered.
+    double fill_rate() const noexcept {
+        int64_t ordered = 0;
+        for (const auto& kv : orders_) ordered += kv.second.ordered;
+        return ordered > 0
+            ? static_cast<double>(total_filled_qty()) / static_cast<double>(ordered)
+            : 0.0;
+    }
     uint64_t fills()       const noexcept { return fills_; }
     uint64_t cancels()     const noexcept { return cancels_; }
     uint64_t rejects()     const noexcept { return rejects_; }
