@@ -84,6 +84,7 @@
 #include "../strategy/vidya.hpp"
 #include "../strategy/center_of_gravity.hpp"
 #include "../strategy/tsf.hpp"
+#include "../strategy/mcginley.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5034,6 +5035,52 @@ void test_tsf() {
     ASSERT(!up.ready() && up.value() == 0.0, "tsf_reset");
 }
 
+// McGinleyDynamic #542 — self-adjusting MA with the asymmetric lag correction.
+void test_mcginley() {
+    SECTION("McGinley Dynamic (#542)");
+    McGinleyDynamic mgf;
+    ASSERT(!mgf.ready() && mgf.value() == 0.0, "mcg_not_ready_before_seed");
+    mgf.update(0.0); mgf.update(-5.0);                 // invalid prints ignored
+    ASSERT(!mgf.ready(), "mcg_ignores_invalid");
+    mgf.update(100.0);                                 // seeds at the first real print
+    ASSERT(mgf.ready() && std::fabs(mgf.value() - 100.0) < 1e-12, "mcg_seeds_at_price");
+
+    // Flat tape: P == MD -> the increment is exactly 0, the line pins.
+    McGinleyDynamic mgc(14);
+    for (int i = 0; i < 20; ++i) mgc.update(50.0);
+    ASSERT(std::fabs(mgc.value() - 50.0) < 1e-12, "mcg_flat_pins_price");
+
+    // Uptrend: MD rises monotonically while lagging below the latest price.
+    McGinleyDynamic mgu(14);
+    double last = 0.0, prev_md = 0.0;
+    mgu.update(100.0); prev_md = mgu.value();
+    bool rising = true;
+    for (int i = 1; i <= 20; ++i) {
+        last = 100.0 + 2.0 * i;
+        mgu.update(last);
+        if (mgu.value() <= prev_md) rising = false;
+        prev_md = mgu.value();
+    }
+    ASSERT(rising && mgu.value() < last, "mcg_uptrend_lags_below");
+
+    // The DESIGN pin — asymmetric speed. From MD=100, a +10% print moves the
+    // line by 10/(0.6*14*1.1^4); an equal -10% print by 10/(0.6*14*0.9^4):
+    // the down step is larger (markets fall faster, the average follows).
+    McGinleyDynamic mup(14), mdn(14);
+    mup.update(100.0); mdn.update(100.0);
+    mup.update(110.0); mdn.update(90.0);
+    const double up_step   = mup.value() - 100.0;
+    const double down_step = 100.0 - mdn.value();
+    ASSERT(std::fabs(up_step   - 10.0 / (0.6 * 14.0 * std::pow(1.1, 4))) < 1e-9,
+           "mcg_up_step_closed_form");
+    ASSERT(std::fabs(down_step - 10.0 / (0.6 * 14.0 * std::pow(0.9, 4))) < 1e-9,
+           "mcg_down_step_closed_form");
+    ASSERT(down_step > up_step, "mcg_downside_tracks_faster");
+
+    mgu.reset();
+    ASSERT(!mgu.ready() && mgu.value() == 0.0, "mcg_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -9295,6 +9342,7 @@ int main() {
     test_vidya();
     test_cog();
     test_tsf();
+    test_mcginley();
     test_cmo();
     test_zscore();
     test_tsi();
