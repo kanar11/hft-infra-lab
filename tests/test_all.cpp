@@ -2830,6 +2830,11 @@ void test_itch_book() {
     // #535: the CVD high/low water marks — peak +300, trough still the start 0.
     ASSERT(iagr.max_cumulative_delta() == 300 && iagr.min_cumulative_delta() == 0,
            "itchbook_cvd_peak_300");
+    // #543: only buyers have printed -> buy VWAP at the lifted ask, sell side
+    // empty, and the effective spread needs BOTH sides (0, not a blow-up).
+    ASSERT(std::fabs(iagr.buy_vwap() - 10.05) < 1e-9, "itchbook_bvwap_at_ask");
+    ASSERT(iagr.sell_vwap() == 0.0 && iagr.tape_effective_spread() == 0.0,
+           "itchbook_svwap_one_sided_zero");
     iagr.on_execute(1, 100);                      // bid hit = seller-initiated
     // (300 - 100) / 400 = +0.5 — net buying pressure.
     ASSERT(std::fabs(iagr.tape_imbalance() - 0.5) < 1e-9, "itchbook_agr_net_half");
@@ -2851,12 +2856,20 @@ void test_itch_book() {
     // #535: the trough now reaches -100 while the peak still holds +300.
     ASSERT(iagr.max_cumulative_delta() == 300 && iagr.min_cumulative_delta() == -100,
            "itchbook_cvd_trough_minus100");
+    // #543: buyers paid the 10.05 ask, sellers received the 10.00 bid — the
+    // realized effective spread on the tape is their 0.05 gap.
+    ASSERT(std::fabs(iagr.buy_vwap() - 10.05) < 1e-9
+           && std::fabs(iagr.sell_vwap() - 10.00) < 1e-9, "itchbook_side_vwaps");
+    ASSERT(std::fabs(iagr.tape_effective_spread() - 0.05) < 1e-9,
+           "itchbook_tape_eff_spread_005");
     iagr.clear();
     ASSERT(iagr.executed_against_bid() == 0 && iagr.tape_imbalance() == 0.0,
            "itchbook_agr_clear");
     ASSERT(iagr.cumulative_delta() == 0, "itchbook_cvd_clear");
     ASSERT(iagr.max_cumulative_delta() == 0 && iagr.min_cumulative_delta() == 0,
            "itchbook_cvd_extremes_clear");   // #535
+    ASSERT(iagr.buy_vwap() == 0.0 && iagr.sell_vwap() == 0.0
+           && iagr.tape_effective_spread() == 0.0, "itchbook_side_vwaps_clear");   // #543
 
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");

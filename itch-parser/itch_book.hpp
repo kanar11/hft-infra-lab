@@ -55,6 +55,8 @@ class ITCHOrderBook {
     int64_t exec_against_ask_    = 0;  // tape: shares lifted from ASKS = buyer-initiated (#415)
     int64_t max_cum_delta_       = 0;  // session peak of cumulative_delta (#535)
     int64_t min_cum_delta_       = 0;  // session trough of cumulative_delta (#535)
+    int64_t exec_notional_bid_ticks_ = 0;  // Σ dec*price over hit-BID prints (#543)
+    int64_t exec_notional_ask_ticks_ = 0;  // Σ dec*price over lifted-ASK prints (#543)
     int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
     uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
     int64_t  max_reprice_ticks_  = 0;  // largest single |new - old| reprice move (#519)
@@ -113,8 +115,10 @@ public:
             exec_notional_ticks_ += static_cast<int64_t>(dec) * it->second.price_ticks;
             // #415: the resting side names the aggressor exactly — a hit
             // resting BID was sold into, a lifted ASK was bought from.
-            if (it->second.side == 'B') exec_against_bid_ += dec;
-            else                        exec_against_ask_ += dec;
+            // #543: notional split by the same side, for the side VWAPs.
+            const int64_t side_notional = static_cast<int64_t>(dec) * it->second.price_ticks;
+            if (it->second.side == 'B') { exec_against_bid_ += dec; exec_notional_bid_ticks_ += side_notional; }
+            else                        { exec_against_ask_ += dec; exec_notional_ask_ticks_ += side_notional; }
             // #535: track the running CVD high/low water marks.
             const int64_t cd = exec_against_ask_ - exec_against_bid_;
             if (cd > max_cum_delta_) max_cum_delta_ = cd;
@@ -238,6 +242,7 @@ public:
         exec_shares_sum_ = exec_notional_ticks_ = 0;   // #407
         exec_against_bid_ = exec_against_ask_ = 0;     // #415
         max_cum_delta_ = min_cum_delta_ = 0;           // #535
+        exec_notional_bid_ticks_ = exec_notional_ask_ticks_ = 0;   // #543
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
         max_reprice_ticks_ = 0;                        // #519
         exec_prints_ = 0;                              // #463
@@ -896,6 +901,40 @@ public:
     // executed_shares (#407).
     int64_t executed_against_bid() const noexcept { return exec_against_bid_; }
     int64_t executed_against_ask() const noexcept { return exec_against_ask_; }
+
+    // buy_vwap / sell_vwap (#543): the side-split session VWAPs of the tape —
+    // buy_vwap over BUYER-initiated prints (asks lifted: what aggressive buyers
+    // actually PAID), sell_vwap over SELLER-initiated prints (bids hit: what
+    // aggressive sellers actually RECEIVED). executed_vwap (#407) blends both;
+    // the #415 share split gives the sides' volumes; these price them. The
+    // itch parallel of the OUCH tracker's avg_buy_price/avg_sell_price (#474),
+    // read from the public feed instead of own fills. 0 before any print on
+    // that side.
+    double buy_vwap() const noexcept {
+        return exec_against_ask_ > 0
+            ? (static_cast<double>(exec_notional_ask_ticks_)
+               / static_cast<double>(exec_against_ask_)) / 100.0
+            : 0.0;
+    }
+    double sell_vwap() const noexcept {
+        return exec_against_bid_ > 0
+            ? (static_cast<double>(exec_notional_bid_ticks_)
+               / static_cast<double>(exec_against_bid_)) / 100.0
+            : 0.0;
+    }
+    // tape_effective_spread (#543): buy_vwap - sell_vwap — the REALIZED spread
+    // the tape actually paid, volume-weighted over the whole session: buyers
+    // crossed to the ask, sellers to the bid, and this is the average gap
+    // between the two. The executed counterpart of the QUOTED spread (#131):
+    // quotes show what crossing would cost right now, this shows what it DID
+    // cost — persistently below the quoted spread means fills happen inside
+    // the touch (price improvement), above it means the tape crosses when the
+    // spread is wide. Needs both sides traded; 0 otherwise.
+    double tape_effective_spread() const noexcept {
+        return (exec_against_ask_ > 0 && exec_against_bid_ > 0)
+            ? buy_vwap() - sell_vwap()
+            : 0.0;
+    }
 
     // cumulative_delta (#495): the running signed net aggressor volume =
     // executed_against_ask - executed_against_bid (buyer-initiated shares
