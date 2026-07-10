@@ -766,6 +766,22 @@ public:
             ? to_float(total_fees_) / static_cast<double>(total_filled_shares_)
             : 0.0;
     }
+    // fee_bps_of_turnover: the session's effective commission rate in BASIS
+    // POINTS of traded notional (#548) = total_fees / total_traded_notional *
+    // 10000. avg_commission_per_share (#236) is $ per SHARE, which is not
+    // comparable across price levels — a 1-cent fee is 10 bps on a $10 name
+    // but 0.05 bps on a $2000 name; this normalizes the cost to the capital
+    // actually turned over, the unit fee schedules and TCA reports quote (the
+    // same normalization realized_spread_capture_bps #506 applied to the MM
+    // edge). Compare directly against tape/quoted spreads in bps: fees above
+    // the captured spread mean the strategy pays more to trade than trading
+    // earns. Fixed-point fees converted with to_float BEFORE dividing (the
+    // #347 lesson). 0 before any fill.
+    double fee_bps_of_turnover() const noexcept {
+        return total_traded_notional_ > 0.0
+            ? to_float(total_fees_) / total_traded_notional_ * 10000.0
+            : 0.0;
+    }
     // Runtime commission change (#166) — the fee schedule can change during a session
     // (volume tier, promotion). Subsequent fills use the new rate.
     void   set_commission(double per_share) noexcept {

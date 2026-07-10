@@ -493,8 +493,17 @@ void test_oms_short_and_replace() {
         oms.fill_order(a->order_id, 100, 10.0);                     // fee 1.0, filled 100
         ASSERT(close(to_float(oms.total_fees()), 1.0), "avgcomm_total_fee");
         ASSERT(close(oms.avg_commission_per_share(), 0.01), "avgcomm_per_share"); // 1.0/100
+        // #548 fee_bps_of_turnover — $1 fee on $1000 turnover = 10 bps.
+        ASSERT(close(oms.fee_bps_of_turnover(), 10.0), "feebps_10_on_ten_dollar_name");
+        // The same 1c/share on a $20 name is CHEAPER in bps: fees $2 on $3000
+        // turnover -> 6.67 bps, though avg_commission_per_share is unchanged.
+        Order* b548 = oms.submit_order("BBB", Side::BUY, 20.0, 100);
+        oms.fill_order(b548->order_id, 100, 20.0);              // fee 1.0, turnover +2000
+        ASSERT(close(oms.avg_commission_per_share(), 0.01), "feebps_per_share_flat");
+        ASSERT(close(oms.fee_bps_of_turnover(), 2.0 / 3000.0 * 10000.0), "feebps_dilutes_to_667");
         OMS empt(1000000, 1000000000.0);
         ASSERT(empt.avg_commission_per_share() == 0.0, "avgcomm_empty_zero");
+        ASSERT(empt.fee_bps_of_turnover() == 0.0, "feebps_empty_zero");   // #548
     }
 
     {   // #244 winning_symbols / losing_symbols (P&L attribution).
