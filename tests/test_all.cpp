@@ -3544,16 +3544,26 @@ void test_multicast_gap_recovery() {
     // 1000 -> a completed 700ns outage.
     ASSERT(sm.longest_outage_ns() == 700 && sm.total_outage_ns() == 700,
            "stale_outage_recorded_from_last_packet");
+    // #547: one completed spell -> the mean IS that outage.
+    ASSERT(sm.completed_outages() == 1 && std::fabs(sm.avg_outage_ns() - 700.0) < 1e-9,
+           "stale_avg_single_700");
     // A second, shorter outage adds to the total but not the maximum.
     ASSERT(sm.check(2300, 500), "stale_second_spell");        // 600 > 500
+    // #547: the spell is still OPEN — it must not dilute the mean with a zero.
+    ASSERT(sm.completed_outages() == 1 && std::fabs(sm.avg_outage_ns() - 700.0) < 1e-9,
+           "stale_avg_open_spell_excluded");
     sm.on_packet(2350);                                        // outage 650
     ASSERT(sm.longest_outage_ns() == 700, "stale_longest_retained");
     ASSERT(sm.total_outage_ns() == 1350, "stale_total_accumulates");
+    // #547: two completed outages (700, 650) -> mean 675, below the 700 max.
+    ASSERT(sm.completed_outages() == 2 && std::fabs(sm.avg_outage_ns() - 675.0) < 1e-9,
+           "stale_avg_675");
     // A healthy inter-packet gap (never detected stale) records nothing.
     sm.on_packet(2400);
     ASSERT(sm.total_outage_ns() == 1350, "stale_healthy_gap_not_outage");
     sm.reset();
     ASSERT(sm.longest_outage_ns() == 0 && sm.total_outage_ns() == 0, "stale_outage_reset");
+    ASSERT(sm.completed_outages() == 0 && sm.avg_outage_ns() == 0.0, "stale_avg_reset");   // #547
 
     // #321 GapRecovery::duplicate_rate / primary_packets
     multicast::GapRecovery grdup;

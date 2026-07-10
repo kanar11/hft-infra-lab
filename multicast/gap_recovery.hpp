@@ -1338,6 +1338,28 @@ struct FeedStalenessMonitor {
     // check(). 0 before any revival from a detected stale spell.
     int64_t longest_outage_ns() const noexcept { return longest_outage_ns_; }
     int64_t total_outage_ns()   const noexcept { return total_outage_ns_; }
+    // completed_outages (#547): stale spells that ENDED in a revival — every
+    // entering edge (stale_events) minus the spell still running, if any. The
+    // correct denominator for the mean below: a spell that has not revived yet
+    // has no duration in total_outage_ns_, so counting it would dilute the
+    // average with a zero.
+    uint64_t completed_outages() const noexcept {
+        return stale_events - (stale_ ? 1 : 0);
+    }
+    // avg_outage_ns (#547): the MEAN completed silent window = total_outage_ns
+    // / completed_outages — the typical-outage leg that completes the duration
+    // family: stale_events is how OFTEN (#98), longest_outage_ns how BAD
+    // (#443), total_outage_ns the summed downtime (#443), this the typical
+    // case. A longest far above the average is one catastrophic drop amid
+    // routine blips (chase the incident); longest ~ average means every outage
+    // looks the same (chase the systemic cause — a periodic upstream stall).
+    // 0 before any completed outage.
+    double avg_outage_ns() const noexcept {
+        const uint64_t done = completed_outages();
+        return done > 0
+            ? static_cast<double>(total_outage_ns_) / static_cast<double>(done)
+            : 0.0;
+    }
     void reset()    noexcept { *this = FeedStalenessMonitor{}; }
 };
 
