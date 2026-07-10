@@ -978,6 +978,37 @@ public:
         return r;
     }
 
+    // ResendReq — typed view of a ResendRequest (35=2) (#545). The RECEIVING
+    // side of the replay flow: the COUNTERPARTY detected a gap in OUR stream
+    // and asks us to retransmit 7=BeginSeqNo through 16=EndSeqNo — build_
+    // resend_request (#5-era admin) sends it, this decodes it, and the session
+    // answers by replaying stored messages (or a SequenceReset GapFill for the
+    // admin ones, #119). EndSeqNo 0 is the FIX convention for "everything from
+    // BeginSeqNo on" — is_open_ended() decodes it, and count() returns how many
+    // messages a CLOSED range spans (0 for open-ended: unbounded). Both seqnos
+    // are 0 when their tags are absent. valid=false when the message is not
+    // 35=2.
+    struct ResendReq {
+        uint32_t begin_seq = 0;    // 7=BeginSeqNo
+        uint32_t end_seq   = 0;    // 16=EndSeqNo (0 = open-ended "to infinity")
+        bool     valid     = false;// true when msg type == '2'
+
+        bool is_open_ended() const noexcept { return end_seq == 0; }
+        // count: messages a closed range covers; 0 when open-ended or inverted.
+        uint32_t count() const noexcept {
+            return (end_seq >= begin_seq && end_seq > 0) ? end_seq - begin_seq + 1 : 0;
+        }
+    };
+
+    static ResendReq parse_resend_request(const FIXMessage& m) noexcept {
+        ResendReq r;
+        if (m.get_msg_type()[0] != '2') return r;   // valid stays false
+        r.begin_seq = m.get_field(7)  ? static_cast<uint32_t>(m.get_int(7))  : 0;
+        r.end_seq   = m.get_field(16) ? static_cast<uint32_t>(m.get_int(16)) : 0;
+        r.valid     = true;
+        return r;
+    }
+
     // DontKnowTrade (35=Q): the client repudiates an ExecutionReport (35=8, #101) it
     // cannot reconcile — an execution for an order it has no record of (#327). Instead
     // of silently dropping a mystery fill (which would desync the position), the client

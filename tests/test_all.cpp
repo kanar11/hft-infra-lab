@@ -7135,6 +7135,22 @@ void test_fix_session() {
         ASSERT(m.get_msg_type()[0] == '2', "fix_resend_msgtype_2");
         ASSERT(std::atoi(m.get_field(7)) == 5, "fix_resend_begin_5");
         ASSERT(s.resends_requested() == 1, "fix_resend_counted");
+
+        // #545 parse_resend_request — the RECEIVING side of the replay flow.
+        // EndSeqNo 0 is the FIX "everything from 5 on" convention.
+        const auto rr545 = fix::FIXSession::parse_resend_request(m);
+        ASSERT(rr545.valid && rr545.begin_seq == 5 && rr545.end_seq == 0,
+               "fix_parse_resend_fields");
+        ASSERT(rr545.is_open_ended() && rr545.count() == 0, "fix_parse_resend_open_ended");
+        // A CLOSED range 5..9 spans 5 messages.
+        s.build_resend_request(buf, sizeof(buf), 5, 9, '|');
+        FIXMessage m2; m2.parse(buf);
+        const auto rr545c = fix::FIXSession::parse_resend_request(m2);
+        ASSERT(rr545c.valid && !rr545c.is_open_ended() && rr545c.count() == 5,
+               "fix_parse_resend_closed_count");
+        FIXMessage not_two; not_two.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_resend_request(not_two).valid,
+               "fix_parse_resend_non2_invalid");
     }
 
     // --- SequenceReset GapFill: 36=NewSeqNo, 123=Y ---
