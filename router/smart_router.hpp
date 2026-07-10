@@ -367,6 +367,28 @@ public:
         return worst;
     }
 
+    // stalest_quote_venue: the NAME of the venue whose quote stalest_quote_
+    // age_ns (#392) measures (#544) — the actionable WHICH behind the worst
+    // age: the venue to drop from the NBBO (or chase with a reconnect) when
+    // the number crosses a threshold, completing the staleness family the way
+    // slowest_venue (#512) named the latency laggard and busiest_venue (#528)
+    // the flow magnet. Same walk and exclusions as the age read (ACTIVE venues
+    // that quoted at least once; never-quoted venues feed the NBBO nothing).
+    // A tie resolves to the first venue seen. nullptr when no active venue
+    // has quoted yet.
+    const char* stalest_quote_venue(int64_t at_ns) const noexcept {
+        const char* name = nullptr;
+        int64_t worst = -1;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active || v.last_quote_ns == 0) continue;
+            const int64_t age = at_ns - v.last_quote_ns;
+            const int64_t clamped = age > 0 ? age : 0;
+            if (clamped > worst) { worst = clamped; name = v.name; }
+        }
+        return name;
+    }
+
     // route_order: choose a venue for the order. side[0]=='B' → buy.
     RouteDecision route_order(const char* side, int32_t quantity,
                                RoutingStrategy strat) noexcept {

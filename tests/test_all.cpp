@@ -5518,6 +5518,7 @@ void test_router_ewma_partial() {
         rqs.add_venue(Venue("C", 100, 0.0));                  // never quotes
         ASSERT(rqs.venue_quote_age_ns("A", 999) == -1, "rqs_never_quoted_minus1");
         ASSERT(rqs.stalest_quote_age_ns(999) == -1, "rqs_no_quotes_minus1");
+        ASSERT(rqs.stalest_quote_venue(999) == nullptr, "rqs_which_none_null");   // #544
         rqs.update_quote("A", 10.0, 10.02, 100, 100, 1000);   // synthetic stamps
         rqs.update_quote("B", 10.0, 10.02, 100, 100, 5000);
         ASSERT(rqs.venue_quote_age_ns("A", 6000) == 5000, "rqs_age_a_exact");
@@ -5526,12 +5527,16 @@ void test_router_ewma_partial() {
         ASSERT(rqs.venue_quote_age_ns("C", 6000) == -1, "rqs_c_never_minus1");
         // Stalest = A's 5000; the never-quoted C is excluded, not infinite.
         ASSERT(rqs.stalest_quote_age_ns(6000) == 5000, "rqs_stalest_is_a");
+        // #544: the WHICH names A while it holds the worst age.
+        ASSERT(std::strcmp(rqs.stalest_quote_venue(6000), "A") == 0, "rqs_which_is_A");
         // Refreshing A hands the worst age to B.
         rqs.update_quote("A", 10.0, 10.02, 100, 100, 5500);
         ASSERT(rqs.stalest_quote_age_ns(6000) == 1000, "rqs_refresh_moves_worst");
+        ASSERT(std::strcmp(rqs.stalest_quote_venue(6000), "B") == 0, "rqs_which_hands_to_B");   // #544
         // Disabling B removes it from the watch (A's 500 remains).
         rqs.set_venue_active("B", false);
         ASSERT(rqs.stalest_quote_age_ns(6000) == 500, "rqs_inactive_excluded");
+        ASSERT(std::strcmp(rqs.stalest_quote_venue(6000), "A") == 0, "rqs_which_inactive_excluded");   // #544
         // A read clocked before the stamp clamps to 0.
         ASSERT(rqs.venue_quote_age_ns("A", 5000) == 0, "rqs_clamp_zero");
     }
