@@ -54,6 +54,7 @@ class OUCHOrderTracker {
         bool       pending_cancel; // Cancel sent, awaiting confirmation (#159)
         double     fill_notional = 0.0; // Σ exec shares × price, $ (#410)
         char       side = ' ';     // 'B'/'S' from Accepted; ' ' until acked (#450)
+        double     price = 0.0;    // working limit price from Accepted/Replaced/Restated (#546)
     };
     std::unordered_map<std::string, Record> orders_;
     uint64_t live_ = 0, filled_ = 0, cancelled_ = 0, rejected_ = 0, broken_ = 0;
@@ -112,6 +113,7 @@ public:
             moved.remaining      = r.shares;
             moved.order_ref      = r.order_ref;
             moved.pending_cancel = false;
+            moved.price          = r.price;   // #546: the replacement's new price
             moved.state = (moved.filled > 0) ? OrderState::PARTIAL : OrderState::LIVE;
             ++replaced_;
             return (orders_[r.token] = moved).state;
@@ -123,6 +125,7 @@ public:
             rec->state     = OrderState::LIVE;
             rec->order_ref = r.order_ref;
             rec->side      = (r.side[0] != '\0') ? r.side[0] : ' ';   // #450: "BUY"/"SELL" -> 'B'/'S'
+            rec->price     = r.price;   // #546: the working limit price
             ++live_;
         } else if (std::strcmp(r.type, "EXECUTED") == 0) {
             const int32_t exec = (r.shares < rec->remaining) ? r.shares : rec->remaining;
@@ -198,6 +201,7 @@ public:
             // request (compliance reprice, display reduction). r.shares IS the
             // new open quantity — adopt it, the order keeps working.
             rec->remaining = r.shares;
+            rec->price     = r.price;   // #546: a restate can also reprice
         } else if (std::strcmp(r.type, "AIQ_CXL") == 0) {
             // AIQ Canceled (#386): self-match prevention removed PART of the
             // order (r.shares = the decrement). Not an error: reduce the open
@@ -312,6 +316,23 @@ public:
             if ((rec.state == OrderState::LIVE || rec.state == OrderState::PARTIAL)
                 && rec.side == side)
                 s += rec.remaining;
+        return s;
+    }
+    // working_notional (#546): the $ VALUE of the confirmed resting book =
+    // Σ remaining × working limit price over LIVE/PARTIAL orders — the capital
+    // committed to the exchange right now, the dollar face of working_shares
+    // (#304) and the OUCH parity of OMS open_order_notional (#180). The price
+    // is captured from the Accepted report and follows the order through
+    // Replaced (#386 migration adopts the replacement's price) and Restated
+    // (a compliance reprice moves it too), so the valuation tracks what is
+    // actually on the book, not what was first sent. 500 shares of a $2000
+    // name and of a $2 name read identically in shares; not here. 0 when
+    // nothing is working.
+    double working_notional() const noexcept {
+        double s = 0.0;
+        for (const auto& [tok, rec] : orders_)
+            if (rec.state == OrderState::LIVE || rec.state == OrderState::PARTIAL)
+                s += static_cast<double>(rec.remaining) * rec.price;
         return s;
     }
     // bought_shares / sold_shares (#458): EXECUTED shares by order side —

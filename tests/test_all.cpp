@@ -8884,6 +8884,33 @@ void test_ouch_order_state() {
     ASSERT(csh.total_cancelled_shares() == 0 && csh.cancelled_share_rate() == 0.0,
            "ouch_csh_reset");
 
+    // #546 working_notional — the $ value of the confirmed resting book.
+    ouch::OUCHOrderTracker wnt;
+    ASSERT(wnt.working_notional() == 0.0, "ouch_wnt_empty_zero");
+    // A sent-but-unacked order has no confirmed price -> contributes nothing.
+    wnt.on_new("W1", 100);
+    ASSERT(wnt.working_notional() == 0.0, "ouch_wnt_unacked_zero");
+    n = OUCHMessage::encode_accepted(buf, "W1", 'B', 100, "AAPL", 10.0, 77101);
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(wnt.working_notional() - 1000.0) < 1e-9, "ouch_wnt_acked_1000");
+    // A partial fill shrinks the resting value: 60 left x 10.00 = 600.
+    n = OUCHMessage::encode_executed(buf, "W1", 40, 10.0, 1);
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(wnt.working_notional() - 600.0) < 1e-9, "ouch_wnt_partial_600");
+    // A replace migrates the chain AND adopts the NEW price: 50 x 12.00 = 600
+    // (same $ by construction here, but priced at the replacement, not the origin).
+    n = OUCHMessage::encode_replaced(buf, "W2", "W1", 50, 12.0, 77102);
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(wnt.working_notional() - 600.0) < 1e-9, "ouch_wnt_replaced_repriced");
+    // A restate repricing to 11.00 moves the valuation with the book: 50 x 11 = 550.
+    n = OUCHMessage::encode_restated(buf, "W2", 50, 11.0, 'P');
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(wnt.working_notional() - 550.0) < 1e-9, "ouch_wnt_restate_repriced");
+    // Cancelling empties the book value.
+    n = OUCHMessage::encode_cancelled(buf, "W2", 50, 'U');
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(wnt.working_notional() == 0.0, "ouch_wnt_cancel_zero");
+
     // #337 avg_order_size / executions_per_order — order sizing & fill fragmentation.
     ouch::OUCHOrderTracker frag;
     ASSERT(frag.avg_order_size() == 0.0 && frag.executions_per_order() == 0.0, "ouch_frag_empty");
