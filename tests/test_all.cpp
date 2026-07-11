@@ -5302,6 +5302,19 @@ void test_router_ewma_partial() {
         const RouteDecision d = r.route_order("BUY", 200);
         ASSERT(d.valid && d.quantity == 50, "partial_filled_50");
         ASSERT(d.unfilled_qty == 150, "partial_unfilled_150");
+        // #552: the shortfall now ACCUMULATES instead of dying with the decision.
+        ASSERT(r.total_unfilled_shares() == 150, "sfr_accumulates_150");
+        // 150 unfilled of 200 requested -> 0.75.
+        ASSERT(std::fabs(r.route_shortfall_rate() - 0.75) < 1e-9, "sfr_rate_075");
+        // A fully-covered follow-up dilutes the rate: +50 routed, +0 unfilled
+        // -> 150 / 250 = 0.6.
+        r.update_quote("V", 10.0, 11.0, 50, 50);
+        r.route_order("BUY", 50);
+        ASSERT(r.total_unfilled_shares() == 150
+               && std::fabs(r.route_shortfall_rate() - 0.6) < 1e-9, "sfr_dilutes_06");
+        r.reset_session_stats();
+        ASSERT(r.total_unfilled_shares() == 0 && r.route_shortfall_rate() == 0.0,
+               "sfr_reset_zero");
     }
 
     // --- Split shortfall: Σliquidity < order ---
@@ -5315,6 +5328,9 @@ void test_router_ewma_partial() {
         ASSERT(d.quantity == 180, "split_filled_180");
         ASSERT(d.unfilled_qty == 320, "split_unfilled_320");
         ASSERT(d.num_venues == 2, "split_two_venues");
+        // #552: the SPLIT path feeds the same accumulator (320 of 500 -> 0.64).
+        ASSERT(r.total_unfilled_shares() == 320
+               && std::fabs(r.route_shortfall_rate() - 0.64) < 1e-9, "sfr_split_path_064");
     }
 
     // --- #86 venue health: a streak of rejects disables a venue, a success reactivates ---

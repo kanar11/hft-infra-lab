@@ -153,6 +153,7 @@ class SmartOrderRouter {
     uint64_t total_rejected_;
     uint64_t total_latency_ns_;
     int64_t  max_routing_latency_ns_ = 0;  // worst single decision latency (#536)
+    int64_t  total_unfilled_shares_ = 0;   // cumulative route shortfall (#552)
     double   total_fees_paid_ = 0.0;   // sum of fee/rebate over routes (#138; <0 = net rebate)
 
     static int64_t now_ns() noexcept {
@@ -464,6 +465,7 @@ public:
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
         if (d.latency_ns > max_routing_latency_ns_) max_routing_latency_ns_ = d.latency_ns;   // #536
+        total_unfilled_shares_ += d.unfilled_qty;   // #552: cumulative shortfall
         total_fees_paid_  += d.total_fee;   // #138 cumulative cost
         return d;
     }
@@ -1443,6 +1445,7 @@ public:
         total_rejected_   = 0;
         total_latency_ns_ = 0;
         max_routing_latency_ns_ = 0;   // #536
+        total_unfilled_shares_ = 0;    // #552
         total_fees_paid_  = 0.0;
         reset_routing_stats();
     }
@@ -1493,6 +1496,26 @@ public:
     // the venue round-trip. 0 before any successful route; reset by
     // reset_session_stats.
     int64_t max_routing_latency_ns() const noexcept { return max_routing_latency_ns_; }
+    // total_unfilled_shares: the cumulative route SHORTFALL this session
+    // (#552) — shares the router was asked to place but the fabric had no
+    // displayed liquidity to cover, summed from every RouteDecision's
+    // unfilled_qty (which until now was only visible per decision and then
+    // lost). The demand-side complement of total_routed_shares (#130): routed
+    // is what landed, this is what could not. Reset by reset_session_stats.
+    int64_t total_unfilled_shares() const noexcept { return total_unfilled_shares_; }
+    // route_shortfall_rate: unfilled / (routed + routed-side shortfall), in
+    // [0,1] (#552) — the fraction of REQUESTED volume the venues could not
+    // absorb. 0 means every share found displayed liquidity; a rising rate
+    // means order sizes chronically exceed what the fabric shows (slice
+    // smaller, or add venues — the flip side of fillable_ratio's #224
+    // PRE-trade estimate, measured on what was actually sent). 0 before any
+    // route.
+    double route_shortfall_rate() const noexcept {
+        const int64_t requested = total_routed_shares() + total_unfilled_shares_;
+        return requested > 0
+            ? static_cast<double>(total_unfilled_shares_) / static_cast<double>(requested)
+            : 0.0;
+    }
 
     void print_stats() const {
         printf("\n=== Router Statistics ===\n");
@@ -1564,6 +1587,7 @@ private:
         ++total_routes_;
         total_latency_ns_ += d.latency_ns;
         if (d.latency_ns > max_routing_latency_ns_) max_routing_latency_ns_ = d.latency_ns;   // #536
+        total_unfilled_shares_ += d.unfilled_qty;   // #552: cumulative shortfall
         total_fees_paid_  += d.total_fee;   // #138 cumulative cost
         return d;
     }
