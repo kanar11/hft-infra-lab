@@ -6482,6 +6482,30 @@ void test_risk_price_band() {
     rrt.reset_daily();
     ASSERT(rrt.pnl_skewness() == 0.0, "skew_reset");
 
+    // #549 pnl_kurtosis — excess kurtosis, the tail weight regardless of side.
+    RiskManager rku;
+    ASSERT(rku.pnl_kurtosis() == 0.0, "kurt_empty_zero");
+    rku.update_pnl(+1.0);
+    ASSERT(rku.pnl_kurtosis() == 0.0, "kurt_single_zero");   // needs >= 2 updates
+    // The symmetric two-point stream is the THIN-tail extreme: exactly -2.
+    RiskManager rk2p;
+    rk2p.update_pnl(+1.0); rk2p.update_pnl(-1.0);
+    ASSERT(std::fabs(rk2p.pnl_kurtosis() + 2.0) < 1e-9, "kurt_two_point_minus2");
+    // Fat tails: six flat updates and two rare +-10 blows. Symmetric (skew 0),
+    // yet var 25, m4 2500 -> 2500/625 - 3 = +1 — the double-sided tail risk
+    // the skewness read (#533) cannot see.
+    RiskManager rkft;
+    for (int i = 0; i < 6; ++i) rkft.update_pnl(0.0);
+    rkft.update_pnl(+10.0); rkft.update_pnl(-10.0);
+    ASSERT(std::fabs(rkft.pnl_skewness()) < 1e-12, "kurt_fat_symmetric_no_skew");
+    ASSERT(std::fabs(rkft.pnl_kurtosis() - 1.0) < 1e-9, "kurt_fat_tails_plus1");
+    // A constant (zero-variance) stream has no shape -> 0, not a blow-up.
+    RiskManager rkc;
+    rkc.update_pnl(+5.0); rkc.update_pnl(+5.0); rkc.update_pnl(+5.0);
+    ASSERT(rkc.pnl_kurtosis() == 0.0, "kurt_constant_zero");
+    rkft.reset_daily();
+    ASSERT(rkft.pnl_kurtosis() == 0.0, "kurt_reset");
+
     // #501 largest_pnl_gain / largest_pnl_loss — the tail events.
     RiskManager rtx;
     ASSERT(rtx.largest_pnl_gain() == 0.0 && rtx.largest_pnl_loss() == 0.0, "ptx_empty_zero");

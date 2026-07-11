@@ -324,6 +324,7 @@ class RiskManager {
     double pnl_sum_      = 0.0;      // Σ every update_pnl delta (#477)
     double pnl_sumsq_    = 0.0;      // Σ delta² over every update_pnl (#477)
     double pnl_sumcube_  = 0.0;      // Σ delta³ over every update_pnl (#533)
+    double pnl_sumquart_ = 0.0;      // Σ delta⁴ over every update_pnl (#549)
     uint64_t pnl_updates_ = 0;      // count of update_pnl calls, incl. flat (#477)
     double loss_sumsq_   = 0.0;      // Σ delta² over LOSING update_pnl (#485)
     double max_gain_     = 0.0;      // largest single winning update_pnl (#501)
@@ -584,6 +585,8 @@ public:
         pnl_sum_   += pnl_change;
         pnl_sumsq_ += pnl_change * pnl_change;
         pnl_sumcube_ += pnl_change * pnl_change * pnl_change;   // #533
+        const double d2_549 = pnl_change * pnl_change;
+        pnl_sumquart_ += d2_549 * d2_549;                       // #549
         ++pnl_updates_;
         daily_pnl_ += pnl_change;
         if (daily_pnl_ > peak_pnl_) peak_pnl_ = daily_pnl_;
@@ -793,6 +796,7 @@ public:
         pnl_sum_ = 0.0;           // #477
         pnl_sumsq_ = 0.0;         // #477
         pnl_sumcube_ = 0.0;       // #533
+        pnl_sumquart_ = 0.0;      // #549
         pnl_updates_ = 0;         // #477
         loss_sumsq_ = 0.0;        // #485
         max_gain_ = 0.0;          // #501
@@ -1261,6 +1265,31 @@ public:
         const double sd = std::sqrt(var);
         const double central3 = pnl_sumcube_ / n - 3.0 * mean * m2 + 2.0 * mean * mean * mean;
         return central3 / (sd * sd * sd);
+    }
+    // pnl_kurtosis: the EXCESS (population) kurtosis of the update_pnl event
+    // series (#549) = E[(x-μ)⁴]/σ⁴ - 3, over the same all-updates population
+    // as pnl_std_dev (#477) and pnl_skewness (#533). It completes the moment
+    // family — mean (#461), variance (#477), skew (#533), and now the TAILS:
+    // positive excess means fat tails (extreme events far more likely than a
+    // Gaussian with the same σ predicts — the regime where σ-based reads like
+    // pnl_sharpe #477 flatter the risk), negative means thin tails (outcomes
+    // clustered, the two-point extreme reads -2). Skew says which SIDE the
+    // tail is on; this says how HEAVY the tails are regardless of side — a
+    // symmetric stream can still hide rare double-sided blow-ups, invisible
+    // to #533. Built on a Σδ⁴ accumulator; 0 before two updates or on a
+    // zero-variance stream; reset by reset_daily.
+    double pnl_kurtosis() const noexcept {
+        if (pnl_updates_ < 2) return 0.0;
+        const double n    = static_cast<double>(pnl_updates_);
+        const double mean = pnl_sum_ / n;
+        const double m2   = pnl_sumsq_ / n;
+        const double var  = m2 - mean * mean;
+        if (var <= 0.0) return 0.0;
+        const double m3 = pnl_sumcube_ / n;
+        const double m4 = pnl_sumquart_ / n;
+        const double mu2 = mean * mean;
+        const double central4 = m4 - 4.0 * mean * m3 + 6.0 * mu2 * m2 - 3.0 * mu2 * mu2;
+        return central4 / (var * var) - 3.0;
     }
     // pnl_recovery_factor: the session return covered by its worst drawdown
     // (#493) = daily_pnl / max_drawdown_dollars — a Calmar/recovery-factor
