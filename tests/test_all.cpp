@@ -85,6 +85,7 @@
 #include "../strategy/center_of_gravity.hpp"
 #include "../strategy/tsf.hpp"
 #include "../strategy/mcginley.hpp"
+#include "../strategy/alma.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5113,6 +5114,42 @@ void test_mcginley() {
     ASSERT(!mgu.ready() && mgu.value() == 0.0, "mcg_reset");
 }
 
+// ALMA #550 — Gaussian-kernel MA with a tunable lag/smoothness trade-off.
+void test_alma() {
+    SECTION("ALMA (#550, MILESTONE 550)");
+    ALMA af;                                       // window 9
+    for (int i = 0; i < 5; ++i) af.update(100.0 + i);
+    ASSERT(!af.ready() && af.value() == 0.0, "alma_not_ready_during_warmup");
+
+    // Flat tape: the kernel normalizes -> the level, exactly.
+    ALMA ac(9);
+    for (int i = 0; i < 12; ++i) ac.update(50.0);
+    ASSERT(ac.ready() && std::fabs(ac.value() - 50.0) < 1e-12, "alma_flat_pins_price");
+
+    // offset 0.5 centers the Gaussian -> symmetric weights -> the exact
+    // midpoint of a linear window: {10,20,30} -> 20.
+    ALMA am(3, 0.5, 6.0);
+    am.update(10.0); am.update(20.0); am.update(30.0);
+    ASSERT(std::fabs(am.value() - 20.0) < 1e-9, "alma_centered_offset_midpoint");
+
+    // offset 1.0 puts the peak on the NEWEST bar -> the estimate leans hard
+    // toward 30, above the uniform mean (the low-lag design point).
+    ALMA an(3, 1.0, 6.0);
+    an.update(10.0); an.update(20.0); an.update(30.0);
+    ASSERT(an.value() > 20.0 && an.value() < 30.0, "alma_offset1_leans_newest");
+
+    // The classic 0.85 on a rising ramp sits ABOVE the plain mean of its
+    // window (less lag than an SMA) yet below the latest print.
+    ALMA ar(9, 0.85, 6.0);
+    double sum = 0.0, lastp = 0.0;
+    for (int i = 0; i < 9; ++i) { lastp = 100.0 + 2.0 * i; ar.update(lastp); sum += lastp; }
+    const double sma = sum / 9.0;
+    ASSERT(ar.value() > sma && ar.value() < lastp, "alma_less_lag_than_sma");
+
+    ar.reset();
+    ASSERT(!ar.ready() && ar.value() == 0.0, "alma_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -9447,6 +9484,7 @@ int main() {
     test_cog();
     test_tsf();
     test_mcginley();
+    test_alma();
     test_cmo();
     test_zscore();
     test_tsi();
