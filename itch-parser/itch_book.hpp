@@ -922,6 +922,24 @@ public:
                / static_cast<double>(exec_against_bid_)) / 100.0
             : 0.0;
     }
+    // mid_vs_vwap_bps (#551): where the CURRENT mid sits relative to the
+    // session tape VWAP, in basis points = (mid - executed_vwap) / vwap *
+    // 10000. The execution-benchmark read: positive = the market trades at a
+    // PREMIUM to its own session average (buyers late to the move fill above
+    // VWAP — the number a VWAP-benchmarked algo is judged on), negative = a
+    // discount (price has come back through the day's average — the classic
+    // VWAP-reversion entry). It joins the BOOK (mid, where you could trade
+    // now) to the TAPE (VWAP, where the session actually traded), which no
+    // single existing read does. Needs a two-sided book AND at least one
+    // print; 0 otherwise.
+    double mid_vs_vwap_bps() const noexcept {
+        const double vwap = executed_vwap();
+        const double mid  = mid_price();
+        return (vwap > 0.0 && mid > 0.0)
+            ? (mid - vwap) / vwap * 10000.0
+            : 0.0;
+    }
+
     // tape_effective_spread (#543): buy_vwap - sell_vwap — the REALIZED spread
     // the tape actually paid, volume-weighted over the whole session: buyers
     // crossed to the ask, sellers to the bid, and this is the average gap

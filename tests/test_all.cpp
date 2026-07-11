@@ -2716,6 +2716,27 @@ void test_itch_book() {
     ASSERT(itap.trade_prints() == 0 && itap.avg_trade_size() == 0.0, "itchbook_prints_clear");
     ASSERT(itap.largest_trade_size() == 0, "itchbook_largest_trade_clear");
 
+    // #551 mid_vs_vwap_bps — the book (mid) judged against the tape (VWAP).
+    itch::ITCHOrderBook ivb;
+    ASSERT(ivb.mid_vs_vwap_bps() == 0.0, "itchbook_mvb_empty_zero");
+    // Session prints 100 @ 10.00 exactly -> VWAP 10.00.
+    ivb.on_add(1, 'S', 10.00, 100);
+    ivb.on_execute(1, 100);
+    // No two-sided book yet -> mid 0 -> guarded to 0.
+    ASSERT(ivb.mid_vs_vwap_bps() == 0.0, "itchbook_mvb_one_sided_zero");
+    // Book at 10.04/10.06 -> mid 10.05, a +50 bps PREMIUM to the day's VWAP.
+    ivb.on_add(2, 'B', 10.04, 100);
+    ivb.on_add(3, 'S', 10.06, 100);
+    ASSERT(std::fabs(ivb.mid_vs_vwap_bps() - 50.0) < 1e-6, "itchbook_mvb_premium_50bps");
+    // Repricing the book below the VWAP flips it to a DISCOUNT: 9.94/9.96 ->
+    // mid 9.95 -> -50 bps.
+    ivb.on_delete(2); ivb.on_delete(3);
+    ivb.on_add(4, 'B', 9.94, 100);
+    ivb.on_add(5, 'S', 9.96, 100);
+    ASSERT(std::fabs(ivb.mid_vs_vwap_bps() + 50.0) < 1e-6, "itchbook_mvb_discount_50bps");
+    ivb.clear();
+    ASSERT(ivb.mid_vs_vwap_bps() == 0.0, "itchbook_mvb_clear");
+
     // #503: block dominance -> one 1000-share block amid 100-share slices
     // gives a largest far above the average.
     itch::ITCHOrderBook ilg;
