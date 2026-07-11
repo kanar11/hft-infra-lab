@@ -1009,6 +1009,37 @@ public:
         return r;
     }
 
+    // SeqReset — typed view of a SequenceReset (35=4) (#553). The ANSWER half
+    // of the replay pair parse_resend_request (#545) opened: asked to resend a
+    // range, a session replays application messages but answers the ADMIN ones
+    // with a single 35=4 GapFill — "nothing worth replaying up to 36=NewSeqNo,
+    // skip ahead". 123=GapFillFlag distinguishes the two very different modes:
+    // 'Y' is the benign in-replay skip; absent or 'N' is the HARD reset — an
+    // out-of-band emergency renumber that can silently discard messages, which
+    // is why is_hard_reset() gets its own read (ops wants to alert on it, not
+    // on routine gap fills). The inbound side has applied these since #119;
+    // this gives recovery tooling the typed view. new_seq is 0 when tag 36 is
+    // absent (malformed — a real 35=4 always carries it). valid=false when the
+    // message is not 35=4.
+    struct SeqReset {
+        uint32_t new_seq  = 0;     // 36=NewSeqNo (0 = absent/malformed)
+        bool     gap_fill = false; // 123=GapFillFlag == 'Y'
+        bool     valid    = false; // true when msg type == '4'
+
+        bool is_gap_fill()   const noexcept { return gap_fill; }
+        bool is_hard_reset() const noexcept { return !gap_fill; }
+    };
+
+    static SeqReset parse_sequence_reset(const FIXMessage& m) noexcept {
+        SeqReset r;
+        if (m.get_msg_type()[0] != '4') return r;   // valid stays false
+        const char* gf = m.get_field(123);
+        r.new_seq  = m.get_field(36) ? static_cast<uint32_t>(m.get_int(36)) : 0;
+        r.gap_fill = (gf && gf[0] == 'Y');
+        r.valid    = true;
+        return r;
+    }
+
     // DontKnowTrade (35=Q): the client repudiates an ExecutionReport (35=8, #101) it
     // cannot reconcile — an execution for an order it has no record of (#327). Instead
     // of silently dropping a mystery fill (which would desync the position), the client

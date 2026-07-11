@@ -7279,6 +7279,25 @@ void test_fix_session() {
         ASSERT(m.is_valid(), "fix_seqreset_valid");
         ASSERT(std::atoi(m.get_field(36)) == 42, "fix_seqreset_newseq_42");
         ASSERT(m.get_field(123)[0] == 'Y', "fix_seqreset_gapfill_Y");
+
+        // #553 parse_sequence_reset — the ANSWER half of the #545 replay pair.
+        const auto sr553 = fix::FIXSession::parse_sequence_reset(m);
+        ASSERT(sr553.valid && sr553.new_seq == 42, "fix_parse_seqreset_newseq");
+        ASSERT(sr553.is_gap_fill() && !sr553.is_hard_reset(), "fix_parse_seqreset_gapfill_benign");
+        // The HARD reset (123=N) is the alerting mode — messages may be discarded.
+        s.build_sequence_reset(buf, sizeof(buf), 100, false, '|');
+        FIXMessage mh; mh.parse(buf);
+        const auto sr553h = fix::FIXSession::parse_sequence_reset(mh);
+        ASSERT(sr553h.valid && sr553h.new_seq == 100
+               && sr553h.is_hard_reset() && !sr553h.is_gap_fill(), "fix_parse_seqreset_hard");
+        // A 35=4 without tag 123 defaults to the hard-reset reading (FIX spec).
+        FIXMessage mb; mb.parse("35=4|36=7|");
+        const auto sr553b = fix::FIXSession::parse_sequence_reset(mb);
+        ASSERT(sr553b.valid && sr553b.new_seq == 7 && sr553b.is_hard_reset(),
+               "fix_parse_seqreset_absent_flag_hard");
+        FIXMessage not_four; not_four.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_sequence_reset(not_four).valid,
+               "fix_parse_seqreset_non4_invalid");
     }
 
     // --- Seq persistence: send a few, persist, new session, load, continue ---
