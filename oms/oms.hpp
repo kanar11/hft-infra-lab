@@ -300,6 +300,18 @@ public:
             return 0;
         }
         Order& order = it->second;
+        // #556 (audit): only a WORKING order can fill — the same guard
+        // cancel_order and replace_order already apply. CANCELLED kept its
+        // quantity/filled_qty, so the remaining-clamp below saw remaining > 0
+        // and a fill racing a cancel would (1) resurrect the dead order as
+        // PARTIAL/FILLED and (2) decrement pos.pending_qty a SECOND time —
+        // cancel_order already released the whole remainder — corrupting the
+        // pending exposure every position/risk read is built on.
+        if (order.status != OrderStatus::SENT && order.status != OrderStatus::PARTIAL) {
+            printf("[OMS] WARNING: fill for inactive order_id=%lu (status=%s) — ignored\n",
+                   (unsigned long)order_id, status_str(order.status));
+            return 0;
+        }
         const int64_t fill_price = to_fixed(fill_price_f);
 
         // Over-fill protection — venue ack > remaining qty = a bug on the

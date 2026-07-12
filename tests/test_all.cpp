@@ -862,6 +862,30 @@ void test_oms_short_and_replace() {
                && oms.avg_time_to_cancel_ns() <= oms.max_time_to_cancel_ns(), "ttc_min_le_avg_le_max");
     }
 
+    {   // #556 fill-after-cancel guard (audit-found): a late fill racing a
+        // cancel must not resurrect the order or double-release pending.
+        OMS oms(1000000, 1000000000.0);
+        Order* fc = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(fc->order_id, 40, 10.0);                  // PARTIAL, net +40
+        ASSERT(oms.pending_buy_shares() == 60, "fac_pending_60_before_cancel");
+        oms.cancel_order(fc->order_id);                          // releases the 60
+        ASSERT(oms.pending_buy_shares() == 0, "fac_cancel_released_pending");
+        const int64_t net_before = oms.net_position_shares();
+        const uint64_t fills_before = oms.total_fills();
+        // The late fill: before the guard it resurrected the order AND drove
+        // pending_buy_shares to -60 (the cancel had already released it).
+        ASSERT(oms.fill_order(fc->order_id, 60, 10.0) == 0, "fac_late_fill_rejected");
+        ASSERT(fc->status == OrderStatus::CANCELLED, "fac_no_resurrection");
+        ASSERT(oms.pending_buy_shares() == 0, "fac_pending_not_double_released");
+        ASSERT(oms.net_position_shares() == net_before
+               && oms.total_fills() == fills_before, "fac_accounting_untouched");
+        // A fill on a FILLED order stays a no-op too (now via the same guard).
+        Order* fd = oms.submit_order("BBB", Side::SELL, 20.0, 50);
+        oms.fill_order(fd->order_id, 50, 20.0);
+        ASSERT(oms.fill_order(fd->order_id, 10, 20.0) == 0
+               && fd->status == OrderStatus::FILLED, "fac_filled_still_terminal");
+    }
+
     {   // #460 realized_pnl_per_share — the per-share edge (MILESTONE 460).
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.realized_pnl_per_share() == 0.0, "rps_empty_zero");
