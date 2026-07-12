@@ -6625,6 +6625,27 @@ void test_risk_price_band() {
     rkft.reset_daily();
     ASSERT(rkft.pnl_kurtosis() == 0.0, "kurt_reset");
 
+    // #557 pnl_value_at_risk — parametric per-event VaR from the live moments.
+    RiskManager rvr;
+    ASSERT(rvr.pnl_value_at_risk() == 0.0, "var_empty_zero");
+    // The +-1 stream: mean 0, sigma 1 -> VaR is exactly the z multiplier.
+    rvr.update_pnl(+1.0); rvr.update_pnl(-1.0);
+    ASSERT(std::fabs(rvr.pnl_value_at_risk(1.645) - 1.645) < 1e-9, "var_95_z_sigma");
+    ASSERT(std::fabs(rvr.pnl_value_at_risk(2.326) - 2.326) < 1e-9, "var_99_scales_with_z");
+    // A strong positive mean CUSHIONS the loss quantile: {+3,+5} has mean 4,
+    // sigma 1 -> 1.645*1 - 4 < 0 -> floored at 0 (no loss expected at 95%).
+    RiskManager rvc;
+    rvc.update_pnl(+3.0); rvc.update_pnl(+5.0);
+    ASSERT(rvc.pnl_value_at_risk(1.645) == 0.0, "var_positive_mean_cushions");
+    // ...but a far quantile overwhelms the cushion: 6*1 - 4 = 2.
+    ASSERT(std::fabs(rvc.pnl_value_at_risk(6.0) - 2.0) < 1e-9, "var_far_quantile_positive");
+    // A constant stream has no dispersion -> 0, not a blow-up.
+    RiskManager rvf;
+    rvf.update_pnl(+5.0); rvf.update_pnl(+5.0);
+    ASSERT(rvf.pnl_value_at_risk() == 0.0, "var_constant_zero");
+    rvr.reset_daily();
+    ASSERT(rvr.pnl_value_at_risk() == 0.0, "var_reset");
+
     // #501 largest_pnl_gain / largest_pnl_loss — the tail events.
     RiskManager rtx;
     ASSERT(rtx.largest_pnl_gain() == 0.0 && rtx.largest_pnl_loss() == 0.0, "ptx_empty_zero");

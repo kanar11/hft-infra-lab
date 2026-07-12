@@ -1291,6 +1291,24 @@ public:
         const double central4 = m4 - 4.0 * mean * m3 + 6.0 * mu2 * m2 - 3.0 * mu2 * mu2;
         return central4 / (var * var) - 3.0;
     }
+    // pnl_value_at_risk: parametric (Gaussian) per-event VaR (#557) =
+    // z*sigma - mean, floored at 0 and returned as a POSITIVE loss magnitude —
+    // the loss a single update_pnl event is not expected to exceed at the
+    // z-quantile confidence (z = 1.645 -> 95%, 2.326 -> 99%). Computed live
+    // from the #477 accumulators (no history buffer, unlike the backtester's
+    // empirical VaR): mean and sigma over EVERY update, so a positive mean
+    // CUSHIONS the number and a strong enough edge floors it at 0 (no loss
+    // expected at that confidence). CAVEAT the moment family exists to check:
+    // this is Gaussian-parametric — with negative skew (#533) or positive
+    // excess kurtosis (#549) it UNDERSTATES the true tail, so read those two
+    // before trusting it. 0 before two updates or on a zero-variance stream.
+    double pnl_value_at_risk(double z = 1.645) const noexcept {
+        const double sd = pnl_std_dev();
+        if (sd <= 0.0) return 0.0;
+        const double mean = pnl_sum_ / static_cast<double>(pnl_updates_);
+        const double v = z * sd - mean;
+        return v > 0.0 ? v : 0.0;
+    }
     // pnl_recovery_factor: the session return covered by its worst drawdown
     // (#493) = daily_pnl / max_drawdown_dollars — a Calmar/recovery-factor
     // read. > 1 means the desk has made more than its worst peak-to-trough
