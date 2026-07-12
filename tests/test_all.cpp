@@ -86,6 +86,7 @@
 #include "../strategy/tsf.hpp"
 #include "../strategy/mcginley.hpp"
 #include "../strategy/alma.hpp"
+#include "../strategy/laguerre_rsi.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5216,6 +5217,38 @@ void test_alma() {
     ASSERT(!ar.ready() && ar.value() == 0.0, "alma_reset");
 }
 
+// LaguerreRSI #558 — Ehlers' Laguerre-filter RSI (four-stage cascade).
+void test_laguerre_rsi() {
+    SECTION("Laguerre RSI (#558)");
+    LaguerreRSI lrf;
+    ASSERT(!lrf.ready() && lrf.value() == 0.0, "lrsi_not_ready_before_seed");
+    lrf.update(0.0); lrf.update(-3.0);                 // invalid prints ignored
+    ASSERT(!lrf.ready(), "lrsi_ignores_invalid");
+    lrf.update(100.0);                                 // seeds the cascade flat
+    ASSERT(lrf.ready() && std::fabs(lrf.value() - 0.5) < 1e-12, "lrsi_seed_neutral");
+
+    // A flat tape keeps every stage equal -> no pressure -> neutral 0.5.
+    LaguerreRSI lrc;
+    for (int i = 0; i < 20; ++i) lrc.update(50.0);
+    ASSERT(std::fabs(lrc.value() - 0.5) < 1e-12, "lrsi_flat_neutral");
+
+    // A steady uptrend leads every stage over the next -> CD = 0 -> pins 1.0,
+    // and the overbought flag fires (> 0.8).
+    LaguerreRSI lru;
+    for (int i = 0; i < 30; ++i) lru.update(100.0 + 2.0 * i);
+    ASSERT(std::fabs(lru.value() - 1.0) < 1e-9, "lrsi_uptrend_pins_one");
+    ASSERT(lru.overbought() && !lru.oversold(), "lrsi_uptrend_overbought");
+
+    // The steady downtrend is the mirror: pins 0.0, oversold.
+    LaguerreRSI lrd;
+    for (int i = 0; i < 30; ++i) lrd.update(200.0 - 2.0 * i);
+    ASSERT(std::fabs(lrd.value()) < 1e-9, "lrsi_downtrend_pins_zero");
+    ASSERT(lrd.oversold() && !lrd.overbought(), "lrsi_downtrend_oversold");
+
+    lru.reset();
+    ASSERT(!lru.ready() && lru.value() == 0.0, "lrsi_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -9646,6 +9679,7 @@ int main() {
     test_tsf();
     test_mcginley();
     test_alma();
+    test_laguerre_rsi();
     test_cmo();
     test_zscore();
     test_tsi();
