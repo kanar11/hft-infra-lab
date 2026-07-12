@@ -404,6 +404,14 @@ struct InterArrivalMeter {
     void on_message(std::int64_t now_ns) noexcept {
         if (started) {
             const std::int64_t g = now_ns - last_ns;
+            // #555 (audit): a non-monotonic timestamp (reorder / clock skew)
+            // produced a NEGATIVE gap that was accepted wholesale — min_gap
+            // went negative, sum_gap shrank, and every mean/jitter/burst read
+            // built on them (#142/#523) was corrupted. A backwards stamp is
+            // not an arrival cadence; skip it AND keep the baseline where it
+            // was (rolling last_ns backwards would double-count the span on
+            // the next packet — the InterArrivalStats #305 mistake).
+            if (g < 0) return;
             if (g < min_gap) min_gap = g;
             if (g > max_gap) max_gap = g;
             sum_gap += g;
@@ -1229,13 +1237,17 @@ struct InterArrivalStats {
     void on_message(int64_t ts) noexcept {
         if (last_ts >= 0) {
             const int64_t gap = ts - last_ts;
-            if (gap >= 0) {
-                if (count == 0 || gap < min_gap) min_gap = gap;
-                if (gap > max_gap) max_gap = gap;
-                total_gap += gap;
-                last_gap_ = gap;
-                ++count;
-            }
+            // #555 (audit): the negative gap was skipped, but last_ts was
+            // STILL rolled backwards to the stale stamp — so the next packet
+            // measured its gap from the past and double-counted the span
+            // (on_message(100), (90) skipped, (110) read 20 where the feed
+            // advanced 10). A non-monotonic stamp must not move the baseline.
+            if (gap < 0) return;
+            if (count == 0 || gap < min_gap) min_gap = gap;
+            if (gap > max_gap) max_gap = gap;
+            total_gap += gap;
+            last_gap_ = gap;
+            ++count;
         }
         last_ts = ts;
     }

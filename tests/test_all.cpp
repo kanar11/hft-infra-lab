@@ -3481,6 +3481,16 @@ void test_multicast_gap_recovery() {
     ASSERT(ias0.last_gap() == 0, "ias_last_gap_before_second_msg");
     ias0.on_message(500);
     ASSERT(ias0.last_gap() == 0, "ias_last_gap_after_first_msg");
+    // #555 (audit): a non-monotonic stamp is skipped AND must not roll the
+    // baseline back — before the fix, (0),(100),(90),(110) measured the last
+    // gap as 20 (from the stale 90) where the feed advanced only 10.
+    multicast::InterArrivalStats iasm;
+    iasm.on_message(0); iasm.on_message(100);
+    iasm.on_message(90);                                 // reordered stamp: ignored entirely
+    ASSERT(iasm.count == 1 && iasm.last_gap() == 100, "ias_nonmono_skipped");
+    iasm.on_message(110);
+    ASSERT(iasm.last_gap() == 10, "ias_nonmono_baseline_kept");   // NOT 20
+    ASSERT(iasm.count == 2 && iasm.total_gap == 110, "ias_nonmono_totals");
 
     // #313 PacketStats — wire-level packet/byte accounting.
     multicast::PacketStats ps;
@@ -3516,6 +3526,17 @@ void test_multicast_gap_recovery() {
     imb.on_message(0); imb.on_message(100); imb.on_message(200); imb.on_message(1200);
     ASSERT(std::fabs(imb.burst_ratio() - 2.5) < 1e-9 && imb.burst_ratio() > ime.burst_ratio(),
            "iam_burst_bursty_2p5");
+    // #555 (audit): before the fix a reordered stamp fed a NEGATIVE gap
+    // straight into the stats — min_gap went negative and sum_gap shrank,
+    // corrupting avg/jitter/burst. Now it is skipped, baseline kept.
+    multicast::InterArrivalMeter imm;
+    imm.on_message(0); imm.on_message(100);
+    imm.on_message(90);                                  // non-monotonic: ignored
+    ASSERT(imm.gaps == 1 && imm.min_gap_ns() == 100, "iam_nonmono_no_negative_min");
+    imm.on_message(110);
+    ASSERT(imm.gaps == 2 && imm.min_gap_ns() == 10 && imm.max_gap_ns() == 100,
+           "iam_nonmono_baseline_kept");
+    ASSERT(std::fabs(imm.avg_gap_ns() - 55.0) < 1e-9, "iam_nonmono_avg_clean");
 
     // #91 A/B line arbitration — the first line wins, the second is deduped; B patches A's gap.
     multicast::ABLineArbitrator arb;
