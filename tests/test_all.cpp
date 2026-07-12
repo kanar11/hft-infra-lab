@@ -9020,6 +9020,45 @@ void test_ouch_order_state() {
     ASSERT(csh.total_cancelled_shares() == 0 && csh.cancelled_share_rate() == 0.0,
            "ouch_csh_reset");
 
+    // #554 terminal-state guard — a duplicate/late Executed must never mutate
+    // a terminal record (audit-found: it re-counted fills and resurrected
+    // cancelled orders before the guard).
+    {
+        ouch::OUCHOrderTracker tg;
+        uint8_t tb[64];
+        // Fill an order completely, then replay the SAME Executed (duplicate).
+        tg.on_new("T1", 100);
+        int tn = OUCHMessage::encode_accepted(tb, "T1", 'B', 100, "AAPL", 10.0, 91001);
+        tg.on_response(OUCHMessage::parse_response(tb, tn));
+        tn = OUCHMessage::encode_executed(tb, "T1", 100, 10.0, 1);
+        tg.on_response(OUCHMessage::parse_response(tb, tn));
+        ASSERT(tg.state("T1") == ouch::OrderState::FILLED && tg.fills() == 1, "ouch_tg_filled_once");
+        tg.on_response(OUCHMessage::parse_response(tb, tn));   // duplicate 'E'
+        ASSERT(tg.fills() == 1, "ouch_tg_dup_exec_not_recounted");
+        ASSERT(tg.exec_count() == 1 && tg.total_filled_shares() == 100,
+               "ouch_tg_dup_exec_no_shares");
+        // A late Executed racing a cancel must NOT resurrect the order.
+        tg.on_new("T2", 100);
+        tn = OUCHMessage::encode_accepted(tb, "T2", 'S', 100, "AAPL", 10.0, 91002);
+        tg.on_response(OUCHMessage::parse_response(tb, tn));
+        tn = OUCHMessage::encode_cancelled(tb, "T2", 100, 'U');
+        tg.on_response(OUCHMessage::parse_response(tb, tn));
+        ASSERT(tg.state("T2") == ouch::OrderState::CANCELLED, "ouch_tg_cancelled");
+        tn = OUCHMessage::encode_executed(tb, "T2", 50, 10.0, 2);
+        ASSERT(tg.on_response(OUCHMessage::parse_response(tb, tn))
+                   == ouch::OrderState::CANCELLED, "ouch_tg_late_exec_returns_terminal");
+        ASSERT(tg.state("T2") == ouch::OrderState::CANCELLED && tg.fills() == 1,
+               "ouch_tg_no_resurrection");
+        ASSERT(tg.sold_shares() == 0, "ouch_tg_no_phantom_flow");
+        // A zero-share 'E' on a LIVE order changes nothing (no PARTIAL relabel).
+        tg.on_new("T3", 100);
+        tn = OUCHMessage::encode_accepted(tb, "T3", 'B', 100, "AAPL", 10.0, 91003);
+        tg.on_response(OUCHMessage::parse_response(tb, tn));
+        tn = OUCHMessage::encode_executed(tb, "T3", 0, 10.0, 3);
+        tg.on_response(OUCHMessage::parse_response(tb, tn));
+        ASSERT(tg.state("T3") == ouch::OrderState::LIVE, "ouch_tg_zero_exec_stays_live");
+    }
+
     // #546 working_notional — the $ value of the confirmed resting book.
     ouch::OUCHOrderTracker wnt;
     ASSERT(wnt.working_notional() == 0.0, "ouch_wnt_empty_zero");

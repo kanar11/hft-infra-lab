@@ -128,6 +128,16 @@ public:
             rec->price     = r.price;   // #546: the working limit price
             ++live_;
         } else if (std::strcmp(r.type, "EXECUTED") == 0) {
+            // #554 (audit): an Executed can only apply to a WORKING order.
+            // Once a record is terminal, a further 'E' is a duplicate or a
+            // late/reordered message — before this guard it re-counted
+            // ++filled_ on EVERY duplicate (remaining was already 0, so the
+            // <=0 branch re-fired) and RESURRECTED a cancelled order as
+            // FILLED, corrupting fills()/order_fill_rate/status_count.
+            // The exchange never executes a dead order; never mutate one.
+            if (rec->state == OrderState::FILLED || rec->state == OrderState::CANCELLED
+                || rec->state == OrderState::REJECTED)
+                return rec->state;
             const int32_t exec = (r.shares < rec->remaining) ? r.shares : rec->remaining;
             rec->filled    += exec;
             rec->remaining -= exec;
@@ -143,8 +153,10 @@ public:
                 if      (rec->side == 'B') { bought_shares_ += exec; buy_notional_  += notional; }
                 else if (rec->side == 'S') { sold_shares_   += exec; sell_notional_ += notional; }
             }
-            if (rec->remaining <= 0) { rec->state = OrderState::FILLED; ++filled_; }
-            else                       rec->state = OrderState::PARTIAL;
+            if (rec->remaining <= 0)   { rec->state = OrderState::FILLED; ++filled_; }
+            else if (exec > 0)           rec->state = OrderState::PARTIAL;
+            // #554: a zero-share 'E' on a LIVE order changes nothing — it must
+            // not relabel the order PARTIAL when nothing has filled.
         } else if (std::strcmp(r.type, "CANCELLED") == 0) {
             cancelled_shares_  += rec->remaining;   // #538: the unfilled remainder freed
             rec->state          = OrderState::CANCELLED;
