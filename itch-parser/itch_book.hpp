@@ -1158,6 +1158,24 @@ public:
         return adds_ > 0 ? static_cast<double>(executes_) / static_cast<double>(adds_) : 0.0;
     }
 
+    // order_to_trade_ratio (#559): quote-management messages per REAL trade
+    // print = (adds + cancels + deletes + replaces) / trade_prints — the
+    // regulatory OTR (the number ESMA/RTS-9 venue surveillance fines on, and
+    // exchanges tier message fees by). Execute events are excluded from the
+    // numerator — they ARE the trades — and orphaned messages still count
+    // (they hit the wire whether or not the book knew the ref). A high ratio
+    // is the quote-churn signature: thousands of adds/cancels grooming the
+    // book per actual execution — where cancel_to_add_ratio (#350) reads one
+    // message type against another, this reads ALL the traffic against what
+    // it produced. 0 before any trade print (the no-trade regime is better
+    // read from the raw counters — a ratio over zero trades is unbounded).
+    double order_to_trade_ratio() const noexcept {
+        return exec_prints_ > 0
+            ? static_cast<double>(adds_ + cancels_ + deletes_ + replaces_)
+                  / static_cast<double>(exec_prints_)
+            : 0.0;
+    }
+
     // resting_order_count / avg_resting_order_size: how many INDIVIDUAL resting
     // orders sit on a side and their mean size (#374) = total_shares(side) /
     // count. resting_orders() gives the both-sides total and total_shares (#174)

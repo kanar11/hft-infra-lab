@@ -2237,6 +2237,25 @@ void test_itch_book() {
     // on_execute(999,10) above, which counts regardless) -> 0.5.
     ASSERT(book.executes() == 2, "itchbook_executes_counted");
     ASSERT(close(book.execute_to_add_ratio(), 0.5), "itchbook_execute_add_ratio");
+
+    // #559 order_to_trade_ratio — the regulatory OTR, traced exactly.
+    itch::ITCHOrderBook otr;
+    ASSERT(otr.order_to_trade_ratio() == 0.0, "itchbook_otr_no_trades_zero");
+    otr.on_add(1, 'B', 10.00, 100);               // adds 1
+    otr.on_add(2, 'S', 10.05, 100);               // adds 2
+    otr.on_add(3, 'S', 10.06, 50);                // adds 3
+    otr.on_replace(3, 4, 10.07, 50);              // replaces 1 (not an add)
+    otr.on_cancel(1, 50);                         // cancels 1
+    // Five quote-management messages, still zero trades -> guarded 0.
+    ASSERT(otr.order_to_trade_ratio() == 0.0, "itchbook_otr_messages_without_trades");
+    otr.on_execute(2, 100);                       // the first real print
+    // (3 adds + 1 cancel + 0 deletes + 1 replace) / 1 print = 5.
+    ASSERT(close(otr.order_to_trade_ratio(), 5.0), "itchbook_otr_five_to_one");
+    // An orphaned delete hit the wire -> it counts: 6 messages / 1 print.
+    otr.on_delete(999);
+    ASSERT(close(otr.order_to_trade_ratio(), 6.0), "itchbook_otr_orphan_counts");
+    otr.clear();
+    ASSERT(otr.order_to_trade_ratio() == 0.0, "itchbook_otr_clear");
     ASSERT(fresh_ctr.execute_to_add_ratio() == 0.0, "itchbook_execute_add_ratio_no_adds");
 
     // #87 microstructure: mid + top-of-book imbalance.
