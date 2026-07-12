@@ -5403,15 +5403,21 @@ void test_router_ewma_partial() {
         ASSERT(r.total_unfilled_shares() == 150, "sfr_accumulates_150");
         // 150 unfilled of 200 requested -> 0.75.
         ASSERT(std::fabs(r.route_shortfall_rate() - 0.75) < 1e-9, "sfr_rate_075");
+        // #560: 50 shares routed @ 11.0 -> $550 turnover, VWAP 11.0.
+        ASSERT(std::fabs(r.total_routed_notional() - 550.0) < 1e-9, "rtn_550");
+        ASSERT(std::fabs(r.avg_routed_price() - 11.0) < 1e-9, "rtn_vwap_11");
         // A fully-covered follow-up dilutes the rate: +50 routed, +0 unfilled
         // -> 150 / 250 = 0.6.
         r.update_quote("V", 10.0, 11.0, 50, 50);
         r.route_order("BUY", 50);
         ASSERT(r.total_unfilled_shares() == 150
                && std::fabs(r.route_shortfall_rate() - 0.6) < 1e-9, "sfr_dilutes_06");
+        ASSERT(std::fabs(r.total_routed_notional() - 1100.0) < 1e-9, "rtn_accumulates_1100");   // #560
         r.reset_session_stats();
         ASSERT(r.total_unfilled_shares() == 0 && r.route_shortfall_rate() == 0.0,
                "sfr_reset_zero");
+        ASSERT(r.total_routed_notional() == 0.0 && r.avg_routed_price() == 0.0,
+               "rtn_reset_zero");   // #560
     }
 
     // --- Split shortfall: Σliquidity < order ---
@@ -5428,6 +5434,16 @@ void test_router_ewma_partial() {
         // #552: the SPLIT path feeds the same accumulator (320 of 500 -> 0.64).
         ASSERT(r.total_unfilled_shares() == 320
                && std::fabs(r.route_shortfall_rate() - 0.64) < 1e-9, "sfr_split_path_064");
+        // #560: a split across two PRICES blends the VWAP exactly —
+        // 100 @ 10.00 + 100 @ 12.00 -> $2200 turnover, avg 11.00.
+        SmartOrderRouter rvw(RoutingStrategy::SPLIT, 100);
+        rvw.add_venue(Venue("A", 100, 0.0));
+        rvw.add_venue(Venue("B", 100, 0.0));
+        rvw.update_quote("A", 9.0, 10.0, 100, 100);
+        rvw.update_quote("B", 9.0, 12.0, 100, 100);
+        rvw.route_order("BUY", 200);
+        ASSERT(std::fabs(rvw.total_routed_notional() - 2200.0) < 1e-9, "rtn_split_blend_2200");
+        ASSERT(std::fabs(rvw.avg_routed_price() - 11.0) < 1e-9, "rtn_split_vwap_11");
     }
 
     // --- #86 venue health: a streak of rejects disables a venue, a success reactivates ---

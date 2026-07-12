@@ -154,6 +154,7 @@ class SmartOrderRouter {
     uint64_t total_latency_ns_;
     int64_t  max_routing_latency_ns_ = 0;  // worst single decision latency (#536)
     int64_t  total_unfilled_shares_ = 0;   // cumulative route shortfall (#552)
+    double   total_routed_notional_ = 0.0; // Σ raw price × routed shares (#560)
     double   total_fees_paid_ = 0.0;   // sum of fee/rebate over routes (#138; <0 = net rebate)
 
     static int64_t now_ns() noexcept {
@@ -466,6 +467,7 @@ public:
         total_latency_ns_ += d.latency_ns;
         if (d.latency_ns > max_routing_latency_ns_) max_routing_latency_ns_ = d.latency_ns;   // #536
         total_unfilled_shares_ += d.unfilled_qty;   // #552: cumulative shortfall
+        total_routed_notional_ += d.price * static_cast<double>(d.quantity);   // #560: $ turnover
         total_fees_paid_  += d.total_fee;   // #138 cumulative cost
         return d;
     }
@@ -1446,6 +1448,7 @@ public:
         total_latency_ns_ = 0;
         max_routing_latency_ns_ = 0;   // #536
         total_unfilled_shares_ = 0;    // #552
+        total_routed_notional_ = 0.0;  // #560
         total_fees_paid_  = 0.0;
         reset_routing_stats();
     }
@@ -1514,6 +1517,27 @@ public:
         const int64_t requested = total_routed_shares() + total_unfilled_shares_;
         return requested > 0
             ? static_cast<double>(total_unfilled_shares_) / static_cast<double>(requested)
+            : 0.0;
+    }
+    // total_routed_notional: the session's routed turnover in DOLLARS (#560) =
+    // Σ decision price × routed shares over every route (the split path's
+    // price is the raw VWAP of its allocation, so the sum is exact). The $
+    // face of total_routed_shares (#130) — 1000 shares of a $2 name and of a
+    // $2000 name read identically in shares, three orders of magnitude apart
+    // here — and the router-side parity of OMS total_traded_notional (#266).
+    // RAW quote prices, fees excluded (total_fees_paid #138 is the fee leg).
+    // Reset by reset_session_stats.
+    double total_routed_notional() const noexcept { return total_routed_notional_; }
+    // avg_routed_price: the blended VWAP across everything the router placed
+    // (#560) = total_routed_notional / total_routed_shares — the single price
+    // the session routed at, the router-side parity of OMS avg_trade_price
+    // (#306). The TCA anchor: compare against the NBBO mid at decision time
+    // or the day's market VWAP to see whether the router's timing added or
+    // cost basis points. 0 before anything is routed.
+    double avg_routed_price() const noexcept {
+        const int64_t shares = total_routed_shares();
+        return shares > 0
+            ? total_routed_notional_ / static_cast<double>(shares)
             : 0.0;
     }
 
@@ -1588,6 +1612,7 @@ private:
         total_latency_ns_ += d.latency_ns;
         if (d.latency_ns > max_routing_latency_ns_) max_routing_latency_ns_ = d.latency_ns;   // #536
         total_unfilled_shares_ += d.unfilled_qty;   // #552: cumulative shortfall
+        total_routed_notional_ += d.price * static_cast<double>(d.quantity);   // #560: $ turnover
         total_fees_paid_  += d.total_fee;   // #138 cumulative cost
         return d;
     }
