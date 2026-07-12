@@ -1040,6 +1040,52 @@ public:
         return r;
     }
 
+    // MDSnapshot — typed view of a MarketDataSnapshotFullRefresh (35=W) (#561).
+    // Completes the typed market-data trio: request 35=V asks, THIS snapshot
+    // seeds the book, 35=X (#529) streams the deltas — W was the missing
+    // middle because it carries a REPEATING group (268=NoMDEntries, then
+    // 269=MDEntryType / 270=MDEntryPx / 271=MDEntrySize per entry), which the
+    // flat get_field would read only the first of. The parser walks the group
+    // with the #263 nth-occurrence readers and splits the entries by side:
+    // '0' fills bid_px/bid_sz, '1' fills ask_px/ask_sz (a repeated side keeps
+    // the LAST entry — top-of-book snapshots carry one each). has_both_sides()
+    // gates seeding a two-sided book. entries echoes 268 (-1 when absent).
+    // valid=false when the message is not 35=W.
+    struct MDSnapshot {
+        char    md_req_id[24] = {};   // 262=MDReqID (ties to the subscription)
+        char    symbol[16]    = {};   // 55=Symbol
+        int     entries       = -1;   // 268=NoMDEntries (-1 = absent)
+        double  bid_px = 0.0, ask_px = 0.0;   // 270 by side
+        int32_t bid_sz = 0,   ask_sz = 0;     // 271 by side
+        bool    valid = false;        // true when msg type == 'W'
+
+        bool has_both_sides() const noexcept { return bid_px > 0.0 && ask_px > 0.0; }
+    };
+
+    static MDSnapshot parse_md_snapshot(const FIXMessage& m) noexcept {
+        MDSnapshot r;
+        if (m.get_msg_type()[0] != 'W') return r;   // valid stays false
+        const char* rid = m.get_field(262);
+        const char* sym = m.get_field(55);
+        if (rid) std::strncpy(r.md_req_id, rid, sizeof(r.md_req_id) - 1);
+        if (sym) std::strncpy(r.symbol,    sym, sizeof(r.symbol) - 1);
+        r.entries = m.get_field(268) ? m.get_int(268) : -1;
+        const int n = m.count_field(269);
+        for (int i = 0; i < n; ++i) {
+            const char* et = m.get_field_nth(269, i);
+            if (!et || et[0] == '\0') continue;
+            if (et[0] == '0') {
+                r.bid_px = m.get_double_nth(270, i);
+                r.bid_sz = static_cast<int32_t>(m.get_int_nth(271, i));
+            } else if (et[0] == '1') {
+                r.ask_px = m.get_double_nth(270, i);
+                r.ask_sz = static_cast<int32_t>(m.get_int_nth(271, i));
+            }
+        }
+        r.valid = true;
+        return r;
+    }
+
     // DontKnowTrade (35=Q): the client repudiates an ExecutionReport (35=8, #101) it
     // cannot reconcile — an execution for an order it has no record of (#327). Instead
     // of silently dropping a mystery fill (which would desync the position), the client

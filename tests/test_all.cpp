@@ -7599,6 +7599,27 @@ void test_fix_session() {
         ASSERT(std::strcmp(mdw.get_field(269), "0") == 0, "fix_mdw_first_is_bid"); // pierwszy wpis = bid
         ASSERT(std::fabs(mdw.get_double(270) - 99.98) < 1e-6, "fix_mdw_bid_px");
 
+        // #561 parse_md_snapshot — typed decode of the repeating group,
+        // closing the V -> W -> X market-data trio (W was the missing middle).
+        const auto snap = fix::FIXSession::parse_md_snapshot(mdw);
+        ASSERT(snap.valid && std::strcmp(snap.md_req_id, "MDR1") == 0
+               && std::strcmp(snap.symbol, "AAPL") == 0, "fix_parse_mdw_ids");
+        ASSERT(snap.entries == 2 && snap.has_both_sides(), "fix_parse_mdw_two_sided");
+        // Both group entries land on the right SIDE — the flat get_field
+        // would have seen only the first (bid) occurrence of 270/271.
+        ASSERT(std::fabs(snap.bid_px - 99.98) < 1e-6 && snap.bid_sz == 100,
+               "fix_parse_mdw_bid_leg");
+        ASSERT(std::fabs(snap.ask_px - 100.02) < 1e-6 && snap.ask_sz == 200,
+               "fix_parse_mdw_ask_leg");
+        // A one-sided snapshot (raw, offer only) gates has_both_sides.
+        FIXMessage mdw1; mdw1.parse("35=W|262=M2|55=AAPL|268=1|269=1|270=100.10|271=50|");
+        const auto snap1 = fix::FIXSession::parse_md_snapshot(mdw1);
+        ASSERT(snap1.valid && !snap1.has_both_sides()
+               && snap1.bid_sz == 0 && std::fabs(snap1.ask_px - 100.10) < 1e-6,
+               "fix_parse_mdw_one_sided");
+        FIXMessage not_w; not_w.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_md_snapshot(not_w).valid, "fix_parse_mdw_nonW_invalid");
+
         // #225 MarketDataIncrementalRefresh (35=X) — incremental bid change.
         s.build_md_incremental(buf, sizeof(buf), "MDR1", '1', '0', "AAPL", 100.05, 500, '|');
         FIXMessage mdx; mdx.parse(buf);
