@@ -87,6 +87,7 @@
 #include "../strategy/mcginley.hpp"
 #include "../strategy/alma.hpp"
 #include "../strategy/laguerre_rsi.hpp"
+#include "../strategy/supersmoother.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5284,6 +5285,38 @@ void test_laguerre_rsi() {
     ASSERT(!lru.ready() && lru.value() == 0.0, "lrsi_reset");
 }
 
+// SuperSmoother #566 — Ehlers' 2-pole Butterworth low-pass.
+void test_supersmoother() {
+    SECTION("SuperSmoother (#566)");
+    SuperSmoother sf;
+    ASSERT(!sf.ready() && sf.value() == 0.0, "ss_not_ready_before_seed");
+    sf.update(-1.0); sf.update(0.0);                    // invalid prints ignored
+    ASSERT(!sf.ready(), "ss_ignores_invalid");
+    sf.update(100.0);
+    ASSERT(sf.ready() && std::fabs(sf.value() - 100.0) < 1e-12, "ss_seeds_at_price");
+
+    // c1+c2+c3 == 1 by construction -> a flat tape pins EXACTLY.
+    SuperSmoother sc(10);
+    for (int i = 0; i < 40; ++i) sc.update(50.0);
+    ASSERT(std::fabs(sc.value() - 50.0) < 1e-9, "ss_flat_pins_exactly");
+
+    // A steady ramp: the filter rises monotonically while lagging below price.
+    SuperSmoother su(10);
+    double last = 0.0, prev = 0.0;
+    su.update(100.0); prev = su.value();
+    bool rising = true;
+    for (int i = 1; i <= 30; ++i) {
+        last = 100.0 + 2.0 * i;
+        su.update(last);
+        if (su.value() <= prev) rising = false;
+        prev = su.value();
+    }
+    ASSERT(rising && su.value() < last, "ss_ramp_lags_below");
+
+    su.reset();
+    ASSERT(!su.ready() && su.value() == 0.0, "ss_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -9785,6 +9818,7 @@ int main() {
     test_mcginley();
     test_alma();
     test_laguerre_rsi();
+    test_supersmoother();
     test_cmo();
     test_zscore();
     test_tsi();
