@@ -228,6 +228,25 @@ public:
     uint64_t fills()       const noexcept { return fills_; }
     uint64_t cancels()     const noexcept { return cancels_; }
     uint64_t rejects()     const noexcept { return rejects_; }
+    // Per-ORDER terminal-outcome rates (#569) — the FIX parity of the OUCH
+    // tracker's trio (reject_rate #345 / cancel_rate #353 / order_fill_rate
+    // #361): each tracked order weighs the same regardless of size, the
+    // complement of the share-weighted fill_rate (#537). Together the three
+    // sketch WHY orders ended: rejected at the door, pulled by the client, or
+    // done — and since order_count() includes still-working records they need
+    // not sum to 1 (the remainder is the live book). 0 before any order.
+    double order_fill_rate() const noexcept {
+        return !orders_.empty()
+            ? static_cast<double>(fills_) / static_cast<double>(orders_.size()) : 0.0;
+    }
+    double cancel_rate() const noexcept {
+        return !orders_.empty()
+            ? static_cast<double>(cancels_) / static_cast<double>(orders_.size()) : 0.0;
+    }
+    double reject_rate() const noexcept {
+        return !orders_.empty()
+            ? static_cast<double>(rejects_) / static_cast<double>(orders_.size()) : 0.0;
+    }
     // cancel_rejects: refused cancel attempts (#393) — distinct from
     // rejects(), which counts orders the exchange rejected outright.
     uint64_t cancel_rejects() const noexcept { return cancel_rejects_; }

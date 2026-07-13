@@ -8317,6 +8317,28 @@ void test_fix_order_state() {
     wtr.reset_session();
     ASSERT(wtr.total_filled_qty() == 0 && wtr.fill_rate() == 0.0, "fixstate_fr_reset");   // #537
 
+    // #569 per-order terminal-outcome trio — OUCH #345/#353/#361 parity.
+    fix::FIXOrderTracker otr_;
+    ASSERT(otr_.order_fill_rate() == 0.0 && otr_.cancel_rate() == 0.0
+           && otr_.reject_rate() == 0.0, "fixstate_rates_empty");
+    otr_.on_new("R1", 100); otr_.on_new("C1", 100);
+    otr_.on_new("F1", 100); otr_.on_new("W1", 100);        // W1 stays working
+    s.build_exec_report(buf, sizeof(buf), "R1", "EXG", "ER1", '8', '8',
+                        "AAPL", Side::BUY, 0, 0.0, 0, 0, '|');
+    FIXMessage mr1; mr1.parse(buf); otr_.on_exec_report(mr1);
+    s.build_exec_report(buf, sizeof(buf), "C1", "EXG", "EC1", '4', '4',
+                        "AAPL", Side::BUY, 0, 0.0, 0, 100, '|');
+    FIXMessage mc1; mc1.parse(buf); otr_.on_exec_report(mc1);
+    s.build_exec_report(buf, sizeof(buf), "F1", "EXG", "EF1", '2', '2',
+                        "AAPL", Side::BUY, 100, 10.0, 100, 0, '|');
+    FIXMessage mf1; mf1.parse(buf); otr_.on_exec_report(mf1);
+    // One of each outcome over 4 tracked orders -> 0.25 apiece; the working
+    // remainder is why the three need not sum to 1.
+    ASSERT(std::fabs(otr_.order_fill_rate() - 0.25) < 1e-9, "fixstate_ofr_quarter");
+    ASSERT(std::fabs(otr_.cancel_rate() - 0.25) < 1e-9, "fixstate_cr_quarter");
+    ASSERT(std::fabs(otr_.reject_rate() - 0.25) < 1e-9, "fixstate_rr_quarter");
+    ASSERT(otr_.working_orders() == 1, "fixstate_rates_working_remainder");
+
     // #425 pending_cancel_qty / pending_cancel_fraction — condemned exposure
     // on the FIX side (parity of OUCH #402).
     fix::FIXOrderTracker ptr_;
