@@ -323,6 +323,24 @@ struct ABLineArbitrator {
         return seen > 0 ? static_cast<double>(dups) / static_cast<double>(seen) : 0.0;
     }
 
+    // preferred_line (#571): 'A' or 'B' when that line wins at least 0.5 +
+    // margin of the races, '-' when they race evenly (or no traffic) — the
+    // POSITIVE selection the family lacked: a_win_rate (#387) is the raw
+    // number and lagging_line the near-death alarm on the LOSER, but the ops
+    // action a persistent tilt calls for is pointing the latency-sensitive
+    // consumer's PRIMARY at the consistently faster line (single-socket
+    // consumers, ordering hints, retransmit-server choice). The margin
+    // (default 0.1 -> needs >= 60%) keeps a coin-flip-healthy pair reading
+    // '-' instead of flapping the primary on noise.
+    char preferred_line(double margin = 0.1) const noexcept {
+        const uint64_t total = a_first + b_first;
+        if (total == 0) return '-';
+        const double a = static_cast<double>(a_first) / static_cast<double>(total);
+        if (a >= 0.5 + margin)       return 'A';
+        if (1.0 - a >= 0.5 + margin) return 'B';
+        return '-';
+    }
+
     void   reset()         noexcept { *this = ABLineArbitrator{}; }
 };
 

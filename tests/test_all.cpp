@@ -3645,10 +3645,20 @@ void test_multicast_gap_recovery() {
     multicast::ABLineArbitrator abd;
     for (int abk = 1; abk <= 10; ++abk) abd.on_packet(abk, true);
     ASSERT(abd.lagging_line() == 'B' && abd.dup_rate() == 0.0, "ab_health_dead_line_no_dups");
+    // #571 preferred_line — the POSITIVE selection: name the primary.
+    ASSERT(abh.preferred_line() == 'A', "ab_pref_a_wins_all");
+    ASSERT(abb.preferred_line() == '-', "ab_pref_balanced_none");   // no flapping on noise
+    ASSERT(abd.preferred_line() == 'A', "ab_pref_dead_b_prefers_a");
+    multicast::ABLineArbitrator abn;
+    ASSERT(abn.preferred_line() == '-', "ab_pref_no_traffic_none");
     // Threshold: 3 wins of 10 (rate 0.3) lags under 0.35 but not under 0.1.
     multicast::ABLineArbitrator abt;
     for (int abm = 1; abm <= 10; ++abm) abt.on_packet(abm, abm <= 3);
     ASSERT(abt.lagging_line(0.35) == 'A' && abt.lagging_line(0.1) == '-', "ab_health_threshold");
+    // #571: B wins 7 of 10 (0.7 >= 0.6 with the default margin) -> prefer B.
+    ASSERT(abt.preferred_line() == 'B', "ab_pref_b_at_070");
+    // A wider margin (0.25 -> needs >= 0.75) refuses to name a primary at 0.7.
+    ASSERT(abt.preferred_line(0.25) == '-', "ab_pref_margin_gates");
 
     // #98 staleness: no packet > timeout = dead feed.
     multicast::FeedStalenessMonitor sm;
