@@ -329,6 +329,15 @@ void test_oms_short_and_replace() {
         ASSERT(close(to_float(p->fees), 2.0), "fee_total_2");                   // 200 shares * $0.01
         ASSERT(close(to_float(p->net_pnl()), 198.0), "fee_net_pnl_198");
         ASSERT(close(to_float(oms.total_fees()), 2.0), "fee_oms_total_2");
+        // #564 typed per-symbol attribution getters — dollars, not fixed-point.
+        ASSERT(close(oms.realized_pnl_symbol("AAPL"), 200.0), "pnlsym_gross_200");
+        ASSERT(close(oms.net_pnl_symbol("AAPL"), 198.0), "pnlsym_net_198");
+        ASSERT(oms.realized_pnl_symbol("GHOST") == 0.0
+               && oms.net_pnl_symbol("GHOST") == 0.0, "pnlsym_unknown_zero");
+        // The per-name slice agrees with the portfolio totals (#120) here
+        // because AAPL is the only name.
+        ASSERT(close(oms.realized_pnl_symbol("AAPL"), to_float(oms.total_realized_pnl())),
+               "pnlsym_slice_matches_total");
     }
 
     {   // #100 cancel_all / cancel_all_symbol — risk-off masowe anulowanie.

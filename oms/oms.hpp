@@ -697,6 +697,23 @@ public:
         auto it = positions_.find(sym_to_key(sym));
         return (it != positions_.end()) ? &it->second : nullptr;
     }
+    // realized_pnl_symbol / net_pnl_symbol: one name's realized P&L in DOLLARS,
+    // gross and net of its fees (#564). get_position exposes the raw Position,
+    // but its P&L fields are FIXED-POINT (×PRICE_SCALE) — every caller had to
+    // remember the to_float conversion (the #347 lesson) or silently read
+    // numbers 10000× too large. These are the typed attribution getters: the
+    // direct per-name lookup behind best/worst_realized_symbol (#492, which
+    // scan for the extremes) and the per-name slice of total_realized_pnl /
+    // total_net_pnl (#120). 0 for an unknown symbol (never traded = nothing
+    // realized).
+    double realized_pnl_symbol(const char* sym) const noexcept {
+        const Position* p = get_position(sym);
+        return p ? to_float(p->realized_pnl) : 0.0;
+    }
+    double net_pnl_symbol(const char* sym) const noexcept {
+        const Position* p = get_position(sym);
+        return p ? to_float(p->net_pnl()) : 0.0;
+    }
     size_t order_count()    const noexcept { return orders_.size(); }
     size_t position_count() const noexcept { return positions_.size(); }
     // count_by_status: how many orders are in a given state (#128) — observability/
