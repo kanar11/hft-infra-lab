@@ -347,6 +347,28 @@ public:
                 s += static_cast<double>(rec.remaining) * rec.price;
         return s;
     }
+    // working_notional_side (#562): the resting-book value of ONE side, in $ —
+    // the dollar face of working_shares_side (#450), exactly as working_
+    // notional (#546) is of working_shares (#304). 500 working buy-shares and
+    // 500 working sell-shares can carry wildly different capital when they sit
+    // on different-priced names; the SHARES split cannot see that, this can.
+    // Unacked orders (side ' ') count on neither side.
+    double working_notional_side(char side) const noexcept {
+        double s = 0.0;
+        for (const auto& [tok, rec] : orders_)
+            if ((rec.state == OrderState::LIVE || rec.state == OrderState::PARTIAL)
+                && rec.side == side)
+                s += static_cast<double>(rec.remaining) * rec.price;
+        return s;
+    }
+    // net_working_notional (#562): buy-side minus sell-side resting value, $
+    // — the SIGNED directional tilt of the book in capital terms, the dollar
+    // parity of net_working_shares (#450). A balanced maker book reads ~0
+    // even when both sides are large; a strongly positive number means the
+    // resting orders themselves are a long bet in dollars before any fill.
+    double net_working_notional() const noexcept {
+        return working_notional_side('B') - working_notional_side('S');
+    }
     // bought_shares / sold_shares (#458): EXECUTED shares by order side —
     // the REALIZED directional flow, the filled counterpart to #450's
     // WORKING (resting) split. Side comes from the Accepted report; busts

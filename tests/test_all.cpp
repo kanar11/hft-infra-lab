@@ -9241,6 +9241,23 @@ void test_ouch_order_state() {
     wnt.on_response(OUCHMessage::parse_response(buf, n));
     ASSERT(wnt.working_notional() == 0.0, "ouch_wnt_cancel_zero");
 
+    // #562 working_notional_side / net_working_notional — the directional $ split.
+    // Bid 100 @ 10.00 ($1000) against an offer 50 @ 30.00 ($1500): fewer SELL
+    // shares yet MORE sell-side capital — the shares split cannot see that.
+    wnt.on_new("B9", 100);
+    n = OUCHMessage::encode_accepted(buf, "B9", 'B', 100, "AAPL", 10.0, 77201);
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    wnt.on_new("S9", 50);
+    n = OUCHMessage::encode_accepted(buf, "S9", 'S', 50, "TSLA", 30.0, 77202);
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(wnt.working_notional_side('B') - 1000.0) < 1e-9, "ouch_wns_buy_1000");
+    ASSERT(std::fabs(wnt.working_notional_side('S') - 1500.0) < 1e-9, "ouch_wns_sell_1500");
+    ASSERT(wnt.net_working_shares() > 0, "ouch_wns_shares_read_long");        // +50 shares
+    ASSERT(std::fabs(wnt.net_working_notional() + 500.0) < 1e-9, "ouch_wns_dollars_read_short");
+    // The sides sum to the both-sides total (#546).
+    ASSERT(std::fabs(wnt.working_notional_side('B') + wnt.working_notional_side('S')
+                     - wnt.working_notional()) < 1e-9, "ouch_wns_sides_sum_to_total");
+
     // #337 avg_order_size / executions_per_order — order sizing & fill fragmentation.
     ouch::OUCHOrderTracker frag;
     ASSERT(frag.avg_order_size() == 0.0 && frag.executions_per_order() == 0.0, "ouch_frag_empty");
