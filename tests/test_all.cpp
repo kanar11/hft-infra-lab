@@ -2342,9 +2342,17 @@ void test_itch_book() {
     ASSERT(close(dm.depth_weighted_mid(2), 100.01), "itchbook_dwm_depth2");
     // n=1: touch only -> (100.00 + 100.02)/2 = 100.01
     ASSERT(close(dm.depth_weighted_mid(1), 100.01), "itchbook_dwm_touch");
+    // #567 depth_weighted_spread — the by-LEVELS spread axis.
+    // n=1 degenerates to the touch spread exactly (100.02 - 100.00).
+    ASSERT(close(dm.depth_weighted_spread(1), dm.spread()), "itchbook_dws_touch_identity");
+    // n=2: ask VWAP 30010/300 minus bid VWAP 29996/300 = 14/300 — wider than
+    // the touch, the book deteriorating past the top.
+    ASSERT(close(dm.depth_weighted_spread(2), 14.0 / 300.0), "itchbook_dws_two_levels");
+    ASSERT(dm.depth_weighted_spread(2) > dm.spread(), "itchbook_dws_widens_with_depth");
     itch::ITCHOrderBook dmo;
     dmo.on_add(1, 'B', 100.00, 100);                                 // one-sided
     ASSERT(dmo.depth_weighted_mid(1) == 0.0, "itchbook_dwm_onesided");
+    ASSERT(dmo.depth_weighted_spread(1) == 0.0, "itchbook_dws_onesided_zero");   // #567
 
     // #164 liquidity_within (N ticks from best).
     itch::ITCHOrderBook lw;

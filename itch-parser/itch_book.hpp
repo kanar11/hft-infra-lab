@@ -461,6 +461,23 @@ public:
         return qty > 0 ? notional / static_cast<double>(qty) : 0.0;
     }
 
+    // depth_weighted_spread (#567): the size-aware spread over the top N
+    // levels = vwap_depth('S', n) - vwap_depth('B', n) — what a round trip
+    // costs when it consumes N levels of EACH side, not just the touch. It
+    // completes the spread family's third axis: spread (#131) is the touch
+    // quote, spread_at_size (#366) widens by SHARES demanded, this widens by
+    // LEVEL COUNT — at n=1 it degenerates to the touch spread exactly
+    // (asserted), and the gap between it and #131 as n grows is how fast the
+    // book deteriorates past the top (thin depth behind a tight touch is the
+    // spoofable-looking book #366 and this both expose, on different axes).
+    // The spread face of depth_weighted_mid (#285), same inputs. 0 when
+    // either side lacks liquidity.
+    double depth_weighted_spread(int n) const noexcept {
+        const double vb = vwap_depth('B', n);
+        const double va = vwap_depth('S', n);
+        return (vb > 0.0 && va > 0.0) ? va - vb : 0.0;
+    }
+
     // depth_weighted_mid: fair value that averages the depth-VWAP of both sides over
     // the top N levels (#285) = (vwap_depth('B', n) + vwap_depth('S', n)) / 2. Unlike
     // mid_price (touch only) or microprice (size-weighted touch) this folds in N
