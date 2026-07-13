@@ -1309,6 +1309,24 @@ public:
         const double v = z * sd - mean;
         return v > 0.0 ? v : 0.0;
     }
+    // pnl_expected_shortfall: parametric (Gaussian) per-event CVaR (#565) =
+    // sigma * phi(z)/tail - mean, floored at 0 — the MEAN loss over the events
+    // that breach the VaR quantile (z = 1.645 / tail = 0.05 for 95%). VaR
+    // (#557) is the fence; this is how bad it is on average once the fence is
+    // crossed, which is why it is the COHERENT risk measure regulation moved
+    // to (VaR can reward concentration; ES cannot). Always >= the same-quantile
+    // VaR on a Gaussian (phi(z)/tail > z), asserted in tests. Same live-moment
+    // construction and the same honesty caveat as #557: negative skew (#533) or
+    // fat tails (#549) mean the Gaussian form understates it. 0 before two
+    // updates or on a zero-variance stream.
+    double pnl_expected_shortfall(double z = 1.645, double tail = 0.05) const noexcept {
+        const double sd = pnl_std_dev();
+        if (sd <= 0.0 || tail <= 0.0) return 0.0;
+        const double mean = pnl_sum_ / static_cast<double>(pnl_updates_);
+        const double phi  = std::exp(-0.5 * z * z) / std::sqrt(2.0 * M_PI);
+        const double es   = sd * phi / tail - mean;
+        return es > 0.0 ? es : 0.0;
+    }
     // pnl_recovery_factor: the session return covered by its worst drawdown
     // (#493) = daily_pnl / max_drawdown_dollars — a Calmar/recovery-factor
     // read. > 1 means the desk has made more than its worst peak-to-trough

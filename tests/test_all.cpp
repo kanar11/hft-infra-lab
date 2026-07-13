@@ -6730,6 +6730,22 @@ void test_risk_price_band() {
     rvr.reset_daily();
     ASSERT(rvr.pnl_value_at_risk() == 0.0, "var_reset");
 
+    // #565 pnl_expected_shortfall — the mean loss BEYOND the VaR fence.
+    RiskManager res;
+    ASSERT(res.pnl_expected_shortfall() == 0.0, "es_empty_zero");
+    res.update_pnl(+1.0); res.update_pnl(-1.0);          // mean 0, sigma 1
+    // Closed form: sigma*phi(1.645)/0.05 = exp(-1.645^2/2)/sqrt(2pi)/0.05.
+    const double es95 = std::exp(-0.5 * 1.645 * 1.645) / std::sqrt(2.0 * M_PI) / 0.05;
+    ASSERT(std::fabs(res.pnl_expected_shortfall() - es95) < 1e-9, "es_closed_form");
+    // Coherence on a Gaussian: ES strictly exceeds the same-quantile VaR.
+    ASSERT(res.pnl_expected_shortfall() > res.pnl_value_at_risk(1.645), "es_above_var");
+    // The positive-mean cushion works exactly as in #557.
+    RiskManager rec_;
+    rec_.update_pnl(+30.0); rec_.update_pnl(+32.0);      // mean 31, sigma 1
+    ASSERT(rec_.pnl_expected_shortfall() == 0.0, "es_cushion_floors_zero");
+    res.reset_daily();
+    ASSERT(res.pnl_expected_shortfall() == 0.0, "es_reset");
+
     // #501 largest_pnl_gain / largest_pnl_loss — the tail events.
     RiskManager rtx;
     ASSERT(rtx.largest_pnl_gain() == 0.0 && rtx.largest_pnl_loss() == 0.0, "ptx_empty_zero");
