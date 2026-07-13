@@ -1540,6 +1540,20 @@ public:
             ? total_routed_notional_ / static_cast<double>(shares)
             : 0.0;
     }
+    // fee_bps_of_routed_notional: the routing fee drag in BASIS POINTS of the
+    // capital routed (#568) = total_fees_paid / total_routed_notional * 10000
+    // — the router-side mirror of OMS fee_bps_of_turnover (#548), possible
+    // now that #560 tracks the $ turnover. avg_fee_per_share (#232) is $ per
+    // share, incomparable across price levels; this is the unit venue fee
+    // schedules quote and TCA compares against captured spread. SIGNED: a
+    // maker-heavy session with net rebates (total_fees_paid < 0, #138 allows
+    // it) reads NEGATIVE — the router EARNED bps on its flow — so it is
+    // deliberately not floored. 0 before any routed notional.
+    double fee_bps_of_routed_notional() const noexcept {
+        return total_routed_notional_ > 0.0
+            ? total_fees_paid_ / total_routed_notional_ * 10000.0
+            : 0.0;
+    }
 
     void print_stats() const {
         printf("\n=== Router Statistics ===\n");

@@ -5501,6 +5501,22 @@ void test_router_ewma_partial() {
         rvw.route_order("BUY", 200);
         ASSERT(std::fabs(rvw.total_routed_notional() - 2200.0) < 1e-9, "rtn_split_blend_2200");
         ASSERT(std::fabs(rvw.avg_routed_price() - 11.0) < 1e-9, "rtn_split_vwap_11");
+
+        // #568 fee_bps_of_routed_notional — the fee drag in bps of capital.
+        // $1.10 of taker fees on $1100 routed = 10 bps.
+        SmartOrderRouter rfb(RoutingStrategy::BEST_PRICE);
+        rfb.add_venue(Venue("F", 100, 0.011));
+        rfb.update_quote("F", 10.0, 11.0, 100, 100);
+        rfb.route_order("BUY", 100);
+        ASSERT(std::fabs(rfb.fee_bps_of_routed_notional() - 10.0) < 1e-9, "fbps_taker_10");
+        // A maker rebate reads NEGATIVE — the router EARNED bps on its flow.
+        SmartOrderRouter rrb(RoutingStrategy::BEST_PRICE);
+        rrb.add_venue(Venue("R", 100, -0.011));
+        rrb.update_quote("R", 10.0, 11.0, 100, 100);
+        rrb.route_order("BUY", 100);
+        ASSERT(std::fabs(rrb.fee_bps_of_routed_notional() + 10.0) < 1e-9, "fbps_rebate_minus10");
+        SmartOrderRouter rfe(RoutingStrategy::BEST_PRICE);
+        ASSERT(rfe.fee_bps_of_routed_notional() == 0.0, "fbps_empty_zero");
     }
 
     // --- #86 venue health: a streak of rejects disables a venue, a success reactivates ---
