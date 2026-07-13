@@ -674,6 +674,7 @@ struct SnapshotRequestThrottle {
     std::int64_t last_request_ns = 0;
     bool          requested = false;
     std::uint64_t suppressed = 0;
+    std::uint64_t allowed    = 0;   // requests that went through (#563)
 
     explicit SnapshotRequestThrottle(std::int64_t min_interval_ns_ = 1'000'000) noexcept
         : min_interval_ns(min_interval_ns_) {}
@@ -683,12 +684,28 @@ struct SnapshotRequestThrottle {
         if (!requested || now_ns - last_request_ns >= min_interval_ns) {
             last_request_ns = now_ns;
             requested = true;
+            ++allowed;   // #563
             return true;
         }
         ++suppressed;
         return false;
     }
-    void reset() noexcept { last_request_ns = 0; requested = false; suppressed = 0; }
+
+    // suppression_rate (#563): the fraction of snapshot attempts the throttle
+    // swallowed = suppressed / (allowed + suppressed), in [0,1]. The FREQUENCY
+    // face of the raw suppressed counter, same shape as TokenBucket's
+    // denial_rate (#539): near 0 the recovery logic asks politely and the
+    // throttle is a no-op; a high rate is the snapshot-storm signature the
+    // throttle exists to contain — gap detection re-firing far faster than the
+    // interval, which points upstream (a flapping line, an aggressive retry
+    // loop), not at the throttle. 0 before any attempt.
+    double suppression_rate() const noexcept {
+        const std::uint64_t attempts = allowed + suppressed;
+        return attempts > 0
+            ? static_cast<double>(suppressed) / static_cast<double>(attempts)
+            : 0.0;
+    }
+    void reset() noexcept { last_request_ns = 0; requested = false; suppressed = 0; allowed = 0; }
 };
 
 

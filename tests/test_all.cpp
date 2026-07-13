@@ -3253,6 +3253,13 @@ void test_multicast_gap_recovery() {
     ASSERT(srt.allow(1000), "srt_allowed_1000");                // 1000 >= 1000
     ASSERT(srt.allow(2500), "srt_allowed_2500");                // 1500 od ostatniego
     ASSERT(srt.suppressed == 2, "srt_suppressed_count");
+    // #563 allowed / suppression_rate — 3 through, 2 swallowed of 5 -> 0.4.
+    ASSERT(srt.allowed == 3, "srt_allowed_count");
+    ASSERT(std::fabs(srt.suppression_rate() - 0.4) < 1e-9, "srt_suppression_rate_04");
+    multicast::SnapshotRequestThrottle srtf(1000);
+    ASSERT(srtf.suppression_rate() == 0.0, "srt_rate_empty_zero");
+    srt.reset();
+    ASSERT(srt.allowed == 0 && srt.suppression_rate() == 0.0, "srt_rate_reset");   // #563
 
     // #219 TokenBucket — burst up to capacity + refill over time.
     multicast::TokenBucket tb(5.0, 1000.0);                     // 5 tokenow, 1000/s
