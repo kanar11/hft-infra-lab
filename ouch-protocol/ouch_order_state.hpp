@@ -369,6 +369,22 @@ public:
     double net_working_notional() const noexcept {
         return working_notional_side('B') - working_notional_side('S');
     }
+    // working_vwap (#570, MILESTONE 570): where the RESTING book is centered
+    // on a side = working_notional_side / working_shares_side — the share-
+    // weighted average limit price of everything LIVE/PARTIAL on that side.
+    // The quote-PLACEMENT read that closes the loop with the fill side: avg_
+    // buy_price / avg_sell_price (#474) say where the desk actually TRADED,
+    // this says where it is currently QUOTING — a buy book resting far below
+    // the session's buy VWAP is a maker that pulled back after getting hit,
+    // and a working_vwap drifting toward the fills is a quote chasing the
+    // market. Prices follow the order through Replaced/Restated (#546). 0
+    // when the side has nothing working.
+    double working_vwap(char side) const noexcept {
+        const int32_t sh = working_shares_side(side);
+        return sh > 0
+            ? working_notional_side(side) / static_cast<double>(sh)
+            : 0.0;
+    }
     // bought_shares / sold_shares (#458): EXECUTED shares by order side —
     // the REALIZED directional flow, the filled counterpart to #450's
     // WORKING (resting) split. Side comes from the Accepted report; busts

@@ -9369,6 +9369,24 @@ void test_ouch_order_state() {
     ASSERT(std::fabs(wnt.working_notional_side('B') + wnt.working_notional_side('S')
                      - wnt.working_notional()) < 1e-9, "ouch_wns_sides_sum_to_total");
 
+    // #570 working_vwap — where the resting book is CENTERED per side.
+    // Single orders: the VWAP is each order's own limit (10.00 buy, 30.00 sell).
+    ASSERT(std::fabs(wnt.working_vwap('B') - 10.0) < 1e-9, "ouch_wvwap_buy_10");
+    ASSERT(std::fabs(wnt.working_vwap('S') - 30.0) < 1e-9, "ouch_wvwap_sell_30");
+    // A second buy 300 @ 12.00 blends: (100*10 + 300*12) / 400 = 11.50.
+    wnt.on_new("B10", 300);
+    n = OUCHMessage::encode_accepted(buf, "B10", 'B', 300, "AAPL", 12.0, 77203);
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(wnt.working_vwap('B') - 11.5) < 1e-9, "ouch_wvwap_blends_1150");
+    // A partial fill shifts the center toward the surviving shares:
+    // 60 of B10 fill -> (100*10 + 240*12) / 340 = 3880/340.
+    n = OUCHMessage::encode_executed(buf, "B10", 60, 12.0, 3);
+    wnt.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(wnt.working_vwap('B') - 3880.0 / 340.0) < 1e-9, "ouch_wvwap_partial_shift");
+    // An empty side has no center.
+    ouch::OUCHOrderTracker wve;
+    ASSERT(wve.working_vwap('B') == 0.0, "ouch_wvwap_empty_zero");
+
     // #337 avg_order_size / executions_per_order — order sizing & fill fragmentation.
     ouch::OUCHOrderTracker frag;
     ASSERT(frag.avg_order_size() == 0.0 && frag.executions_per_order() == 0.0, "ouch_frag_empty");
