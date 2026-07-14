@@ -7374,6 +7374,24 @@ void test_risk_price_band() {
     rlp.update_pnl(500.0);                  // a profit increases the budget -> 1500
     ASSERT(std::fabs(rlp.remaining_loss_budget() - 1500.0) < 1e-6, "rlb_profit_extends");
 
+    // #573 loss_budget_runway — the countdown in average-loss units.
+    RiskManager rrw(lbl);                   // budget 1000
+    ASSERT(rrw.loss_budget_runway() == -1.0, "runway_no_loss_history_minus1");
+    rrw.update_pnl(-40.0); rrw.update_pnl(-60.0);   // avg loss 50, budget 900
+    ASSERT(std::fabs(rrw.loss_budget_runway() - 18.0) < 1e-9, "runway_18_avg_losses");
+    // A bigger loss shrinks BOTH the budget and the runway per-loss:
+    // avg (40+60+200)/3 = 100, budget 700 -> 7 typical losses left.
+    rrw.update_pnl(-200.0);
+    ASSERT(std::fabs(rrw.loss_budget_runway() - 7.0) < 1e-9, "runway_shrinks_as_losses_grow");
+    // The exhausted budget reads 0, not negative.
+    rrw.update_pnl(-800.0);
+    ASSERT(rrw.loss_budget_runway() == 0.0, "runway_exhausted_zero");
+    // The breaker off (limit 0) -> -1 (matching #205's convention).
+    RiskLimits lbo; lbo.max_daily_loss = 0;
+    RiskManager rrn(lbo);
+    rrn.update_pnl(-10.0);
+    ASSERT(rrn.loss_budget_runway() == -1.0, "runway_breaker_off_minus1");
+
     // #307 loss_budget_utilization_pct (same 1000 limit).
     ASSERT(std::fabs(rlb.loss_budget_utilization_pct() - 100.0) < 1e-6, "lbu_clamped_full"); // -1100/1000
     ASSERT(rlp.loss_budget_utilization_pct() == 0.0, "lbu_profit_zero");        // in profit

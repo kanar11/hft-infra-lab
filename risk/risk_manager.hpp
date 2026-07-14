@@ -1483,6 +1483,23 @@ public:
         const double budget = static_cast<double>(limits_.max_daily_loss) + daily_pnl_;
         return budget > 0.0 ? budget : 0.0;
     }
+    // loss_budget_runway: how many AVERAGE-sized losses the remaining daily
+    // budget can absorb (#573) = remaining_loss_budget (#213) / avg_pnl_loss
+    // (#381). The countdown in the desk's own units: "$80 left" needs mental
+    // division, "16 more typical losses" does not — the loss-budget parallel
+    // of consecutive_losses_remaining (#205), which counts to the STREAK
+    // breaker while this counts to the DAILY-LOSS breaker, scaled by how big
+    // this session's losses actually run. A shrinking runway with a steady
+    // budget means the losses are getting BIGGER, which the $ number alone
+    // does not show. -1 when the breaker is off or no losing update exists
+    // yet (no basis to project — matching #205's off convention); 0 when the
+    // budget is already exhausted.
+    double loss_budget_runway() const noexcept {
+        if (limits_.max_daily_loss <= 0) return -1.0;
+        const double al = avg_pnl_loss();
+        if (al <= 0.0) return -1.0;
+        return remaining_loss_budget() / al;
+    }
     // loss_budget_utilization_pct: how much of the daily-loss circuit-breaker budget
     // is consumed (#307), in [0, 100]. 0 while flat or in profit, 100 at the trip
     // point (daily_pnl_ == -max_daily_loss). The percentage companion to
