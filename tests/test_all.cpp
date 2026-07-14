@@ -88,6 +88,7 @@
 #include "../strategy/alma.hpp"
 #include "../strategy/laguerre_rsi.hpp"
 #include "../strategy/supersmoother.hpp"
+#include "../strategy/t3.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5343,6 +5344,41 @@ void test_supersmoother() {
     ASSERT(!su.ready() && su.value() == 0.0, "ss_reset");
 }
 
+// T3 #574 — Tillson's triple-GD moving average on the EMA cascade.
+void test_t3() {
+    SECTION("T3 Tillson (#574)");
+    T3 tf3;
+    ASSERT(!tf3.ready() && tf3.value() == 0.0, "t3_not_ready_before_seed");
+    tf3.update(100.0);   // every EMA in the cascade seeds at the first print
+    ASSERT(tf3.ready() && std::fabs(tf3.value() - 100.0) < 1e-9, "t3_seeds_at_price");
+
+    // c1+c2+c3+c4 == 1 for every v -> a flat tape pins EXACTLY.
+    T3 tc(5, 0.7);
+    for (int i = 0; i < 50; ++i) tc.update(50.0);
+    ASSERT(std::fabs(tc.value() - 50.0) < 1e-9, "t3_flat_pins_exactly");
+
+    // A steady ramp: rises monotonically, lags below the latest print.
+    T3 tu(5, 0.7);
+    double last = 0.0, prev = 0.0;
+    tu.update(100.0); prev = tu.value();
+    bool rising = true;
+    for (int i = 1; i <= 40; ++i) {
+        last = 100.0 + 2.0 * i;
+        tu.update(last);
+        if (tu.value() <= prev) rising = false;
+        prev = tu.value();
+    }
+    ASSERT(rising && tu.value() < last, "t3_ramp_lags_below");
+
+    // The v knob: v=0 (pure EMA cascade) lags MORE than v=0.7 on the same ramp.
+    T3 t0(5, 0.0), t7(5, 0.7);
+    for (int i = 0; i <= 40; ++i) { const double p = 100.0 + 2.0 * i; t0.update(p); t7.update(p); }
+    ASSERT(t7.value() > t0.value(), "t3_v_knob_cuts_lag");
+
+    tu.reset();
+    ASSERT(!tu.ready() && tu.value() == 0.0, "t3_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -9919,6 +9955,7 @@ int main() {
     test_alma();
     test_laguerre_rsi();
     test_supersmoother();
+    test_t3();
     test_cmo();
     test_zscore();
     test_tsi();
