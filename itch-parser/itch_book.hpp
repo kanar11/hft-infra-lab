@@ -57,6 +57,8 @@ class ITCHOrderBook {
     int64_t min_cum_delta_       = 0;  // session trough of cumulative_delta (#535)
     int64_t exec_notional_bid_ticks_ = 0;  // Σ dec*price over hit-BID prints (#543)
     int64_t exec_notional_ask_ticks_ = 0;  // Σ dec*price over lifted-ASK prints (#543)
+    int64_t pulled_bid_ = 0;   // shares withdrawn from BIDS by cancels/deletes (#575)
+    int64_t pulled_ask_ = 0;   // shares withdrawn from ASKS by cancels/deletes (#575)
     int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
     uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
     int64_t  max_reprice_ticks_  = 0;  // largest single |new - old| reprice move (#519)
@@ -153,10 +155,24 @@ public:
         reduce_(ref, exec_shares);
         ++executes_;
     }
-    void on_cancel(int64_t ref, uint32_t cancelled_shares) noexcept { reduce_(ref, cancelled_shares); ++cancels_; }
+    void on_cancel(int64_t ref, uint32_t cancelled_shares) noexcept {
+        // #575: attribute the CLAMPED withdrawal to the order's side before
+        // reduce_ (which may erase the record). Orphans pull nothing.
+        auto it = orders_.find(ref);
+        if (it != orders_.end()) {
+            const uint32_t dec = (cancelled_shares < it->second.shares)
+                                     ? cancelled_shares : it->second.shares;
+            if (it->second.side == 'B') pulled_bid_ += dec; else pulled_ask_ += dec;
+        }
+        reduce_(ref, cancelled_shares);
+        ++cancels_;
+    }
     void on_delete(int64_t ref) noexcept {
         auto it = orders_.find(ref);
         if (it == orders_.end()) { ++orphans_; ++deletes_; return; }
+        // #575: a delete withdraws the whole remainder on the order's side.
+        if (it->second.side == 'B') pulled_bid_ += it->second.shares;
+        else                        pulled_ask_ += it->second.shares;
         reduce_(ref, it->second.shares);   // remove the whole thing
         ++deletes_;
     }
@@ -243,6 +259,7 @@ public:
         exec_against_bid_ = exec_against_ask_ = 0;     // #415
         max_cum_delta_ = min_cum_delta_ = 0;           // #535
         exec_notional_bid_ticks_ = exec_notional_ask_ticks_ = 0;   // #543
+        pulled_bid_ = pulled_ask_ = 0;                             // #575
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
         max_reprice_ticks_ = 0;                        // #519
         exec_prints_ = 0;                              // #463
@@ -939,6 +956,21 @@ public:
                / static_cast<double>(exec_against_bid_)) / 100.0
             : 0.0;
     }
+    // pulled_shares (#575): shares WITHDRAWN from a side by cancels and
+    // deletes this session — the liquidity makers took back, as opposed to
+    // what the market TOOK (executed_against_bid/ask #415) or what still
+    // RESTS (total_shares #174). The itch parallel of the OUCH tracker's
+    // total_cancelled_shares (#538), read from the public feed: heavy
+    // one-sided pulling is makers fleeing that side — a bid book losing its
+    // depth to cancels BEFORE price moves is the classic informed-flow tell
+    // (someone knows, and the makers are getting out of the way). Cancels
+    // count their CLAMPED amount, deletes the whole remainder; orphaned
+    // events pull nothing (the book never held those shares). Reset by
+    // clear().
+    int64_t pulled_shares(char side) const noexcept {
+        return side == 'B' ? pulled_bid_ : pulled_ask_;
+    }
+
     // mid_vs_vwap_bps (#551): where the CURRENT mid sits relative to the
     // session tape VWAP, in basis points = (mid - executed_vwap) / vwap *
     // 10000. The execution-benchmark read: positive = the market trades at a

@@ -2787,6 +2787,26 @@ void test_itch_book() {
     ASSERT(itap.trade_prints() == 0 && itap.avg_trade_size() == 0.0, "itchbook_prints_clear");
     ASSERT(itap.largest_trade_size() == 0, "itchbook_largest_trade_clear");
 
+    // #575 pulled_shares — liquidity WITHDRAWN per side (cancels + deletes).
+    itch::ITCHOrderBook ipl;
+    ASSERT(ipl.pulled_shares('B') == 0 && ipl.pulled_shares('S') == 0, "itchbook_pull_empty");
+    ipl.on_add(1, 'B', 10.00, 100);
+    ipl.on_add(2, 'S', 10.05, 200);
+    ipl.on_add(3, 'S', 10.06, 50);
+    ipl.on_cancel(1, 30);                          // partial cancel pulls 30 bid shares
+    ASSERT(ipl.pulled_shares('B') == 30, "itchbook_pull_partial_30");
+    ipl.on_cancel(1, 999);                         // over-cancel clamps to the 70 left
+    ASSERT(ipl.pulled_shares('B') == 100, "itchbook_pull_clamped_100");
+    ipl.on_delete(2);                              // delete withdraws the whole 200
+    ASSERT(ipl.pulled_shares('S') == 200, "itchbook_pull_delete_200");
+    // An execution TAKES liquidity, it does not pull it; orphans pull nothing.
+    ipl.on_execute(3, 50);
+    ipl.on_cancel(777, 10); ipl.on_delete(888);
+    ASSERT(ipl.pulled_shares('S') == 200 && ipl.pulled_shares('B') == 100,
+           "itchbook_pull_exec_and_orphans_dont_count");
+    ipl.clear();
+    ASSERT(ipl.pulled_shares('B') == 0 && ipl.pulled_shares('S') == 0, "itchbook_pull_clear");
+
     // #551 mid_vs_vwap_bps — the book (mid) judged against the tape (VWAP).
     itch::ITCHOrderBook ivb;
     ASSERT(ivb.mid_vs_vwap_bps() == 0.0, "itchbook_mvb_empty_zero");
