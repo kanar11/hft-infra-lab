@@ -6109,6 +6109,7 @@ void test_router_ewma_partial() {
         // #359 liquidity_venue_count: both A and B quote both sides -> 2 each.
         ASSERT(r.liquidity_venue_count(true) == 2 && r.liquidity_venue_count(false) == 2,
                "liqvenue_both_quoting");
+        ASSERT(r.two_sided_venue_count() == 2, "twoside_both");   // #576
         r.set_venue_active("B", false);
         ASSERT(r.active_venue_count() == 1, "best_eff_active_1_after_disable");
         ASSERT(close(r.best_effective_price(true), 11.005), "best_eff_buy_A_only");
@@ -6119,8 +6120,16 @@ void test_router_ewma_partial() {
         // A active but no quote on a side (fresh venue C) -> not counted.
         r.add_venue(Venue("C", 100, 0.0));           // active but never quoted
         ASSERT(r.liquidity_venue_count(true) == 1, "liqvenue_unquoted_not_counted");
+        // #576: disable + never-quoted leave ONE two-sided venue — the NBBO
+        // hangs on A alone; a bid-only quote on C props one leg but does NOT
+        // make it two-sided.
+        ASSERT(r.two_sided_venue_count() == 1, "twoside_one_after_disable");
+        r.update_quote("C", 10.0, 0.0, 100, 0);      // bid only
+        ASSERT(r.liquidity_venue_count(false) == 2, "liqvenue_c_props_bid_leg");
+        ASSERT(r.two_sided_venue_count() == 1, "twoside_one_legged_not_counted");
         SmartOrderRouter empt(RoutingStrategy::BEST_PRICE);
         ASSERT(empt.liquidity_venue_count(true) == 0, "liqvenue_empty_zero");
+        ASSERT(empt.two_sided_venue_count() == 0, "twoside_empty_zero");   // #576
         // #464: an empty router disperses nothing.
         ASSERT(empt.effective_price_dispersion(true) == 0.0, "epd_empty_zero");
     }

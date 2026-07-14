@@ -720,6 +720,24 @@ public:
     // gap between the two is how many active venues are dark / not quoting that
     // side. A breadth-of-execution measure — with only one quoting venue there
     // is no cross-venue competition and a route can't diversify market impact.
+    // two_sided_venue_count: active venues quoting BOTH sides right now
+    // (#576) — the venues that can contribute to BOTH NBBO legs at once,
+    // the real redundancy of the consolidated quote. active_venue_count
+    // (#154) counts venues regardless of quoting and liquidity_venue_count
+    // (#359) one side at a time; a venue quoting only bids props one leg
+    // while leaving the other thinner than either count shows. With this at
+    // 1 the two-sided market hangs on a single venue — one outage away from
+    // a one-legged NBBO no marketable-limit logic can price against.
+    int two_sided_venue_count() const noexcept {
+        int n = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (v.is_active
+                && v.best_bid > 0 && v.bid_size > 0
+                && v.best_ask > 0 && v.ask_size > 0) ++n;
+        }
+        return n;
+    }
     int liquidity_venue_count(bool is_buy) const noexcept {
         int n = 0;
         for (int i = 0; i < venue_count_; ++i) {
