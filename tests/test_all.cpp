@@ -8144,6 +8144,23 @@ void test_fix_session() {
         ts.clear_pending_test_req();
         ASSERT(ts.pending_test_req_id()[0] == '\0', "fix_pi_testreq_cleared");
 
+        // #577 parse_test_request / parse_heartbeat — the liveness pair typed.
+        const auto trq = fix::FIXSession::parse_test_request(trm);
+        ASSERT(trq.valid && std::strcmp(trq.test_req_id, "TR123") == 0,
+               "fix_parse_testreq_id");
+        // The answering heartbeat ECHOES the id -> solicited.
+        const auto hbs = fix::FIXSession::parse_heartbeat(hbm);
+        ASSERT(hbs.valid && hbs.is_solicited()
+               && std::strcmp(hbs.test_req_id, "TR123") == 0, "fix_parse_hb_solicited_echo");
+        // A routine timer heartbeat carries no 112 -> unsolicited.
+        ts.build_heartbeat(tb, sizeof(tb), nullptr, '|');
+        FIXMessage hbt; hbt.parse(tb);
+        const auto hbu = fix::FIXSession::parse_heartbeat(hbt);
+        ASSERT(hbu.valid && !hbu.is_solicited(), "fix_parse_hb_timer_unsolicited");
+        // Cross-type guards.
+        ASSERT(!fix::FIXSession::parse_test_request(hbt).valid, "fix_parse_testreq_non1_invalid");
+        ASSERT(!fix::FIXSession::parse_heartbeat(trm).valid, "fix_parse_hb_non0_invalid");
+
         // #116 walidacja NewOrderSingle (acceptor-side).
         s.build_new_order(buf, sizeof(buf), "X", "AAPL", Side::BUY, 100, 150.0, '|');
         FIXMessage ok; ok.parse(buf);

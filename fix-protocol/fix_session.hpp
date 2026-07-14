@@ -1062,6 +1062,43 @@ public:
         bool has_both_sides() const noexcept { return bid_px > 0.0 && ask_px > 0.0; }
     };
 
+    // TestReq / HeartbeatMsg — typed views of the LIVENESS admin pair (#577):
+    // TestRequest (35=1) asks "are you alive" carrying 112=TestReqID, and the
+    // required Heartbeat (35=0) answer ECHOES that id — while a routine
+    // timer heartbeat carries no 112 at all. That echo is the whole protocol:
+    // a heartbeat with the WRONG (or no) id does not answer the outstanding
+    // TestRequest, and a session that cannot tell solicited from timer
+    // heartbeats declares false liveness. is_solicited() reads the
+    // distinction. Completes the admin recovery/liveness set with the
+    // 35=2/35=4 pair (#545/#553); typed-parse family now 27 types.
+    struct TestReq {
+        char test_req_id[24] = {};   // 112=TestReqID (echo target)
+        bool valid           = false;// true when msg type == '1'
+    };
+    struct HeartbeatMsg {
+        char test_req_id[24] = {};   // 112 echo; empty on a timer heartbeat
+        bool valid           = false;// true when msg type == '0'
+
+        bool is_solicited() const noexcept { return test_req_id[0] != '\0'; }
+    };
+
+    static TestReq parse_test_request(const FIXMessage& m) noexcept {
+        TestReq r;
+        if (m.get_msg_type()[0] != '1') return r;   // valid stays false
+        const char* id = m.get_field(112);
+        if (id) std::strncpy(r.test_req_id, id, sizeof(r.test_req_id) - 1);
+        r.valid = true;
+        return r;
+    }
+    static HeartbeatMsg parse_heartbeat(const FIXMessage& m) noexcept {
+        HeartbeatMsg r;
+        if (m.get_msg_type()[0] != '0') return r;   // valid stays false
+        const char* id = m.get_field(112);
+        if (id) std::strncpy(r.test_req_id, id, sizeof(r.test_req_id) - 1);
+        r.valid = true;
+        return r;
+    }
+
     static MDSnapshot parse_md_snapshot(const FIXMessage& m) noexcept {
         MDSnapshot r;
         if (m.get_msg_type()[0] != 'W') return r;   // valid stays false
