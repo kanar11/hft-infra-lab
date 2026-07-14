@@ -655,10 +655,18 @@ void test_oms_short_and_replace() {
         (void)s3;
         ASSERT(close(oms322.total_submitted_notional(), 3000.0), "oms_sub_notional_3");
         ASSERT(close(oms322.avg_submitted_notional(), 1000.0), "oms_avg_sub_notional_3");
+        // #572: three equal $1000 submits -> the high-water is $1000...
+        ASSERT(close(oms322.largest_submitted_notional(), 1000.0), "oms_maxsub_1000");
+        // ...and one $2500 block raises it while the mean only creeps to 1375.
+        Order* s4 = oms322.submit_order("DDD", Side::BUY, 25.0, 100);
+        (void)s4;
+        ASSERT(close(oms322.largest_submitted_notional(), 2500.0), "oms_maxsub_block_2500");
+        ASSERT(close(oms322.avg_submitted_notional(), 1375.0), "oms_maxsub_mean_hides_block");
         // reset clears the counter
         oms322.reset_session_counters();
         ASSERT(oms322.total_submitted_notional() == 0.0, "oms_sub_notional_reset");
         ASSERT(oms322.avg_submitted_notional() == 0.0, "oms_avg_sub_notional_reset");
+        ASSERT(oms322.largest_submitted_notional() == 0.0, "oms_maxsub_reset");   // #572
         // empty OMS returns 0
         OMS oms322e(1000000, 1000000000.0);
         ASSERT(oms322e.avg_submitted_notional() == 0.0, "oms_avg_sub_notional_empty");

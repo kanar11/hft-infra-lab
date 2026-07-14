@@ -210,6 +210,7 @@ class OMS {
     uint64_t  total_filled_shares_  = 0;  // sum of executed shares (#228)
     double    total_traded_notional_    = 0.0; // cumulative $ value of all fills (#266)
     double    total_submitted_notional_ = 0.0; // cumulative $ value of all submitted orders (#322)
+    double    max_submitted_notional_   = 0.0; // biggest single submit in $ (#572)
     int64_t   price_improvement_fp_     = 0;   // signed fill-vs-limit improvement, fixed-point (#396)
     uint64_t  round_trips_              = 0;   // positions closed to (or through) flat (#420)
 
@@ -284,6 +285,10 @@ public:
         ++total_submitted_;   // #160
         total_ordered_shares_ += quantity;   // #228
         total_submitted_notional_ += price_f * static_cast<double>(quantity);  // #322
+        {   // #572: fat-finger high-water — the biggest single submit in $.
+            const double ord_notional = price_f * static_cast<double>(quantity);
+            if (ord_notional > max_submitted_notional_) max_submitted_notional_ = ord_notional;
+        }
         return &it->second;
     }
 
@@ -1311,6 +1316,16 @@ public:
             ? total_submitted_notional_ / static_cast<double>(total_submitted_)
             : 0.0;
     }
+    // largest_submitted_notional: the biggest SINGLE accepted submit in $
+    // (#572) — the fat-finger high-water, the MAX companion to avg_submitted_
+    // notional (#322) the way largest_trade_size (#503) tails avg_trade_size.
+    // The post-trade audit read behind the pre-trade max_order_value gate: the
+    // gate rejects what crosses it, this records how CLOSE the session's
+    // biggest accepted order came — a high-water hugging the limit means the
+    // limit is doing work (or is about to be breached by the next size-up).
+    // Only ACCEPTED submits count (rejected ones never reach the
+    // accumulators). Reset by reset_session_counters.
+    double largest_submitted_notional() const noexcept { return max_submitted_notional_; }
     // avg_trade_price: blended VWAP across EVERY fill (#306) = total_traded_notional
     // / total_filled_shares. The single execution price the whole session achieved,
     // independent of side or position — the TCA benchmark you compare arrival/VWAP
@@ -1342,6 +1357,7 @@ public:
         total_filled_shares_  = 0;
         total_traded_notional_    = 0.0;   // #266
         total_submitted_notional_ = 0.0;   // #322
+        max_submitted_notional_   = 0.0;   // #572
         price_improvement_fp_     = 0;     // #396
         round_trips_              = 0;     // #420
         for (auto& c : reject_counts_) c = 0;
