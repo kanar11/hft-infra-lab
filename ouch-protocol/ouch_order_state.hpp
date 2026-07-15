@@ -615,6 +615,22 @@ public:
             ? static_cast<double>(pending_cancel_shares()) / static_cast<double>(w)
             : 0.0;
     }
+    // pending_cancel_notional (#578): the condemned exposure in DOLLARS =
+    // Σ remaining × working limit price over pending-cancel records —
+    // completing the condemned trio the way the working trio was completed:
+    // cancel_pending_count (#280) counts ORDERS, pending_cancel_shares (#402)
+    // SHARES, this the CAPITAL a slow exchange is still holding hostage
+    // (risk head-room the desk already spent its cancel on but cannot re-use
+    // until the ack lands). Prices follow the order through Replaced/
+    // Restated (#546). A fill racing the cancel shrinks it with the
+    // remaining shares; the ack (or any terminal transition) frees it. 0
+    // when nothing is pending.
+    double pending_cancel_notional() const noexcept {
+        double s = 0.0;
+        for (const auto& [tok, rec] : orders_)
+            if (rec.pending_cancel) s += static_cast<double>(rec.remaining) * rec.price;
+        return s;
+    }
     // status_count: how many tracked orders are CURRENTLY in a given state (#296).
     // A point-in-time snapshot (vs the cumulative live_/filled_/... event counters,
     // which only ever go up). Mirrors the OMS count_by_status (#290 family) — e.g.

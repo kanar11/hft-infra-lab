@@ -8844,6 +8844,7 @@ void test_ouch_order_state() {
         uint8_t pcb[64];
         ASSERT(pcs.pending_cancel_shares() == 0 && pcs.pending_cancel_fraction() == 0.0,
                "ouch_pcs_empty");
+        ASSERT(pcs.pending_cancel_notional() == 0.0, "ouch_pcn_empty");   // #578
         pcs.on_new("P1", 100);
         int pcn = OUCHMessage::encode_accepted(pcb, "P1", 'B', 100, "AAPL", 10.0, 1);
         pcs.on_response(OUCHMessage::parse_response(pcb, pcn));
@@ -8853,6 +8854,8 @@ void test_ouch_order_state() {
         ASSERT(pcs.pending_cancel_shares() == 0, "ouch_pcs_none_armed");
         pcs.on_cancel_sent("P2");
         ASSERT(pcs.pending_cancel_shares() == 300, "ouch_pcs_armed_shares");
+        // #578: the same condemned exposure in dollars — 300 x 10.00 = 3000.
+        ASSERT(std::fabs(pcs.pending_cancel_notional() - 3000.0) < 1e-9, "ouch_pcn_armed_3000");
         // 300 condemned of 400 working -> 0.75 of the book is an illusion.
         ASSERT(std::fabs(pcs.pending_cancel_fraction() - 0.75) < 1e-9, "ouch_pcs_fraction_3_4");
         // A fill racing the cancel shrinks the condemned shares too.
@@ -8861,11 +8864,14 @@ void test_ouch_order_state() {
         ASSERT(pcs.pending_cancel_shares() == 200, "ouch_pcs_fill_shrinks");
         ASSERT(std::fabs(pcs.pending_cancel_fraction() - 200.0 / 300.0) < 1e-9,
                "ouch_pcs_fraction_2_3");
+        ASSERT(std::fabs(pcs.pending_cancel_notional() - 2000.0) < 1e-9,
+               "ouch_pcn_fill_shrinks_2000");   // #578
         // The Cancelled ack frees the exposure.
         pcn = OUCHMessage::encode_cancelled(pcb, "P2", 200, 'U');
         pcs.on_response(OUCHMessage::parse_response(pcb, pcn));
         ASSERT(pcs.pending_cancel_shares() == 0 && pcs.pending_cancel_fraction() == 0.0,
                "ouch_pcs_ack_frees");
+        ASSERT(pcs.pending_cancel_notional() == 0.0, "ouch_pcn_ack_frees");   // #578
     }
 
     // #410 avg_fill_price / fill_vwap — pricing the executions (MILESTONE 410).
