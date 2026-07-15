@@ -402,6 +402,20 @@ struct MultiChannelRecovery {
         out_missing = worst;
         return true;
     }
+
+    // overall_completeness (#579): the FLEET-wide recovery health in one
+    // number = total_recovered / (total_recovered + total_missing), in [0,1]
+    // — the aggregate of per-channel recovery_completeness (#156) weighted by
+    // how much each channel actually lost, which is the honest fleet SLA: an
+    // unweighted average of per-channel ratios would let forty clean channels
+    // hide one channel missing thousands. 1.0 = every sequence ever lost
+    // anywhere has been recovered (the whole book is certain again), and 1.0
+    // before any loss (nothing outstanding — matching #156's convention).
+    double overall_completeness() const {
+        const std::uint64_t rec  = total_recovered();
+        const std::uint64_t tot  = rec + static_cast<std::uint64_t>(total_missing());
+        return tot > 0 ? static_cast<double>(rec) / static_cast<double>(tot) : 1.0;
+    }
 };
 
 

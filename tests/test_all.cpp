@@ -3158,20 +3158,28 @@ void test_multicast_gap_recovery() {
     ASSERT(!mcw.worst_channel(mcw_ch, mcw_miss) && mcw_ch == 777 && mcw_miss == 777,
            "mcr_worst_none_untouched");
     ASSERT(mcw.channels_with_gaps() == 0, "mcr_breadth_zero");
+    ASSERT(mcw.overall_completeness() == 1.0, "mcr_fleet_clean_one");   // #579: nothing lost yet
     mcw.observe(10, 1); mcw.observe(10, 4);      // ch 10: missing 2,3 (2 holes)
     mcw.observe(20, 1); mcw.observe(20, 7);      // ch 20: missing 2..6 (5 holes)
     mcw.observe(30, 1); mcw.observe(30, 2);      // ch 30: clean
     ASSERT(mcw.channels_with_gaps() == 2, "mcr_breadth_two_of_three");
     ASSERT(mcw.worst_channel(mcw_ch, mcw_miss) && mcw_ch == 20 && mcw_miss == 5,
            "mcr_worst_is_ch20");
+    // #579: 7 lost fleet-wide, none recovered -> completeness 0.
+    ASSERT(mcw.overall_completeness() == 0.0, "mcr_fleet_all_outstanding");
     // Healing ch 20 fully hands the worst spot to ch 10.
     for (std::uint64_t mcs = 2; mcs <= 6; ++mcs) mcw.on_retransmit(20, mcs);
     ASSERT(mcw.channels_with_gaps() == 1, "mcr_breadth_after_heal");
     ASSERT(mcw.worst_channel(mcw_ch, mcw_miss) && mcw_ch == 10 && mcw_miss == 2,
            "mcr_worst_moves_to_ch10");
+    // #579: 5 of the 7 ever lost are back -> 5/7 — the LOSS-weighted fleet
+    // number an unweighted per-channel average would misstate (ch 20 reads
+    // 1.0 and ch 30 never lost anything).
+    ASSERT(std::fabs(mcw.overall_completeness() - 5.0 / 7.0) < 1e-9, "mcr_fleet_5_of_7");
     mcw.on_retransmit(10, 2); mcw.on_retransmit(10, 3);
     ASSERT(!mcw.worst_channel(mcw_ch, mcw_miss) && mcw.channels_with_gaps() == 0,
            "mcr_worst_all_healed");
+    ASSERT(mcw.overall_completeness() == 1.0, "mcr_fleet_healed_one");   // #579
 
     // #132 FeedRateMeter — sliding-window rate.
     multicast::FeedRateMeter fr(1000);                    // 1000 ns window
