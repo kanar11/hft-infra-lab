@@ -680,6 +680,21 @@ public:
         return sz;
     }
 
+    // nbbo_depth_notional (#584): the CAPITAL defending the national best
+    // price on a side = nbbo_depth (#480) × the best price — exact, since
+    // every counted share sits at that one price. The dollar face of the
+    // touch: 500 shares at the touch of a $2 name and of a $2000 name read
+    // identically in nbbo_depth and three orders of magnitude apart here —
+    // the same argument that split shares from dollars across the lab (#527
+    // notional_within, #560 routed notional, #562 working notional). What a
+    // sweep of the touch actually costs / what it takes to defend it. 0
+    // without liquidity on the side.
+    double nbbo_depth_notional(bool is_buy) const noexcept {
+        const double best = is_buy ? national_best_ask() : national_best_bid();
+        if (best <= 0.0) return 0.0;
+        return static_cast<double>(nbbo_depth(is_buy)) * best;
+    }
+
     // touch_concentration (#488): the fraction of a side's total displayed
     // liquidity that sits AT the national best price = nbbo_depth (#480) /
     // available_liquidity (#109), in (0,1]. Near 1 the market is

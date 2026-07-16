@@ -5731,6 +5731,11 @@ void test_router_ewma_partial() {
         // SELL takes bids at NBB 100.00 -> A 200 + B 300 = 500.
         ASSERT(rsum.nbbo_depth(true) == 250, "router_nbbo_depth_ask");
         ASSERT(rsum.nbbo_depth(false) == 500, "router_nbbo_depth_bid");
+        // #584: the same touch in DOLLARS — 250 x 100.02 and 500 x 100.00.
+        ASSERT(closei(rsum.nbbo_depth_notional(true), 250.0 * 100.02),
+               "router_nbbo_notional_ask");
+        ASSERT(closei(rsum.nbbo_depth_notional(false), 50000.0),
+               "router_nbbo_notional_bid");
         // Distinct from available_liquidity (#109): A's ask (100 @ 100.05) is
         // top-of-book but NOT at the NBO, so it counts there but not here.
         ASSERT(rsum.available_liquidity(true) > rsum.nbbo_depth(true),
@@ -5756,6 +5761,8 @@ void test_router_ewma_partial() {
                "router_vatn_empty_zero");
         // #480: empty router has no touch depth.
         ASSERT(rem.nbbo_depth(true) == 0 && rem.nbbo_depth(false) == 0, "router_nbbo_depth_empty");
+        ASSERT(rem.nbbo_depth_notional(true) == 0.0 && rem.nbbo_depth_notional(false) == 0.0,
+               "router_nbbo_notional_empty");   // #584
     }
 
     // --- #376 liquidity_at_limit: marketable size at a limit price ---
