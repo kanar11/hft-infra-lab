@@ -1250,6 +1250,18 @@ public:
             if (o.fill_count > mx) mx = o.fill_count;
         return mx;
     }
+    // most_fragmented_order_id (#580, MILESTONE 580): the ORDER behind
+    // max_order_fill_count's (#444) number — the actionable WHICH: pull that
+    // order's symbol, venue and limit price via get_order and the
+    // venue-quality review has its exhibit, instead of grepping the blotter
+    // for the count. Same walk as #444; a tie resolves to the first order
+    // seen (map order). 0 when nothing has filled (order ids start at 1).
+    uint64_t most_fragmented_order_id() const noexcept {
+        uint32_t mx = 0; uint64_t who = 0;
+        for (const auto& [id, o] : orders_)
+            if (o.fill_count > mx) { mx = o.fill_count; who = id; }
+        return who;
+    }
     // order_fill_rate: fraction of submitted orders that FULLY filled (#476)
     // = count_by_status(FILLED) / total_submitted. Completes the lifecycle
     // ratio family alongside cancel_rate (#258), replace_rate (#282),

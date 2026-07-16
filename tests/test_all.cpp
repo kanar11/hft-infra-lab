@@ -836,6 +836,7 @@ void test_oms_short_and_replace() {
     {   // #444 order_fill_count / max_order_fill_count — per-order fragmentation.
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.max_order_fill_count() == 0, "ofc_empty_zero");
+        ASSERT(oms.most_fragmented_order_id() == 0, "ofc_which_empty_zero");   // #580
         Order* fca = oms.submit_order("AAA", Side::BUY, 10.0, 100);
         Order* fcb = oms.submit_order("BBB", Side::BUY, 20.0, 100);
         // AAA gets shredded into 3 odd lots; BBB fills in one print.
@@ -846,6 +847,11 @@ void test_oms_short_and_replace() {
         ASSERT(oms.order_fill_count(fca->order_id) == 3, "ofc_shredded_three");
         ASSERT(oms.order_fill_count(fcb->order_id) == 1, "ofc_clean_one");
         ASSERT(oms.max_order_fill_count() == 3, "ofc_max_names_worst");
+        // #580: the WHICH names the shredded order, and its record hands the
+        // review the symbol directly.
+        ASSERT(oms.most_fragmented_order_id() == fca->order_id, "ofc_which_names_shredded");
+        ASSERT(std::strcmp(oms.get_order(oms.most_fragmented_order_id())->symbol, "AAA") == 0,
+               "ofc_which_resolves_symbol");
         ASSERT(oms.order_fill_count(999999) == 0, "ofc_unknown_zero");
         // A fully-clamped over-fill (0 applied) does not count a slice.
         oms.fill_order(fca->order_id, 50, 10.0);   // AAA already complete
