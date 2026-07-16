@@ -1062,6 +1062,45 @@ public:
         bool has_both_sides() const noexcept { return bid_px > 0.0 && ask_px > 0.0; }
     };
 
+    // LogonMsg / LogoutMsg — typed views of the SESSION-BOUNDARY admin pair
+    // (#585): Logon (35=A) opens the session carrying 108=HeartBtInt — the
+    // heartbeat cadence BOTH sides must honor, and the one field the acceptor
+    // must validate before accepting (a 0 or absurd interval breaks liveness
+    // detection; -1 when the tag is absent, since 0 is a real "no heartbeats"
+    // value some venues allow). Logout (35=5) closes it, with an optional
+    // 58=Text reason the ops log wants verbatim (venues put the WHY there:
+    // "logon window closed", "too many resend requests"). Completes the admin
+    // family: liveness 35=0/1 (#577), recovery 35=2/4 (#545/#553), boundary
+    // 35=A/5 here — typed-parse family now 29 types (6 admin).
+    struct LogonMsg {
+        int  hb_int_sec = -1;   // 108=HeartBtInt (-1 = absent)
+        bool valid      = false;// true when msg type == 'A'
+    };
+    struct LogoutMsg {
+        char text[64] = {};     // 58=Text (empty when absent)
+        bool valid    = false;  // true when msg type == '5'
+
+        bool has_reason() const noexcept { return text[0] != '\0'; }
+    };
+
+    static LogonMsg parse_logon(const FIXMessage& m) noexcept {
+        LogonMsg r;
+        // Full strcmp, NOT a first-char check: "AE"/"AI"/"AF" also start
+        // with 'A' and must not decode as a Logon.
+        if (std::strcmp(m.get_msg_type(), "A") != 0) return r;
+        r.hb_int_sec = m.get_field(108) ? m.get_int(108) : -1;
+        r.valid      = true;
+        return r;
+    }
+    static LogoutMsg parse_logout(const FIXMessage& m) noexcept {
+        LogoutMsg r;
+        if (m.get_msg_type()[0] != '5') return r;   // valid stays false
+        const char* txt = m.get_field(58);
+        if (txt) std::strncpy(r.text, txt, sizeof(r.text) - 1);
+        r.valid = true;
+        return r;
+    }
+
     // TestReq / HeartbeatMsg — typed views of the LIVENESS admin pair (#577):
     // TestRequest (35=1) asks "are you alive" carrying 112=TestReqID, and the
     // required Heartbeat (35=0) answer ECHOES that id — while a routine

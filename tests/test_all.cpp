@@ -7624,6 +7624,24 @@ void test_fix_session() {
         const char* seq = m.get_field(34);
         ASSERT(seq && std::atoi(seq) == 1, "fix_logon_seq_1");
         ASSERT(s.peek_outbound_seq() == 2, "fix_seq_incremented");
+
+        // #585 parse_logon / parse_logout — the session-boundary pair typed.
+        const auto lg = fix::FIXSession::parse_logon(m);
+        ASSERT(lg.valid && lg.hb_int_sec == 30, "fix_parse_logon_hbint");
+        // A 35=AE must NOT decode as a Logon (first-char trap pinned).
+        FIXMessage fake_a; fake_a.parse("35=AE|571=T|55=X|");
+        ASSERT(!fix::FIXSession::parse_logon(fake_a).valid, "fix_parse_logon_AE_not_A");
+        // Logout with and without the ops reason in 58.
+        s.build_logout(buf, sizeof(buf), "logon window closed", '|');
+        FIXMessage lo; lo.parse(buf);
+        const auto lg5 = fix::FIXSession::parse_logout(lo);
+        ASSERT(lg5.valid && lg5.has_reason()
+               && std::strcmp(lg5.text, "logon window closed") == 0, "fix_parse_logout_reason");
+        s.build_logout(buf, sizeof(buf), nullptr, '|');
+        FIXMessage lo2; lo2.parse(buf);
+        ASSERT(fix::FIXSession::parse_logout(lo2).valid
+               && !fix::FIXSession::parse_logout(lo2).has_reason(), "fix_parse_logout_bare");
+        ASSERT(!fix::FIXSession::parse_logout(m).valid, "fix_parse_logout_non5_invalid");
     }
 
     // --- #119 inbound SequenceReset: set the expected seq, ignore a backward one ---
