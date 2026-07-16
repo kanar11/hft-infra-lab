@@ -971,6 +971,23 @@ public:
         return side == 'B' ? pulled_bid_ : pulled_ask_;
     }
 
+    // pull_to_take_ratio (#583): how a side's liquidity LEAVES — withdrawn
+    // vs traded = pulled_shares (#575) / executed_against (#415), per side.
+    // Around 1 the makers' shares are as likely to be pulled as filled
+    // (normal reprice churn); far above 1 the side is EVAPORATING by cancel
+    // — makers fleeing faster than the market can hit them, the strongest
+    // form of the #575 informed-flow tell because it is normalized by how
+    // much actually trades (a busy tape with heavy pulling reads very
+    // differently from a quiet one). Guarded to 0 before any shares trade on
+    // that side — a ratio over zero takes is unbounded; read pulled_shares
+    // raw in the no-trade regime.
+    double pull_to_take_ratio(char side) const noexcept {
+        const int64_t taken = (side == 'B') ? exec_against_bid_ : exec_against_ask_;
+        return taken > 0
+            ? static_cast<double>(pulled_shares(side)) / static_cast<double>(taken)
+            : 0.0;
+    }
+
     // mid_vs_vwap_bps (#551): where the CURRENT mid sits relative to the
     // session tape VWAP, in basis points = (mid - executed_vwap) / vwap *
     // 10000. The execution-benchmark read: positive = the market trades at a

@@ -2811,8 +2811,14 @@ void test_itch_book() {
     ipl.on_cancel(777, 10); ipl.on_delete(888);
     ASSERT(ipl.pulled_shares('S') == 200 && ipl.pulled_shares('B') == 100,
            "itchbook_pull_exec_and_orphans_dont_count");
+    // #583 pull_to_take_ratio — the ask side evaporates by cancel: 200 pulled
+    // against only 50 traded = 4x; the bid side has pulls but ZERO takes, so
+    // the unbounded ratio is guarded to 0 (read pulled_shares raw there).
+    ASSERT(std::fabs(ipl.pull_to_take_ratio('S') - 4.0) < 1e-9, "itchbook_ptt_ask_4x");
+    ASSERT(ipl.pull_to_take_ratio('B') == 0.0, "itchbook_ptt_no_takes_guarded");
     ipl.clear();
     ASSERT(ipl.pulled_shares('B') == 0 && ipl.pulled_shares('S') == 0, "itchbook_pull_clear");
+    ASSERT(ipl.pull_to_take_ratio('S') == 0.0, "itchbook_ptt_clear");   // #583
 
     // #551 mid_vs_vwap_bps — the book (mid) judged against the tape (VWAP).
     itch::ITCHOrderBook ivb;
