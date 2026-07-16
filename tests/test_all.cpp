@@ -7111,10 +7111,21 @@ void test_risk_price_band() {
            == rka.kill_switch_activations(), "kcount_sums_to_total");
     ASSERT(rka.kill_count(KillReason::CIRCUIT_BREAKER) == 0
            && rka.kill_count(KillReason::DRAWDOWN) == 0, "kcount_untouched_zero");
+    // #589: two MANUALs against one streak -> the operator is the story.
+    ASSERT(rka.most_common_kill_reason() == KillReason::MANUAL, "kmost_manual_wins");
     rka.reset_daily();
     ASSERT(rka.kill_switch_activations() == 0, "ksa_reset_daily");
     ASSERT(rka.kill_count(KillReason::MANUAL) == 0
            && rka.kill_count(KillReason::CONSECUTIVE_LOSSES) == 0, "kcount_reset");   // #541
+    ASSERT(rka.most_common_kill_reason() == KillReason::NONE, "kmost_reset_none");   // #589
+    // #589: the streak breaker overtakes after two fresh trips (2 vs 1 MANUAL).
+    rka.update_pnl(-1.0); rka.update_pnl(-1.0);          // streak trip 1
+    rka.deactivate_kill_switch();
+    rka.activate_kill_switch();                          // MANUAL 1
+    rka.deactivate_kill_switch();
+    rka.update_pnl(-1.0); rka.update_pnl(-1.0);          // streak trip 2
+    ASSERT(rka.most_common_kill_reason() == KillReason::CONSECUTIVE_LOSSES,
+           "kmost_streak_overtakes");
 
     // #121 reason the kill switch latched.
     RiskManager rk(lim);

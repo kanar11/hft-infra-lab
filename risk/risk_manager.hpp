@@ -730,6 +730,21 @@ public:
     uint64_t kill_count(KillReason r) const noexcept {
         return kill_counts_[static_cast<int>(r)];
     }
+    // most_common_kill_reason: the KillReason that halted the desk the MOST
+    // this session (#589) — the actionable WHICH behind kill_switch_
+    // activations (#421, the total) and kill_count (#541, one bucket at a
+    // time), the exact mirror of OMS most_common_reject (#532) on the halt
+    // side. Five halts where four are CONSECUTIVE_LOSSES is a streak-limit
+    // tuning problem; four MANUALs is an operator telling you something. Scans
+    // the real reasons (1..4); NONE (index 0) is never a halt. A tie resolves
+    // to the lowest enum value; returns KillReason::NONE when nothing has
+    // tripped. Reset by reset_daily via the #541 buckets.
+    KillReason most_common_kill_reason() const noexcept {
+        int best = 0; uint64_t best_n = 0;
+        for (int i = 1; i < 5; ++i)
+            if (kill_counts_[i] > best_n) { best_n = kill_counts_[i]; best = i; }
+        return static_cast<KillReason>(best);
+    }
 
     // Runtime limit update (#129) — risk often tightens limits intraday
     // (e.g. after a loss) without a restart. get_limits for inspection/dashboard.
