@@ -1367,6 +1367,23 @@ public:
     // reset_daily.
     double largest_pnl_gain() const noexcept { return max_gain_; }
     double largest_pnl_loss() const noexcept { return max_loss_; }
+    // pnl_gain_concentration / pnl_loss_concentration (#581): the single
+    // biggest winning / losing update as a fraction of that side's GROSS sum
+    // (largest_pnl_gain / win_pnl_sum, largest_pnl_loss / loss_pnl_sum), in
+    // (0,1] — the per-EVENT fragility read, the RiskManager parallel of OMS
+    // profit/loss_concentration (#500, per-NAME): gain concentration near 1
+    // means one update carried the day (a fragile edge that hangs on a single
+    // print), and loss concentration near 1 means one hit did all the damage
+    // (an incident, not a bleed — chase that trade, not the strategy). Low
+    // values mean the P&L is built from many comparable events (repeatable).
+    // 0 before any winning / losing update; reset by reset_daily via the
+    // #381/#501 accumulators.
+    double pnl_gain_concentration() const noexcept {
+        return win_pnl_sum_ > 0.0 ? max_gain_ / win_pnl_sum_ : 0.0;
+    }
+    double pnl_loss_concentration() const noexcept {
+        return loss_pnl_sum_ > 0.0 ? max_loss_ / loss_pnl_sum_ : 0.0;
+    }
     // pnl_tail_ratio: the ratio of the EXTREMES (#509) = largest_pnl_gain /
     // largest_pnl_loss. It completes the ladder of gain-vs-loss ratios on
     // the update_pnl stream: pnl_payoff_ratio (#381) is the ratio of the

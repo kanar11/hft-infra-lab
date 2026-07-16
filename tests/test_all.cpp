@@ -6911,8 +6911,21 @@ void test_risk_price_band() {
     rtx.update_pnl(+2.0); rtx.update_pnl(-1.0); rtx.update_pnl(0.0);
     ASSERT(std::fabs(rtx.largest_pnl_gain() - 10.0) < 1e-9
            && std::fabs(rtx.largest_pnl_loss() - 5.0) < 1e-9, "ptx_extremes_survive");
+    // #581: concentration of the extremes over the side sums. Wins {3,10,2}
+    // sum 15 with a 10 peak -> 2/3; losses {1,5,1} sum 7 with a 5 peak -> 5/7.
+    ASSERT(std::fabs(rtx.pnl_gain_concentration() - 10.0 / 15.0) < 1e-9,
+           "pcn_gain_two_thirds");
+    ASSERT(std::fabs(rtx.pnl_loss_concentration() - 5.0 / 7.0) < 1e-9,
+           "pcn_loss_five_sevenths");
     rtx.reset_daily();
     ASSERT(rtx.largest_pnl_gain() == 0.0 && rtx.largest_pnl_loss() == 0.0, "ptx_reset");
+    ASSERT(rtx.pnl_gain_concentration() == 0.0 && rtx.pnl_loss_concentration() == 0.0,
+           "pcn_reset");   // #581
+    // A single-event side reads FULL concentration — the fragile extreme.
+    RiskManager rc1;
+    rc1.update_pnl(+9.0); rc1.update_pnl(-4.0);
+    ASSERT(rc1.pnl_gain_concentration() == 1.0 && rc1.pnl_loss_concentration() == 1.0,
+           "pcn_single_event_full");
 
     // #509 pnl_tail_ratio — the ratio of the EXTREMES (best gain / worst loss),
     // the tail companion to pnl_payoff_ratio (#381, averages) and
