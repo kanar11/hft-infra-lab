@@ -89,6 +89,7 @@
 #include "../strategy/laguerre_rsi.hpp"
 #include "../strategy/supersmoother.hpp"
 #include "../strategy/t3.hpp"
+#include "../strategy/decycler.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5413,6 +5414,39 @@ void test_t3() {
     ASSERT(!tu.ready() && tu.value() == 0.0, "t3_reset");
 }
 
+// Decycler #582 — Ehlers' Simple Decycler (price minus 2-pole high-pass).
+void test_decycler() {
+    SECTION("Decycler (#582)");
+    Decycler df;
+    ASSERT(!df.ready() && df.value() == 0.0, "dec_not_ready_before_seed");
+    df.update(100.0);
+    ASSERT(df.ready() && std::fabs(df.value() - 100.0) < 1e-12, "dec_seeds_at_price");
+
+    // A flat tape has no curvature -> HP stays 0 -> pins EXACTLY.
+    Decycler dc(10);
+    for (int i = 0; i < 30; ++i) dc.update(50.0);
+    ASSERT(std::fabs(dc.value() - 50.0) < 1e-9, "dec_flat_pins_exactly");
+
+    // The design point: a LINEAR trend has zero curvature, so after the seed
+    // transient decays the decycler tracks price essentially EXACTLY — where
+    // any same-period smoother would trail the ramp forever.
+    Decycler du(10);
+    du.update(100.0);
+    double last = 0.0;
+    for (int i = 1; i <= 40; ++i) { last = 100.0 + 2.0 * i; du.update(last); }
+    ASSERT(std::fabs(du.value() - last) < 0.01, "dec_linear_trend_zero_lag");
+
+    // A one-bar cycle spike is mostly absorbed by the high-pass: flat 50s,
+    // one print at 60 — the decycler moves less than half the impulse.
+    Decycler ds(10);
+    for (int i = 0; i < 20; ++i) ds.update(50.0);
+    ds.update(60.0);
+    ASSERT(ds.value() - 50.0 < 5.0, "dec_spike_mostly_removed");
+
+    du.reset();
+    ASSERT(!du.ready() && du.value() == 0.0, "dec_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -10035,6 +10069,7 @@ int main() {
     test_laguerre_rsi();
     test_supersmoother();
     test_t3();
+    test_decycler();
     test_cmo();
     test_zscore();
     test_tsi();
