@@ -88,6 +88,7 @@ struct GapRecovery {
     uint64_t gap_events  = 0;            // how many separate gap events
     uint64_t recovered   = 0;            // how many missing recovered
     uint64_t duplicates  = 0;            // seq < expected and NOT a missing one
+    uint64_t max_gap_burst_ = 0;         // widest single gap event ever (#587)
 
     // observe: primary feed. In order → OK; ahead → record a gap; behind
     // → either fills a known gap (recovered) or a pure duplicate.
@@ -96,6 +97,8 @@ struct GapRecovery {
         if (!initialized) { initialized = true; expected = seq + 1; return; }
         if (seq == expected) { ++expected; return; }
         if (seq > expected) {
+            const uint64_t burst = seq - expected;   // #587: this event's width
+            if (burst > max_gap_burst_) max_gap_burst_ = burst;
             for (uint64_t s = expected; s < seq; ++s) missing.insert(s);
             ++gap_events;
             expected = seq + 1;
@@ -167,6 +170,17 @@ struct GapRecovery {
             ? static_cast<double>(recovered + missing.size()) / static_cast<double>(gap_events)
             : 0.0;
     }
+
+    // max_gap_burst (#587): the WIDEST single gap event ever seen — the
+    // historical MAX companion to avg_gap_burst's (#329) mean, recorded at
+    // the moment the gap OPENS. largest_outstanding_run (#338) is the worst
+    // hole RIGHT NOW and shrinks as retransmits land; this remembers the
+    // worst drop even after it healed — the burst that sizes the reorder
+    // buffer and the retransmit request budget, and the number an incident
+    // review asks for after the recovery erased the evidence. One 50-wide
+    // drop among single-packet losses reads ~1 on the mean and 50 here. 0
+    // before any gap.
+    uint64_t max_gap_burst() const noexcept { return max_gap_burst_; }
 
     // outstanding_range_count (#338): how many DISTINCT contiguous runs the
     // currently-missing sequences form — the number of separate gap-fill requests

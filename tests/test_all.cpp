@@ -3054,6 +3054,7 @@ void test_multicast_gap_recovery() {
     ASSERT(agb.avg_gap_burst() == 0.0, "gaprec_burst_none");
     agb.observe(1); agb.observe(2); agb.observe(5);     // one gap event, run of 2 (3,4)
     ASSERT(agb.gap_events == 1 && std::fabs(agb.avg_gap_burst() - 2.0) < 1e-9, "gaprec_burst_2");
+    ASSERT(agb.max_gap_burst() == 2, "gaprec_maxburst_2");   // #587
     agb.observe(6);                                     // contiguous, no new gap
     ASSERT(std::fabs(agb.avg_gap_burst() - 2.0) < 1e-9, "gaprec_burst_still_2");
     agb.observe(8);                                     // second gap event, run of 1 (7)
@@ -3064,11 +3065,19 @@ void test_multicast_gap_recovery() {
     // packet. observe count = 5 (1,2,5,6,8).
     ASSERT(agb.primary_packets == 5 && std::fabs(agb.gap_event_rate() - 0.4) < 1e-9,
            "gaprec_gap_event_rate");
+    // #587: the second event (width 1) does not lower the high-water; a
+    // later 50-wide drop raises it while the mean stays low.
+    ASSERT(agb.max_gap_burst() == 2, "gaprec_maxburst_holds");
+    agb.observe(59);                                    // third event: 9..58 = 50 wide
+    ASSERT(agb.max_gap_burst() == 50, "gaprec_maxburst_50");
+    ASSERT(agb.avg_gap_burst() < 20.0, "gaprec_maxburst_mean_hides_incident");
     // recovering does not change the lifetime burst average (recovered+missing invariant)
     agb.on_retransmit(3); agb.on_retransmit(4); agb.on_retransmit(7);
-    ASSERT(std::fabs(agb.avg_gap_burst() - 1.5) < 1e-9, "gaprec_burst_recover_invariant");
-    // #475: recovery touches neither gap_events nor primary_packets.
-    ASSERT(std::fabs(agb.gap_event_rate() - 0.4) < 1e-9, "gaprec_gap_event_rate_stable");
+    ASSERT(std::fabs(agb.max_gap_burst() - 50.0) < 1e-9, "gaprec_maxburst_survives_recovery");   // #587
+    // #475: recovery touches neither gap_events nor primary_packets —
+    // 3 events over 6 observed packets (the #587 wide-gap observe added one
+    // of each) both before and after the retransmits.
+    ASSERT(std::fabs(agb.gap_event_rate() - 0.5) < 1e-9, "gaprec_gap_event_rate_stable");
     // A clean in-order feed never opens a gap -> rate 0.
     multicast::GapRecovery gcln;
     gcln.observe(1); gcln.observe(2); gcln.observe(3); gcln.observe(4);
