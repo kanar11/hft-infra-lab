@@ -9541,6 +9541,30 @@ void test_ouch_order_state() {
         ASSERT(tg.state("T3") == ouch::OrderState::LIVE, "ouch_tg_zero_exec_stays_live");
     }
 
+    // #586 last_reject_reason — the WHY behind rejects() (OMS #88 parity).
+    {
+        ouch::OUCHOrderTracker rjr;
+        uint8_t rjb[64];
+        ASSERT(rjr.last_reject_reason() == '\0', "ouch_lrr_empty");
+        rjr.on_new("R1", 100);
+        int rjn = OUCHMessage::encode_rejected(rjb, "R1", 'X');   // invalid price
+        rjr.on_response(OUCHMessage::parse_response(rjb, rjn));
+        ASSERT(rjr.state("R1") == ouch::OrderState::REJECTED, "ouch_lrr_rejected");
+        ASSERT(rjr.last_reject_reason() == 'X', "ouch_lrr_captures_X");
+        // The next 'J' overwrites — it is the LAST reason, like OMS #88.
+        rjr.on_new("R2", 100);
+        rjn = OUCHMessage::encode_rejected(rjb, "R2", 'H');       // halted
+        rjr.on_response(OUCHMessage::parse_response(rjb, rjn));
+        ASSERT(rjr.last_reject_reason() == 'H', "ouch_lrr_last_wins");
+        // A desync rejection (unknown token) carries no venue reason ->
+        // untouched.
+        rjn = OUCHMessage::encode_executed(rjb, "GHOST", 10, 10.0, 1);
+        rjr.on_response(OUCHMessage::parse_response(rjb, rjn));
+        ASSERT(rjr.last_reject_reason() == 'H', "ouch_lrr_desync_untouched");
+        rjr.reset_session();
+        ASSERT(rjr.last_reject_reason() == '\0', "ouch_lrr_reset");
+    }
+
     // #546 working_notional — the $ value of the confirmed resting book.
     ouch::OUCHOrderTracker wnt;
     ASSERT(wnt.working_notional() == 0.0, "ouch_wnt_empty_zero");

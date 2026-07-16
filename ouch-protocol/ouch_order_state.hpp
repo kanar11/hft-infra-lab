@@ -64,6 +64,7 @@ class OUCHOrderTracker {
     int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
     int64_t  max_exec_shares_ = 0;  // largest single Executed report (clamped) (#530)
     int64_t  cancelled_shares_ = 0; // shares freed by CANCELLED remainders + AIQ decrements (#538)
+    char     last_reject_reason_ = '\0'; // reason char of the last 'J' Rejected (#586)
     uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
     uint64_t replaced_       = 0;   // Order Replaced ('U') migrations applied (#386)
     uint64_t desyncs_        = 0;   // responses naming an UNKNOWN token (#426)
@@ -226,6 +227,14 @@ public:
                 rec->pending_cancel = false;
                 ++cancelled_;
             }
+        } else if (std::strcmp(r.type, "REJECTED") == 0) {
+            // #586: the 'J' carries WHY (NASDAQ reason char) — capture it
+            // instead of dropping it into the generic else. The OUCH parity
+            // of OMS last_reject (#88): rejects() says how often, this says
+            // what the venue said last.
+            rec->state = OrderState::REJECTED;
+            if (r.reason[0] != '\0') last_reject_reason_ = r.reason[0];
+            ++rejected_;
         } else {  // ERROR / UNKNOWN
             rec->state = OrderState::REJECTED;
             ++rejected_;
@@ -653,6 +662,14 @@ public:
     // cancel_rejects: how many Cancel Reject ('I') reports were applied (#378).
     // Distinct from rejects(): the ORDER survives a cancel reject.
     uint64_t cancel_rejects() const noexcept { return cancel_rejects_; }
+    // last_reject_reason: the NASDAQ reason char of the most recent 'J'
+    // Rejected report (#586) — the WHY behind rejects(): 'T' = test-mode
+    // symbol, 'H' = halted, 'S' = shares exceed a limit, 'X' = invalid price
+    // and so on (venue-defined). rejects() counts, this names — the OUCH
+    // parity of OMS last_reject (#88). '\\0' before any 'J'; a desync-path
+    // rejection (unknown token / ERROR) leaves it untouched, since the venue
+    // supplied no reason. Reset by reset_session.
+    char last_reject_reason() const noexcept { return last_reject_reason_; }
     // replaces: how many Order Replaced ('U') token migrations were applied (#386).
     uint64_t replaces() const noexcept { return replaced_; }
     // reset_session: wipe the tracker for a new trading day (#442) — clears
@@ -671,6 +688,7 @@ public:
         exec_shares_    = 0;
         max_exec_shares_ = 0;   // #530
         cancelled_shares_ = 0;  // #538
+        last_reject_reason_ = '\0';  // #586
         cancel_rejects_ = 0;
         replaced_       = 0;
         desyncs_        = 0;
