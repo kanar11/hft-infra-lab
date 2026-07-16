@@ -621,6 +621,21 @@ void test_oms_short_and_replace() {
         oms.submit_order("BBB", Side::BUY, 10.0, 100);              // submitted 2
         oms.cancel_order(a->order_id);                             // cancels 1
         ASSERT(close(oms.cancel_rate(), 0.5), "cancel_rate_half"); // 1/2
+        // #588 cancel_to_fill_ratio — normalized by FILLS, not submits:
+        // no fill yet -> guarded 0 despite the cancel.
+        ASSERT(oms.cancel_to_fill_ratio() == 0.0, "ctf_no_fills_guarded");
+        // The maker profile: 3 more cancels, then ONE fill in 2 slices ->
+        // 4 cancels / 2 fill events = 2.0, while cancel_rate reads 4/6.
+        Order* c1 = oms.submit_order("CCC", Side::BUY, 10.0, 100);
+        Order* c2 = oms.submit_order("DDD", Side::BUY, 10.0, 100);
+        Order* c3 = oms.submit_order("EEE", Side::BUY, 10.0, 100);
+        oms.cancel_order(c1->order_id); oms.cancel_order(c2->order_id);
+        oms.cancel_order(c3->order_id);
+        Order* f1 = oms.submit_order("FFF", Side::BUY, 10.0, 100);
+        oms.fill_order(f1->order_id, 60, 10.0);
+        oms.fill_order(f1->order_id, 40, 10.0);
+        ASSERT(close(oms.cancel_to_fill_ratio(), 2.0), "ctf_two_cancels_per_fill");
+        ASSERT(close(oms.cancel_rate(), 4.0 / 6.0), "ctf_diverges_from_cancel_rate");
     }
 
     {   // #282 replace_rate (replaces / submitted).

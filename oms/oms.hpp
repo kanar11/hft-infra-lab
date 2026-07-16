@@ -1033,6 +1033,20 @@ public:
     }
     uint64_t total_cancels()  const noexcept { return total_cancels_; }
     uint64_t total_replaces() const noexcept { return total_replaces_; }
+    // cancel_to_fill_ratio (#588): cancels per FILL event = total_cancels /
+    // total_fills — the OMS-side cousin of itch's order_to_trade_ratio (#559,
+    // the venue's whole-tape view): how much of this desk's own order traffic
+    // is quote management versus execution. cancel_rate (#258) normalizes by
+    // SUBMITS (how orders end); this normalizes by FILLS (what the traffic
+    // BOUGHT) — a maker repricing all day can show a modest cancel_rate yet
+    // dozens of cancels per actual fill, exactly the profile message-fee
+    // schedules and venue surveillance price. Guarded to 0 before any fill
+    // (unbounded otherwise; read total_cancels raw in the no-fill regime).
+    double cancel_to_fill_ratio() const noexcept {
+        return total_fills_ > 0
+            ? static_cast<double>(total_cancels_) / static_cast<double>(total_fills_)
+            : 0.0;
+    }
     uint64_t total_ordered_shares() const noexcept { return total_ordered_shares_; }
     // avg_submitted_size: mean order size in SHARES across all submits (#371) =
     // total_ordered_shares / total_submitted. The entry-side companion to
