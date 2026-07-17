@@ -90,6 +90,7 @@
 #include "../strategy/supersmoother.hpp"
 #include "../strategy/t3.hpp"
 #include "../strategy/decycler.hpp"
+#include "../strategy/efficiency_ratio.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5477,6 +5478,42 @@ void test_decycler() {
     ASSERT(!du.ready() && du.value() == 0.0, "dec_reset");
 }
 
+// EfficiencyRatio #590 — Kaufman's ER (net progress / path length).
+void test_efficiency_ratio() {
+    SECTION("Efficiency Ratio (#590, MILESTONE 590)");
+    EfficiencyRatio ef;                            // period 10 -> needs 11 prices
+    for (int i = 0; i < 8; ++i) ef.update(100.0 + i);
+    ASSERT(!ef.ready() && ef.value() == 0.0, "er_not_ready_during_warmup");
+
+    // A perfect ramp is perfectly efficient: net 8 over path 8 -> EXACTLY 1.
+    EfficiencyRatio eu(4);
+    eu.update(10.0); eu.update(12.0); eu.update(14.0); eu.update(16.0); eu.update(18.0);
+    ASSERT(eu.ready() && std::fabs(eu.value() - 1.0) < 1e-12, "er_ramp_exactly_one");
+
+    // Direction-blind: the mirrored down-ramp is just as efficient.
+    EfficiencyRatio ed(4);
+    ed.update(18.0); ed.update(16.0); ed.update(14.0); ed.update(12.0); ed.update(10.0);
+    ASSERT(std::fabs(ed.value() - 1.0) < 1e-12, "er_down_ramp_one");
+
+    // A round trip moves 8 and nets 0 -> EXACTLY 0 (pure chop).
+    EfficiencyRatio ec(4);
+    ec.update(10.0); ec.update(12.0); ec.update(14.0); ec.update(12.0); ec.update(10.0);
+    ASSERT(std::fabs(ec.value()) < 1e-12, "er_round_trip_exactly_zero");
+
+    // A half-efficient path: net 4 over path 8 -> 0.5.
+    EfficiencyRatio eh(4);
+    eh.update(10.0); eh.update(12.0); eh.update(10.0); eh.update(12.0); eh.update(14.0);
+    ASSERT(std::fabs(eh.value() - 0.5) < 1e-12, "er_half_efficient");
+
+    // A flat window has no path at all -> 0, not a division blow-up.
+    EfficiencyRatio efl(4);
+    for (int i = 0; i < 6; ++i) efl.update(50.0);
+    ASSERT(efl.ready() && efl.value() == 0.0, "er_flat_zero");
+
+    eu.reset();
+    ASSERT(!eu.ready() && eu.value() == 0.0, "er_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -10160,6 +10197,7 @@ int main() {
     test_supersmoother();
     test_t3();
     test_decycler();
+    test_efficiency_ratio();
     test_cmo();
     test_zscore();
     test_tsi();
