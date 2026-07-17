@@ -2398,6 +2398,14 @@ void test_itch_book() {
     // Empty side or negative ticks -> 0.
     ASSERT(lw.notional_within('B', 5) == 0.0, "itchbook_notional_within_empty_side");
     ASSERT(lw.notional_within('S', -1) == 0.0, "itchbook_notional_within_negative_zero");
+    // #591 levels_within — the DENSITY axis of the same band: the touch alone
+    // at 0 ticks, two rungs within 1, all three within 5 (100.02..100.04 are
+    // empty air the shares/dollar reads cannot see).
+    ASSERT(lw.levels_within('S', 0) == 1, "itchbook_levels_within_touch");
+    ASSERT(lw.levels_within('S', 1) == 2, "itchbook_levels_within_1");
+    ASSERT(lw.levels_within('S', 5) == 3, "itchbook_levels_within_5");
+    ASSERT(lw.levels_within('B', 5) == 0 && lw.levels_within('S', -1) == 0,
+           "itchbook_levels_within_guards");
 
     // #269 liquidity_imbalance_within (ticks-based imbalance).
     itch::ITCHOrderBook li;

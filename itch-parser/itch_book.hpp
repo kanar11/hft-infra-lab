@@ -333,6 +333,31 @@ public:
         return sum;
     }
 
+    // levels_within (#591): how many DISTINCT price levels populate the tick
+    // band next to the touch — the DENSITY axis completing the within-band
+    // family: liquidity_within (#164) sums the band's SHARES, notional_within
+    // (#527) its DOLLARS, this counts its rungs. The same 600 shares within 5
+    // ticks mean very different books on 2 levels versus 12: dense rungs give
+    // a sweep a staircase of small concessions (and a maker many join points),
+    // two sparse walls mean price gaps straight between them — the same
+    // granularity story largest_level_gap (#325) tells from the air-pocket
+    // side. levels_within / (ticks+1) is the band's fill factor. 0 when the
+    // side is empty or ticks < 0.
+    int levels_within(char side, int ticks) const noexcept {
+        if (ticks < 0) return 0;
+        int n = 0;
+        if (side == 'B') {
+            if (bids_.empty()) return 0;
+            const int64_t floor = bids_.rbegin()->first - ticks;
+            for (auto it = bids_.rbegin(); it != bids_.rend() && it->first >= floor; ++it) ++n;
+        } else {
+            if (asks_.empty()) return 0;
+            const int64_t ceil = asks_.begin()->first + ticks;
+            for (auto it = asks_.begin(); it != asks_.end() && it->first <= ceil; ++it) ++n;
+        }
+        return n;
+    }
+
     // fillable_shares: how many shares can be executed up to a LIMIT PRICE (#223). BUY:
     // sum of ask qty at price <= limit; SELL: sum of bid qty at price >= limit. Unlike
     // liquidity_within (ticks from best) — here the threshold is a specific order price.
