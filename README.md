@@ -5,7 +5,7 @@
 Complete low-latency infrastructure lab for HFT systems — kernel tuning, networking, order management, and monitoring.
 
 ## Performance Highlights (Red Hat EL10, VirtualBox 2-core VM)
-- Order book matching: **17.8M orders/sec** (C++, fixed-point int64 prices, p50=50ns, p99=130ns)
+- Order book matching: **17.8M orders/sec repeatable gate — measured 60–78M orders/sec** on the flat-array book with occupancy bitmaps (ctz/clz word scans, O(gap/64) cursor advance). Reproduce: `./orderbook/benchmark_orderbook 1000000 7 17.8` — multi-trial, fresh book per trial, std::map cross-check, threshold applied to the *slowest* trial
 - Order book — flat-array variant (`orderbook/orderbook_flat.hpp`): **O(1) add/match, zero heap alloc** — see `./orderbook/orderbook_flat 1000000` for live head-to-head vs the std::map baseline
 - **FullOrderBook L3** (`orderbook/orderbook_pro.hpp`): production-grade L3 matching engine — FIFO queue per price level, 10 order types (LIMIT/IOC/FOK/POST_ONLY/ICEBERG/STOP/PEG/MARKET/HIDDEN/AON) + OCO/bracket/trailing-stop, auction cross, self-trade prevention, LULD + MIFID II compliance, snapshot+delta recovery, integrity audit, microstructure analytics (VPIN, Kyle's λ, OFI, Lee-Ready, Hurst). 300+ tests: `./orderbook/orderbook_pro_demo 100000`
 - ITCH parser (C++): **60M msg/sec** (16ns/msg, p50=40ns, p99=50ns)
@@ -83,6 +83,59 @@ A fourth data source — a minimal **RFC 6455 WebSocket** client + a self-contai
 
 Protocol details, opcodes, and connecting to real exchanges: [`feed/README.md`](feed/README.md).
 
+## Observability & analytics layer
+
+On top of the hot paths, every core module carries a tested read-only metrics
+surface (built up across ~590 numbered expansion commits, one feature + tests
+per commit, all CI-green):
+
+- **oms/** — full TCA (speed/size/price axes: min/avg/max time-to-fill and
+  time-to-cancel, price improvement vs limit, fee bps of turnover), P&L
+  attribution per name (typed dollar getters, best/worst symbol,
+  profit/loss concentration), round-trip accounting, reject histogram with
+  `most_common_reject`, fat-finger high-waters, notional vs per-order fill
+  ratios, `cancel_to_fill_ratio`
+- **risk/** — the complete moment family on the P&L stream (mean, variance,
+  skewness, excess kurtosis) feeding live parametric **VaR and expected
+  shortfall**, Sharpe/Sortino/Calmar/Kelly, streak and drawdown families
+  (depth, duration, underwater fraction), loss-budget runway, kill-switch
+  histogram with `most_common_kill_reason`
+- **itch-parser/** — L3 book + tape analytics: exact aggressor split, CVD
+  with high/low water marks, side VWAPs and realized effective spread,
+  liquidity withdrawn per side (`pulled_shares`, `pull_to_take_ratio`),
+  within-band depth in shares / dollars / levels, regulatory
+  `order_to_trade_ratio`, book integrity audit
+- **router/** — best-ex TCA: routed turnover in shares *and* dollars, blended
+  routing VWAP, signed fee bps, shortfall accounting, NBBO health (two-sided
+  venue count, touch depth in $, staleness), and the "name the venue" family
+  (cheapest/dearest fee, fastest/slowest, busiest, stalest quote)
+- **fix-protocol/** — typed parse family of **29 message types** (application
+  + admin: liveness 0/1, recovery 2/4, boundary A/5, market data V/W/X incl.
+  the repeating-group snapshot), client-side order tracker with cancel
+  lifecycle and per-order outcome rates
+- **ouch-protocol/** — order-state tracker with full P&L decomposition
+  (realized / unrealized / mark-to-market, breakeven mark, spread capture in
+  bps), working-book valuation (shares, dollars, per-side, VWAP center),
+  condemned-exposure trio, share-weighted cancel accounting, terminal-state
+  guards against duplicate/late executions
+- **multicast/** — feed health toolkit: gap recovery with burst forensics
+  (`max_gap_burst`), A/B line arbitration with primary selection, staleness
+  outage stats, inter-arrival meters hardened against non-monotonic
+  timestamps, token-bucket / throttle pressure rates, composite `FeedHealth`
+  score with `worst_impairment`, fleet-wide `overall_completeness`
+- **strategy/** — **67 header-only indicator primitives**: the MA family
+  (EMA/WMA/Hull/DEMA/TEMA/T3/VWMA/ZLEMA/ALMA), adaptive MAs (KAMA, VIDYA,
+  McGinley), the Ehlers set (SuperSmoother, Decycler, Laguerre RSI, Fisher,
+  Center of Gravity), momentum/volume/regime oscillators (MACD, KST, Coppock,
+  MFI, OBV/PVT/NVI+PVI, Efficiency Ratio, Choppiness), execution algos
+  (TWAP/VWAP/POV) and a market maker
+
+Recurring design idioms: every mean has its MAX/MIN companions, every
+aggregate its actionable *which* (name the venue/symbol/order/channel/reason),
+shares vs dollars split everywhere capital matters, clock injection for
+deterministic latency tests, and audit-found bug fixes shipped as tested
+expansions (terminal-state guards, monotonicity guards, fill-after-cancel).
+
 ## Modules 
 
 | Module | Description | Language |
@@ -90,20 +143,20 @@ Protocol details, opcodes, and connecting to real exchanges: [`feed/README.md`](
 | kernel-config/ | Hugepages, CPU isolation, sysctl, IRQ affinity | Bash |
 | linux-tuning/ | Baseline vs tuned kernel benchmarks | Bash |
 | network-latency/ | Network latency and jitter measurement | Bash |
-| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec), sequence gap detection + **recovery** (retransmit request/reconcile) | C++ |
+| multicast/ | Market data feed — UDP multicast sender/receiver, binary protocol (23M msg/sec), sequence gap detection + **recovery** (retransmit request/reconcile) + feed-health toolkit (A/B lines, staleness, dedup, reorder, conflation, `FeedHealth`) | C++ |
 | orderbook/ | Matching engine: 4 variants — std::map basic, std::map + cancel/modify, flat-array O(1), **FullOrderBook L3** (FIFO, 10 order types + OCO/bracket/trailing, auction cross, STP, LULD/MIFID II, snapshot/delta recovery, integrity audit, microstructure analytics) | C++ |
-| fix-protocol/ | FIX 4.2 parser + session validation (CheckSum tag 10, BodyLength tag 9, SOH delimiter) + message builder (5.5M msg/sec) | C++ |
-| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types, 60M msg/sec) + **L3 book reconstructor** (`itch_book.hpp`: Add/Exec/Cancel/Delete/Replace → best bid/ask, depth, resting orders) | C++ |
-| ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) | C++ |
+| fix-protocol/ | FIX 4.2 parser + session (CheckSum/BodyLength/SOH, seq persistence, resend/gap-fill) + builders and a **typed parse family of 29 message types** + client-side order tracker (5.5M msg/sec) | C++ |
+| itch-parser/ | NASDAQ ITCH 5.0 binary protocol parser (9 message types, 60M msg/sec) + **L3 book reconstructor** (`itch_book.hpp`: best/depth/microprice + tape analytics — CVD, aggressor runs, side VWAPs, OTR, integrity audit) | C++ |
+| ouch-protocol/ | NASDAQ OUCH 4.2 order entry protocol (19.9M msg/sec) + **order-state tracker** (P&L decomposition, working-book valuation, cancel lifecycle, terminal-state guards) | C++ |
 | dpdk-bypass/ | Kernel bypass simulator — poll vs interrupt benchmark (2.3x speedup) | C++ |
 | memory-latency/ | Cache latency measurement (L1/L2/L3/RAM) | C++ |
 | lockfree/ | 6 lock-free primitives: SPSC, MPSC, MPMC, Sequencer, WaitableMPSC, VarlenRingBuffer | C++ |
 | common/ | Shared types (Side enum), sym_to_key, time helpers used across modules | C++ |
-| oms/ | Order Management System with risk checks, P&L, pending exposure (11.6M orders/sec) | C++ |
+| oms/ | Order Management System — risk checks, P&L + per-name attribution, pending exposure, full TCA metric surface (11.6M orders/sec) | C++ |
 | monitoring/ | Real-time infra monitor — /proc parser, alerts (8.6M parse/sec) | C++ |
-| strategy/ | Three strategy families: reactive (mean reversion) + proactive (market maker) + execution algos (TWAP, VWAP w/ U-shape volume profile) | C++ |
-| router/ | Smart Order Router — venue selection by effective price (quote ± maker/taker fee), latency, split (9.7M routes/sec) | C++ |
-| risk/ | Risk Manager — circuit breakers, kill switch, position/PnL limits, pending exposure (7.9M checks/sec) | C++ |
+| strategy/ | **67 indicator primitives** (MA/adaptive/Ehlers/momentum/volume/regime families) + reactive (mean reversion), proactive (market maker) and execution algos (TWAP, VWAP w/ U-shape profile, POV) | C++ |
+| router/ | Smart Order Router — venue selection by effective price (quote ± maker/taker fee), latency, split; best-ex TCA in shares and dollars, NBBO health, venue-naming reads (9.7M routes/sec) | C++ |
+| risk/ | Risk Manager — circuit breakers, kill switch + reason histogram, position/PnL limits, pending exposure; live moment family with parametric VaR/ES, Kelly, drawdown/streak analytics (7.9M checks/sec) | C++ |
 | benchmarks/ | Micro-benchmarks: ping-pong latency, orderbook ops, CSV + gnuplot | C++ |
 | simulator/ | End-to-end pipeline (ITCH→Parser→Strategy→Router→Risk→OMS→FullOrderBook match→P&L), sync + threaded; flags `--strategy/--router/--risk/--book/--mm` | C++ |
 | backtest/ | Strategy P&L attribution — Sharpe, max drawdown, hit-rate, profit factor, fill-rate over a strategy run (`make backtest`) | C++ |
@@ -112,7 +165,7 @@ Protocol details, opcodes, and connecting to real exchanges: [`feed/README.md`](
 | network/ | Epoll-based async TCP server + self-test FIX ingestion demo | C++ |
 | feed/ | Minimal RFC 6455 WebSocket client + self-contained mock server (Binance-style JSON trades) | C++ |
 | bindings/ | pybind11 Python extension exposing OMS, RiskManager, FlatOrderBook | C++/Python |
-| tests/ | Integration test suite — cross-module pipeline validation (200+ assertions) | C++ |
+| tests/ | Integration test suite — cross-module pipeline validation (**2,938 assertions** in `test_all.cpp`, plus 805 in the FullOrderBook demo) | C++ |
 | docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |
 
 ## Quick Start
@@ -127,11 +180,16 @@ docker run hft-lab make simulate  # simulator only
 
 ### Manual
 ```bash
-make build      # compile all 21 C++ binaries
-make test       # run all built-in unit tests (200+)
+make build      # compile all C++ binaries
+make test       # run all built-in unit tests (2,900+ assertions)
 make benchmark  # run all throughput benchmarks
 make simulate   # run end-to-end market simulator (direct, strategy, router, +risk, +book full pipeline)
 ```
+
+### CI
+Every push to `main` runs six jobs: `g++`, `clang++`, ASan+UBSan sanitizers,
+clang-tidy (warnings-as-errors), cppcheck static analysis, and the pybind11
+Python-binding build.
 
 ## Environment 
 - OS: Red Hat Enterprise Linux 10.1 (Coughlan)
