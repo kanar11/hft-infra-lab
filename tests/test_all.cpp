@@ -5985,6 +5985,31 @@ void test_router_ewma_partial() {
         ASSERT(std::strcmp(rhu.busiest_venue(bv_sh), "P") == 0 && bv_sh == 90, "rhhi_busiest_P");
         ASSERT(rhe.busiest_venue(bv_sh) == nullptr, "rhhi_busiest_empty_null");
 
+        // #592 idle_venue_count — active, quoting, yet never routed to.
+        // rhu: both P and Q took flow -> 0 idle on the buy side.
+        ASSERT(rhu.idle_venue_count(true) == 0, "idle_both_routed_zero");
+        SmartOrderRouter ridle(RoutingStrategy::BEST_PRICE);
+        ridle.add_venue(Venue("W", 100, 0.0));
+        ridle.add_venue(Venue("L", 100, 0.010));       // punishing fee -> never wins
+        ridle.update_quote("W", 10.0, 11.0, 1000, 500);
+        ridle.update_quote("L", 10.0, 11.0, 1000, 500);
+        ridle.route_order("BUY", 200);                 // all to W (cheaper all-in)
+        // L is live and quoting the ask but took nothing -> 1 idle venue.
+        ASSERT(ridle.idle_venue_count(true) == 1, "idle_never_chosen_one");
+        // Sell side: W QUOTES the bid but already took BUY flow, so it is no
+        // longer 'never routed' -> only L (which took nothing) is idle -> 1.
+        // 'Idle' is a per-venue TOTAL (ever routed to?), gated by the side's quote.
+        ASSERT(ridle.idle_venue_count(false) == 1, "idle_side_gates_but_total_counts");
+        // Disabling L removes it from the count (cannot be routed to).
+        ridle.set_venue_active("L", false);
+        ASSERT(ridle.idle_venue_count(true) == 0, "idle_disabled_excluded");
+        // A venue that does not quote the side is not 'idle' — it can't be hit.
+        SmartOrderRouter rnq(RoutingStrategy::BEST_PRICE);
+        rnq.add_venue(Venue("N", 100, 0.0));
+        rnq.update_quote("N", 10.0, 0.0, 500, 0);      // bid only
+        ASSERT(rnq.idle_venue_count(true) == 0 && rnq.idle_venue_count(false) == 1,
+               "idle_non_quoting_side_excluded");
+
         rs.reset_routing_stats();
         ASSERT(rs.total_routed_shares() == 0, "tca_reset_zero");
         ASSERT(rs.routing_concentration() == 0.0, "rhhi_reset_zero");

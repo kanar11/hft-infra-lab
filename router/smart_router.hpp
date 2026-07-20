@@ -1463,6 +1463,28 @@ public:
         if (name != nullptr) out_shares = best;
         return name;
     }
+    // idle_venue_count: active venues QUOTING the given side that have never
+    // received a single routed share this session (#592) — the dead weight in
+    // a best-ex arrangement: a venue you pay to connect to, that is live and
+    // showing liquidity, yet the router keeps passing over (worse price, worse
+    // fee, or losing every tie). The complement of busiest_venue (#528, where
+    // the flow concentrates): concentration and idleness are two ends of the
+    // same skew, and a rising idle count justifies dropping a venue or asking
+    // why its quotes never win. A venue not quoting the side is EXCLUDED (it
+    // cannot be routed to, so its silence is not idleness) — same quoting gate
+    // as liquidity_venue_count (#359). 0 when every quoting venue has taken
+    // flow, or none quotes the side.
+    int idle_venue_count(bool is_buy) const noexcept {
+        int n = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const bool quotes = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                       : (v.best_bid > 0 && v.bid_size > 0);
+            if (quotes && v.routed_shares == 0) ++n;
+        }
+        return n;
+    }
     // reset_routing_stats: zero the per-venue TCA counters (new session/window).
     void reset_routing_stats() noexcept {
         for (int i = 0; i < venue_count_; ++i) {
