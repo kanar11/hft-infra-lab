@@ -332,6 +332,7 @@ class RiskManager {
     int32_t underwater_updates_     = 0;  // consecutive updates below the P&L peak (#397)
     int32_t max_underwater_updates_ = 0;  // longest such spell this session (#397)
     uint64_t total_underwater_updates_ = 0;  // cumulative updates below the peak (#517)
+    double   dd_sumsq_ = 0.0;                 // Σ drawdown_$² over every update (#596)
     int32_t max_consec_wins_        = 0;  // best winning streak seen this session (#405)
     uint64_t kill_activations_      = 0;  // fresh false->true kill-switch latches (#421)
     uint64_t kill_counts_[5]        = {}; // fresh latches per KillReason (#541; index = enum)
@@ -593,6 +594,7 @@ public:
         // Track the worst peak-to-trough decline ever seen this session (#340).
         const double dd_now = peak_pnl_ - daily_pnl_;
         if (dd_now > max_drawdown_dollars_) max_drawdown_dollars_ = dd_now;
+        dd_sumsq_ += dd_now * dd_now;   // #596: RMS-drawdown (pain index) accumulator
         // Drawdown DURATION (#397): consecutive updates spent below the peak
         // — the time axis to #340's depth. FLAT updates extend the spell
         // (time passes underwater even when nothing changes), unlike the
@@ -819,6 +821,7 @@ public:
         underwater_updates_     = 0;  // #397
         max_underwater_updates_ = 0;  // #397
         total_underwater_updates_ = 0;  // #517
+        dd_sumsq_ = 0.0;                // #596
         max_consec_wins_        = 0;  // #405
         kill_activations_       = 0;  // #421
         for (int i = 0; i < 5; ++i) kill_counts_[i] = 0;   // #541
@@ -1497,6 +1500,24 @@ public:
     double underwater_fraction() const noexcept {
         return pnl_updates_ > 0
             ? static_cast<double>(total_underwater_updates_) / static_cast<double>(pnl_updates_)
+            : 0.0;
+    }
+    // pnl_pain_index: the ROOT-MEAN-SQUARE drawdown depth over the session, in
+    // dollars (#596) = sqrt(mean(drawdown_$²)) — the dollar Ulcer / Martin
+    // index. It fuses the two axes the existing drawdown reads split:
+    // max_drawdown_dollars (#340) is only the single worst point (depth,
+    // blind to how long) and underwater_fraction (#517) only the time below
+    // the peak (duration, blind to how deep) — this weights every update's
+    // drawdown quadratically, so a shallow-but-constant drawdown and a
+    // deep-but-brief one that share a MAX read very differently here (the deep
+    // one hurts more). The honest "how uncomfortable was the ride" number a
+    // risk-adjusted return divides by (return / pain = the Martin ratio).
+    // Always <= max_drawdown_dollars (an RMS never exceeds its max); 0 on an
+    // only-up session (every update at a new peak, zero drawdown) and before
+    // any update. Reset by reset_daily.
+    double pnl_pain_index() const noexcept {
+        return pnl_updates_ > 0
+            ? std::sqrt(dd_sumsq_ / static_cast<double>(pnl_updates_))
             : 0.0;
     }
     // consecutive_losses_remaining: how many more losing fills IN A ROW until the

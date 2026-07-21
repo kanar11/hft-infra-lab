@@ -7139,6 +7139,29 @@ void test_risk_price_band() {
     rmono.update_pnl(+1.0); rmono.update_pnl(+2.0); rmono.update_pnl(+3.0);
     ASSERT(rmono.total_underwater_updates() == 0 && rmono.underwater_fraction() == 0.0,
            "uw_monotone_zero_fraction");
+    ASSERT(rmono.pnl_pain_index() == 0.0, "pain_monotone_zero");   // #596: no drawdown, no pain
+
+    // #596 pnl_pain_index — RMS drawdown depth, fusing depth AND duration.
+    RiskManager rpn;
+    ASSERT(rpn.pnl_pain_index() == 0.0, "pain_empty_zero");
+    // A BRIEF deep drawdown: dd path 0,8,0,0 -> RMS sqrt(64/4) = 4.00, max 8.
+    RiskManager rbrief;
+    rbrief.update_pnl(+10.0); rbrief.update_pnl(-8.0);
+    rbrief.update_pnl(+8.0);  rbrief.update_pnl(0.0);
+    ASSERT(std::fabs(rbrief.pnl_pain_index() - 4.0) < 1e-9, "pain_brief_four");
+    // An RMS never exceeds the max — depth's single worst point bounds it.
+    ASSERT(rbrief.pnl_pain_index() < rbrief.max_drawdown_dollars(), "pain_below_max");
+    ASSERT(std::fabs(rbrief.max_drawdown_dollars() - 8.0) < 1e-9, "pain_brief_max_8");
+    // A PERSISTENT deep drawdown of the SAME max and SAME update count sits
+    // underwater longer -> dd path 0,8,8,0 -> RMS sqrt(128/4) = 5.66 > 4.00.
+    // Same worst point, more pain — exactly what max_drawdown cannot see.
+    RiskManager rpersist;
+    rpersist.update_pnl(+10.0); rpersist.update_pnl(-8.0);
+    rpersist.update_pnl(0.0);   rpersist.update_pnl(+8.0);
+    ASSERT(std::fabs(rpersist.max_drawdown_dollars() - 8.0) < 1e-9, "pain_persist_same_max");
+    ASSERT(rpersist.pnl_pain_index() > rbrief.pnl_pain_index(), "pain_persist_hurts_more");
+    rbrief.reset_daily();
+    ASSERT(rbrief.pnl_pain_index() == 0.0, "pain_reset");
 
     // #405 max_consecutive_wins_seen — the win-side high-water mark (#364's twin).
     RiskManager rmw;
