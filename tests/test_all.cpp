@@ -9584,6 +9584,7 @@ void test_ouch_order_state() {
     ouch::OUCHOrderTracker aes;
     ASSERT(aes.exec_count() == 0 && aes.avg_exec_shares() == 0.0, "ouch_aes_empty");
     ASSERT(aes.largest_execution() == 0, "ouch_aes_largest_empty");   // #530
+    ASSERT(aes.smallest_execution() == 0, "ouch_aes_smallest_empty");   // #594
     aes.on_new("E1", 300);
     n = OUCHMessage::encode_accepted(buf, "E1", 'B', 300, "AAPL", 50.0, 77001);
     aes.on_response(OUCHMessage::parse_response(buf, n));
@@ -9595,6 +9596,8 @@ void test_ouch_order_state() {
     ASSERT(std::fabs(aes.avg_exec_shares() - 150.0) < 1e-9, "ouch_aes_avg_150"); // (100+200)/2
     // #530 largest_execution — the block-fill high-water (200 > the 150 mean).
     ASSERT(aes.largest_execution() == 200, "ouch_aes_largest_200");
+    // #594 smallest_execution — the low-water: 100 is the smaller of the two.
+    ASSERT(aes.smallest_execution() == 100, "ouch_aes_smallest_100");
     // an over-fill attempt clamps to remaining 0 -> exec 0 -> NOT counted
     n = OUCHMessage::encode_executed(buf, "E1", 50, 50.0, 3);
     aes.on_response(OUCHMessage::parse_response(buf, n));
@@ -9606,6 +9609,26 @@ void test_ouch_order_state() {
     ASSERT(aes.exec_count() == 2 && std::fabs(aes.avg_exec_shares() - 150.0) < 1e-9,
            "ouch_aes_break_unaffected");
     ASSERT(aes.largest_execution() == 200, "ouch_aes_largest_break_unaffected");   // #530
+    ASSERT(aes.smallest_execution() == 100, "ouch_aes_smallest_break_unaffected");   // #594
+    // #594 odd-lot spread: a fresh order filled 200, then a 1-share odd lot,
+    // then 49 -> smallest 1, largest 200 (the block-and-scrap signature).
+    {
+        ouch::OUCHOrderTracker odl;
+        uint8_t ob[64];
+        odl.on_new("O1", 250);
+        int on = OUCHMessage::encode_accepted(ob, "O1", 'B', 250, "AAPL", 50.0, 78001);
+        odl.on_response(OUCHMessage::parse_response(ob, on));
+        on = OUCHMessage::encode_executed(ob, "O1", 200, 50.0, 1);
+        odl.on_response(OUCHMessage::parse_response(ob, on));
+        on = OUCHMessage::encode_executed(ob, "O1", 1, 50.0, 2);   // odd lot
+        odl.on_response(OUCHMessage::parse_response(ob, on));
+        on = OUCHMessage::encode_executed(ob, "O1", 49, 50.0, 3);
+        odl.on_response(OUCHMessage::parse_response(ob, on));
+        ASSERT(odl.smallest_execution() == 1 && odl.largest_execution() == 200,
+               "ouch_odl_spread_1_to_200");
+        odl.reset_session();
+        ASSERT(odl.smallest_execution() == 0, "ouch_odl_reset");
+    }
 
     // #538 total_cancelled_shares / cancelled_share_rate — the share-weighted cancel face.
     ouch::OUCHOrderTracker csh;

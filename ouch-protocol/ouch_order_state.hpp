@@ -63,6 +63,7 @@ class OUCHOrderTracker {
     uint64_t exec_count_     = 0;   // number of Executed ('E') reports applied (#328)
     int64_t  exec_shares_    = 0;   // cumulative executed shares, as reported (#328)
     int64_t  max_exec_shares_ = 0;  // largest single Executed report (clamped) (#530)
+    int64_t  min_exec_shares_ = 0;  // smallest single Executed report (0 = none) (#594)
     int64_t  cancelled_shares_ = 0; // shares freed by CANCELLED remainders + AIQ decrements (#538)
     char     last_reject_reason_ = '\0'; // reason char of the last 'J' Rejected (#586)
     uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
@@ -145,6 +146,8 @@ public:
             if (exec > 0) {
                 exec_shares_ += exec; ++exec_count_;   // #328 per-execution
                 if (exec > max_exec_shares_) max_exec_shares_ = exec;   // #530 block-fill high-water
+                if (min_exec_shares_ == 0 || exec < min_exec_shares_)
+                    min_exec_shares_ = exec;                            // #594 odd-lot low-water
                 // #410: price the fill — Executed carries the exec price.
                 const double notional = r.price * static_cast<double>(exec);
                 rec->fill_notional     += notional;
@@ -687,6 +690,7 @@ public:
         exec_count_     = 0;
         exec_shares_    = 0;
         max_exec_shares_ = 0;   // #530
+        min_exec_shares_ = 0;   // #594
         cancelled_shares_ = 0;  // #538
         last_reject_reason_ = '\0';  // #586
         cancel_rejects_ = 0;
@@ -798,6 +802,17 @@ public:
     // it never exceeds the order it filled. 0 before any fill; reset by
     // reset_session.
     int64_t largest_execution() const noexcept { return max_exec_shares_; }
+    // smallest_execution (#594): the smallest single Executed report this
+    // session, in shares — the odd-lot / probe detector, the MIN companion to
+    // largest_execution (#530) that completes the slice-size envelope with
+    // avg_exec_shares (#328) in the middle. A tiny minimum (an odd lot, a
+    // single share) among otherwise chunky fills is the signature of a
+    // probing child-order algo or the ragged tail of an iceberg; largest /
+    // smallest is the slice-uniformity spread (near 1 = evenly clipped, wide =
+    // mixed block-and-scrap execution). Counts the CLAMPED applied shares like
+    // #530, so it never exceeds the order it filled. 0 before any fill; reset
+    // by reset_session.
+    int64_t smallest_execution() const noexcept { return min_exec_shares_; }
     // avg_order_size: mean ordered quantity per tracked order = total_ordered_shares
     // / order_count (#337). The sizing companion to avg_exec_shares (#328, mean
     // shares per execution): together they show how finely the venue slices orders
