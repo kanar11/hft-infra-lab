@@ -50,6 +50,8 @@ class FIXOrderTracker {
     uint64_t fills_ = 0, cancels_ = 0, rejects_ = 0;
     uint64_t cancel_rejects_ = 0;   // OrderCancelReject (35=9) applied (#393)
     uint64_t replaces_       = 0;   // OrdStatus=5 ClOrdID migrations applied (#401)
+    double   fill_notional_  = 0.0; // Σ LastQty × LastPx over exec reports (#593)
+    int64_t  fill_shares_    = 0;   // Σ LastQty over exec reports (#593)
 
     static OrdState map_status(char s) noexcept {
         switch (s) {
@@ -100,6 +102,19 @@ public:
 
         if (const char* cum = m.get_field(14))  r.cum_qty    = std::atoi(cum);
         if (const char* lv  = m.get_field(151)) r.leaves_qty = std::atoi(lv);
+        // #593: price the slice from 32=LastQty / 31=LastPx (the tape as
+        // reported — a report carrying a positive last fill accrues to the
+        // session VWAP; cancel/reject reports carry LastQty 0 and are skipped).
+        const char* lq = m.get_field(32);
+        const char* lp = m.get_field(31);
+        if (lq && lp) {
+            const int64_t last_qty = std::atoll(lq);
+            const double  last_px  = std::atof(lp);
+            if (last_qty > 0 && last_px > 0.0) {
+                fill_notional_ += static_cast<double>(last_qty) * last_px;
+                fill_shares_   += last_qty;
+            }
+        }
         const char* st = m.get_field(39);            // OrdStatus
         r.state = st ? map_status(st[0]) : OrdState::UNKNOWN;
 
@@ -225,6 +240,19 @@ public:
             ? static_cast<double>(total_filled_qty()) / static_cast<double>(ordered)
             : 0.0;
     }
+    // fill_vwap: the session's blended fill price (#593) = Σ(LastQty × LastPx)
+    // / Σ LastQty over every ExecutionReport that carried a slice — the FIX
+    // parity of the OUCH tracker's fill_vwap (#410) and the client-side
+    // benchmark price to compare arrival / market VWAP slippage against. It
+    // prices what the venue actually reported filling, side-blind (a buy and
+    // a sell both accrue at their exec price) — the tracker follows single
+    // orders, this is the whole session's execution average. 0 before any
+    // priced fill. reset_session clears it.
+    double fill_vwap() const noexcept {
+        return fill_shares_ > 0
+            ? fill_notional_ / static_cast<double>(fill_shares_)
+            : 0.0;
+    }
     uint64_t fills()       const noexcept { return fills_; }
     uint64_t cancels()     const noexcept { return cancels_; }
     uint64_t rejects()     const noexcept { return rejects_; }
@@ -263,6 +291,8 @@ public:
         fills_ = cancels_ = rejects_ = 0;
         cancel_rejects_ = 0;
         replaces_       = 0;
+        fill_notional_  = 0.0;   // #593
+        fill_shares_    = 0;     // #593
     }
     // replaces: OrdStatus=5 ClOrdID migrations applied (#401).
     uint64_t replaces() const noexcept { return replaces_; }

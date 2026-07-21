@@ -8629,6 +8629,35 @@ void test_fix_order_state() {
     // the same share-vs-order divergence OUCH pins between #250 and #361.
     ASSERT(wtr.total_filled_qty() == 100, "fixstate_fr_total_100");
     ASSERT(std::fabs(wtr.fill_rate() - 2.0 / 3.0) < 1e-9, "fixstate_fr_two_thirds");
+    // #593 fill_vwap — session blended fill price from 32=LastQty / 31=LastPx.
+    {
+        fix::FIXOrderTracker fvw;
+        char vb[256];
+        ASSERT(fvw.fill_vwap() == 0.0, "fixstate_fvwap_empty");
+        fvw.on_new("V1", 100); fvw.on_new("V2", 100);
+        // V1: two slices 40@10.00 then 60@11.00 (cum 40, then 100).
+        s.build_exec_report(vb, sizeof(vb), "V1", "EXG", "E1", '1', '1',
+                            "AAPL", Side::BUY, 40, 10.00, 40, 60, '|');
+        FIXMessage e1; e1.parse(vb); fvw.on_exec_report(e1);
+        s.build_exec_report(vb, sizeof(vb), "V1", "EXG", "E2", '2', '2',
+                            "AAPL", Side::BUY, 60, 11.00, 100, 0, '|');
+        FIXMessage e2; e2.parse(vb); fvw.on_exec_report(e2);
+        // V2: 100 @ 12.00 in one print. Blended over 200 sh:
+        // (40*10 + 60*11 + 100*12) / 200 = 2260/200 = 11.30.
+        s.build_exec_report(vb, sizeof(vb), "V2", "EXG", "E3", '2', '2',
+                            "MSFT", Side::SELL, 100, 12.00, 100, 0, '|');
+        FIXMessage e3; e3.parse(vb); fvw.on_exec_report(e3);
+        ASSERT(std::fabs(fvw.fill_vwap() - 11.30) < 1e-9, "fixstate_fvwap_blended_1130");
+        // A cancel report carries LastQty 0 -> no effect on the VWAP.
+        fvw.on_new("V3", 100);
+        s.build_exec_report(vb, sizeof(vb), "V3", "EXG", "E4", '4', '4',
+                            "AAPL", Side::BUY, 0, 0.0, 0, 100, '|');
+        FIXMessage e4; e4.parse(vb); fvw.on_exec_report(e4);
+        ASSERT(std::fabs(fvw.fill_vwap() - 11.30) < 1e-9, "fixstate_fvwap_cancel_no_effect");
+        fvw.reset_session();
+        ASSERT(fvw.fill_vwap() == 0.0, "fixstate_fvwap_reset");
+    }
+
     wtr.reset_session();
     ASSERT(wtr.total_filled_qty() == 0 && wtr.fill_rate() == 0.0, "fixstate_fr_reset");   // #537
 
