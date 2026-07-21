@@ -3310,6 +3310,19 @@ void test_multicast_gap_recovery() {
     ASSERT(lrm.expected() == 6 && lrm.received == 5, "loss_expected_received");
     ASSERT(lrm.lost() == 1, "loss_count");
     ASSERT(std::fabs(lrm.loss_rate() - 1.0/6.0) < 1e-9, "loss_rate");
+    // #595 delivery_rate / is_within_sla — the SLA reporting unit + failover gate.
+    ASSERT(std::fabs(lrm.delivery_rate() - 5.0/6.0) < 1e-9, "loss_delivery_5_6");
+    ASSERT(std::fabs(lrm.delivery_rate() + lrm.loss_rate() - 1.0) < 1e-12,
+           "loss_delivery_complements");
+    ASSERT(!lrm.is_within_sla(), "loss_default_sla_fails_on_loss");   // default demands zero loss
+    ASSERT(lrm.is_within_sla(0.2) && !lrm.is_within_sla(0.1), "loss_sla_threshold");
+    // A fresh meter: nothing expected -> full delivery, passes any SLA.
+    multicast::LossRateMeter lrf;
+    ASSERT(lrf.delivery_rate() == 1.0 && lrf.is_within_sla(), "loss_fresh_full_delivery");
+    // A perfect run -> 1.0 delivery, passes even the strict default.
+    multicast::LossRateMeter lrp;
+    for (uint64_t s = 1; s <= 5; ++s) lrp.on_packet(s);
+    ASSERT(lrp.delivery_rate() == 1.0 && lrp.is_within_sla(), "loss_perfect_delivery");
 
     // #195 OutOfOrderMeter — the fraction of out-of-order packets.
     multicast::OutOfOrderMeter ooo;

@@ -618,6 +618,25 @@ struct LossRateMeter {
         const std::uint64_t e = expected();
         return e ? static_cast<double>(lost()) / static_cast<double>(e) : 0.0;
     }
+    // delivery_rate (#595): the fraction of expected packets that ARRIVED =
+    // received / expected = 1 - loss_rate, in [0,1]. loss_rate is the
+    // diagnostic; this is the REPORTING unit — feed SLAs and exchange conformance
+    // are quoted as availability / delivery percentages ("five nines" =
+    // 0.99999), not as loss, so this is the number that goes on the dashboard.
+    // 1.0 before any packet (nothing expected yet is not a loss).
+    double delivery_rate() const noexcept {
+        const std::uint64_t e = expected();
+        return e ? static_cast<double>(received) / static_cast<double>(e) : 1.0;
+    }
+    // is_within_sla (#595): whether the feed meets a maximum-loss threshold =
+    // loss_rate <= max_loss_rate — the go/no-go gate a failover controller
+    // acts on, the LossRateMeter parallel of FeedHealth::is_healthy (#289).
+    // A clean feed passes any non-negative bar; the default 0.0 demands zero
+    // loss (the strictest reading — any missing packet fails). True before any
+    // packet (no loss observed yet).
+    bool is_within_sla(double max_loss_rate = 0.0) const noexcept {
+        return loss_rate() <= max_loss_rate;
+    }
     void reset() noexcept { first = highest = received = 0; init = false; }
 };
 
