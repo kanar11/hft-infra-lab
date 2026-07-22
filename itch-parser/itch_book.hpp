@@ -59,6 +59,8 @@ class ITCHOrderBook {
     int64_t exec_notional_ask_ticks_ = 0;  // Σ dec*price over lifted-ASK prints (#543)
     int64_t pulled_bid_ = 0;   // shares withdrawn from BIDS by cancels/deletes (#575)
     int64_t pulled_ask_ = 0;   // shares withdrawn from ASKS by cancels/deletes (#575)
+    uint64_t buy_prints_  = 0; // buyer-initiated trade prints (lifted asks) (#598)
+    uint64_t sell_prints_ = 0; // seller-initiated trade prints (hit bids) (#598)
     int64_t  reprice_ticks_sum_  = 0;  // Σ |new - old| price ticks over applied replaces (#431)
     uint64_t repriced_           = 0;  // replaces that actually found their order (#431)
     int64_t  max_reprice_ticks_  = 0;  // largest single |new - old| reprice move (#519)
@@ -119,8 +121,8 @@ public:
             // resting BID was sold into, a lifted ASK was bought from.
             // #543: notional split by the same side, for the side VWAPs.
             const int64_t side_notional = static_cast<int64_t>(dec) * it->second.price_ticks;
-            if (it->second.side == 'B') { exec_against_bid_ += dec; exec_notional_bid_ticks_ += side_notional; }
-            else                        { exec_against_ask_ += dec; exec_notional_ask_ticks_ += side_notional; }
+            if (it->second.side == 'B') { exec_against_bid_ += dec; exec_notional_bid_ticks_ += side_notional; ++sell_prints_; }
+            else                        { exec_against_ask_ += dec; exec_notional_ask_ticks_ += side_notional; ++buy_prints_; }
             // #535: track the running CVD high/low water marks.
             const int64_t cd = exec_against_ask_ - exec_against_bid_;
             if (cd > max_cum_delta_) max_cum_delta_ = cd;
@@ -260,6 +262,7 @@ public:
         max_cum_delta_ = min_cum_delta_ = 0;           // #535
         exec_notional_bid_ticks_ = exec_notional_ask_ticks_ = 0;   // #543
         pulled_bid_ = pulled_ask_ = 0;                             // #575
+        buy_prints_ = sell_prints_ = 0;                            // #598
         reprice_ticks_sum_ = 0; repriced_ = 0;         // #431
         max_reprice_ticks_ = 0;                        // #519
         exec_prints_ = 0;                              // #463
@@ -1082,6 +1085,33 @@ public:
         const int64_t total = exec_against_bid_ + exec_against_ask_;
         return total > 0
             ? static_cast<double>(exec_against_ask_ - exec_against_bid_)
+                  / static_cast<double>(total)
+            : 0.0;
+    }
+
+    // buy_prints / sell_prints (#598): the trade-print COUNT split by aggressor
+    // — buyer-initiated (asks lifted) vs seller-initiated (bids hit), the
+    // per-EVENT companion to the per-SHARE split executed_against_ask/bid
+    // (#415). The two disagree exactly when the sides trade in different clip
+    // sizes: heavy buy SHARES from a handful of big blocks against light but
+    // NUMEROUS sell prints is one institution accumulating while the retail
+    // crowd trickles out — a divergence tape_imbalance (#415, shares) and
+    // print_imbalance below (counts) surface together. Orphaned executes are
+    // excluded (they are not real prints, matching trade_prints #463). 0
+    // before any print on that side; reset by clear().
+    uint64_t buy_prints()  const noexcept { return buy_prints_; }
+    uint64_t sell_prints() const noexcept { return sell_prints_; }
+    // print_imbalance (#598): buyer-initiated minus seller-initiated PRINTS
+    // over total prints, in [-1,1] — the count-weighted twin of tape_imbalance
+    // (#415, share-weighted). +1 = every trade was a lifted ask, -1 = every
+    // one a hit bid. Read against tape_imbalance it separates how OFTEN a side
+    // aggresses from how MUCH: a print_imbalance near 0 (balanced trade count)
+    // with a strongly positive tape_imbalance means the buyers trade rarely
+    // but in size. 0 before any print or on a balanced tape.
+    double print_imbalance() const noexcept {
+        const uint64_t total = buy_prints_ + sell_prints_;
+        return total > 0
+            ? (static_cast<double>(buy_prints_) - static_cast<double>(sell_prints_))
                   / static_cast<double>(total)
             : 0.0;
     }

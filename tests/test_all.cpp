@@ -2845,6 +2845,30 @@ void test_itch_book() {
     ASSERT(ipl.pulled_shares('B') == 0 && ipl.pulled_shares('S') == 0, "itchbook_pull_clear");
     ASSERT(ipl.pull_to_take_ratio('S') == 0.0, "itchbook_ptt_clear");   // #583
 
+    // #598 buy_prints / sell_prints / print_imbalance — the trade-COUNT split,
+    // which diverges from the SHARE split (#415) when the sides trade in
+    // different clips.
+    itch::ITCHOrderBook ipr;
+    ASSERT(ipr.buy_prints() == 0 && ipr.sell_prints() == 0 && ipr.print_imbalance() == 0.0,
+           "itchbook_prints_empty");
+    ipr.on_add(1, 'S', 10.05, 1000);               // resting ask
+    ipr.on_add(2, 'B', 10.00, 1000);               // resting bid
+    ipr.on_execute(1, 1000);                       // one big BUY (lift ask): 1 print, 1000 sh
+    ipr.on_execute(2, 10); ipr.on_execute(2, 10); ipr.on_execute(2, 10);  // three small SELL hits
+    ASSERT(ipr.buy_prints() == 1 && ipr.sell_prints() == 3, "itchbook_print_counts");
+    // print_imbalance (1-3)/4 = -0.5 -> sellers aggress more OFTEN...
+    ASSERT(std::fabs(ipr.print_imbalance() + 0.5) < 1e-9, "itchbook_print_imb_minus_half");
+    // ...yet tape_imbalance (shares) is POSITIVE -> buyers dominate VOLUME: one
+    // block accumulating while the crowd trickles out, the two reads disagree.
+    ASSERT(ipr.tape_imbalance() > 0.0 && ipr.print_imbalance() < 0.0,
+           "itchbook_print_vs_share_diverge");
+    // An orphan execute is not a real print.
+    ipr.on_execute(999, 50);
+    ASSERT(ipr.buy_prints() == 1 && ipr.sell_prints() == 3, "itchbook_print_orphan_excluded");
+    ipr.clear();
+    ASSERT(ipr.buy_prints() == 0 && ipr.sell_prints() == 0 && ipr.print_imbalance() == 0.0,
+           "itchbook_prints_clear");
+
     // #551 mid_vs_vwap_bps — the book (mid) judged against the tape (VWAP).
     itch::ITCHOrderBook ivb;
     ASSERT(ivb.mid_vs_vwap_bps() == 0.0, "itchbook_mvb_empty_zero");
