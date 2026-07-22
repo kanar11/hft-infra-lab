@@ -91,6 +91,7 @@
 #include "../strategy/t3.hpp"
 #include "../strategy/decycler.hpp"
 #include "../strategy/efficiency_ratio.hpp"
+#include "../strategy/trima.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5535,6 +5536,36 @@ void test_efficiency_ratio() {
     ASSERT(!eu.ready() && eu.value() == 0.0, "er_reset");
 }
 
+// TRIMA #597 — Triangular Moving Average (double-smoothed SMA).
+void test_trima() {
+    SECTION("TRIMA (#597)");
+    TRIMA tf;                                      // period 20
+    for (int i = 0; i < 8; ++i) tf.update(100.0 + i);
+    ASSERT(!tf.ready(), "trima_not_ready_during_warmup");
+
+    // A flat tape pins EXACTLY (both SMAs of a constant are that constant).
+    TRIMA tc(5);
+    for (int i = 0; i < 20; ++i) tc.update(50.0);
+    ASSERT(tc.ready() && std::fabs(tc.value() - 50.0) < 1e-12, "trima_flat_pins_exactly");
+
+    // TRIMA(3) has triangular weights 1-2-1: 10,20,30 -> (10+40+30)/4 = 20.
+    TRIMA t3(3);
+    t3.update(10.0); t3.update(20.0); t3.update(30.0);
+    ASSERT(t3.ready() && std::fabs(t3.value() - 20.0) < 1e-9, "trima3_triangular_20");
+    // ...and it keeps rolling: +40 -> triangular of 20,30,40 = 30.
+    t3.update(40.0);
+    ASSERT(std::fabs(t3.value() - 30.0) < 1e-9, "trima3_rolls_to_30");
+
+    // A steady uptrend: the centered smoother lags BELOW the latest print.
+    TRIMA tu(5);
+    double last = 0.0;
+    for (int i = 0; i < 20; ++i) { last = 100.0 + 2.0 * i; tu.update(last); }
+    ASSERT(tu.ready() && tu.value() > 0.0 && tu.value() < last, "trima_uptrend_lags_below");
+
+    t3.reset();
+    ASSERT(!t3.ready() && t3.value() == 0.0, "trima_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -10319,6 +10350,7 @@ int main() {
     test_t3();
     test_decycler();
     test_efficiency_ratio();
+    test_trima();
     test_cmo();
     test_zscore();
     test_tsi();
