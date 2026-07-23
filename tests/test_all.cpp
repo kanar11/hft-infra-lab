@@ -6053,6 +6053,32 @@ void test_router_ewma_partial() {
         ASSERT(std::strcmp(rhu.busiest_venue(bv_sh), "P") == 0 && bv_sh == 90, "rhhi_busiest_P");
         ASSERT(rhe.busiest_venue(bv_sh) == nullptr, "rhhi_busiest_empty_null");
 
+        // #599 most_chosen_venue — the DECISION-count WHICH, which diverges
+        // from busiest_venue (#528, shares) when clip sizes differ.
+        int64_t mc_n = 0;
+        ASSERT(rhe.most_chosen_venue(mc_n) == nullptr, "mcv_empty_null");
+        // rhu: P was chosen once (90 sh), Q once (30 sh) -> tie goes to the
+        // first venue seen, and P also leads on shares.
+        ASSERT(std::strcmp(rhu.most_chosen_venue(mc_n), "P") == 0 && mc_n == 1,
+               "mcv_tie_first_seen");
+        // A venue picked MANY times in small clips beats a one-shot block
+        // venue on COUNT while losing on SHARES — the two WHICHes disagree.
+        SmartOrderRouter rmc(RoutingStrategy::BEST_PRICE);
+        rmc.add_venue(Venue("SMALL", 100, 0.0));
+        rmc.add_venue(Venue("BLOCK", 100, 0.002));      // worse fee -> only wins when SMALL is dry
+        rmc.update_quote("BLOCK", 10.0, 11.0, 1000, 1000);
+        for (int k = 0; k < 4; ++k) {                   // 4 tiny routes to SMALL
+            rmc.update_quote("SMALL", 10.0, 11.0, 1000, 5);
+            rmc.route_order("BUY", 5);
+        }
+        rmc.update_quote("SMALL", 10.0, 11.0, 1000, 0); // SMALL dry -> BLOCK takes the block
+        rmc.route_order("BUY", 900);
+        int64_t bv_n = 0;
+        ASSERT(std::strcmp(rmc.most_chosen_venue(mc_n), "SMALL") == 0 && mc_n == 4,
+               "mcv_count_favours_small");
+        ASSERT(std::strcmp(rmc.busiest_venue(bv_n), "BLOCK") == 0 && bv_n == 900,
+               "mcv_shares_favour_block");
+
         // #592 idle_venue_count — active, quoting, yet never routed to.
         // rhu: both P and Q took flow -> 0 idle on the buy side.
         ASSERT(rhu.idle_venue_count(true) == 0, "idle_both_routed_zero");

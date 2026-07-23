@@ -1474,6 +1474,28 @@ public:
     // cannot be routed to, so its silence is not idleness) — same quoting gate
     // as liquidity_venue_count (#359). 0 when every quoting venue has taken
     // flow, or none quotes the side.
+    // most_chosen_venue: the NAME of the venue the router SELECTED most often
+    // (#599), writing its decision count into out_routes — the count-weighted
+    // twin of busiest_venue (#528, which ranks by SHARES). The two diverge
+    // exactly when venues take different clip sizes: a venue fed many small
+    // odd lots wins here while one block venue wins there, and that split is
+    // the routing-side echo of avg_route_size (#456). Which one a best-ex
+    // review wants depends on the question — "where did the VOLUME go" (#528)
+    // versus "which venue does the logic actually prefer" (this one). A tie
+    // resolves to the first venue seen; nullptr (out_routes untouched) before
+    // anything is routed.
+    const char* most_chosen_venue(int64_t& out_routes) const noexcept {
+        const char* name = nullptr;
+        uint64_t best = 0;
+        for (int i = 0; i < venue_count_; ++i) {
+            if (venues_[i].routes_count > best) {
+                best = venues_[i].routes_count;
+                name = venues_[i].name;
+            }
+        }
+        if (name != nullptr) out_routes = static_cast<int64_t>(best);
+        return name;
+    }
     int idle_venue_count(bool is_buy) const noexcept {
         int n = 0;
         for (int i = 0; i < venue_count_; ++i) {
