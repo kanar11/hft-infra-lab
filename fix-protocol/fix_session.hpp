@@ -1138,6 +1138,60 @@ public:
         return r;
     }
 
+    // MassQuote — typed view of a MassQuote (35=i) (#600, MILESTONE 600). The
+    // market maker's bulk two-sided update: one message carrying a quote for
+    // MANY symbols (117=QuoteID, 295=NoQuoteEntries, then 55/132=BidPx/
+    // 133=OfferPx per entry). It is the last builder-side repeating group to
+    // get a typed decode, joining the 35=W snapshot (#561): the flat
+    // get_field would return only the FIRST entry's symbol and prices, so a
+    // naive parse silently drops every quote after the first — exactly the
+    // trap #561 documented, and the reason venue-side code must walk the
+    // group with the #263 nth-occurrence readers.
+    //
+    // Entries land in a fixed array (no allocation on the parse path, which a
+    // quote-heavy feed hits constantly); anything past MAX_ENTRIES is dropped
+    // and truncated() says so, rather than silently overflowing. count is the
+    // number actually decoded, entry_count the venue's declared 295 — the two
+    // differ on a truncated or malformed message, and comparing them is the
+    // integrity check. valid=false when the message is not 35=i.
+    struct MassQuote {
+        static constexpr int MAX_ENTRIES = 8;
+        struct Entry {
+            char   symbol[16] = {};   // 55=Symbol
+            double bid_px     = 0.0;  // 132=BidPx
+            double offer_px   = 0.0;  // 133=OfferPx
+            bool two_sided() const noexcept { return bid_px > 0.0 && offer_px > 0.0; }
+        };
+        char  quote_id[24] = {};      // 117=QuoteID
+        Entry entries[MAX_ENTRIES] = {};
+        int   count       = 0;        // entries actually decoded
+        int   entry_count = -1;       // 295=NoQuoteEntries as declared (-1 absent)
+        bool  valid       = false;    // true when msg type == 'i'
+
+        // truncated: the venue declared more entries than fit / were decoded.
+        bool truncated() const noexcept { return entry_count > count; }
+    };
+
+    static MassQuote parse_mass_quote(const FIXMessage& m) noexcept {
+        MassQuote r;
+        if (m.get_msg_type()[0] != 'i') return r;   // valid stays false
+        const char* qid = m.get_field(117);
+        if (qid) std::strncpy(r.quote_id, qid, sizeof(r.quote_id) - 1);
+        r.entry_count = m.get_field(295) ? m.get_int(295) : -1;
+        const int n = m.count_field(55);
+        for (int i = 0; i < n && r.count < MassQuote::MAX_ENTRIES; ++i) {
+            const char* sym = m.get_field_nth(55, i);
+            if (!sym || sym[0] == '\0') continue;
+            MassQuote::Entry& e = r.entries[r.count];
+            std::strncpy(e.symbol, sym, sizeof(e.symbol) - 1);
+            e.bid_px   = m.get_double_nth(132, i);
+            e.offer_px = m.get_double_nth(133, i);
+            ++r.count;
+        }
+        r.valid = true;
+        return r;
+    }
+
     static MDSnapshot parse_md_snapshot(const FIXMessage& m) noexcept {
         MDSnapshot r;
         if (m.get_msg_type()[0] != 'W') return r;   // valid stays false

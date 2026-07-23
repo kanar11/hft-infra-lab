@@ -8269,6 +8269,35 @@ void test_fix_session() {
                && std::fabs(mq.get_double_nth(132, 1) - 200.00) < 1e-6, "fix_massq_bids");
         ASSERT(std::fabs(mq.get_double_nth(133, 1) - 200.10) < 1e-6, "fix_massq_ask2");
 
+        // #600 parse_mass_quote — the LAST repeating-group builder to get a
+        // typed decode. The flat get_field would see only AAPL and drop MSFT
+        // entirely; the group walk keeps both entries with their own prices.
+        const auto mqp = fix::FIXSession::parse_mass_quote(mq);
+        ASSERT(mqp.valid && std::strcmp(mqp.quote_id, "MQ1") == 0, "fix_parse_massq_id");
+        ASSERT(mqp.count == 2 && mqp.entry_count == 2 && !mqp.truncated(),
+               "fix_parse_massq_two_entries");
+        ASSERT(std::strcmp(mqp.entries[0].symbol, "AAPL") == 0
+               && std::fabs(mqp.entries[0].bid_px - 99.98) < 1e-6
+               && std::fabs(mqp.entries[0].offer_px - 100.02) < 1e-6, "fix_parse_massq_entry0");
+        ASSERT(std::strcmp(mqp.entries[1].symbol, "MSFT") == 0
+               && std::fabs(mqp.entries[1].bid_px - 200.00) < 1e-6
+               && std::fabs(mqp.entries[1].offer_px - 200.10) < 1e-6, "fix_parse_massq_entry1");
+        ASSERT(mqp.entries[0].two_sided() && mqp.entries[1].two_sided(),
+               "fix_parse_massq_both_two_sided");
+        // A one-sided entry (bid only) is decoded but flagged.
+        FIXMessage mq1; mq1.parse("35=i|117=MQ2|295=1|299=1|55=IBM|132=50.00|");
+        const auto mqp1 = fix::FIXSession::parse_mass_quote(mq1);
+        ASSERT(mqp1.valid && mqp1.count == 1 && !mqp1.entries[0].two_sided(),
+               "fix_parse_massq_one_sided_entry");
+        // A declared count larger than what was decoded reports truncation —
+        // the integrity check against a malformed / oversized group.
+        FIXMessage mqt; mqt.parse("35=i|117=MQ3|295=5|299=1|55=AAA|132=1.00|133=1.01|");
+        const auto mqpt = fix::FIXSession::parse_mass_quote(mqt);
+        ASSERT(mqpt.count == 1 && mqpt.entry_count == 5 && mqpt.truncated(),
+               "fix_parse_massq_truncated");
+        FIXMessage not_i; not_i.parse("35=8|11=X|37=Y|");
+        ASSERT(!fix::FIXSession::parse_mass_quote(not_i).valid, "fix_parse_massq_non_i_invalid");
+
         // #287 TradeCaptureReport (35=AE) — post-trade record (multi-char msg type).
         s.build_trade_capture_report(buf, sizeof(buf), "TR1", "AAPL", Side::BUY,
                                      100, 150.25, "20260622", '|');
