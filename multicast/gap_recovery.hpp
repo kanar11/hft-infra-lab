@@ -1268,6 +1268,14 @@ struct GapFillTimer {
     int64_t  total_recovery_ms = 0;
     int64_t  max_recovery_ms = 0;
     int64_t  min_recovery_ms_ = 0;   // best case seen; valid once gaps > 0 (#435)
+    int64_t  sla_ms = 100;           // recovery budget per gap (#602)
+    uint64_t sla_breaches_ = 0;      // recoveries that blew the budget (#602)
+
+    // #602: the SLA budget is a ctor knob so the monitor can be told what
+    // "too slow" means for this feed; default-construction keeps the old
+    // behaviour with a 100 ms budget.
+    explicit GapFillTimer(int64_t sla_ms_ = 100) noexcept
+        : sla_ms(sla_ms_ > 0 ? sla_ms_ : 1) {}
 
     // record: a gap detected at detect_ms was filled at fill_ms.
     void record(int64_t detect_ms, int64_t fill_ms) noexcept {
@@ -1277,6 +1285,7 @@ struct GapFillTimer {
         ++gaps;
         total_recovery_ms += dur;
         if (dur > max_recovery_ms) max_recovery_ms = dur;
+        if (dur > sla_ms) ++sla_breaches_;   // #602: budget blown on this gap
     }
     double avg_recovery_ms() const noexcept {
         return gaps > 0 ? static_cast<double>(total_recovery_ms) / static_cast<double>(gaps) : 0.0;
@@ -1293,9 +1302,29 @@ struct GapFillTimer {
     int64_t recovery_jitter_ms() const noexcept {
         return gaps > 0 ? max_recovery_ms - min_recovery_ms_ : 0;
     }
+    // sla_breaches / sla_breach_rate (#602): how many recoveries blew the
+    // budget, and their share of all recoveries. The struct has called itself
+    // a recovery-SLA monitor since #297 while offering only the min/mean/max
+    // envelope — which cannot answer the one question an SLA asks: HOW OFTEN
+    // was the book stale for longer than we accept. A mean comfortably inside
+    // the budget still hides a tail that breaches it (that is exactly what
+    // max_recovery_ms #297 hints at and this counts), so the rate is the
+    // conformance number an ops report quotes. 0 before any recovery.
+    uint64_t sla_breaches() const noexcept { return sla_breaches_; }
+    double sla_breach_rate() const noexcept {
+        return gaps > 0
+            ? static_cast<double>(sla_breaches_) / static_cast<double>(gaps)
+            : 0.0;
+    }
+    // meets_sla (#602): every recovery so far stayed inside the budget — the
+    // go/no-go gate, the GapFillTimer parallel of LossRateMeter::is_within_sla
+    // (#595) and FeedHealth::is_healthy (#289). True before any recovery
+    // (nothing has breached yet).
+    bool meets_sla() const noexcept { return sla_breaches_ == 0; }
     void reset() noexcept {
         gaps = 0; total_recovery_ms = 0; max_recovery_ms = 0;
         min_recovery_ms_ = 0;   // #435
+        sla_breaches_ = 0;      // #602 (sla_ms is configuration, not state)
     }
 };
 

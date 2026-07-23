@@ -3646,6 +3646,28 @@ void test_multicast_gap_recovery() {
     ASSERT(gft.min_recovery_ms() == 10, "gft_min_survives_slow");
     gft.record(7000, 7005);   // 5 ms — a new best case
     ASSERT(gft.min_recovery_ms() == 5 && gft.recovery_jitter_ms() == 195, "gft_new_floor");
+    // #602 SLA gate — the default 100 ms budget. Of the five recoveries
+    // (50, 150, 10, 200, 5) exactly two blew it: 2/5 = 0.4.
+    ASSERT(gft.sla_ms == 100, "gft_default_budget_100");
+    ASSERT(gft.sla_breaches() == 2, "gft_two_breaches");
+    ASSERT(std::fabs(gft.sla_breach_rate() - 0.4) < 1e-9, "gft_breach_rate_04");
+    ASSERT(!gft.meets_sla(), "gft_does_not_meet_sla");
+    // The mean (83) sits INSIDE the budget while 40% of recoveries breached —
+    // exactly the tail the min/mean/max envelope alone cannot report.
+    ASSERT(gft.avg_recovery_ms() < static_cast<double>(gft.sla_ms) && gft.sla_breaches() > 0,
+           "gft_mean_inside_budget_tail_breaches");
+    // A tighter budget catches more of the same history going forward, and a
+    // roomy one lets every recovery through.
+    multicast::GapFillTimer gtight(20);
+    gtight.record(0, 50); gtight.record(100, 110);      // 50 breaches, 10 does not
+    ASSERT(gtight.sla_breaches() == 1 && !gtight.meets_sla(), "gft_tight_budget_breach");
+    multicast::GapFillTimer groomy(1000);
+    groomy.record(0, 50); groomy.record(100, 300);
+    ASSERT(groomy.sla_breaches() == 0 && groomy.meets_sla() && groomy.sla_breach_rate() == 0.0,
+           "gft_roomy_budget_clean");
+    // A fresh timer has breached nothing -> meets_sla is true.
+    multicast::GapFillTimer gfresh;
+    ASSERT(gfresh.meets_sla() && gfresh.sla_breach_rate() == 0.0, "gft_fresh_meets_sla");
     // Fresh timer: 0/0 until the first recovery; an instant fill floors at 0.
     multicast::GapFillTimer gfz;
     ASSERT(gfz.min_recovery_ms() == 0 && gfz.recovery_jitter_ms() == 0, "gft_fresh_zero");
@@ -3653,6 +3675,9 @@ void test_multicast_gap_recovery() {
     ASSERT(gfz.gaps == 1 && gfz.min_recovery_ms() == 0, "gft_instant_fill_floor");
     gfz.reset();
     ASSERT(gfz.min_recovery_ms() == 0 && gfz.gaps == 0, "gft_reset");
+    // #602: reset clears the breach COUNT but keeps the configured budget —
+    // the SLA is configuration, not session state.
+    ASSERT(gfz.sla_breaches() == 0 && gfz.sla_ms == 100, "gft_reset_keeps_budget");
 
     // #305 InterArrivalStats — feed jitter envelope.
     multicast::InterArrivalStats ias;
