@@ -66,6 +66,7 @@ class OUCHOrderTracker {
     int64_t  min_exec_shares_ = 0;  // smallest single Executed report (0 = none) (#594)
     int64_t  cancelled_shares_ = 0; // shares freed by CANCELLED remainders + AIQ decrements (#538)
     char     last_reject_reason_ = '\0'; // reason char of the last 'J' Rejected (#586)
+    uint64_t responses_ = 0;        // every report passed to on_response (#601)
     uint64_t cancel_rejects_ = 0;   // Cancel Reject ('I') reports applied (#378)
     uint64_t replaced_       = 0;   // Order Replaced ('U') migrations applied (#386)
     uint64_t desyncs_        = 0;   // responses naming an UNKNOWN token (#426)
@@ -102,6 +103,7 @@ public:
     // on_response: apply an exchange report. Returns the new state (or REJECTED when
     // the report concerns an unknown token — desync).
     OrderState on_response(const OUCHResponse& r) noexcept {
+        ++responses_;   // #601: every report the tracker was handed (incl. desyncs)
         // Order Replaced ('U') is keyed by the PREVIOUS token, not r.token —
         // the generic lookup below would treat the (still unknown) new token
         // as a desync. Migrate the record to the replacement token (#386):
@@ -693,6 +695,7 @@ public:
         min_exec_shares_ = 0;   // #594
         cancelled_shares_ = 0;  // #538
         last_reject_reason_ = '\0';  // #586
+        responses_ = 0;              // #601
         cancel_rejects_ = 0;
         replaced_       = 0;
         desyncs_        = 0;
@@ -712,6 +715,27 @@ public:
     // meaning; desyncs() splits the ops share out: rejects() - desyncs()
     // = true order rejections.
     uint64_t desyncs() const noexcept { return desyncs_; }
+    // responses (#601): every report handed to on_response this session,
+    // including the desynced ones — the traffic DENOMINATOR the tracker never
+    // kept. The per-event counters (filled_/cancelled_/rejected_/broken_) only
+    // cover reports that matched a known token, so none of them can size the
+    // wire volume the desyncs came out of.
+    uint64_t responses() const noexcept { return responses_; }
+    // desync_rate (#601): the fraction of reports that named a token the
+    // tracker never registered = desyncs / responses, in [0,1] — the
+    // FREQUENCY face of the raw desyncs counter (#426), the same shape as
+    // TokenBucket::denial_rate (#539) and SnapshotRequestThrottle::
+    // suppression_rate (#563). The raw count cannot be judged without volume:
+    // 5 desyncs in 100 reports is a broken session, 5 in a million is a
+    // rounding error. A non-zero rate is an OPS alarm (missed messages, a
+    // reconnect without replay, a session restart against a live stream), not
+    // a trading one — distinct from reject_rate (#345), which counts the
+    // venue refusing real ORDERS. 0 before any report.
+    double desync_rate() const noexcept {
+        return responses_ > 0
+            ? static_cast<double>(desyncs_) / static_cast<double>(responses_)
+            : 0.0;
+    }
     // total_broken_shares: cumulative shares returned to "open" by Broken Trade
     // messages (#320). The exchange rescinds a prior fill — shares move back from
     // filled to remaining. Watching this versus total_filled_shares reveals how much

@@ -9292,6 +9292,8 @@ void test_ouch_order_state() {
         ouch::OUCHOrderTracker dst;
         uint8_t dsb[64];
         ASSERT(dst.desyncs() == 0, "ouch_dsy_fresh_zero");
+        // #601: no traffic yet -> no denominator, rate guarded to 0.
+        ASSERT(dst.responses() == 0 && dst.desync_rate() == 0.0, "ouch_dsy_rate_fresh_zero");
         // A REAL order rejection: rejects() moves, desyncs() does not.
         dst.on_new("D1", 100);
         int dsn = OUCHMessage::encode_rejected(dsb, "D1", 'X');
@@ -9307,6 +9309,23 @@ void test_ouch_order_state() {
         dsn = OUCHMessage::encode_replaced(dsb, "NEWD", "GHOST2", 10, 1.0, 10);
         dst.on_response(OUCHMessage::parse_response(dsb, dsn));
         ASSERT(dst.desyncs() == 2, "ouch_dsy_replaced_unknown_prev");
+        // #601: 3 reports handled, 2 of them desynced -> 2/3. The REPLACED
+        // desync path counts as traffic too (the counter sits at the entry).
+        ASSERT(dst.responses() == 3, "ouch_dsy_responses_counted");
+        ASSERT(std::fabs(dst.desync_rate() - 2.0 / 3.0) < 1e-9, "ouch_dsy_rate_two_thirds");
+        // A clean session has traffic but no desyncs -> rate 0, which the raw
+        // counter alone could not distinguish from 'no traffic at all'.
+        ouch::OUCHOrderTracker dcl;
+        uint8_t dcb[64];
+        dcl.on_new("C1", 100);
+        int dcn = OUCHMessage::encode_accepted(dcb, "C1", 'B', 100, "AAPL", 10.0, 1);
+        dcl.on_response(OUCHMessage::parse_response(dcb, dcn));
+        dcn = OUCHMessage::encode_executed(dcb, "C1", 100, 10.0, 2);
+        dcl.on_response(OUCHMessage::parse_response(dcb, dcn));
+        ASSERT(dcl.responses() == 2 && dcl.desyncs() == 0 && dcl.desync_rate() == 0.0,
+               "ouch_dsy_clean_session_zero_rate");
+        dst.reset_session();
+        ASSERT(dst.responses() == 0 && dst.desync_rate() == 0.0, "ouch_dsy_rate_reset");
     }
 
     // #442 reset_session — the tracker's new-day wipe.
