@@ -1114,6 +1114,16 @@ void test_oms_short_and_replace() {
         // #532 most_common_reject — the dominant reason. All three fired once,
         // so the tie resolves to the lowest enum value (INVALID_INPUT).
         ASSERT(oms.most_common_reject() == OMSReject::INVALID_INPUT, "rej_most_common_tie_lowest");
+        // #603 reject_share — the winner here is NOT dominant: an even 1/1/1
+        // split gives every reason a third, which most_common_reject cannot say.
+        ASSERT(close(oms.reject_share(OMSReject::INVALID_INPUT), 1.0 / 3.0), "rejshare_even_third");
+        ASSERT(close(oms.reject_share(OMSReject::ORDER_VALUE), 1.0 / 3.0), "rejshare_even_other");
+        // The shares of the real reasons sum to 1 by construction.
+        ASSERT(close(oms.reject_share(OMSReject::INVALID_INPUT)
+                     + oms.reject_share(OMSReject::ORDER_VALUE)
+                     + oms.reject_share(OMSReject::POSITION_LIMIT), 1.0), "rejshare_sums_to_one");
+        // NONE is success, never a rejection -> always 0.
+        ASSERT(oms.reject_share(OMSReject::NONE) == 0.0, "rejshare_none_zero");
         // A clear winner: two ORDER_VALUE rejects against one INVALID_INPUT.
         OMS omw(/*max_pos=*/100, /*max_val=*/1000.0);
         OMSReject wy = OMSReject::NONE;
@@ -1121,9 +1131,18 @@ void test_oms_short_and_replace() {
         omw.submit_order("AAA", Side::BUY, 200.0, 60, &wy);   // ORDER_VALUE (12000>1000)
         omw.submit_order("AAA", Side::BUY, -1.0, 10, &wy);    // INVALID_INPUT
         ASSERT(omw.most_common_reject() == OMSReject::ORDER_VALUE, "rej_most_common_order_value");
+        // #603: here the winner IS dominant — 2 of 3 rejections (2/3) against
+        // the other reason's 1/3. Same most_common_reject as the even case
+        // above, very different share: one thing to fix, not everything.
+        ASSERT(close(omw.reject_share(OMSReject::ORDER_VALUE), 2.0 / 3.0), "rejshare_dominant_two_thirds");
+        ASSERT(close(omw.reject_share(OMSReject::INVALID_INPUT), 1.0 / 3.0), "rejshare_minor_third");
+        ASSERT(omw.reject_share(OMSReject::POSITION_LIMIT) == 0.0, "rejshare_unfired_zero");
+        ASSERT(omw.reject_share(OMSReject::ORDER_VALUE)
+               > oms.reject_share(OMSReject::INVALID_INPUT), "rejshare_dominant_beats_even");
         // Nothing rejected -> NONE.
         OMS omn(100, 1000.0);
         ASSERT(omn.most_common_reject() == OMSReject::NONE, "rej_most_common_empty_none");
+        ASSERT(omn.reject_share(OMSReject::ORDER_VALUE) == 0.0, "rejshare_empty_zero");   // #603
     }
 }
 

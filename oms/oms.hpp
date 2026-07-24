@@ -1004,6 +1004,24 @@ public:
     // real reasons (1..3); NONE (index 0, success) is never a rejection. A tie
     // resolves to the lowest enum value. Returns OMSReject::NONE when nothing
     // has been rejected. The OMS analog of FeedHealth::worst_impairment (#531).
+    // reject_share: what fraction of this session's rejections a given reason
+    // caused (#603) = reject_count(r) / total_rejects, in [0,1]. The rejection
+    // family could name the winner (most_common_reject #532) and count one
+    // reason at a time (#136), but not say whether that winner is a DOMINANT
+    // cause or merely first past the post: three reasons at 34/33/33 and one
+    // at 98/1/1 both report the same most_common_reject, and only the share
+    // separates "one thing to fix" from "everything is a little broken". It
+    // is the per-reason face of submit_reject_rate (#212, which sizes ALL
+    // rejections against attempts) — that one says how often the door is
+    // slammed, this says which door. NONE (index 0, success) always reads 0:
+    // it is never a rejection. 0 when nothing has been rejected.
+    double reject_share(OMSReject r) const noexcept {
+        if (r == OMSReject::NONE) return 0.0;
+        const uint64_t tot = total_rejects();
+        return tot > 0
+            ? static_cast<double>(reject_counts_[static_cast<int>(r)]) / static_cast<double>(tot)
+            : 0.0;
+    }
     OMSReject most_common_reject() const noexcept {
         int best = 0; uint64_t best_n = 0;
         for (int i = 1; i < 4; ++i) {
