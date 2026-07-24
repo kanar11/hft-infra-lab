@@ -7285,8 +7285,27 @@ void test_risk_price_band() {
     rpersist.update_pnl(0.0);   rpersist.update_pnl(+8.0);
     ASSERT(std::fabs(rpersist.max_drawdown_dollars() - 8.0) < 1e-9, "pain_persist_same_max");
     ASSERT(rpersist.pnl_pain_index() > rbrief.pnl_pain_index(), "pain_persist_hurts_more");
+
+    // #604 pnl_martin_ratio — return per unit of PAIN. Both books ended +10
+    // with the SAME worst hole (8), so Calmar (#493) cannot tell them apart...
+    ASSERT(std::fabs(rbrief.get_daily_pnl() - 10.0) < 1e-9
+           && std::fabs(rpersist.get_daily_pnl() - 10.0) < 1e-9, "martin_same_return");
+    ASSERT(std::fabs(rbrief.pnl_recovery_factor() - rpersist.pnl_recovery_factor()) < 1e-12,
+           "martin_calmar_cannot_separate");
+    // ...but Martin can: 10 / 4.00 = 2.5 for the brief hole, and the book that
+    // SAT in the hole scores strictly worse for the identical profit.
+    ASSERT(std::fabs(rbrief.pnl_martin_ratio() - 2.5) < 1e-9, "martin_brief_2p5");
+    ASSERT(rbrief.pnl_martin_ratio() > rpersist.pnl_martin_ratio(), "martin_separates_them");
+    // A painless (only-up) curve reports 0 rather than infinity, like #493.
+    ASSERT(rmono.pnl_martin_ratio() == 0.0, "martin_painless_zero");
+    // A net-down session ranks NEGATIVE: -10 with a single 10-deep drawdown.
+    RiskManager rmneg;
+    rmneg.update_pnl(-10.0);
+    ASSERT(std::fabs(rmneg.pnl_martin_ratio() + 1.0) < 1e-9, "martin_negative_session");
+
     rbrief.reset_daily();
     ASSERT(rbrief.pnl_pain_index() == 0.0, "pain_reset");
+    ASSERT(rbrief.pnl_martin_ratio() == 0.0, "martin_reset");   // #604
 
     // #405 max_consecutive_wins_seen — the win-side high-water mark (#364's twin).
     RiskManager rmw;

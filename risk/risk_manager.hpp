@@ -1360,6 +1360,25 @@ public:
         return max_drawdown_dollars_ > 0.0 ? daily_pnl_ / max_drawdown_dollars_ : 0.0;
     }
 
+    // pnl_martin_ratio: the session return per unit of PAIN (#604) =
+    // daily_pnl / pnl_pain_index (#596) — the Martin (Ulcer Performance)
+    // ratio, and the read #596's own comment promised. It completes the
+    // risk-adjusted family by naming the fourth denominator: pnl_sharpe
+    // (#477) divides by volatility, pnl_sortino (#485) by downside deviation,
+    // pnl_recovery_factor (#493) by the single worst DRAWDOWN — this by the
+    // RMS of the WHOLE drawdown path. That last distinction is the point: two
+    // sessions with the same worst hole rank identically on #493, but the one
+    // that sat in the hole longer earns a bigger pain index and a WORSE Martin
+    // ratio (pinned by test). It is the ranking a desk that must HOLD the
+    // position through the drawdown actually wants. 0 on a painless session
+    // (an only-up curve, reported as 0 rather than infinity, matching #493's
+    // convention); goes negative when the session is net down. Reset by
+    // reset_daily via its inputs.
+    double pnl_martin_ratio() const noexcept {
+        const double pain = pnl_pain_index();
+        return pain > 0.0 ? daily_pnl_ / pain : 0.0;
+    }
+
     // pnl_sharpe: the risk-adjusted per-event edge (#477) = mean(update_pnl)
     // / pnl_std_dev — a Sharpe-style ratio on the P&L event stream (no
     // annualization, no risk-free rate; a pure reward-per-unit-volatility
