@@ -92,6 +92,7 @@
 #include "../strategy/decycler.hpp"
 #include "../strategy/efficiency_ratio.hpp"
 #include "../strategy/trima.hpp"
+#include "../strategy/schaff_trend_cycle.hpp"
 #include "../strategy/ensemble.hpp"
 #include "../backtest/backtest.hpp"
 #include "../strategy/trailing_stop.hpp"
@@ -5634,6 +5635,39 @@ void test_trima() {
     ASSERT(!t3.ready() && t3.value() == 0.0, "trima_reset");
 }
 
+// SchaffTrendCycle #605 — Doug Schaff's double-stochastic-of-MACD oscillator.
+void test_schaff() {
+    SECTION("Schaff Trend Cycle (#605)");
+    SchaffTrendCycle sf;                           // 23/50/10 -> long warmup
+    for (int i = 0; i < 6; ++i) sf.update(100.0 + i);
+    ASSERT(!sf.ready(), "stc_not_ready_during_warmup");
+
+    // Compact params for a quick, deterministic test.
+    // A steady uptrend drives MACD up -> STC climbs into overbought (> 75).
+    SchaffTrendCycle su(5, 10, 3);
+    bool bounded = true;
+    for (int i = 0; i < 60; ++i) {
+        su.update(100.0 + 5.0 * i);
+        if (su.value() < 0.0 || su.value() > 100.0) bounded = false;
+    }
+    ASSERT(su.ready(), "stc_ready");
+    ASSERT(bounded, "stc_bounded_0_100");            // in range at every step
+    ASSERT(su.value() > 75.0, "stc_uptrend_overbought");
+
+    // A steady downtrend is the mirror: STC falls into oversold (< 25).
+    SchaffTrendCycle sd(5, 10, 3);
+    for (int i = 0; i < 60; ++i) sd.update(400.0 - 5.0 * i);
+    ASSERT(sd.value() < 25.0, "stc_downtrend_oversold");
+
+    // A flat tape holds a defined value in range (no divide-by-zero blow-up).
+    SchaffTrendCycle sfl(5, 10, 3);
+    for (int i = 0; i < 40; ++i) sfl.update(50.0);
+    ASSERT(sfl.ready() && sfl.value() >= 0.0 && sfl.value() <= 100.0, "stc_flat_in_range");
+
+    sd.reset();
+    ASSERT(!sd.ready() && sd.value() == 0.0, "stc_reset");
+}
+
 // Ensemble #140 — voting of signals (agreement >= min_agree).
 void test_ensemble() {
     SECTION("Signal Ensemble (#140)");
@@ -10512,6 +10546,7 @@ int main() {
     test_decycler();
     test_efficiency_ratio();
     test_trima();
+    test_schaff();
     test_cmo();
     test_zscore();
     test_tsi();
