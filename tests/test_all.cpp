@@ -3075,6 +3075,42 @@ void test_itch_book() {
     ASSERT(iagr.buy_vwap() == 0.0 && iagr.sell_vwap() == 0.0
            && iagr.tape_effective_spread() == 0.0, "itchbook_side_vwaps_clear");   // #543
 
+    // #606 pull_imbalance — the WITHDRAWAL imbalance: which side makers flee.
+    itch::ITCHOrderBook ipmb;
+    ASSERT(ipmb.pull_imbalance() == 0.0, "itchbook_pimb_empty_zero");
+    ipmb.on_add(1, 'B', 10.00, 500);
+    ipmb.on_add(2, 'B', 9.99, 500);
+    ipmb.on_add(3, 'S', 10.02, 500);
+    ipmb.on_add(4, 'S', 10.03, 500);
+    // Support evaporating: 300 cancelled off a bid + a whole 500 bid deleted =
+    // 800 pulled bid, against only 200 pulled from an ask -> +0.6 (BEARISH).
+    ipmb.on_cancel(1, 300);
+    ipmb.on_delete(2);
+    ipmb.on_cancel(3, 200);
+    ASSERT(std::fabs(ipmb.pull_imbalance() - 0.6) < 1e-9, "itchbook_pimb_bid_flees_bearish");
+    ASSERT(ipmb.pull_imbalance() > 0.0, "itchbook_pimb_positive_is_bearish");
+    // Bounded and consistent with the raw #575 per-side pulls (800 vs 200).
+    ASSERT(ipmb.pulled_shares('B') == 800 && ipmb.pulled_shares('S') == 200,
+           "itchbook_pimb_matches_pulled");
+    // Executions TAKE, they do not pull -> the withdrawal imbalance is unmoved.
+    ipmb.on_execute(4, 500);
+    ASSERT(std::fabs(ipmb.pull_imbalance() - 0.6) < 1e-9, "itchbook_pimb_exec_no_pull");
+    // Mirror book: offers pulled away, support intact -> -1 (bullish).
+    itch::ITCHOrderBook ipmb2;
+    ipmb2.on_add(1, 'B', 10.00, 400);
+    ipmb2.on_add(2, 'S', 10.05, 400);
+    ipmb2.on_delete(2);                            // pull the whole ask
+    ASSERT(std::fabs(ipmb2.pull_imbalance() + 1.0) < 1e-9, "itchbook_pimb_ask_flees_bullish");
+    // Balanced pulling -> 0.
+    itch::ITCHOrderBook ipmb3;
+    ipmb3.on_add(1, 'B', 10.00, 300);
+    ipmb3.on_add(2, 'S', 10.05, 300);
+    ipmb3.on_cancel(1, 300);
+    ipmb3.on_cancel(2, 300);
+    ASSERT(ipmb3.pull_imbalance() == 0.0, "itchbook_pimb_balanced_zero");
+    ipmb.clear();
+    ASSERT(ipmb.pull_imbalance() == 0.0, "itchbook_pimb_clear");
+
     sb.clear();
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }

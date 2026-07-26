@@ -1016,6 +1016,29 @@ public:
             : 0.0;
     }
 
+    // pull_imbalance (#606): the WITHDRAWAL imbalance in [-1,1] =
+    // (pulled_bid - pulled_ask) / (pulled_bid + pulled_ask) — which side
+    // makers are RETREATING from, built on pulled_shares (#575). It completes
+    // three imbalance lenses on the same book: depth_imbalance (#148) reads
+    // resting INTENT (who is quoting), tape_imbalance (#415) reads executed
+    // COMMITMENT (who is trading), this reads RETREAT (who is cancelling out).
+    // NOTE the sign reads OPPOSITE to the other two: a hit BID is buying
+    // pressure, but a PULLED bid is support VANISHING — so +1 here (all the
+    // pulling on the bid) is the BEARISH tell (the support book evaporating
+    // before price falls, the classic informed-seller footprint #575
+    // describes), and -1 (offers pulled away) is the bullish one. Read
+    // alongside tape_imbalance it separates a quiet retreat (heavy pull, light
+    // trade) from an aggressive one. Cancels count their clamped amount,
+    // deletes the whole remainder, orphans nothing (all via #575). 0 before
+    // any shares are pulled or on balanced pulling; reset by clear().
+    double pull_imbalance() const noexcept {
+        const int64_t b = pulled_bid_, a = pulled_ask_;
+        const int64_t tot = b + a;
+        return tot > 0
+            ? static_cast<double>(b - a) / static_cast<double>(tot)
+            : 0.0;
+    }
+
     // mid_vs_vwap_bps (#551): where the CURRENT mid sits relative to the
     // session tape VWAP, in basis points = (mid - executed_vwap) / vwap *
     // 10000. The execution-benchmark read: positive = the market trades at a
