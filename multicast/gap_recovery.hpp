@@ -1372,6 +1372,22 @@ struct InterArrivalStats {
     // mean_gap right now signals the feed just went quiet (possible stall)
     // even though the aggregate looks healthy. 0 before the second message.
     int64_t last_gap() const noexcept { return last_gap_; }
+    // jitter_ratio (#610): the arrival jitter normalized by the mean cadence =
+    // jitter (#305, max - min) / mean_gap — a dimensionless burstiness measure
+    // comparable across feeds of different speed. Raw jitter() is in time
+    // units, so a 300 us spread means something very different on a 200 us-
+    // cadence feed (1.5x the mean — violently bursty) than on a 30 ms one (1%
+    // — smooth); dividing by the mean puts both on one scale. Near 0 the feed
+    // ticks like a metronome; >> 1 the gaps swing wildly around their average
+    // (congestion, coalescing, upstream batching). This is the range-over-mean
+    // form (min/max/sum are all the struct tracks — NOT the stddev-based
+    // coefficient of variation), the same normalize-to-compare idiom behind
+    // spread_bps (#131) and realized_spread_capture_bps (#506). 0 before a
+    // positive mean exists.
+    double jitter_ratio() const noexcept {
+        const double m = mean_gap();
+        return m > 0.0 ? static_cast<double>(jitter()) / m : 0.0;
+    }
     void reset() noexcept {
         last_ts = -1; count = 0; total_gap = 0; min_gap = 0; max_gap = 0; last_gap_ = 0;
     }

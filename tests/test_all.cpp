@@ -3763,6 +3763,30 @@ void test_multicast_gap_recovery() {
     ASSERT(iasm.last_gap() == 10, "ias_nonmono_baseline_kept");   // NOT 20
     ASSERT(iasm.count == 2 && iasm.total_gap == 110, "ias_nonmono_totals");
 
+    // #610 jitter_ratio — normalized burstiness (jitter / mean), comparable
+    // across feeds of different cadence.
+    multicast::InterArrivalStats jr0;
+    ASSERT(jr0.jitter_ratio() == 0.0, "ias_jr_empty");
+    jr0.on_message(1000);
+    ASSERT(jr0.jitter_ratio() == 0.0, "ias_jr_one_msg");          // no positive mean yet
+    // A metronome (equal gaps) has zero jitter -> ratio 0.
+    multicast::InterArrivalStats jrm;
+    jrm.on_message(0); jrm.on_message(25); jrm.on_message(50); jrm.on_message(75);
+    ASSERT(jrm.jitter() == 0 && jrm.jitter_ratio() == 0.0, "ias_jr_metronome_zero");
+    // Bursty: gaps 10/40/10 -> jitter 30, mean 20 -> ratio 1.5.
+    multicast::InterArrivalStats jrb;
+    jrb.on_message(0); jrb.on_message(10); jrb.on_message(50); jrb.on_message(60);
+    ASSERT(jrb.jitter() == 30 && std::fabs(jrb.mean_gap() - 20.0) < 1e-9, "ias_jr_bursty_env");
+    ASSERT(std::fabs(jrb.jitter_ratio() - 1.5) < 1e-9, "ias_jr_bursty_150");
+    // The whole point: a 10x-faster feed with the SAME relative pattern
+    // (100/400/100) reads the SAME ratio, where raw jitter is 10x larger.
+    multicast::InterArrivalStats jrf;
+    jrf.on_message(0); jrf.on_message(100); jrf.on_message(500); jrf.on_message(600);
+    ASSERT(jrf.jitter() == 300, "ias_jr_fast_raw_10x");
+    ASSERT(std::fabs(jrf.jitter_ratio() - jrb.jitter_ratio()) < 1e-9, "ias_jr_scale_invariant");
+    jrb.reset();
+    ASSERT(jrb.jitter_ratio() == 0.0, "ias_jr_reset");
+
     // #313 PacketStats — wire-level packet/byte accounting.
     multicast::PacketStats ps;
     ps.on_packet(100); ps.on_packet(300); ps.on_packet(200);
