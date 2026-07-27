@@ -253,6 +253,20 @@ public:
             ? fill_notional_ / static_cast<double>(fill_shares_)
             : 0.0;
     }
+    // filled_notional: the session's EXECUTED CAPITAL in dollars (#608) =
+    // Σ (LastQty × LastPx) over every ExecutionReport that carried a slice —
+    // the exact numerator fill_vwap (#593) divides by shares, surfaced on its
+    // own (until now it lived only inside that ratio). It is the dollar face
+    // of total_filled_qty (#537, shares): a session that filled the same share
+    // count in a $2 name and a $2000 name reads identically there and three
+    // orders of magnitude apart here — the pervasive shares-vs-dollars split,
+    // and the FIX-tracker parity of OMS total_traded_notional (#266) and
+    // router total_routed_notional (#560). Priced from 32=LastQty / 31=LastPx,
+    // side-blind (a buy and a sell both accrue at their exec price); cancel/
+    // reject reports carry LastQty 0 and never accrue. By construction
+    // filled_notional == fill_vwap × Σ LastQty. 0 before any priced fill;
+    // reset_session clears it.
+    double filled_notional() const noexcept { return fill_notional_; }
     uint64_t fills()       const noexcept { return fills_; }
     uint64_t cancels()     const noexcept { return cancels_; }
     uint64_t rejects()     const noexcept { return rejects_; }

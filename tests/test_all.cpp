@@ -8984,6 +8984,39 @@ void test_fix_order_state() {
         ASSERT(fvw.fill_vwap() == 0.0, "fixstate_fvwap_reset");
     }
 
+    // #608 filled_notional — the session's executed capital ($), the exact
+    // numerator fill_vwap (#593) divides by shares.
+    {
+        fix::FIXOrderTracker fnl;
+        char nb[256];
+        ASSERT(fnl.filled_notional() == 0.0, "fixstate_fnl_empty");
+        fnl.on_new("N1", 100); fnl.on_new("N2", 100);
+        // N1: 40 @ 10.00 then 60 @ 11.00 -> 400 + 660 = 1060.
+        s.build_exec_report(nb, sizeof(nb), "N1", "EXG", "F1", '1', '1',
+                            "AAPL", Side::BUY, 40, 10.00, 40, 60, '|');
+        FIXMessage f1; f1.parse(nb); fnl.on_exec_report(f1);
+        s.build_exec_report(nb, sizeof(nb), "N1", "EXG", "F2", '2', '2',
+                            "AAPL", Side::BUY, 60, 11.00, 100, 0, '|');
+        FIXMessage f2; f2.parse(nb); fnl.on_exec_report(f2);
+        // N2: 100 @ 12.00 -> 1200. Session total 1060 + 1200 = 2260.
+        s.build_exec_report(nb, sizeof(nb), "N2", "EXG", "F3", '2', '2',
+                            "MSFT", Side::SELL, 100, 12.00, 100, 0, '|');
+        FIXMessage f3; f3.parse(nb); fnl.on_exec_report(f3);
+        ASSERT(std::fabs(fnl.filled_notional() - 2260.0) < 1e-6, "fixstate_fnl_2260");
+        // Exact identity with the #593 VWAP: notional == vwap * filled shares
+        // (11.30 * 200 = 2260) — same numerator, surfaced on its own.
+        ASSERT(std::fabs(fnl.filled_notional() - fnl.fill_vwap() * 200.0) < 1e-6,
+               "fixstate_fnl_equals_vwap_times_shares");
+        // A cancel report (LastQty 0) adds no capital.
+        fnl.on_new("N3", 100);
+        s.build_exec_report(nb, sizeof(nb), "N3", "EXG", "F4", '4', '4',
+                            "AAPL", Side::BUY, 0, 0.0, 0, 100, '|');
+        FIXMessage f4; f4.parse(nb); fnl.on_exec_report(f4);
+        ASSERT(std::fabs(fnl.filled_notional() - 2260.0) < 1e-6, "fixstate_fnl_cancel_no_add");
+        fnl.reset_session();
+        ASSERT(fnl.filled_notional() == 0.0, "fixstate_fnl_reset");
+    }
+
     wtr.reset_session();
     ASSERT(wtr.total_filled_qty() == 0 && wtr.fill_rate() == 0.0, "fixstate_fr_reset");   // #537
 
