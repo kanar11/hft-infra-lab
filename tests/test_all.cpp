@@ -10224,6 +10224,43 @@ void test_ouch_order_state() {
     ASSERT(std::fabs(ofr.order_fill_rate() - 0.5) < 1e-9, "ouch_ofr_half_by_order");
     // ...but 300 of 500 shares filled -> fill_rate 0.6 (they disagree by design).
     ASSERT(std::fabs(ofr.fill_rate() - 0.6) < 1e-9, "ouch_ofr_vs_share_fill_rate");
+
+    // #609 cancel_to_fill_ratio — shares PULLED per share FILLED (itch #583 parity).
+    ouch::OUCHOrderTracker ctf;
+    ASSERT(ctf.cancel_to_fill_ratio() == 0.0, "ouch_ctf_empty");
+    // CF1: 100 ordered, 40 filled, 60 cancelled -> 60 pulled / 40 taken = 1.5.
+    ctf.on_new("CF1", 100);
+    n = OUCHMessage::encode_accepted(buf, "CF1", 'B', 100, "AAPL", 10.0, 81001);
+    ctf.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "CF1", 40, 10.0, 1);
+    ctf.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_cancelled(buf, "CF1", 60, 'U');
+    ctf.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(ctf.cancel_to_fill_ratio() - 1.5) < 1e-9, "ouch_ctf_150");
+    // CF2: 200 ordered, 20 filled, 180 cancelled -> cumulative 240 pulled / 60
+    // taken = 4.0 (the desk is pulling far more size than it trades).
+    ctf.on_new("CF2", 200);
+    n = OUCHMessage::encode_accepted(buf, "CF2", 'B', 200, "AAPL", 10.0, 81002);
+    ctf.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_executed(buf, "CF2", 20, 10.0, 2);
+    ctf.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_cancelled(buf, "CF2", 180, 'U');
+    ctf.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(std::fabs(ctf.cancel_to_fill_ratio() - 4.0) < 1e-9, "ouch_ctf_400");
+    // Size-aware, unlike the per-ORDER cancel_rate: both orders were cancelled
+    // (cancel_rate 1.0), yet the SHARES story (4x pulled vs filled) is another lens.
+    ASSERT(std::fabs(ctf.cancel_rate() - 1.0) < 1e-9, "ouch_ctf_vs_cancel_rate");
+    // Guard: cancels but no fills -> unbounded, so read as 0 (raw counter instead).
+    ouch::OUCHOrderTracker ctg;
+    ctg.on_new("G1", 100);
+    n = OUCHMessage::encode_accepted(buf, "G1", 'B', 100, "AAPL", 10.0, 81003);
+    ctg.on_response(OUCHMessage::parse_response(buf, n));
+    n = OUCHMessage::encode_cancelled(buf, "G1", 100, 'U');
+    ctg.on_response(OUCHMessage::parse_response(buf, n));
+    ASSERT(ctg.total_cancelled_shares() == 100 && ctg.cancel_to_fill_ratio() == 0.0,
+           "ouch_ctf_no_fill_guarded");
+    ctf.reset_session();
+    ASSERT(ctf.cancel_to_fill_ratio() == 0.0, "ouch_ctf_reset");
 }
 
 // OUCH ↔ SoupBinTCP #78 — full round-trip login→order→accepted→executed.

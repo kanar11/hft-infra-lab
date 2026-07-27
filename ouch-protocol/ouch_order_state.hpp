@@ -769,6 +769,26 @@ public:
             ? static_cast<double>(cancelled_shares_) / static_cast<double>(ordered_shares_)
             : 0.0;
     }
+    // cancel_to_fill_ratio (#609): shares the desk PULLED per share it got
+    // done = total_cancelled_shares (#538) / total_filled_shares (#242) — the
+    // OUCH client-side parity of itch's pull_to_take_ratio (#583), which reads
+    // the same pull-vs-take story off the PUBLIC feed; this reads it off the
+    // desk's OWN order flow. Around 1 the desk cancels about as much size as it
+    // trades (ordinary reprice churn); far above 1 it is quoting and pulling
+    // far more than it executes — heavy maker churn, the order-to-trade
+    // signature venue surveillance flags (the OUCH analog of itch's
+    // order_to_trade_ratio #559). It weighs SHARES, so it is the size-aware
+    // complement of the per-ORDER cancel_rate (#353): many tiny cancels against
+    // a few large fills read low here even at a high cancel_rate. Busts lower
+    // the denominator (an unwound fill is no longer taken), correctly nudging
+    // the ratio up. Guarded to 0 before any shares fill — a ratio over zero
+    // takes is unbounded; read total_cancelled_shares raw in the no-fill regime.
+    double cancel_to_fill_ratio() const noexcept {
+        const int32_t filled = total_filled_shares();
+        return filled > 0
+            ? static_cast<double>(cancelled_shares_) / static_cast<double>(filled)
+            : 0.0;
+    }
     // reject_rate: fraction of tracked ORDERS that ended up REJECTED (#345) =
     // rejected_ / order_count. Distinct from fill_rate (#250, a SHARE ratio):
     // this is a per-order rate — e.g. many small rejected clips vs one large
