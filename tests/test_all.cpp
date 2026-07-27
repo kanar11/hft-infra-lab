@@ -6558,6 +6558,53 @@ void test_router_ewma_partial() {
         ASSERT(rte.touch_concentration(true) == 0.0, "router_touch_conc_empty_zero");
     }
 
+    // --- #607 liquidity_concentration — HHI of LIVE displayed liquidity ---
+    {
+        auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-9; };
+        // One quoting venue -> the whole buy-side depth on one venue -> 1.0.
+        SmartOrderRouter r1(RoutingStrategy::BEST_PRICE);
+        r1.add_venue(Venue("A", 100, 0.0));
+        r1.add_venue(Venue("B", 100, 0.0));
+        r1.update_quote("A", 9.98, 10.02, 100, 100);      // only A quotes so far
+        ASSERT(close(r1.liquidity_concentration(true), 1.0), "router_liqconc_single_one");
+        // Two venues with equal ask size -> evenly split -> 0.5.
+        r1.update_quote("B", 9.97, 10.03, 100, 100);
+        ASSERT(close(r1.liquidity_concentration(true), 0.5), "router_liqconc_even_half");
+        // Skewed 900/100 -> 0.9^2 + 0.1^2 = 0.82.
+        SmartOrderRouter r2(RoutingStrategy::BEST_PRICE);
+        r2.add_venue(Venue("A", 100, 0.0));
+        r2.add_venue(Venue("B", 100, 0.0));
+        r2.update_quote("A", 9.98, 10.02, 100, 900);
+        r2.update_quote("B", 9.98, 10.02, 100, 100);
+        ASSERT(close(r2.liquidity_concentration(true), 0.82), "router_liqconc_skewed_082");
+        // Four equal venues -> 1/4 = 0.25 (the even-split floor for N=4).
+        SmartOrderRouter r3(RoutingStrategy::BEST_PRICE);
+        r3.add_venue(Venue("A", 100, 0.0));
+        r3.add_venue(Venue("B", 100, 0.0));
+        r3.add_venue(Venue("C", 100, 0.0));
+        r3.add_venue(Venue("D", 100, 0.0));
+        r3.update_quote("A", 9.98, 10.02, 100, 100);
+        r3.update_quote("B", 9.98, 10.02, 100, 100);
+        r3.update_quote("C", 9.98, 10.02, 100, 100);
+        r3.update_quote("D", 9.98, 10.02, 100, 100);
+        ASSERT(close(r3.liquidity_concentration(true), 0.25), "router_liqconc_four_even_quarter");
+        // Side-specific: dominate the BID on A (1000 vs 100) while asks stay even.
+        r3.update_quote("A", 9.98, 10.02, 1000, 100);
+        ASSERT(r3.liquidity_concentration(false) > r3.liquidity_concentration(true),
+               "router_liqconc_side_specific");
+        ASSERT(close(r3.liquidity_concentration(true), 0.25), "router_liqconc_ask_still_even");
+        // Bounded (0,1].
+        ASSERT(r3.liquidity_concentration(false) > 0.0 && r3.liquidity_concentration(false) <= 1.0,
+               "router_liqconc_bounded");
+        // Distinct from routing_concentration (#384): nothing has ROUTED yet, so
+        // that HHI is 0 while the LIVE-quote HHI is positive.
+        ASSERT(r3.routing_concentration() == 0.0 && r3.liquidity_concentration(true) > 0.0,
+               "router_liqconc_vs_routed");
+        // Empty side / no liquidity -> 0 (no division trap).
+        SmartOrderRouter re(RoutingStrategy::BEST_PRICE);
+        ASSERT(re.liquidity_concentration(true) == 0.0, "router_liqconc_empty_zero");
+    }
+
     // --- #464 effective_price_dispersion — real cross-venue price spread ---
     {
         auto close = [](double a, double b) { const double d = a - b; return (d<0?-d:d) < 1e-6; };

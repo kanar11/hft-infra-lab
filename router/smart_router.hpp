@@ -1443,6 +1443,36 @@ public:
         }
         return hhi;
     }
+    // liquidity_concentration (#607): the Herfindahl index of the LIVE
+    // displayed liquidity across venues on a side = Σ (venue_size / total)²,
+    // in (0,1]. 1.0 = the whole side's depth sits on ONE venue (a fragile
+    // consolidated book — that venue pulling or getting hit collapses the
+    // touch), 1/N = depth spread evenly across N quoting venues (resilient,
+    // and real cross-venue competition to route into). It is the LIVE-QUOTE
+    // twin of routing_concentration (#384, the HHI of historical ROUTED
+    // volume) — same construction as risk's exposure_concentration (#331) —
+    // and the single-number summary that venue_liquidity_share (#262) gives
+    // only one venue at a time. Distinct from touch_concentration (#488),
+    // which measures the fraction of the side sitting at the BEST price; this
+    // measures how the whole side's size spreads across VENUES regardless of
+    // price. Only active venues quoting the side count. 0 when the side shows
+    // no displayed liquidity.
+    double liquidity_concentration(bool is_buy) const noexcept {
+        const int32_t total = available_liquidity(is_buy);
+        if (total <= 0) return 0.0;
+        double hhi = 0.0;
+        for (int i = 0; i < venue_count_; ++i) {
+            const Venue& v = venues_[i];
+            if (!v.is_active) continue;
+            const bool has_liq = is_buy ? (v.best_ask > 0 && v.ask_size > 0)
+                                        : (v.best_bid > 0 && v.bid_size > 0);
+            if (!has_liq) continue;
+            const double share = static_cast<double>(is_buy ? v.ask_size : v.bid_size)
+                               / static_cast<double>(total);
+            hhi += share * share;
+        }
+        return hhi;
+    }
     // busiest_venue: the NAME of the venue that took the most routed volume
     // (#528), writing its share count into out_shares — the actionable WHICH
     // behind routing_concentration (#384): the HHI says HOW concentrated the
