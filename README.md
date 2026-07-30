@@ -86,7 +86,7 @@ Protocol details, opcodes, and connecting to real exchanges: [`feed/README.md`](
 ## Observability & analytics layer
 
 On top of the hot paths, every core module carries a tested read-only metrics
-surface (built up across ~590 numbered expansion commits, one feature + tests
+surface (built up across ~610 numbered expansion commits, one feature + tests
 per commit, all CI-green):
 
 - **oms/** — full TCA (speed/size/price axes: min/avg/max time-to-fill and
@@ -165,7 +165,7 @@ expansions (terminal-state guards, monotonicity guards, fill-after-cancel).
 | network/ | Epoll-based async TCP server + self-test FIX ingestion demo | C++ |
 | feed/ | Minimal RFC 6455 WebSocket client + self-contained mock server (Binance-style JSON trades) | C++ |
 | bindings/ | pybind11 Python extension exposing OMS, RiskManager, FlatOrderBook | C++/Python |
-| tests/ | Integration test suite — cross-module pipeline validation (**2,938 assertions** in `test_all.cpp`, plus 805 in the FullOrderBook demo) | C++ |
+| tests/ | Integration test suite — cross-module pipeline validation (**3,063 assertions** in `test_all.cpp`, plus 805 in the FullOrderBook demo) | C++ |
 | docs/ | Architecture diagrams, Linux tuning write-up, benchmark charts | Markdown |
 
 ## Quick Start
@@ -181,7 +181,7 @@ docker run hft-lab make simulate  # simulator only
 ### Manual
 ```bash
 make build      # compile all C++ binaries
-make test       # run all built-in unit tests (2,900+ assertions)
+make test       # run all built-in unit tests (3,000+ assertions)
 make benchmark  # run all throughput benchmarks
 make simulate   # run end-to-end market simulator (direct, strategy, router, +risk, +book full pipeline)
 ```
