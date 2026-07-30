@@ -3115,7 +3115,7 @@ void test_itch_book() {
     ASSERT(sb.resting_orders() == 0 && sb.best_bid() == 0.0, "itchbook_clear_resets");
 }
 
-// Multicast gap-recovery #82 — detekcja luk + retransmisja + rekoncyliacja.
+// Multicast gap-recovery #82 — gap detection + retransmission + reconciliation.
 void test_multicast_gap_recovery() {
     SECTION("Multicast Gap Recovery (#82)");
     multicast::GapRecovery gr;
@@ -3135,7 +3135,7 @@ void test_multicast_gap_recovery() {
     gr.observe(6);                               // a late primary fills 6
     ASSERT(gr.missing_count() == 1 && gr.recovered == 3, "gaprec_late_primary_recovers");
 
-    // #149 lista zakresow luk (ciagle przedzialy).
+    // #149 list of gap ranges (contiguous intervals).
     multicast::GapRecovery mr2;
     mr2.observe(1); mr2.observe(5);                      // missing 2,3,4 -> [2,4]
     mr2.observe(10);                                     // missing 6,7,8,9 -> [6,9]
@@ -3230,7 +3230,7 @@ void test_multicast_gap_recovery() {
 
     // #110 ReorderBuffer — always delivers in order, holds "future" ones.
     multicast::ReorderBuffer<int> rb;
-    rb.push(1, 10);                              // expected=1 -> dostarcz, expected->2
+    rb.push(1, 10);                              // expected=1 -> deliver, expected->2
     ASSERT(rb.out.size() == 1 && rb.out[0] == 10, "reorder_inorder_deliver");
     rb.push(3, 30);                              // gap at 2 -> buffer
     rb.push(4, 40);                              // buffer it
@@ -6666,7 +6666,7 @@ void test_router_ewma_partial() {
         SmartOrderRouter r(RoutingStrategy::BEST_PRICE);
         r.add_venue(Venue("A", 100, 0.0));
         r.update_quote("A", 10.0, 11.0, 100, 100);
-        r.route_order("BUY", 10); r.route_order("BUY", 10);   // 2 udane
+        r.route_order("BUY", 10); r.route_order("BUY", 10);   // 2 successful
         ASSERT(close(r.reject_rate(), 0.0), "rejrate_all_ok");
         ASSERT(r.avg_routing_latency_ns() >= 0.0, "rejrate_avg_lat_nonneg");
         // #536 max_routing_latency_ns — the tail (real clock -> invariants only:
@@ -8847,8 +8847,8 @@ void test_fix_session() {
                    "fix_dk_text");
 
             // a non-Q message must produce valid=false
-            FIXMessage not_q; not_q.parse("35=8|11=X|37=Y|17=Z|");
-            ASSERT(!fix::FIXSession::parse_dont_know_trade(not_q).valid, "fix_dk_non_Q_invalid");
+            FIXMessage not_dk; not_dk.parse("35=8|11=X|37=Y|17=Z|");
+            ASSERT(!fix::FIXSession::parse_dont_know_trade(not_dk).valid, "fix_dk_non_Q_invalid");
         }
     }
 }

@@ -127,8 +127,8 @@ inline int64_t parse_context_switches(const char* content) noexcept {
 inline MemoryStats parse_meminfo(const char* content) noexcept {
     MemoryStats mem = {0, 0, 0, 0, 0.0};
 
-    auto find_value = [](const char* content, const char* key) -> int64_t {
-        const char* p = std::strstr(content, key);
+    auto find_value = [](const char* text, const char* key) -> int64_t {
+        const char* p = std::strstr(text, key);
         if (!p) return 0;
         p += std::strlen(key);
         while (*p == ' ' || *p == ':') p++;
