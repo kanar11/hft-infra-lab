@@ -1168,6 +1168,23 @@ public:
             ? to_float(total_realized_pnl()) / static_cast<double>(round_trips_)
             : 0.0;
     }
+    // avg_net_pnl_per_round_trip: per completed flat-to-flat cycle P&L AFTER
+    // commissions (#611) = total_net_pnl / round_trips. The NET sibling of
+    // avg_pnl_per_round_trip (#428, which is GROSS realized) — the same
+    // gross->net step the per-SHARE axis already carries (realized_pnl_per_share
+    // #460 -> net_pnl_per_share #468), applied to the per-TRADE axis: it is the
+    // honest number a session review lives on, the average a completed trade
+    // actually banks once it has paid to enter and exit. It equals
+    // avg_pnl_per_round_trip minus fees/round_trips by construction, so a book
+    // whose gross per-trade edge sits below its round-trip fee load reads
+    // NEGATIVE here. Fixed-point accumulator: to_float BEFORE dividing (the #347
+    // lesson). 0 before the first completed cycle; reset by
+    // reset_session_counters.
+    double avg_net_pnl_per_round_trip() const noexcept {
+        return round_trips_ > 0
+            ? to_float(total_net_pnl()) / static_cast<double>(round_trips_)
+            : 0.0;
+    }
     // realized_pnl_per_share: the average $ edge captured per executed
     // share (#460, MILESTONE 460) = total_realized_pnl / total_filled_
     // shares. The headline efficiency number: avg_pnl_per_round_trip (#428)

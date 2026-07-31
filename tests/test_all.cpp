@@ -852,6 +852,24 @@ void test_oms_short_and_replace() {
         ASSERT(oms.symbol_round_trips("BBB") == 2, "srt_survives_session_reset");
     }
 
+    {   // #611 avg_net_pnl_per_round_trip — per-trade P&L AFTER commissions.
+        OMS oms(1000, 1000000.0, 0.01);            // $0.01/share commission
+        ASSERT(oms.avg_net_pnl_per_round_trip() == 0.0, "anrt_empty_zero");
+        Order* a = oms.submit_order("AAA", Side::BUY, 10.0, 100);
+        oms.fill_order(a->order_id, 100, 10.0);     // open, fee $1
+        Order* b = oms.submit_order("AAA", Side::SELL, 11.0, 100);
+        oms.fill_order(b->order_id, 100, 11.0);     // close flat: +$100 gross, fee $1
+        ASSERT(oms.round_trips() == 1, "anrt_one_trip");
+        // Gross per trip 100; two 100-share fills at $0.01 = $2 fees -> net 98.
+        ASSERT(close(oms.avg_pnl_per_round_trip(), 100.0), "anrt_gross_100");
+        ASSERT(close(oms.avg_net_pnl_per_round_trip(), 98.0), "anrt_net_98");
+        // Net trails gross by exactly the per-trip fee load (fees $2 / 1 trip).
+        ASSERT(close(oms.avg_pnl_per_round_trip() - oms.avg_net_pnl_per_round_trip(), 2.0),
+               "anrt_gap_is_fee_load");
+        oms.reset_session_counters();
+        ASSERT(oms.avg_net_pnl_per_round_trip() == 0.0, "anrt_reset_zero");
+    }
+
     {   // #444 order_fill_count / max_order_fill_count — per-order fragmentation.
         OMS oms(1000000, 1000000000.0);
         ASSERT(oms.max_order_fill_count() == 0, "ofc_empty_zero");
